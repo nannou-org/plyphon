@@ -148,7 +148,7 @@ impl SynthDef {
             let ctor = registry
                 .get(&spec.name)
                 .ok_or_else(|| BuildError::UnknownUgen(spec.name.clone()))?;
-            ugens.push(ctor.build(&build_ctx));
+            ugens.push(ctor.build(&build_ctx)?);
             inputs_plan.push(sources.into_boxed_slice());
 
             let base = wire_base[u];

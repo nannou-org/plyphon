@@ -3,6 +3,7 @@
 use core::f32::consts::TAU;
 
 use crate::bus::AudioBus;
+use crate::error::BuildError;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
 use crate::ugen::{Inputs, Outputs, ProcessContext, Ugen};
@@ -73,11 +74,11 @@ fn wrap_unit(x: f32) -> f32 {
 pub struct SinOscCtor;
 
 impl UgenCtor for SinOscCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Box<dyn Ugen> {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
         let calc = match ctx.input_rates.first().copied() {
             Some(Rate::Audio) => Calc::FreqAudio,
             _ => Calc::FreqControl,
         };
-        Box::new(SinOsc { calc, phase: 0.0 })
+        Ok(Box::new(SinOsc { calc, phase: 0.0 }))
     }
 }

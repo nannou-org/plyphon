@@ -18,9 +18,6 @@ mod engine;
 #[path = "engine_web.rs"]
 mod engine;
 
-/// Master gain applied to the engine's full-scale output, to keep the demo gentle on the ears.
-const GAIN: f32 = 0.2;
-
 fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
@@ -58,7 +55,7 @@ fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::S
                 scratch.resize(output.len(), 0.0);
                 source.fill(&mut scratch, channels);
                 for (out, sample) in output.iter_mut().zip(scratch.iter()) {
-                    *out = T::from_sample(*sample * GAIN);
+                    *out = T::from_sample(*sample);
                 }
             },
             |err| eprintln!("audio stream error: {err}"),

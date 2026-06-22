@@ -6,10 +6,13 @@
 
 use std::collections::HashMap;
 
+use crate::error::BuildError;
 use crate::rate::{Rate, RateInfo};
 use crate::ugen::Ugen;
+use crate::ugen::binary_op::BinaryOpCtor;
 use crate::ugen::out::OutCtor;
 use crate::ugen::sin_osc::SinOscCtor;
+use crate::ugen::unary_op::UnaryOpCtor;
 
 /// Build-time context for constructing a UGen. Runs off the audio thread, so allocation is fine.
 pub struct BuildContext<'a> {
@@ -25,8 +28,8 @@ pub struct BuildContext<'a> {
 
 /// Constructs a [`Ugen`] from a [`BuildContext`] during SynthDef instantiation.
 pub trait UgenCtor: Send + Sync {
-    /// Build a UGen instance.
-    fn build(&self, ctx: &BuildContext<'_>) -> Box<dyn Ugen>;
+    /// Build a UGen instance, or fail (e.g. an unsupported operator or bad input count).
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError>;
 }
 
 /// Maps UGen names to their constructors.
@@ -47,6 +50,8 @@ impl UgenRegistry {
         let mut registry = Self::new();
         registry.register("SinOsc", Box::new(SinOscCtor));
         registry.register("Out", Box::new(OutCtor));
+        registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));
+        registry.register("UnaryOpUGen", Box::new(UnaryOpCtor));
         registry
     }
 

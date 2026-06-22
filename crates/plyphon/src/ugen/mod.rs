@@ -10,17 +10,21 @@
 //! an output borrow at the same time without aliasing - the safe equivalent of scsynth's raw
 //! aliasing `float*` wires.
 
+pub mod binary_op;
 pub mod out;
 pub mod registry;
 pub mod sin_osc;
+pub mod unary_op;
 
 use crate::bus::AudioBus;
 use crate::rate::{Rate, RateInfo};
 use crate::wavetable::Wavetables;
 
+pub use binary_op::BinaryOp;
 pub use out::Out;
 pub use registry::{BuildContext, UgenCtor, UgenRegistry};
 pub use sin_osc::SinOsc;
+pub use unary_op::UnaryOp;
 
 /// Immutable per-block context handed to every [`Ugen::process`] call.
 #[derive(Copy, Clone)]

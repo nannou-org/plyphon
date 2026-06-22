@@ -1,6 +1,7 @@
 //! `Out` - writes signals to output-bus channels, plyphon's port of scsynth's `Out`.
 
 use crate::bus::AudioBus;
+use crate::error::BuildError;
 use crate::ugen::registry::{BuildContext, UgenCtor};
 use crate::ugen::{Inputs, Outputs, ProcessContext, Ugen};
 
@@ -36,7 +37,7 @@ impl Ugen for Out {
 pub struct OutCtor;
 
 impl UgenCtor for OutCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Box<dyn Ugen> {
-        Box::new(Out)
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+        Ok(Box::new(Out))
     }
 }
