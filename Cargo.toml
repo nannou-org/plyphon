@@ -18,6 +18,8 @@ scgf = { version = "0.1.0", path = "crates/scgf" }
 cpal = "0.16"
 # Lock-free SPSC ring for control -> RT command delivery (wait-free, no_std-friendly).
 rtrb = "0.3"
+# OSC encoding/decoding for the SuperCollider-compatible command front-end.
+rosc = "0.11"
 
 # Web (wasm) example dependencies.
 console_error_panic_hook = "0.1"

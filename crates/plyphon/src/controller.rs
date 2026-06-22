@@ -91,12 +91,25 @@ impl Controller {
         target: i32,
         action: AddAction,
     ) -> Result<i32, SynthNewError> {
+        let id = self.next_id;
+        self.synth_new_with_id(id, def_name, target, action)?;
+        self.next_id += 1;
+        Ok(id)
+    }
+
+    /// Instantiate a synth with a caller-chosen client id (e.g. an id from an OSC `/s_new`).
+    pub fn synth_new_with_id(
+        &mut self,
+        id: i32,
+        def_name: &str,
+        target: i32,
+        action: AddAction,
+    ) -> Result<(), SynthNewError> {
         let def = self
             .defs
             .get(def_name)
             .ok_or_else(|| SynthNewError::UnknownDef(def_name.to_string()))?;
         let synth = def.instantiate(&self.registry, &self.audio, &self.control)?;
-        let id = self.next_id;
         self.tx
             .push(Command::AddSynth {
                 id,
@@ -105,18 +118,27 @@ impl Controller {
                 action,
             })
             .map_err(|_| SynthNewError::QueueFull)?;
-        self.next_id += 1;
-        Ok(id)
+        Ok(())
     }
 
     /// Create an empty group under group `target`. Returns the new group's client id.
     pub fn new_group(&mut self, target: i32, action: AddAction) -> Result<i32, QueueFull> {
         let id = self.next_id;
-        self.tx
-            .push(Command::AddGroup { id, target, action })
-            .map_err(|_| QueueFull)?;
+        self.new_group_with_id(id, target, action)?;
         self.next_id += 1;
         Ok(id)
+    }
+
+    /// Create an empty group with a caller-chosen client id (e.g. an id from an OSC `/g_new`).
+    pub fn new_group_with_id(
+        &mut self,
+        id: i32,
+        target: i32,
+        action: AddAction,
+    ) -> Result<(), QueueFull> {
+        self.tx
+            .push(Command::AddGroup { id, target, action })
+            .map_err(|_| QueueFull)
     }
 
     /// Set control parameter `param` of node `node` to `value`.

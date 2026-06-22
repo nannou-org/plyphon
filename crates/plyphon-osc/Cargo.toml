@@ -1,0 +1,16 @@
+[package]
+name = "plyphon-osc"
+version = "0.1.0"
+description = "SuperCollider-compatible OSC command front-end for the plyphon engine."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+plyphon.workspace = true
+rosc.workspace = true
+
+[dev-dependencies]
+scgf.workspace = true
