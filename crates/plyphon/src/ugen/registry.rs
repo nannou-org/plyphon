@@ -12,6 +12,7 @@ use crate::ugen::Ugen;
 use crate::ugen::binary_op::BinaryOpCtor;
 use crate::ugen::filter::{ButterCtor, Kind};
 use crate::ugen::line::LineCtor;
+use crate::ugen::noise::WhiteNoiseCtor;
 use crate::ugen::out::OutCtor;
 use crate::ugen::sin_osc::SinOscCtor;
 use crate::ugen::unary_op::UnaryOpCtor;
@@ -28,6 +29,8 @@ pub struct BuildContext<'a> {
     pub control: &'a RateInfo,
     /// scsynth's `mSpecialIndex` (e.g. which binary/unary operator).
     pub special_index: i16,
+    /// A seed for this UGen's random number generator (distinct per UGen and per synth instance).
+    pub seed: u64,
 }
 
 /// Constructs a [`Ugen`] from a [`BuildContext`] during SynthDef instantiation.
@@ -59,6 +62,7 @@ impl UgenRegistry {
         registry.register("Line", Box::new(LineCtor));
         registry.register("LPF", Box::new(ButterCtor(Kind::LowPass)));
         registry.register("HPF", Box::new(ButterCtor(Kind::HighPass)));
+        registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry
     }
 

@@ -13,6 +13,7 @@
 pub mod binary_op;
 pub mod filter;
 pub mod line;
+pub mod noise;
 pub mod out;
 pub mod registry;
 pub mod sin_osc;
@@ -25,6 +26,7 @@ use crate::wavetable::Wavetables;
 pub use binary_op::BinaryOp;
 pub use filter::Butter;
 pub use line::Line;
+pub use noise::WhiteNoise;
 pub use out::Out;
 pub use registry::{BuildContext, UgenCtor, UgenRegistry};
 pub use sin_osc::SinOsc;

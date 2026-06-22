@@ -44,6 +44,7 @@ pub struct Controller {
     tx: Producer<Command>,
     trash_rx: Consumer<Trash>,
     next_id: i32,
+    next_seed: u64,
 }
 
 impl Controller {
@@ -62,6 +63,7 @@ impl Controller {
             trash_rx,
             // Client node ids start above the root group (id 0).
             next_id: 1000,
+            next_seed: 0x123456789ABCDEF,
         }
     }
 
@@ -104,11 +106,12 @@ impl Controller {
         target: i32,
         action: AddAction,
     ) -> Result<(), SynthNewError> {
+        let seed = self.next_seed;
         let def = self
             .defs
             .get(def_name)
             .ok_or_else(|| SynthNewError::UnknownDef(def_name.to_string()))?;
-        let synth = def.instantiate(&self.registry, &self.audio, &self.control)?;
+        let synth = def.instantiate(&self.registry, &self.audio, &self.control, seed)?;
         self.tx
             .push(Command::AddSynth {
                 id,
@@ -117,6 +120,7 @@ impl Controller {
                 action,
             })
             .map_err(|_| SynthNewError::QueueFull)?;
+        self.next_seed = self.next_seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
         Ok(())
     }
 

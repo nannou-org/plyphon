@@ -94,6 +94,7 @@ impl SynthDef {
         registry: &UgenRegistry,
         audio: &RateInfo,
         control: &RateInfo,
+        base_seed: u64,
     ) -> Result<Box<Synth>, BuildError> {
         let block_size = audio.block_size;
 
@@ -143,7 +144,7 @@ impl SynthDef {
         let mut ugens = Vec::with_capacity(self.ugens.len());
         let mut inputs_plan = Vec::with_capacity(self.ugens.len());
         let mut max_outputs = 0usize;
-        for spec in &self.ugens {
+        for (u, spec) in self.ugens.iter().enumerate() {
             let mut sources = Vec::with_capacity(spec.inputs.len());
             for input in &spec.inputs {
                 let source = match *input {
@@ -173,6 +174,7 @@ impl SynthDef {
                 control,
                 rate: spec.rate,
                 special_index: spec.special_index,
+                seed: base_seed.wrapping_add((u as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
             };
             let ctor = registry
                 .get(&spec.name)

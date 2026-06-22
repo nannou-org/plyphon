@@ -18,6 +18,7 @@ pub mod controller;
 pub mod engine;
 pub mod error;
 pub mod rate;
+pub mod rng;
 pub mod synth;
 pub mod synthdef;
 pub mod tree;
