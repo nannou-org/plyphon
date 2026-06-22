@@ -1,0 +1,54 @@
+# plyphon
+
+A **pure-Rust** rewrite of the core of SuperCollider's [`scsynth`][scsynth] audio synthesis
+engine. No C++, no FFI, no submodules - the entire engine is Rust, so it builds for native
+targets and `wasm32-unknown-unknown` alike, and runs in the browser. The goal is an
+scsynth-compatible synthesis core that can be driven by any pure-Rust audio backend (e.g.
+[`cpal`][cpal]), preserving scsynth's hard real-time guarantees (no locks, blocking, or
+allocation on the audio thread).
+
+This is early-stage research, developed in parallel with [`scsynth-rs`][scsynth-rs] (which
+embeds the C++ engine via FFI). plyphon currently ships a minimal placeholder - a `SinOsc`
+playing through `cpal` natively and on the web - while the real lock-free engine is built up
+incrementally.
+
+## Crates
+
+| Crate | Description |
+| --- | --- |
+| [`plyphon`](crates/plyphon) | The pure-Rust engine core (currently a `SinOsc` placeholder). |
+| [`plyphon-example`](crates/plyphon-example) | Minimal native + web SinOsc demo driven by `cpal`. |
+
+## Building
+
+All dependencies (the Rust toolchain, `alsa`/`pkg-config` for the native `cpal` backend, and the
+wasm tooling) are provided by the Nix flake:
+
+```console
+nix develop            # or `direnv allow` (uses ./.envrc)
+cargo build
+cargo test
+cargo build --target wasm32-unknown-unknown -p plyphon-example
+```
+
+## The web demo
+
+```console
+nix run .#serve-plyphon-website
+# or, for live reload during development:
+trunk serve
+```
+
+Open `localhost:8088` and click once to start audio (browsers hold audio until a user gesture).
+
+`cpal` is the audio backend on both targets: natively via ALSA/CoreAudio/WASAPI, on the web via
+its WebAudio backend (the `wasm-bindgen` cpal feature). The audio *source* is the same
+`plyphon::SinOsc` on both.
+
+## License
+
+Licensed under [GPL-3.0-or-later](LICENSE), matching SuperCollider's license.
+
+[scsynth]: https://github.com/supercollider/supercollider
+[scsynth-rs]: https://github.com/mitchmindtree/scsynth-rs
+[cpal]: https://github.com/RustAudio/cpal

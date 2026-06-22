@@ -1,0 +1,30 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+authors = ["mitchmindtree <mail@mitchellnordine.com>"]
+edition = "2024"
+homepage = "https://github.com/mitchmindtree/plyphon"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/mitchmindtree/plyphon"
+
+[workspace.dependencies]
+# Internal crates.
+plyphon = { version = "0.1.0", path = "crates/plyphon" }
+
+# Shared dependencies.
+cpal = "0.16"
+
+# Web (wasm) example dependencies.
+console_error_panic_hook = "0.1"
+wasm-bindgen = "0.2"
+
+[profile.wasm_release]
+inherits = "release"
+opt-level = 'z'  # Optimize for size
+lto = true       # Enable link-time optimization
+codegen-units = 1
+panic = 'abort'  # Remove panic unwinding to reduce size
+strip = true     # Remove debug symbols
+debug = false
