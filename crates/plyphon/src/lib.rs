@@ -1,16 +1,23 @@
 //! plyphon: a pure-Rust rewrite of SuperCollider's `scsynth` audio engine core.
 //!
-//! This crate currently provides only a minimal placeholder: a [`SinOsc`] oscillator and a
-//! [`Source`] abstraction for filling interleaved `f32` output blocks. It compiles for native and
-//! `wasm32-unknown-unknown` alike with no platform-specific dependencies - the property the whole
-//! engine core must preserve as it grows into the real real-time synthesis engine.
+//! The engine is being built bottom-up. The modules below provide the real synthesis primitives -
+//! [`rate`], [`wavetable`], [`bus`], [`ugen`] (the [`Ugen`](ugen::Ugen) trait plus `SinOsc`/`Out`),
+//! [`synth`], and [`synthdef`] - all `unsafe`-free and free of global mutable state (everything a
+//! UGen needs is passed by argument). It compiles for native and `wasm32-unknown-unknown` alike.
 //!
-//! See the project plan for the staged roadmap: the next milestone replaces this placeholder with
-//! the lock-free `World`/`Controller` engine, a `Ugen` trait, a node tree, and SynthDef
-//! instantiation - all without `unsafe` or global mutable state, hence the crate-wide
-//! `forbid(unsafe_code)` below.
+//! A small placeholder [`SinOsc`] oscillator and the [`Source`] host interface remain at the crate
+//! root to keep the `plyphon-example` demo playing while the lock-free `World`/`Controller` driver
+//! is assembled; they will be replaced once the engine can drive the example end-to-end.
 
 #![forbid(unsafe_code)]
+
+pub mod bus;
+pub mod error;
+pub mod rate;
+pub mod synth;
+pub mod synthdef;
+pub mod ugen;
+pub mod wavetable;
 
 use core::f32::consts::TAU;
 
