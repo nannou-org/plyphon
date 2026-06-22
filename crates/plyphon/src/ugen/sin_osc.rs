@@ -6,7 +6,7 @@ use crate::bus::AudioBus;
 use crate::error::BuildError;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
 use crate::wavetable::lookup_cycle;
 
 /// Which calc variant to use, chosen from the frequency input's rate at build time (scsynth picks
@@ -39,7 +39,7 @@ impl Ugen for SinOsc {
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
         _out_bus: &mut AudioBus,
-    ) {
+    ) -> DoneAction {
         let table = ctx.wavetables.sine();
         let sample_dur = ctx.audio.sample_dur as f32;
         // Phase offset in cycles (radians / 2pi). Constant/control rate for now.
@@ -61,6 +61,7 @@ impl Ugen for SinOsc {
                 }
             }
         }
+        DoneAction::Nothing
     }
 }
 

@@ -78,7 +78,7 @@ fn glide_def() -> SynthDef {
 
 #[test]
 fn control_rate_line_glides_sine_frequency() {
-    let (mut controller, mut world) = engine(Options {
+    let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()

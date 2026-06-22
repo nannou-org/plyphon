@@ -3,13 +3,14 @@
 //!
 //! The `Controller` owns the [`SynthDefLibrary`] and the [`UgenRegistry`]; the audio thread never
 //! touches them. It instantiates synths (all allocation and UGen construction happens here) and
-//! ships the finished `Box<Synth>` to the [`World`](crate::world::World) over the command ring, and
-//! it drains the trash ring to drop freed synths off the audio thread.
+//! ships the finished `Box<Synth>` to the [`World`](crate::world::World) over the command ring.
+//! Reactive NRT work - dropping freed synths and surfacing notifications - lives in the
+//! [`Nrt`](crate::nrt::Nrt) instead.
 
-use rtrb::{Consumer, Producer};
+use rtrb::Producer;
 use thiserror::Error;
 
-use crate::command::{Command, Trash};
+use crate::command::Command;
 use crate::error::BuildError;
 use crate::rate::RateInfo;
 use crate::synthdef::{SynthDef, SynthDefLibrary};
@@ -42,25 +43,18 @@ pub struct Controller {
     audio: RateInfo,
     control: RateInfo,
     tx: Producer<Command>,
-    trash_rx: Consumer<Trash>,
     next_id: i32,
     next_seed: u64,
 }
 
 impl Controller {
-    pub(crate) fn new(
-        audio: RateInfo,
-        control: RateInfo,
-        tx: Producer<Command>,
-        trash_rx: Consumer<Trash>,
-    ) -> Self {
+    pub(crate) fn new(audio: RateInfo, control: RateInfo, tx: Producer<Command>) -> Self {
         Controller {
             registry: UgenRegistry::with_builtins(),
             defs: SynthDefLibrary::new(),
             audio,
             control,
             tx,
-            trash_rx,
             // Client node ids start above the root group (id 0).
             next_id: 1000,
             next_seed: 0x123456789ABCDEF,
@@ -158,10 +152,10 @@ impl Controller {
             .map_err(|_| QueueFull)
     }
 
-    /// Drop any synths the audio thread has finished with. Call periodically from the control side.
-    pub fn drain_trash(&mut self) {
-        while self.trash_rx.pop().is_ok() {
-            // Each popped `Trash` is dropped here, on the control thread.
-        }
+    /// Pause or resume node `node` (scsynth's `/n_run`).
+    pub fn node_run(&mut self, node: i32, run: bool) -> Result<(), QueueFull> {
+        self.tx
+            .push(Command::NodeRun { node, run })
+            .map_err(|_| QueueFull)
     }
 }

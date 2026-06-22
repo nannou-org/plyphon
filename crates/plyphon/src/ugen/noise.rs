@@ -5,7 +5,7 @@ use crate::error::BuildError;
 use crate::rate::Rate;
 use crate::rng::Rng;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
 
 /// `WhiteNoise.ar/kr`: samples drawn uniformly from `[-1, 1)`.
 pub struct WhiteNoise {
@@ -20,7 +20,7 @@ impl Ugen for WhiteNoise {
         _ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
         _out_bus: &mut AudioBus,
-    ) {
+    ) -> DoneAction {
         if self.audio {
             for o in outs.audio(0).iter_mut() {
                 *o = self.rng.next_bipolar();
@@ -28,6 +28,7 @@ impl Ugen for WhiteNoise {
         } else {
             *outs.control(0) = self.rng.next_bipolar();
         }
+        DoneAction::Nothing
     }
 }
 

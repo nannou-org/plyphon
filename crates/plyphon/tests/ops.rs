@@ -73,7 +73,7 @@ fn amped_sine() -> SynthDef {
 
 #[test]
 fn binary_op_multiply_scales_amplitude() {
-    let (mut controller, mut world) = engine(Options {
+    let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
@@ -127,7 +127,7 @@ fn unary_op_abs_rectifies() {
             ),
         ],
     };
-    let (mut controller, mut world) = engine(Options {
+    let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
@@ -162,7 +162,7 @@ fn unsupported_op_is_rejected() {
             special_index: 999,
         }],
     };
-    let (mut controller, _world) = engine(Options::default());
+    let (mut controller, _nrt, _world) = engine(Options::default());
     controller.add_synthdef(def);
     let result = controller.synth_new("bad", ROOT_GROUP_ID, AddAction::Tail);
     assert!(matches!(

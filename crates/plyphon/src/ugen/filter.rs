@@ -10,7 +10,7 @@ use std::f64::consts::{PI, SQRT_2};
 use crate::bus::AudioBus;
 use crate::error::BuildError;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
 
 /// Which Butterworth response to compute.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -78,7 +78,7 @@ impl Ugen for Butter {
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
         _out_bus: &mut AudioBus,
-    ) {
+    ) -> DoneAction {
         let freq = ins.control(Self::FREQ);
         if freq != self.freq {
             let pfreq = freq as f64 * ctx.audio.sample_rate.recip() * PI;
@@ -101,6 +101,7 @@ impl Ugen for Butter {
         }
         self.y1 = zap(y1);
         self.y2 = zap(y2);
+        DoneAction::Nothing
     }
 }
 

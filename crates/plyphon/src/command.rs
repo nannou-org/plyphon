@@ -2,8 +2,9 @@
 //!
 //! [`Command`]s flow control-side -> RT-side over a lock-free ring. Anything needing allocation
 //! (instantiating a synth) is pre-built control-side, so applying a command on the audio thread is
-//! pure link manipulation. [`Trash`] flows back RT-side -> control-side so freed `Box`es are dropped
-//! off the audio thread.
+//! pure link manipulation. Two streams flow back RT-side -> NRT-side, both drained by the
+//! [`Nrt`](crate::nrt::Nrt): [`Trash`] carries freed `Box`es to be dropped off the audio thread, and
+//! [`Event`] carries notifications (node started/ended/paused/resumed) for the consumer.
 
 use crate::synth::Synth;
 use crate::tree::AddAction;
@@ -45,10 +46,43 @@ pub enum Command {
         /// Target node's client id.
         node: i32,
     },
+    /// Pause or resume node `node` (scsynth's `/n_run`).
+    NodeRun {
+        /// Target node's client id.
+        node: i32,
+        /// Run the node (`true`) or pause it (`false`).
+        run: bool,
+    },
 }
 
-/// Heap-owning values handed back to the control side to be dropped off the audio thread.
+/// Heap-owning values handed back to the NRT side to be dropped off the audio thread.
 pub enum Trash {
     /// A freed synth.
     Synth(Box<Synth>),
+}
+
+/// A notification flowing RT-side -> NRT-side, surfaced to the consumer by the
+/// [`Nrt`](crate::nrt::Nrt). Each mirrors a scsynth node-notification message.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Event {
+    /// A node was added to the tree (`/n_go`).
+    NodeStarted {
+        /// The node's client id.
+        id: i32,
+    },
+    /// A node was freed (`/n_end`), whether explicitly or by a done action.
+    NodeEnded {
+        /// The node's client id.
+        id: i32,
+    },
+    /// A node was paused (`/n_off`).
+    NodePaused {
+        /// The node's client id.
+        id: i32,
+    },
+    /// A node was resumed (`/n_on`).
+    NodeResumed {
+        /// The node's client id.
+        id: i32,
+    },
 }

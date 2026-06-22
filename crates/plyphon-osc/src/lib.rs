@@ -64,7 +64,7 @@ impl OscDispatcher {
         }
     }
 
-    /// Access the wrapped controller (e.g. to call [`Controller::drain_trash`]).
+    /// Access the wrapped controller (e.g. to add SynthDefs or register custom UGens).
     pub fn controller(&mut self) -> &mut Controller {
         &mut self.controller
     }

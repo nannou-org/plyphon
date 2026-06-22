@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use crate::bus::AudioBus;
 use crate::synth::Synth;
-use crate::ugen::ProcessContext;
+use crate::ugen::{DoneAction, ProcessContext};
 
 /// Where to insert a node relative to a target group.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -27,11 +27,13 @@ enum Slot {
     Node(Node),
 }
 
-/// A tree node: sibling links plus its kind.
+/// A tree node: its client id, sibling links, paused flag, and kind.
 struct Node {
+    id: i32,
     parent: Option<u32>,
     prev: Option<u32>,
     next: Option<u32>,
+    paused: bool,
     kind: NodeKind,
 }
 
@@ -65,9 +67,11 @@ impl NodeTree {
         let mut free: Vec<u32> = (0..capacity as u32).rev().collect();
         let root_index = free.pop().expect("capacity >= 1");
         slots[root_index as usize] = Slot::Node(Node {
+            id: root_id,
             parent: None,
             prev: None,
             next: None,
+            paused: false,
             kind: NodeKind::Group {
                 head: None,
                 tail: None,
@@ -109,9 +113,11 @@ impl NodeTree {
             None => return Err(synth),
         };
         self.slots[idx as usize] = Slot::Node(Node {
+            id,
             parent: None,
             prev: None,
             next: None,
+            paused: false,
             kind: NodeKind::Synth(synth),
         });
         self.id_map.insert(id, idx);
@@ -130,9 +136,11 @@ impl NodeTree {
             None => return false,
         };
         self.slots[idx as usize] = Slot::Node(Node {
+            id,
             parent: None,
             prev: None,
             next: None,
+            paused: false,
             kind: NodeKind::Group {
                 head: None,
                 tail: None,
@@ -177,13 +185,26 @@ impl NodeTree {
         }
     }
 
-    /// Process the whole tree for one block, walking groups head-to-tail.
-    pub fn process(&mut self, ctx: &ProcessContext<'_>, out_bus: &mut AudioBus) {
+    /// Process the whole tree for one block, walking groups head-to-tail. Paused nodes are skipped.
+    /// Any node whose synth requested a done action is recorded in `done` as `(slot index, action)`
+    /// for the caller to apply after the walk.
+    pub fn process(
+        &mut self,
+        ctx: &ProcessContext<'_>,
+        out_bus: &mut AudioBus,
+        done: &mut Vec<(u32, DoneAction)>,
+    ) {
         let root = self.root_index;
-        self.process_group(root, ctx, out_bus);
+        self.process_group(root, ctx, out_bus, done);
     }
 
-    fn process_group(&mut self, group_idx: u32, ctx: &ProcessContext<'_>, out_bus: &mut AudioBus) {
+    fn process_group(
+        &mut self,
+        group_idx: u32,
+        ctx: &ProcessContext<'_>,
+        out_bus: &mut AudioBus,
+        done: &mut Vec<(u32, DoneAction)>,
+    ) {
         let mut cur = match &self.slots[group_idx as usize] {
             Slot::Node(Node {
                 kind: NodeKind::Group { head, .. },
@@ -197,15 +218,69 @@ impl NodeTree {
                 Slot::Free => None,
             };
             if self.is_group(idx) {
-                self.process_group(idx, ctx, out_bus);
-            } else if let Slot::Node(Node {
-                kind: NodeKind::Synth(synth),
-                ..
-            }) = &mut self.slots[idx as usize]
-            {
-                synth.process(ctx, out_bus);
+                self.process_group(idx, ctx, out_bus, done);
+            } else {
+                let active = matches!(&self.slots[idx as usize], Slot::Node(node) if !node.paused);
+                if active
+                    && let Slot::Node(Node {
+                        kind: NodeKind::Synth(synth),
+                        ..
+                    }) = &mut self.slots[idx as usize]
+                {
+                    let action = synth.process(ctx, out_bus);
+                    if action != DoneAction::Nothing {
+                        done.push((idx, action));
+                    }
+                }
             }
             cur = next;
+        }
+    }
+
+    /// Free the synth at slot `idx` (done actions locate nodes by index during the walk), returning
+    /// its client id and synth for off-RT dropping. No-op for groups or empty slots.
+    pub fn free_by_index(&mut self, idx: u32) -> Option<(i32, Box<Synth>)> {
+        let id = match &self.slots[idx as usize] {
+            Slot::Node(Node {
+                id,
+                kind: NodeKind::Synth(_),
+                ..
+            }) => *id,
+            _ => return None,
+        };
+        self.unlink(idx);
+        self.id_map.remove(&id);
+        let slot = core::mem::replace(&mut self.slots[idx as usize], Slot::Free);
+        self.free.push(idx);
+        match slot {
+            Slot::Node(Node {
+                kind: NodeKind::Synth(synth),
+                ..
+            }) => Some((id, synth)),
+            _ => None,
+        }
+    }
+
+    /// Pause the node at slot `idx`. Returns its client id if found.
+    pub fn pause_by_index(&mut self, idx: u32) -> Option<i32> {
+        match &mut self.slots[idx as usize] {
+            Slot::Node(node) => {
+                node.paused = true;
+                Some(node.id)
+            }
+            Slot::Free => None,
+        }
+    }
+
+    /// Set node `id`'s run state (pausing when `run` is false). Returns the id only if it changed.
+    pub fn set_run(&mut self, id: i32, run: bool) -> Option<i32> {
+        let idx = *self.id_map.get(&id)?;
+        match &mut self.slots[idx as usize] {
+            Slot::Node(node) if node.paused == run => {
+                node.paused = !run;
+                Some(id)
+            }
+            _ => None,
         }
     }
 

@@ -95,7 +95,7 @@ fn render(world: &mut plyphon::World, frames: usize) -> Vec<f32> {
 
 #[test]
 fn drives_engine_over_osc() {
-    let (controller, mut world) = engine(Options {
+    let (controller, mut nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
@@ -153,5 +153,5 @@ fn drives_engine_over_osc() {
         "expected silence after /n_free"
     );
 
-    dispatcher.controller().drain_trash();
+    nrt.process();
 }

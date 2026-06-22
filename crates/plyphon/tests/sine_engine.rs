@@ -71,7 +71,7 @@ fn render(world: &mut World, frames: usize) -> Vec<f32> {
 
 #[test]
 fn sine_engine_plays_and_responds_to_n_set() {
-    let (mut controller, mut world) = engine(Options {
+    let (mut controller, mut nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
@@ -116,5 +116,13 @@ fn sine_engine_plays_and_responds_to_n_set() {
         c.iter().all(|s| s.abs() < 1e-6),
         "expected silence after free"
     );
-    controller.drain_trash();
+    // The NRT side drops the freed synth and surfaces the node-ended notification.
+    assert!(
+        nrt.process() >= 1,
+        "expected the freed synth to reach the trash ring"
+    );
+    assert!(
+        std::iter::from_fn(|| nrt.poll()).any(|e| e == plyphon::Event::NodeEnded { id: node }),
+        "expected a NodeEnded event for the freed node"
+    );
 }

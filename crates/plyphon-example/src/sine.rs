@@ -17,7 +17,7 @@ const AMP: f32 = 0.2;
 /// Build a [`World`] already playing a `FREQ`-Hz sine at `AMP` on every output channel.
 pub fn build_world(sample_rate: f32, channels: usize) -> World {
     let channels = channels.max(1);
-    let (mut controller, world) = engine(Options {
+    let (mut controller, _nrt, world) = engine(Options {
         sample_rate: sample_rate as f64,
         output_channels: channels,
         ..Options::default()

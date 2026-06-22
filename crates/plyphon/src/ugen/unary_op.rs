@@ -4,7 +4,7 @@ use crate::bus::AudioBus;
 use crate::error::BuildError;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
 
 /// `<op>(a)`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
 /// unary operator indices). The input may be audio- or control-rate; the output is audio-rate.
@@ -20,7 +20,7 @@ impl Ugen for UnaryOp {
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
         _out_bus: &mut AudioBus,
-    ) {
+    ) -> DoneAction {
         let op = self.op;
         let out = outs.audio(0);
         if self.a_audio {
@@ -31,6 +31,7 @@ impl Ugen for UnaryOp {
         } else {
             out.fill(op(ins.control(0)));
         }
+        DoneAction::Nothing
     }
 }
 

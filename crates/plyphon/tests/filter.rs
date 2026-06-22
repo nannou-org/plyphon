@@ -88,7 +88,7 @@ fn filtered_mix(filter: &str) -> SynthDef {
 }
 
 fn render_filtered(filter: &str) -> Vec<f32> {
-    let (mut controller, mut world) = engine(Options {
+    let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()

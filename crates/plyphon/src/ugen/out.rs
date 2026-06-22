@@ -3,7 +3,7 @@
 use crate::bus::AudioBus;
 use crate::error::BuildError;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
 
 /// `Out.ar(bus, channelsArray)`: writes each signal input to a consecutive output-bus channel
 /// starting at `bus`, summing with anything already written to that channel this block.
@@ -16,9 +16,9 @@ impl Ugen for Out {
         ins: Inputs<'_>,
         _outs: &mut Outputs<'_>,
         out_bus: &mut AudioBus,
-    ) {
+    ) -> DoneAction {
         if ins.is_empty() {
-            return;
+            return DoneAction::Nothing;
         }
         // Input 0 is the starting bus channel; the rest are signals to write.
         let base = ins.control(0) as usize;
@@ -30,6 +30,7 @@ impl Ugen for Out {
                 out_bus.write_accumulate(ch, ctx.buf_counter, signal);
             }
         }
+        DoneAction::Nothing
     }
 }
 

@@ -12,7 +12,7 @@
 
 use crate::bus::AudioBus;
 use crate::rate::Rate;
-use crate::ugen::{InputSource, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, InputSource, Inputs, Outputs, ProcessContext, Ugen};
 
 /// Where a UGen output is published: an audio wire (a block) or a control wire (one value).
 #[derive(Copy, Clone, Debug)]
@@ -68,8 +68,10 @@ impl Synth {
         }
     }
 
-    /// Compute one control block, writing into `out_bus` via any `Out` UGens.
-    pub fn process(&mut self, ctx: &ProcessContext<'_>, out_bus: &mut AudioBus) {
+    /// Compute one control block, writing into `out_bus` via any `Out` UGens. Returns the strongest
+    /// [`DoneAction`] any of its UGens requested this block (e.g. an envelope asking to free).
+    #[must_use]
+    pub fn process(&mut self, ctx: &ProcessContext<'_>, out_bus: &mut AudioBus) -> DoneAction {
         let Synth {
             ugens,
             audio_wires,
@@ -81,6 +83,7 @@ impl Synth {
             ..
         } = self;
         let bs = *block_size;
+        let mut done = DoneAction::Nothing;
         for u in 0..ugens.len() {
             let ins = Inputs::new(
                 &inputs_plan[u],
@@ -89,7 +92,7 @@ impl Synth {
                 bs,
             );
             let mut outs = Outputs::new(scratch.as_mut_slice(), bs);
-            ugens[u].process(ctx, ins, &mut outs, out_bus);
+            done = done.max(ugens[u].process(ctx, ins, &mut outs, out_bus));
             // Publish this UGen's scratch outputs into the arena wires.
             for (k, output) in outputs_plan[u].iter().enumerate() {
                 let src = k * bs;
@@ -104,6 +107,7 @@ impl Synth {
                 }
             }
         }
+        done
     }
 
     /// Set control parameter `param` to `value`. No-op if out of range. Allocation-free (RT-safe).

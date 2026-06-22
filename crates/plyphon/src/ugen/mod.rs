@@ -23,6 +23,30 @@ use crate::bus::AudioBus;
 use crate::rate::{Rate, RateInfo};
 use crate::wavetable::Wavetables;
 
+/// What a UGen asks the engine to do with its enclosing synth when it finishes - plyphon's subset
+/// of scsynth's done-action codes. Ordered so the strongest action wins when combined.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
+pub enum DoneAction {
+    /// Keep running (no action). scsynth code 0.
+    #[default]
+    Nothing,
+    /// Pause the enclosing synth. scsynth code 1.
+    Pause,
+    /// Free the enclosing synth. scsynth code 2 (and, for now, the higher free-variant codes).
+    FreeSelf,
+}
+
+impl DoneAction {
+    /// Map a scsynth done-action code (carried as a float UGen input) to a [`DoneAction`].
+    pub fn from_code(code: f32) -> DoneAction {
+        match code as i32 {
+            1 => DoneAction::Pause,
+            n if n >= 2 => DoneAction::FreeSelf,
+            _ => DoneAction::Nothing,
+        }
+    }
+}
+
 pub use binary_op::BinaryOp;
 pub use filter::Butter;
 pub use line::Line;
@@ -173,12 +197,14 @@ pub trait Ugen: Send {
     /// Compute one control block.
     ///
     /// Reads `ins`, writes its outputs into `outs`, and (for output UGens like `Out`) writes into
-    /// `out_bus`. Must not allocate, block, or take locks.
+    /// `out_bus`. Must not allocate, block, or take locks. Returns the [`DoneAction`] the UGen wants
+    /// applied to its enclosing synth (almost always [`DoneAction::Nothing`]).
+    #[must_use]
     fn process(
         &mut self,
         ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
         out_bus: &mut AudioBus,
-    );
+    ) -> DoneAction;
 }

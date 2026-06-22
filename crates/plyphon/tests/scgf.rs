@@ -104,7 +104,7 @@ fn scgf_folds_control_into_param_and_plays() {
     assert!(matches!(def.ugens[0].inputs[0], InputRef::Param(0)));
 
     // Instantiate and play it: 440 Hz, then retune to 330 Hz via the folded parameter.
-    let (mut controller, mut world) = engine(Options {
+    let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()

@@ -1,10 +1,11 @@
-//! Engine construction: the [`Options`] and the [`engine`] function that wires a paired
-//! [`Controller`] (control side) and [`World`] (RT side) together over the command/trash rings.
+//! Engine construction: the [`Options`] and the [`engine`] function that wires a [`Controller`]
+//! (control side), [`Nrt`] (NRT side), and [`World`] (RT side) together over lock-free rings.
 
 use rtrb::RingBuffer;
 
-use crate::command::{Command, Trash};
+use crate::command::{Command, Event, Trash};
 use crate::controller::Controller;
+use crate::nrt::Nrt;
 use crate::rate::RateInfo;
 use crate::world::World;
 
@@ -38,19 +39,22 @@ impl Default for Options {
     }
 }
 
-/// Build a paired [`Controller`] and [`World`] from `options`.
+/// Build a [`Controller`], [`Nrt`], and [`World`] from `options`.
 ///
-/// The `Controller` stays on the control side and the `World` moves to the audio thread; they share
-/// only the two lock-free rings created here.
-pub fn engine(options: Options) -> (Controller, World) {
+/// Move the `World` to the audio thread, run the `Nrt` on an NRT thread (or timer), and keep the
+/// `Controller` wherever commands originate. They share only the lock-free rings created here. See
+/// the [`nrt`](crate::nrt) module for the intended threading lifecycle.
+pub fn engine(options: Options) -> (Controller, Nrt, World) {
     let (cmd_tx, cmd_rx) = RingBuffer::<Command>::new(options.command_capacity.max(1));
     let (trash_tx, trash_rx) = RingBuffer::<Trash>::new(options.max_nodes.max(1));
+    let (events_tx, events_rx) = RingBuffer::<Event>::new(options.max_nodes.max(1));
 
     let audio = RateInfo::new(options.sample_rate, options.block_size);
     // Control rate: one value per control block.
     let control = RateInfo::new(options.sample_rate / options.block_size as f64, 1);
 
-    let world = World::new(&options, audio, control, cmd_rx, trash_tx);
-    let controller = Controller::new(audio, control, cmd_tx, trash_rx);
-    (controller, world)
+    let world = World::new(&options, audio, control, cmd_rx, trash_tx, events_tx);
+    let nrt = Nrt::new(trash_rx, events_rx);
+    let controller = Controller::new(audio, control, cmd_tx);
+    (controller, nrt, world)
 }
