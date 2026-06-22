@@ -11,6 +11,7 @@
 //! aliasing `float*` wires.
 
 pub mod binary_op;
+pub mod filter;
 pub mod line;
 pub mod out;
 pub mod registry;
@@ -22,6 +23,7 @@ use crate::rate::{Rate, RateInfo};
 use crate::wavetable::Wavetables;
 
 pub use binary_op::BinaryOp;
+pub use filter::Butter;
 pub use line::Line;
 pub use out::Out;
 pub use registry::{BuildContext, UgenCtor, UgenRegistry};

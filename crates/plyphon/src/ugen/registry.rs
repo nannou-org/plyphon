@@ -10,6 +10,7 @@ use crate::error::BuildError;
 use crate::rate::{Rate, RateInfo};
 use crate::ugen::Ugen;
 use crate::ugen::binary_op::BinaryOpCtor;
+use crate::ugen::filter::{ButterCtor, Kind};
 use crate::ugen::line::LineCtor;
 use crate::ugen::out::OutCtor;
 use crate::ugen::sin_osc::SinOscCtor;
@@ -56,6 +57,8 @@ impl UgenRegistry {
         registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));
         registry.register("UnaryOpUGen", Box::new(UnaryOpCtor));
         registry.register("Line", Box::new(LineCtor));
+        registry.register("LPF", Box::new(ButterCtor(Kind::LowPass)));
+        registry.register("HPF", Box::new(ButterCtor(Kind::HighPass)));
         registry
     }
 
