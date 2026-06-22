@@ -1,9 +1,12 @@
 //! Synth definitions and their instantiation into live [`Synth`]s.
 //!
-//! A [`SynthDef`] is the template (the analogue of scsynth's `GraphDef` / the SCgf binary format),
-//! built programmatically for now. [`SynthDef::instantiate`] turns it into a `Box<Synth>` off the
-//! audio thread - this is where all the per-synth allocation and UGen construction happens, so the
-//! audio thread only ever has to link the finished synth into the tree.
+//! A [`SynthDef`] is the template (the analogue of scsynth's `GraphDef`). It can be built
+//! programmatically or parsed from SuperCollider's binary SCgf format (see [`read`]), so
+//! `sclang`-compiled definitions load directly. [`SynthDef::instantiate`] turns it into a
+//! `Box<Synth>` off the audio thread - this is where all the per-synth allocation and UGen
+//! construction happens, so the audio thread only ever has to link the finished synth into the tree.
+
+pub mod read;
 
 use std::collections::HashMap;
 

@@ -1,0 +1,160 @@
+//! Convert parsed SCgf definitions (from the [`scgf`] crate) into plyphon [`SynthDef`]s.
+//!
+//! SC models a SynthDef's named parameters as `Control`-family UGens whose outputs feed the rest of
+//! the graph; plyphon handles parameters directly (see [`crate::synth::Synth::set_control`]), so
+//! this converter folds those control UGens into [`Param`]s and rewrites inputs that referenced them
+//! into [`InputRef::Param`]. The remaining UGens are renumbered and emitted as a plyphon
+//! [`SynthDef`].
+//!
+//! Non-`Control` UGens with control-rate outputs are not yet representable in the engine's wire
+//! model and are reported as [`ReadError::UnsupportedControlRateOutput`].
+
+use std::collections::HashMap;
+use std::fmt;
+
+use crate::rate::Rate;
+use crate::synthdef::{InputRef, Param, SynthDef, UgenSpec};
+
+/// An error loading SynthDefs from SCgf bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReadError {
+    /// The bytes failed to parse as SCgf.
+    Scgf(scgf::Error),
+    /// A rate plyphon does not yet support (e.g. demand rate) was used.
+    UnsupportedRate,
+    /// A non-`Control` UGen has a control-rate output, which the engine cannot yet represent.
+    UnsupportedControlRateOutput(String),
+    /// An input references a UGen or constant index that does not exist.
+    BadInputRef,
+}
+
+impl From<scgf::Error> for ReadError {
+    fn from(error: scgf::Error) -> Self {
+        ReadError::Scgf(error)
+    }
+}
+
+impl fmt::Display for ReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReadError::Scgf(e) => write!(f, "invalid SCgf: {e}"),
+            ReadError::UnsupportedRate => write!(f, "unsupported calculation rate"),
+            ReadError::UnsupportedControlRateOutput(name) => {
+                write!(f, "unsupported control-rate output on ugen: {name}")
+            }
+            ReadError::BadInputRef => write!(f, "input reference out of range"),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {}
+
+/// Parse SCgf bytes into plyphon [`SynthDef`]s (a file may contain several).
+pub fn parse(data: &[u8]) -> Result<Vec<SynthDef>, ReadError> {
+    let file = scgf::parse(data)?;
+    file.defs.iter().map(convert).collect()
+}
+
+/// Whether `name` is a control-rate parameter UGen that plyphon folds into [`Param`]s.
+fn is_control(name: &str) -> bool {
+    matches!(name, "Control" | "TrigControl" | "LagControl")
+}
+
+fn rate(rate: scgf::Rate) -> Result<Rate, ReadError> {
+    match rate {
+        scgf::Rate::Scalar => Ok(Rate::Scalar),
+        scgf::Rate::Control => Ok(Rate::Control),
+        scgf::Rate::Audio => Ok(Rate::Audio),
+        scgf::Rate::Demand => Err(ReadError::UnsupportedRate),
+    }
+}
+
+fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
+    // Map each control UGen output to its parameter index, and renumber the surviving UGens.
+    let mut param_of: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut remap: Vec<Option<u32>> = vec![None; def.ugens.len()];
+    let mut next = 0u32;
+    for (i, ugen) in def.ugens.iter().enumerate() {
+        if is_control(&ugen.name) {
+            for output in 0..ugen.outputs.len() {
+                let param = ugen.special_index as i64 + output as i64;
+                if param >= 0 {
+                    param_of.insert((i as u32, output as u32), param as u32);
+                }
+            }
+        } else {
+            remap[i] = Some(next);
+            next += 1;
+        }
+    }
+
+    // Parameters: defaults from the value array, names attached by index.
+    let mut params: Vec<Param> = def
+        .param_values
+        .iter()
+        .map(|&default| Param {
+            name: String::new(),
+            default,
+        })
+        .collect();
+    for named in &def.param_names {
+        if let Some(param) = params.get_mut(named.index as usize) {
+            param.name = named.name.clone();
+        }
+    }
+    for (i, param) in params.iter_mut().enumerate() {
+        if param.name.is_empty() {
+            param.name = format!("param{i}");
+        }
+    }
+
+    let mut ugens = Vec::with_capacity(next as usize);
+    for ugen in &def.ugens {
+        if is_control(&ugen.name) {
+            continue;
+        }
+        for &output in &ugen.outputs {
+            if rate(output)? != Rate::Audio {
+                return Err(ReadError::UnsupportedControlRateOutput(ugen.name.clone()));
+            }
+        }
+        let mut inputs = Vec::with_capacity(ugen.inputs.len());
+        for input in &ugen.inputs {
+            let input = match *input {
+                scgf::Input::Constant { index } => {
+                    let value = *def
+                        .constants
+                        .get(index as usize)
+                        .ok_or(ReadError::BadInputRef)?;
+                    InputRef::Constant(value)
+                }
+                scgf::Input::Ugen { ugen, output } => {
+                    if let Some(&param) = param_of.get(&(ugen, output)) {
+                        InputRef::Param(param)
+                    } else {
+                        let ugen = remap
+                            .get(ugen as usize)
+                            .copied()
+                            .flatten()
+                            .ok_or(ReadError::BadInputRef)?;
+                        InputRef::Ugen { ugen, output }
+                    }
+                }
+            };
+            inputs.push(input);
+        }
+        ugens.push(UgenSpec {
+            name: ugen.name.clone(),
+            rate: rate(ugen.rate)?,
+            inputs,
+            num_outputs: ugen.outputs.len(),
+            special_index: ugen.special_index,
+        });
+    }
+
+    Ok(SynthDef {
+        name: def.name.clone(),
+        params,
+        ugens,
+    })
+}

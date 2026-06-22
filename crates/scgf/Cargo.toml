@@ -1,7 +1,7 @@
 [package]
-name = "plyphon"
+name = "scgf"
 version = "0.1.0"
-description = "A pure-Rust rewrite of SuperCollider's scsynth audio engine core."
+description = "Parser and encoder for SuperCollider's binary SynthDef (SCgf) format."
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -9,5 +9,3 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-rtrb.workspace = true
-scgf.workspace = true

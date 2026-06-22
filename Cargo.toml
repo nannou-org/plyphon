@@ -12,6 +12,7 @@ repository = "https://github.com/mitchmindtree/plyphon"
 [workspace.dependencies]
 # Internal crates.
 plyphon = { version = "0.1.0", path = "crates/plyphon" }
+scgf = { version = "0.1.0", path = "crates/scgf" }
 
 # Shared dependencies.
 cpal = "0.16"
