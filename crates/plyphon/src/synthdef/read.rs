@@ -4,10 +4,7 @@
 //! the graph; plyphon handles parameters directly (see [`crate::synth::Synth::set_control`]), so
 //! this converter folds those control UGens into [`Param`]s and rewrites inputs that referenced them
 //! into [`InputRef::Param`]. The remaining UGens are renumbered and emitted as a plyphon
-//! [`SynthDef`].
-//!
-//! Non-`Control` UGens with control-rate outputs are not yet representable in the engine's wire
-//! model and are reported as [`ReadError::UnsupportedControlRateOutput`].
+//! [`SynthDef`], carrying their calculation rate (so audio- and control-rate UGens both load).
 
 use std::collections::HashMap;
 
@@ -25,9 +22,6 @@ pub enum ReadError {
     /// A rate plyphon does not yet support (e.g. demand rate) was used.
     #[error("unsupported calculation rate")]
     UnsupportedRate,
-    /// A non-`Control` UGen has a control-rate output, which the engine cannot yet represent.
-    #[error("unsupported control-rate output on ugen: {0}")]
-    UnsupportedControlRateOutput(String),
     /// An input references a UGen or constant index that does not exist.
     #[error("input reference out of range")]
     BadInputRef,
@@ -96,11 +90,6 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
     for ugen in &def.ugens {
         if is_control(&ugen.name) {
             continue;
-        }
-        for &output in &ugen.outputs {
-            if rate(output)? != Rate::Audio {
-                return Err(ReadError::UnsupportedControlRateOutput(ugen.name.clone()));
-            }
         }
         let mut inputs = Vec::with_capacity(ugen.inputs.len());
         for input in &ugen.inputs {

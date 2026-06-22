@@ -11,6 +11,7 @@
 //! aliasing `float*` wires.
 
 pub mod binary_op;
+pub mod line;
 pub mod out;
 pub mod registry;
 pub mod sin_osc;
@@ -21,6 +22,7 @@ use crate::rate::{Rate, RateInfo};
 use crate::wavetable::Wavetables;
 
 pub use binary_op::BinaryOp;
+pub use line::Line;
 pub use out::Out;
 pub use registry::{BuildContext, UgenCtor, UgenRegistry};
 pub use sin_osc::SinOsc;
@@ -153,6 +155,12 @@ impl<'a> Outputs<'a> {
     pub fn audio(&mut self, i: usize) -> &mut [f32] {
         let start = i * self.block_size;
         &mut self.scratch[start..start + self.block_size]
+    }
+
+    /// Control-rate output `i` as a single mutable value to write (the first scratch slot, which the
+    /// synth process loop publishes to the output's control wire).
+    pub fn control(&mut self, i: usize) -> &mut f32 {
+        &mut self.scratch[i * self.block_size]
     }
 }
 

@@ -6,11 +6,22 @@
 //!
 //! The process loop avoids scsynth's aliasing raw `float*` wires while staying `unsafe`-free: each
 //! UGen writes into a pre-allocated scratch buffer (disjoint from the input wires), then the loop
-//! copies that scratch into the UGen's arena output wires. Inputs and outputs are therefore never
-//! borrowed both mutably and immutably at once.
+//! copies that scratch into the UGen's arena output wires (a full block for audio-rate outputs, a
+//! single value for control-rate outputs). Inputs and outputs are therefore never borrowed both
+//! mutably and immutably at once.
 
 use crate::bus::AudioBus;
+use crate::rate::Rate;
 use crate::ugen::{InputSource, Inputs, Outputs, ProcessContext, Ugen};
+
+/// Where a UGen output is published: an audio wire (a block) or a control wire (one value).
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct OutputWire {
+    /// The output's calculation rate.
+    pub rate: Rate,
+    /// Index into the synth's audio wires (audio rate) or control wires (control/scalar rate).
+    pub wire: u32,
+}
 
 /// A live synth instance.
 pub struct Synth {
@@ -18,14 +29,15 @@ pub struct Synth {
     ugens: Vec<Box<dyn Ugen>>,
     /// Audio wires, flat: wire `w` occupies `audio_wires[w*bs .. (w+1)*bs]`.
     audio_wires: Vec<f32>,
-    /// Control wires (one value each); the first entries back the control parameters.
+    /// Control wires (one value each); the first entries back the control parameters, the rest hold
+    /// control-rate UGen outputs.
     control_wires: Vec<f32>,
     /// Reused per-UGen output scratch, `max_outputs_per_ugen * block_size`.
     scratch: Vec<f32>,
     /// Per-UGen resolved input sources.
     inputs_plan: Vec<Box<[InputSource]>>,
-    /// Per-UGen audio output wire indices.
-    outputs_plan: Vec<Box<[u32]>>,
+    /// Per-UGen output wires (rate + index).
+    outputs_plan: Vec<Box<[OutputWire]>>,
     /// Control-parameter index -> control wire index.
     param_wires: Vec<u32>,
     block_size: usize,
@@ -40,7 +52,7 @@ impl Synth {
         control_wires: Vec<f32>,
         scratch: Vec<f32>,
         inputs_plan: Vec<Box<[InputSource]>>,
-        outputs_plan: Vec<Box<[u32]>>,
+        outputs_plan: Vec<Box<[OutputWire]>>,
         param_wires: Vec<u32>,
         block_size: usize,
     ) -> Self {
@@ -78,11 +90,18 @@ impl Synth {
             );
             let mut outs = Outputs::new(scratch.as_mut_slice(), bs);
             ugens[u].process(ctx, ins, &mut outs, out_bus);
-            // Publish this UGen's scratch outputs into the arena audio wires.
-            for (k, &wire) in outputs_plan[u].iter().enumerate() {
-                let dst = wire as usize * bs;
+            // Publish this UGen's scratch outputs into the arena wires.
+            for (k, output) in outputs_plan[u].iter().enumerate() {
                 let src = k * bs;
-                audio_wires[dst..dst + bs].copy_from_slice(&scratch[src..src + bs]);
+                match output.rate {
+                    Rate::Audio => {
+                        let dst = output.wire as usize * bs;
+                        audio_wires[dst..dst + bs].copy_from_slice(&scratch[src..src + bs]);
+                    }
+                    Rate::Control | Rate::Scalar => {
+                        control_wires[output.wire as usize] = scratch[src];
+                    }
+                }
             }
         }
     }

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use crate::error::BuildError;
 use crate::rate::{Rate, RateInfo};
-use crate::synth::Synth;
+use crate::synth::{OutputWire, Synth};
 use crate::ugen::InputSource;
 use crate::ugen::registry::{BuildContext, UgenRegistry};
 
@@ -97,29 +97,53 @@ impl SynthDef {
     ) -> Result<Box<Synth>, BuildError> {
         let block_size = audio.block_size;
 
-        // Control wires: one per parameter, initialised to its default.
-        let mut control_wires = vec![0.0f32; self.params.len()];
-        let mut param_wires = Vec::with_capacity(self.params.len());
+        // Parameters occupy the first control wires.
+        let num_params = self.params.len();
+        let param_wires: Vec<u32> = (0..num_params as u32).collect();
+
+        // Pass 1: assign a wire to each (ugen, output) by rate. Audio outputs go to audio wires;
+        // control/scalar outputs go to control wires following the parameter wires.
+        let mut num_audio_wires = 0u32;
+        let mut num_control_wires = num_params as u32;
+        let mut outputs_plan: Vec<Box<[OutputWire]>> = Vec::with_capacity(self.ugens.len());
+        for spec in &self.ugens {
+            let mut wires = Vec::with_capacity(spec.num_outputs);
+            for _ in 0..spec.num_outputs {
+                let wire = match spec.rate {
+                    Rate::Audio => {
+                        let w = num_audio_wires;
+                        num_audio_wires += 1;
+                        OutputWire {
+                            rate: Rate::Audio,
+                            wire: w,
+                        }
+                    }
+                    Rate::Control | Rate::Scalar => {
+                        let w = num_control_wires;
+                        num_control_wires += 1;
+                        OutputWire {
+                            rate: spec.rate,
+                            wire: w,
+                        }
+                    }
+                };
+                wires.push(wire);
+            }
+            outputs_plan.push(wires.into_boxed_slice());
+        }
+
+        // Control wires: parameters initialised to their defaults, the rest (control-rate UGen
+        // outputs) zeroed.
+        let mut control_wires = vec![0.0f32; num_control_wires as usize];
         for (i, param) in self.params.iter().enumerate() {
             control_wires[i] = param.default;
-            param_wires.push(i as u32);
         }
 
-        // Assign a distinct audio wire to each (ugen, output); record each UGen's first wire.
-        let mut wire_base = Vec::with_capacity(self.ugens.len());
-        let mut num_audio_wires = 0u32;
-        for spec in &self.ugens {
-            wire_base.push(num_audio_wires);
-            num_audio_wires += spec.num_outputs as u32;
-        }
-
+        // Pass 2: build each UGen and resolve its inputs against the assigned wires.
         let mut ugens = Vec::with_capacity(self.ugens.len());
         let mut inputs_plan = Vec::with_capacity(self.ugens.len());
-        let mut outputs_plan = Vec::with_capacity(self.ugens.len());
         let mut max_outputs = 0usize;
-
-        for (u, spec) in self.ugens.iter().enumerate() {
-            // Resolve each input to a concrete source (constant / control wire / audio wire).
+        for spec in &self.ugens {
             let mut sources = Vec::with_capacity(spec.inputs.len());
             for input in &spec.inputs {
                 let source = match *input {
@@ -129,10 +153,14 @@ impl SynthDef {
                         InputSource::Control(wire)
                     }
                     InputRef::Ugen { ugen, output } => {
-                        let base = *wire_base
+                        let from = outputs_plan
                             .get(ugen as usize)
+                            .and_then(|outs| outs.get(output as usize))
                             .ok_or(BuildError::BadInputRef)?;
-                        InputSource::Audio(base + output)
+                        match from.rate {
+                            Rate::Audio => InputSource::Audio(from.wire),
+                            Rate::Control | Rate::Scalar => InputSource::Control(from.wire),
+                        }
                     }
                 };
                 sources.push(source);
@@ -143,6 +171,7 @@ impl SynthDef {
                 input_rates: &input_rates,
                 audio,
                 control,
+                rate: spec.rate,
                 special_index: spec.special_index,
             };
             let ctor = registry
@@ -150,10 +179,6 @@ impl SynthDef {
                 .ok_or_else(|| BuildError::UnknownUgen(spec.name.clone()))?;
             ugens.push(ctor.build(&build_ctx)?);
             inputs_plan.push(sources.into_boxed_slice());
-
-            let base = wire_base[u];
-            let out_wires: Vec<u32> = (0..spec.num_outputs as u32).map(|o| base + o).collect();
-            outputs_plan.push(out_wires.into_boxed_slice());
             max_outputs = max_outputs.max(spec.num_outputs);
         }
 

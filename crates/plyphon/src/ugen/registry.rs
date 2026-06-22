@@ -10,19 +10,22 @@ use crate::error::BuildError;
 use crate::rate::{Rate, RateInfo};
 use crate::ugen::Ugen;
 use crate::ugen::binary_op::BinaryOpCtor;
+use crate::ugen::line::LineCtor;
 use crate::ugen::out::OutCtor;
 use crate::ugen::sin_osc::SinOscCtor;
 use crate::ugen::unary_op::UnaryOpCtor;
 
 /// Build-time context for constructing a UGen. Runs off the audio thread, so allocation is fine.
 pub struct BuildContext<'a> {
-    /// The resolved calc rate of each input, in order - drives rate specialization.
+    /// The resolved calc rate of each input, in order - drives input rate specialization.
     pub input_rates: &'a [Rate],
+    /// The UGen's own calculation rate (so it can specialize its output: a block vs one value).
+    pub rate: Rate,
     /// Audio-rate constants.
     pub audio: &'a RateInfo,
     /// Control-rate constants.
     pub control: &'a RateInfo,
-    /// scsynth's `mSpecialIndex` (e.g. which binary op). Unused by the current UGens.
+    /// scsynth's `mSpecialIndex` (e.g. which binary/unary operator).
     pub special_index: i16,
 }
 
@@ -52,6 +55,7 @@ impl UgenRegistry {
         registry.register("Out", Box::new(OutCtor));
         registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));
         registry.register("UnaryOpUGen", Box::new(UnaryOpCtor));
+        registry.register("Line", Box::new(LineCtor));
         registry
     }
 
