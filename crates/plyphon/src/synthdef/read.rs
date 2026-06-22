@@ -10,44 +10,28 @@
 //! model and are reported as [`ReadError::UnsupportedControlRateOutput`].
 
 use std::collections::HashMap;
-use std::fmt;
+
+use thiserror::Error;
 
 use crate::rate::Rate;
 use crate::synthdef::{InputRef, Param, SynthDef, UgenSpec};
 
 /// An error loading SynthDefs from SCgf bytes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum ReadError {
     /// The bytes failed to parse as SCgf.
-    Scgf(scgf::Error),
+    #[error("invalid SCgf: {0}")]
+    Scgf(#[from] scgf::Error),
     /// A rate plyphon does not yet support (e.g. demand rate) was used.
+    #[error("unsupported calculation rate")]
     UnsupportedRate,
     /// A non-`Control` UGen has a control-rate output, which the engine cannot yet represent.
+    #[error("unsupported control-rate output on ugen: {0}")]
     UnsupportedControlRateOutput(String),
     /// An input references a UGen or constant index that does not exist.
+    #[error("input reference out of range")]
     BadInputRef,
 }
-
-impl From<scgf::Error> for ReadError {
-    fn from(error: scgf::Error) -> Self {
-        ReadError::Scgf(error)
-    }
-}
-
-impl fmt::Display for ReadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ReadError::Scgf(e) => write!(f, "invalid SCgf: {e}"),
-            ReadError::UnsupportedRate => write!(f, "unsupported calculation rate"),
-            ReadError::UnsupportedControlRateOutput(name) => {
-                write!(f, "unsupported control-rate output on ugen: {name}")
-            }
-            ReadError::BadInputRef => write!(f, "input reference out of range"),
-        }
-    }
-}
-
-impl std::error::Error for ReadError {}
 
 /// Parse SCgf bytes into plyphon [`SynthDef`]s (a file may contain several).
 pub fn parse(data: &[u8]) -> Result<Vec<SynthDef>, ReadError> {

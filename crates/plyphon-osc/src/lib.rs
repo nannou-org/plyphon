@@ -9,53 +9,44 @@
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
-use std::fmt;
 
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
 use plyphon::{AddAction, Controller};
 use rosc::{OscMessage, OscPacket, OscType};
+use thiserror::Error;
 
 /// An error applying an OSC command.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum OscError {
     /// The bytes failed to decode as an OSC packet.
-    Decode(rosc::OscError),
+    #[error("OSC decode error: {0}")]
+    Decode(#[from] rosc::OscError),
     /// The command address is not supported.
+    #[error("unsupported OSC command: {0}")]
     UnsupportedCommand(String),
     /// The arguments did not match the command.
+    #[error("bad OSC arguments: {0}")]
     BadArguments(&'static str),
     /// The `addAction` code is not one plyphon supports (only head/tail for now).
+    #[error("unsupported addAction: {0}")]
     UnsupportedAddAction(i32),
     /// A `/d_recv` payload failed to load as a SynthDef.
-    SynthDef(ReadError),
+    #[error("bad SynthDef: {0}")]
+    SynthDef(#[from] ReadError),
     /// A `/s_new` failed to instantiate.
-    SynthNew(SynthNewError),
+    #[error("s_new failed: {0}")]
+    SynthNew(#[from] SynthNewError),
     /// A command ring was full.
+    #[error("command queue full")]
     QueueFull,
     /// A control name was not found on the target node's SynthDef.
+    #[error("unknown control: {0}")]
     UnknownParam(String),
     /// A node id was referenced whose SynthDef the dispatcher does not know.
+    #[error("unknown node: {0}")]
     UnknownNode(i32),
 }
-
-impl fmt::Display for OscError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OscError::Decode(e) => write!(f, "OSC decode error: {e}"),
-            OscError::UnsupportedCommand(a) => write!(f, "unsupported OSC command: {a}"),
-            OscError::BadArguments(m) => write!(f, "bad OSC arguments: {m}"),
-            OscError::UnsupportedAddAction(c) => write!(f, "unsupported addAction: {c}"),
-            OscError::SynthDef(e) => write!(f, "bad SynthDef: {e}"),
-            OscError::SynthNew(e) => write!(f, "s_new failed: {e:?}"),
-            OscError::QueueFull => write!(f, "command queue full"),
-            OscError::UnknownParam(n) => write!(f, "unknown control: {n}"),
-            OscError::UnknownNode(id) => write!(f, "unknown node: {id}"),
-        }
-    }
-}
-
-impl std::error::Error for OscError {}
 
 /// Applies SuperCollider OSC commands to a plyphon [`Controller`].
 pub struct OscDispatcher {

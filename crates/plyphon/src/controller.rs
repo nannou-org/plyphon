@@ -7,6 +7,7 @@
 //! it drains the trash ring to drop freed synths off the audio thread.
 
 use rtrb::{Consumer, Producer};
+use thiserror::Error;
 
 use crate::command::{Command, Trash};
 use crate::error::BuildError;
@@ -16,24 +17,22 @@ use crate::tree::AddAction;
 use crate::ugen::registry::UgenRegistry;
 
 /// The command ring was full; the command was dropped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("command queue full")]
 pub struct QueueFull;
 
 /// Failure to create a new synth.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum SynthNewError {
     /// No SynthDef registered under the given name.
+    #[error("unknown synthdef: {0}")]
     UnknownDef(String),
     /// The SynthDef failed to instantiate.
-    Build(BuildError),
+    #[error(transparent)]
+    Build(#[from] BuildError),
     /// The command ring was full.
+    #[error("command queue full")]
     QueueFull,
-}
-
-impl From<BuildError> for SynthNewError {
-    fn from(error: BuildError) -> Self {
-        SynthNewError::Build(error)
-    }
 }
 
 /// The control side of the engine.

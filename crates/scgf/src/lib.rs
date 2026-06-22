@@ -129,30 +129,21 @@ pub struct Variant {
 }
 
 /// An error parsing or encoding an SCgf buffer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     /// The buffer ended before a field could be read.
+    #[error("unexpected end of SCgf buffer")]
     Truncated,
     /// The buffer does not start with the `SCgf` magic.
+    #[error("not an SCgf buffer (bad magic)")]
     BadMagic,
     /// The format version is neither 1 nor 2.
+    #[error("unsupported SCgf version: {0}")]
     UnsupportedVersion(i32),
     /// A calculation-rate byte was out of range.
+    #[error("invalid calc-rate code: {0}")]
     BadRate(i8),
     /// A string was longer than the 255-byte SCgf limit (encoding only).
+    #[error("string exceeds the 255-byte SCgf limit")]
     NameTooLong,
 }
-
-impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Error::Truncated => write!(f, "unexpected end of SCgf buffer"),
-            Error::BadMagic => write!(f, "not an SCgf buffer (bad magic)"),
-            Error::UnsupportedVersion(v) => write!(f, "unsupported SCgf version: {v}"),
-            Error::BadRate(r) => write!(f, "invalid calc-rate code: {r}"),
-            Error::NameTooLong => write!(f, "string exceeds the 255-byte SCgf limit"),
-        }
-    }
-}
-
-impl std::error::Error for Error {}

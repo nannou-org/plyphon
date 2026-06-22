@@ -11,3 +11,4 @@ repository.workspace = true
 [dependencies]
 rtrb.workspace = true
 scgf.workspace = true
+thiserror.workspace = true
