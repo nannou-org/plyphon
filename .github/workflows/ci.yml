@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix:
+    permissions:
+      id-token: "write"
+      contents: "read"
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
+      RUSTDOCFLAGS: "-D warnings"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - command: develop -c cargo fmt --all -- --check
+          - command: develop -c cargo clippy --locked --all-targets
+          - command: develop -c cargo test --locked --all
+          - command: develop -c cargo doc --locked --no-deps
+          - command: fmt -- --ci
+          - command: build --print-build-logs --no-update-lock-file .#plyphon-website
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      - uses: Swatinem/rust-cache@v2
+      - run: nix ${{ matrix.command }}
+
+  upload-pr-preview-artifact:
+    needs: nix
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      - run: nix build --print-build-logs .#plyphon-website
+      - name: Prepare artifact
+        run: |
+          cp -rL result artifact
+          chmod -R u+w artifact
+          echo "${{ github.event.pull_request.number }}" > artifact/PR_NUMBER
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-preview-${{ github.event.pull_request.number }}
+          path: artifact/
+
+  deploy-website:
+    needs: nix
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      - run: nix build --print-build-logs .#plyphon-website
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./result
+          keep_files: true
