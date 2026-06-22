@@ -1,100 +1,51 @@
 //! plyphon: a pure-Rust rewrite of SuperCollider's `scsynth` audio engine core.
 //!
-//! The engine is being built bottom-up. The modules below provide the real synthesis primitives -
-//! [`rate`], [`wavetable`], [`bus`], [`ugen`] (the [`Ugen`](ugen::Ugen) trait plus `SinOsc`/`Out`),
-//! [`synth`], and [`synthdef`] - all `unsafe`-free and free of global mutable state (everything a
-//! UGen needs is passed by argument). It compiles for native and `wasm32-unknown-unknown` alike.
+//! A host builds the engine with [`engine()`], giving a [`Controller`] (control side: owns the
+//! SynthDef library and UGen registry, instantiates synths, issues commands) and a [`World`] (the
+//! real-time side: owns the buses and node tree, drained once per block by the audio callback via
+//! [`World::fill`]). They communicate only through lock-free rings, so the audio thread never
+//! allocates, blocks, or locks. The synthesis primitives live in [`rate`], [`wavetable`], [`bus`],
+//! [`ugen`] (the [`Ugen`] trait plus `SinOsc`/`Out`), [`synth`], and [`synthdef`].
 //!
-//! A small placeholder [`SinOsc`] oscillator and the [`Source`] host interface remain at the crate
-//! root to keep the `plyphon-example` demo playing while the lock-free `World`/`Controller` driver
-//! is assembled; they will be replaced once the engine can drive the example end-to-end.
+//! The whole crate is `unsafe`-free and free of global mutable state - everything a UGen needs is
+//! passed by argument - and compiles for native and `wasm32-unknown-unknown` alike.
 
 #![forbid(unsafe_code)]
 
 pub mod bus;
+pub mod command;
+pub mod controller;
+pub mod engine;
 pub mod error;
 pub mod rate;
 pub mod synth;
 pub mod synthdef;
+pub mod tree;
 pub mod ugen;
 pub mod wavetable;
+pub mod world;
 
-use core::f32::consts::TAU;
+pub use controller::Controller;
+pub use engine::{Options, ROOT_GROUP_ID, engine};
+pub use rate::{Rate, RateInfo};
+pub use synth::Synth;
+pub use synthdef::{InputRef, Param, SynthDef, UgenSpec};
+pub use tree::AddAction;
+pub use ugen::{Ugen, UgenRegistry};
+pub use world::World;
 
 /// Anything that can fill an interleaved, `channels`-wide block of `f32` output samples.
 ///
-/// This is the seed of the engine's host-facing interface: a host (e.g. a `cpal` callback) hands
-/// us an interleaved output buffer to fill, one block at a time.
+/// This is the engine's host-facing interface: a host (e.g. a `cpal` callback) hands us an
+/// interleaved output buffer to fill. [`World`] implements it by reblocking its fixed control-block
+/// size to the host's buffer length.
 pub trait Source {
     /// Fill `output` (interleaved, `channels` samples per frame) with the next block of audio.
     fn fill(&mut self, output: &mut [f32], channels: usize);
 }
 
-/// A sine oscillator driven by a normalised phase accumulator.
-///
-/// `phase` advances in `[0, 1)` cycles per sample; the emitted sample is
-/// `sin(phase * TAU) * amplitude`. This is a deliberately simple placeholder - the real engine's
-/// `SinOsc` will port scsynth's wavetable + fixed-point phase implementation.
-#[derive(Clone, Debug)]
-pub struct SinOsc {
-    /// Current phase in cycles, kept within `[0, 1)`.
-    phase: f32,
-    /// Phase increment per sample: `freq / sample_rate`.
-    phase_inc: f32,
-    /// Peak amplitude of the emitted sine.
-    amplitude: f32,
-}
-
-impl SinOsc {
-    /// Create a sine oscillator at `freq` Hz for the given `sample_rate`, with peak `amplitude`.
-    pub fn new(freq: f32, sample_rate: f32, amplitude: f32) -> Self {
-        SinOsc {
-            phase: 0.0,
-            phase_inc: freq / sample_rate,
-            amplitude,
-        }
-    }
-
-    /// Advance one sample and return its value.
-    #[inline]
-    pub fn next_sample(&mut self) -> f32 {
-        let value = (self.phase * TAU).sin() * self.amplitude;
-        self.phase = (self.phase + self.phase_inc).fract();
-        value
-    }
-}
-
-impl Source for SinOsc {
+impl Source for World {
     fn fill(&mut self, output: &mut [f32], channels: usize) {
-        for frame in output.chunks_mut(channels.max(1)) {
-            let value = self.next_sample();
-            for sample in frame.iter_mut() {
-                *sample = value;
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sine_is_bounded_and_nonzero() {
-        let mut osc = SinOsc::new(440.0, 48_000.0, 0.2);
-        let mut buf = [0.0f32; 256];
-        osc.fill(&mut buf, 2);
-        assert!(buf.iter().all(|s| s.abs() <= 0.2 + 1e-6));
-        assert!(buf.iter().any(|s| s.abs() > 0.0));
-    }
-
-    #[test]
-    fn stereo_frames_are_identical_across_channels() {
-        let mut osc = SinOsc::new(440.0, 48_000.0, 0.5);
-        let mut buf = [0.0f32; 64];
-        osc.fill(&mut buf, 2);
-        for frame in buf.chunks(2) {
-            assert_eq!(frame[0], frame[1]);
-        }
+        World::fill(self, output, channels);
     }
 }

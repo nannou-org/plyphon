@@ -70,7 +70,12 @@ impl Synth {
         } = self;
         let bs = *block_size;
         for u in 0..ugens.len() {
-            let ins = Inputs::new(&inputs_plan[u], audio_wires.as_slice(), control_wires.as_slice(), bs);
+            let ins = Inputs::new(
+                &inputs_plan[u],
+                audio_wires.as_slice(),
+                control_wires.as_slice(),
+                bs,
+            );
             let mut outs = Outputs::new(scratch.as_mut_slice(), bs);
             ugens[u].process(ctx, ins, &mut outs, out_bus);
             // Publish this UGen's scratch outputs into the arena audio wires.

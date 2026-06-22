@@ -1,14 +1,9 @@
-//! Web audio source: a [`plyphon::SinOsc`].
+//! Web audio source: a [`plyphon::World`] playing the demo sine.
 //!
 //! Identical to the native source today. Kept separate so the web path can grow an
 //! AudioWorklet/SharedArrayBuffer backend independently of the native build.
 
-pub use plyphon::Source;
-
-const FREQ: f32 = 440.0;
-const AMPLITUDE: f32 = 0.2;
-
-/// Create the web sine source.
-pub fn new(sample_rate: f32, _channels: usize) -> plyphon::SinOsc {
-    plyphon::SinOsc::new(FREQ, sample_rate, AMPLITUDE)
+/// Create the web source: a `World` already playing the demo sine.
+pub fn new(sample_rate: f32, channels: usize) -> plyphon::World {
+    crate::sine::build_world(sample_rate, channels)
 }

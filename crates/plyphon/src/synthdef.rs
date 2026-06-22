@@ -50,7 +50,12 @@ pub struct UgenSpec {
 
 impl UgenSpec {
     /// A convenience constructor with `special_index = 0`.
-    pub fn new(name: impl Into<String>, rate: Rate, inputs: Vec<InputRef>, num_outputs: usize) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        rate: Rate,
+        inputs: Vec<InputRef>,
+        num_outputs: usize,
+    ) -> Self {
         UgenSpec {
             name: name.into(),
             rate,
@@ -121,7 +126,9 @@ impl SynthDef {
                         InputSource::Control(wire)
                     }
                     InputRef::Ugen { ugen, output } => {
-                        let base = *wire_base.get(ugen as usize).ok_or(BuildError::BadInputRef)?;
+                        let base = *wire_base
+                            .get(ugen as usize)
+                            .ok_or(BuildError::BadInputRef)?;
                         InputSource::Audio(base + output)
                     }
                 };

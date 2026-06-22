@@ -69,4 +69,18 @@ impl AudioBus {
     pub fn is_touched(&self, ch: usize, buf_counter: u64) -> bool {
         self.touched[ch] == buf_counter
     }
+
+    /// Zero every channel that was *not* written during block `buf_counter`, so stale audio from
+    /// an earlier block is not re-emitted on a channel nothing wrote to this block.
+    pub fn silence_untouched(&mut self, buf_counter: u64) {
+        let bs = self.block_size;
+        for ch in 0..self.num_channels {
+            if self.touched[ch] != buf_counter {
+                let start = ch * bs;
+                for sample in &mut self.data[start..start + bs] {
+                    *sample = 0.0;
+                }
+            }
+        }
+    }
 }

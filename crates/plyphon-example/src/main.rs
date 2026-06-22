@@ -1,14 +1,15 @@
 //! Minimal SinOsc example driven by [`cpal`], working both natively and on the web.
 //!
-//! The audio loop is identical on both targets - a `cpal` output stream whose callback asks an
-//! [`engine::Source`] to fill an interleaved `f32` buffer. The source is a `plyphon::SinOsc` on
-//! both targets; the native/web split (the `engine` module) exists so each side can diverge later
-//! (e.g. an AudioWorklet backend on the web, or driving the full engine natively) without touching
-//! the other. This keeps `cpal` the uniform audio backend the engine slots into.
+//! The audio loop is identical on both targets - a `cpal` output stream whose callback asks the
+//! engine (a `plyphon::World` playing a SinOsc, built in [`sine`]) to fill an interleaved `f32`
+//! buffer via `World::fill`. The native/web split (the `engine` module) exists so each side can
+//! diverge later (e.g. an AudioWorklet backend on the web) without touching the other. This keeps
+//! `cpal` the uniform audio backend the engine slots into.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
-use engine::Source;
+
+mod sine;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "engine_native.rs"]
@@ -16,6 +17,9 @@ mod engine;
 #[cfg(target_arch = "wasm32")]
 #[path = "engine_web.rs"]
 mod engine;
+
+/// Master gain applied to the engine's full-scale output, to keep the demo gentle on the ears.
+const GAIN: f32 = 0.2;
 
 fn main() {
     #[cfg(target_arch = "wasm32")]
@@ -37,7 +41,7 @@ fn main() {
     }
 }
 
-/// Build and play an output stream fed by the target's [`engine::Source`].
+/// Build and play an output stream fed by the target's engine `World`.
 fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate.0 as f32;
@@ -54,7 +58,7 @@ fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::S
                 scratch.resize(output.len(), 0.0);
                 source.fill(&mut scratch, channels);
                 for (out, sample) in output.iter_mut().zip(scratch.iter()) {
-                    *out = T::from_sample(*sample);
+                    *out = T::from_sample(*sample * GAIN);
                 }
             },
             |err| eprintln!("audio stream error: {err}"),
