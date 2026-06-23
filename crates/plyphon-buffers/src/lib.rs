@@ -24,7 +24,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use plyphon::Buffer;
+use plyphon::{Buffer, StreamProducer};
 use thiserror::Error;
 
 /// A boxed future returned by a [`BufferSource`]/[`BufferStream`].
@@ -140,4 +140,43 @@ pub trait BufferStream {
 
     /// Seek so the next [`read`](BufferStream::read) starts at `frame`.
     fn seek<'a>(&'a mut self, frame: u64) -> BufFuture<'a, Result<(), LoadError>>;
+}
+
+/// Drives a [`BufferStream`] to keep a plyphon stream's playback queue full.
+///
+/// Wrap the [`StreamProducer`] returned by `Controller::buffer_cue`, then call [`fill`](
+/// StreamFeeder::fill) on your executor (a background thread natively, `spawn_local` on the web, or
+/// whenever the queue runs low) to read chunks from the stream and hand them to the audio thread.
+pub struct StreamFeeder {
+    producer: StreamProducer,
+}
+
+impl StreamFeeder {
+    /// Wrap the producer side of a cued stream.
+    pub fn new(producer: StreamProducer) -> Self {
+        StreamFeeder { producer }
+    }
+
+    /// Top the queue up from `stream`: read chunks until the queue is full or the stream ends.
+    ///
+    /// Returns the number of frames pushed this call (0 if the queue was already full or the stream
+    /// is exhausted). Call it repeatedly to keep `DiskIn` fed.
+    pub async fn fill(&mut self, stream: &mut dyn BufferStream) -> Result<usize, LoadError> {
+        let mut pushed = 0;
+        while let Some(mut chunk) = self.producer.take_empty() {
+            let frames = stream.read(chunk.samples_mut()).await?;
+            chunk.set_frames(frames);
+            if frames == 0 {
+                // End of stream: return the unused chunk and stop.
+                self.producer.return_empty(chunk);
+                break;
+            }
+            pushed += frames;
+            if let Err(chunk) = self.producer.push(chunk) {
+                self.producer.return_empty(chunk);
+                break;
+            }
+        }
+        Ok(pushed)
+    }
 }
