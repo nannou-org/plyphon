@@ -15,6 +15,7 @@ use crate::buffer::BufferTable;
 use crate::bus::Buses;
 use crate::command::{Command, Event, Trash};
 use crate::engine::Options;
+use crate::io::Io;
 use crate::rate::RateInfo;
 use crate::tree::NodeTree;
 use crate::ugen::{DoneAction, ProcessContext};
@@ -145,13 +146,11 @@ impl World {
         let ctx = ProcessContext {
             audio: &self.audio,
             control: &self.control,
-            buf_counter,
             wavetables: &self.wavetables,
-            buffers: &self.buffers,
         };
+        let mut io = Io::new(&mut self.buses, &mut self.buffers, buf_counter);
         self.done_nodes.clear();
-        self.tree
-            .process(&ctx, &mut self.buses, &mut self.done_nodes);
+        self.tree.process(&ctx, &mut io, &mut self.done_nodes);
         self.buses.silence_untouched_outputs(buf_counter);
         self.apply_done_actions();
     }

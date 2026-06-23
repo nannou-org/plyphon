@@ -21,8 +21,7 @@ pub mod registry;
 pub mod sin_osc;
 pub mod unary_op;
 
-use crate::buffer::BufferTable;
-use crate::bus::Buses;
+use crate::io::Io;
 use crate::rate::{Rate, RateInfo};
 use crate::wavetable::Wavetables;
 
@@ -62,18 +61,17 @@ pub use sin_osc::SinOsc;
 pub use unary_op::UnaryOp;
 
 /// Immutable per-block context handed to every [`Ugen::process`] call.
+///
+/// The block counter and access to the World's shared buses and buffers live on the mutable
+/// [`Io`] handle instead; this holds only the read-only per-block constants.
 #[derive(Copy, Clone)]
 pub struct ProcessContext<'a> {
     /// Audio-rate constants.
     pub audio: &'a RateInfo,
     /// Control-rate constants.
     pub control: &'a RateInfo,
-    /// The block counter, incremented once per control block (used for bus "touched" tracking).
-    pub buf_counter: u64,
     /// Shared wavetables (sine, ...), owned by the engine.
     pub wavetables: &'a Wavetables,
-    /// The engine's buffer table, for sample-playback UGens like `PlayBuf` to read.
-    pub buffers: &'a BufferTable,
 }
 
 /// How a single UGen input is sourced. Resolved once at build time from the SynthDef.
@@ -203,15 +201,16 @@ impl<'a> Outputs<'a> {
 pub trait Ugen: Send {
     /// Compute one control block.
     ///
-    /// Reads `ins`, writes its outputs into `outs`, and (for I/O UGens like `In`/`Out`) reads or
-    /// writes `buses`. Must not allocate, block, or take locks. Returns the [`DoneAction`] the UGen
-    /// wants applied to its enclosing synth (almost always [`DoneAction::Nothing`]).
+    /// Reads `ins`, writes its outputs into `outs`, and (for I/O UGens like `In`/`Out`/`PlayBuf`)
+    /// reads or writes the World's shared buses and buffers through `io`. Must not allocate, block,
+    /// or take locks. Returns the [`DoneAction`] the UGen wants applied to its enclosing synth
+    /// (almost always [`DoneAction::Nothing`]).
     #[must_use]
     fn process(
         &mut self,
         ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
-        buses: &mut Buses,
+        io: &mut Io,
     ) -> DoneAction;
 }

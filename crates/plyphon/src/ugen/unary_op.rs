@@ -1,7 +1,7 @@
 //! `UnaryOpUGen` - applies a unary math operator (chosen by `special_index`) to one input.
 
-use crate::bus::Buses;
 use crate::error::BuildError;
+use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
 use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
@@ -19,7 +19,7 @@ impl Ugen for UnaryOp {
         _ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
-        _buses: &mut Buses,
+        _io: &mut Io,
     ) -> DoneAction {
         let op = self.op;
         let out = outs.audio(0);

@@ -10,7 +10,7 @@
 //! single value for control-rate outputs). Inputs and outputs are therefore never borrowed both
 //! mutably and immutably at once.
 
-use crate::bus::Buses;
+use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::{DoneAction, InputSource, Inputs, Outputs, ProcessContext, Ugen};
 
@@ -73,11 +73,11 @@ impl Synth {
         }
     }
 
-    /// Compute one control block, reading/writing `buses` via any `In`/`Out` UGens. Returns the
-    /// strongest [`DoneAction`] any of its UGens requested this block (e.g. an envelope asking to
-    /// free).
+    /// Compute one control block, reading/writing the World's shared storage (`io`) via any
+    /// `In`/`Out`/`PlayBuf` UGens. Returns the strongest [`DoneAction`] any of its UGens requested
+    /// this block (e.g. an envelope asking to free).
     #[must_use]
-    pub fn process(&mut self, ctx: &ProcessContext<'_>, buses: &mut Buses) -> DoneAction {
+    pub fn process(&mut self, ctx: &ProcessContext<'_>, io: &mut Io) -> DoneAction {
         let Synth {
             ugens,
             audio_wires,
@@ -93,7 +93,7 @@ impl Synth {
         // Apply control-bus mappings (`/n_map`): a mapped parameter takes the bus's current value.
         for (p, &maybe_bus) in param_maps.iter().enumerate() {
             if let Some(bus) = maybe_bus {
-                control_wires[param_wires[p] as usize] = buses.control().read(bus as usize);
+                control_wires[param_wires[p] as usize] = io.control_in(bus as usize);
             }
         }
         let mut done = DoneAction::Nothing;
@@ -105,7 +105,7 @@ impl Synth {
                 bs,
             );
             let mut outs = Outputs::new(scratch.as_mut_slice(), bs);
-            done = done.max(ugens[u].process(ctx, ins, &mut outs, buses));
+            done = done.max(ugens[u].process(ctx, ins, &mut outs, io));
             // Publish this UGen's scratch outputs into the arena wires.
             for (k, output) in outputs_plan[u].iter().enumerate() {
                 let src = k * bs;

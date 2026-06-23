@@ -1,7 +1,7 @@
 //! `WhiteNoise` - uniform white noise, plyphon's port of scsynth's `WhiteNoise`.
 
-use crate::bus::Buses;
 use crate::error::BuildError;
+use crate::io::Io;
 use crate::rate::Rate;
 use crate::rng::Rng;
 use crate::ugen::registry::{BuildContext, UgenCtor};
@@ -19,7 +19,7 @@ impl Ugen for WhiteNoise {
         _ctx: &ProcessContext<'_>,
         _ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
-        _buses: &mut Buses,
+        _io: &mut Io,
     ) -> DoneAction {
         if self.audio {
             for o in outs.audio(0).iter_mut() {

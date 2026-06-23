@@ -1,7 +1,7 @@
 //! `In` - reads signals from audio or control bus channels, plyphon's port of scsynth's `In`.
 
-use crate::bus::Buses;
 use crate::error::BuildError;
+use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
 use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
@@ -25,23 +25,22 @@ impl Ugen for In {
         _ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
-        buses: &mut Buses,
+        io: &mut Io,
     ) -> DoneAction {
         let base = ins.control(Self::BUS) as usize;
         if self.audio {
-            let available = buses.audio().num_channels();
             for o in 0..self.num_channels {
                 let dst = outs.audio(o);
-                let ch = base + o;
-                if ch < available {
-                    dst.copy_from_slice(buses.audio().channel(ch));
+                let chan = io.audio_in(base + o);
+                if chan.len() == dst.len() {
+                    dst.copy_from_slice(chan);
                 } else {
                     dst.fill(0.0);
                 }
             }
         } else {
             for o in 0..self.num_channels {
-                *outs.control(o) = buses.control().read(base + o);
+                *outs.control(o) = io.control_in(base + o);
             }
         }
         DoneAction::Nothing

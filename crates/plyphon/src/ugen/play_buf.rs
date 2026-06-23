@@ -1,7 +1,7 @@
 //! `PlayBuf` - plays a buffer back at a given rate, plyphon's port of scsynth's `PlayBuf`.
 
-use crate::bus::Buses;
 use crate::error::BuildError;
+use crate::io::Io;
 use crate::ugen::registry::{BuildContext, UgenCtor};
 use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
 
@@ -41,13 +41,13 @@ impl PlayBuf {
 impl Ugen for PlayBuf {
     fn process(
         &mut self,
-        ctx: &ProcessContext<'_>,
+        _ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
-        _buses: &mut Buses,
+        io: &mut Io,
     ) -> DoneAction {
         let bufnum = ins.control(Self::BUFNUM).max(0.0) as usize;
-        let buffer = match ctx.buffers.get(bufnum) {
+        let buffer = match io.buffer(bufnum) {
             Some(buffer) if buffer.num_frames() > 0 => buffer,
             _ => {
                 self.silence(outs);

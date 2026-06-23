@@ -1,7 +1,7 @@
 //! `Out` - writes signals to audio or control bus channels, plyphon's port of scsynth's `Out`.
 
-use crate::bus::Buses;
 use crate::error::BuildError;
+use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
 use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
@@ -16,10 +16,10 @@ pub struct Out {
 impl Ugen for Out {
     fn process(
         &mut self,
-        ctx: &ProcessContext<'_>,
+        _ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         _outs: &mut Outputs<'_>,
-        buses: &mut Buses,
+        io: &mut Io,
     ) -> DoneAction {
         if ins.is_empty() {
             return DoneAction::Nothing;
@@ -28,17 +28,11 @@ impl Ugen for Out {
         let base = ins.control(0) as usize;
         if self.audio {
             for k in 1..ins.len() {
-                buses
-                    .audio_mut()
-                    .write_accumulate(base + (k - 1), ctx.buf_counter, ins.audio(k));
+                io.write_audio(base + (k - 1), ins.audio(k));
             }
         } else {
             for k in 1..ins.len() {
-                buses.control_mut().write_accumulate(
-                    base + (k - 1),
-                    ctx.buf_counter,
-                    ins.control(k),
-                );
+                io.write_control(base + (k - 1), ins.control(k));
             }
         }
         DoneAction::Nothing
