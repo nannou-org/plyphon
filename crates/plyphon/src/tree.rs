@@ -1,10 +1,11 @@
 //! The node tree - plyphon's port of scsynth's `Node`/`Group`/`Graph` hierarchy.
 //!
-//! Nodes live in a fixed-capacity slotmap allocated once at construction, so linking and unlinking
-//! on the audio thread is O(1) pointer (index) manipulation with no allocation. Client node ids map
-//! to slot indices through a pre-reserved [`HashMap`] that never rehashes while the node count stays
-//! within capacity. Synths removed from the tree are handed back to the caller so their `Box` can be
-//! dropped off the audio thread.
+//! Nodes live in a fixed-capacity slotmap allocated once at construction, so linking, unlinking, and
+//! moving on the audio thread is O(1) pointer (index) manipulation with no allocation. Client node
+//! ids map to slot indices through a pre-reserved [`HashMap`] that never rehashes while the node
+//! count stays within capacity. Synths removed from the tree are handed back to the caller (through a
+//! pre-allocated sink, so freeing even a whole group allocates nothing) to be dropped off the audio
+//! thread.
 
 use std::collections::HashMap;
 
@@ -12,14 +13,34 @@ use crate::io::Io;
 use crate::synth::Synth;
 use crate::ugen::{DoneAction, ProcessContext};
 
-/// Where to insert a node relative to a target group.
+/// Where to place a node relative to a target, mirroring scsynth's `addAction` codes.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum AddAction {
-    /// Prepend to the group's children.
+    /// Prepend to the target *group*'s children (`addToHead`, code 0).
     Head,
-    /// Append to the group's children.
+    /// Append to the target *group*'s children (`addToTail`, code 1).
     Tail,
+    /// Immediately before the target *node*, among its siblings (`addBefore`, code 2).
+    Before,
+    /// Immediately after the target *node*, among its siblings (`addAfter`, code 3).
+    After,
 }
+
+/// A resolved placement: where a node is to be linked, by slot index.
+#[derive(Copy, Clone)]
+enum Placement {
+    /// Head of the group at this index.
+    Head(u32),
+    /// Tail of the group at this index.
+    Tail(u32),
+    /// Before the node at `node`, within its parent `group`.
+    Before { group: u32, node: u32 },
+    /// After the node at `node`, within its parent `group`.
+    After { group: u32, node: u32 },
+}
+
+/// A node removed by a free, handed back for off-audio-thread dropping: its id and (for synths) box.
+pub(crate) type FreedNode = (i32, Option<Box<Synth>>);
 
 /// A slot in the node arena.
 enum Slot {
@@ -93,10 +114,10 @@ impl NodeTree {
         self.root_id
     }
 
-    /// Link a pre-built synth into the tree under group `target`.
+    /// Link a pre-built synth into the tree at `target`/`action`.
     ///
-    /// On failure (unknown/non-group target, or the tree is full) the synth is returned so the
-    /// caller can route it back to the trash ring.
+    /// On failure (unresolvable placement, or the tree is full) the synth is returned so the caller
+    /// can route it back to the trash ring.
     pub fn add_synth(
         &mut self,
         id: i32,
@@ -104,9 +125,9 @@ impl NodeTree {
         target: i32,
         action: AddAction,
     ) -> Result<(), Box<Synth>> {
-        let group_idx = match self.id_map.get(&target) {
-            Some(&i) if self.is_group(i) => i,
-            _ => return Err(synth),
+        let placement = match self.resolve_placement(target, action) {
+            Some(p) => p,
+            None => return Err(synth),
         };
         let idx = match self.free.pop() {
             Some(i) => i,
@@ -121,15 +142,15 @@ impl NodeTree {
             kind: NodeKind::Synth(synth),
         });
         self.id_map.insert(id, idx);
-        self.link_into_group(idx, group_idx, action);
+        self.link_at(idx, placement);
         Ok(())
     }
 
-    /// Create an empty group under group `target`. Returns `false` if it could not be added.
+    /// Create an empty group at `target`/`action`. Returns `false` if it could not be added.
     pub fn add_group(&mut self, id: i32, target: i32, action: AddAction) -> bool {
-        let group_idx = match self.id_map.get(&target) {
-            Some(&i) if self.is_group(i) => i,
-            _ => return false,
+        let placement = match self.resolve_placement(target, action) {
+            Some(p) => p,
+            None => return false,
         };
         let idx = match self.free.pop() {
             Some(i) => i,
@@ -147,30 +168,80 @@ impl NodeTree {
             },
         });
         self.id_map.insert(id, idx);
-        self.link_into_group(idx, group_idx, action);
+        self.link_at(idx, placement);
         true
     }
 
-    /// Free a node, returning its synth (if it was a leaf synth) for off-RT dropping.
-    ///
-    /// The root group is never freed. Freeing a group currently just unlinks it (group deep-free is
-    /// a later milestone), so callers should free synths individually for now.
-    pub fn free_node(&mut self, id: i32) -> Option<Box<Synth>> {
+    /// Move an existing node to `target`/`action` (scsynth's `/g_head`/`/g_tail`/`/n_before`/
+    /// `/n_after`/`/n_order`). Returns `false` if the node or placement is invalid, or the move would
+    /// put a group inside its own subtree.
+    pub fn move_node(&mut self, id: i32, target: i32, action: AddAction) -> bool {
+        let node_idx = match self.id_map.get(&id) {
+            Some(&i) if i != self.root_index => i,
+            _ => return false,
+        };
+        let placement = match self.resolve_placement(target, action) {
+            Some(p) => p,
+            None => return false,
+        };
+        // A node cannot be placed relative to itself, nor moved into itself or its own descendant.
+        if let Placement::Before { node, .. } | Placement::After { node, .. } = placement
+            && node == node_idx
+        {
+            return false;
+        }
+        let dest = self.dest_group(placement);
+        if dest == node_idx || self.is_descendant(dest, node_idx) {
+            return false;
+        }
+        self.unlink(node_idx);
+        self.link_at(node_idx, placement);
+        true
+    }
+
+    /// Free node `id`, deeply: a synth is removed; a group is removed along with its whole subtree.
+    /// Every removed node is pushed to `sink` (its id, and its boxed synth if it was one) for the
+    /// caller to drop and notify off the audio thread. The root is never freed. Returns whether the
+    /// node existed.
+    pub fn free_node(&mut self, id: i32, sink: &mut Vec<FreedNode>) -> bool {
         if id == self.root_id {
-            return None;
+            return false;
         }
-        let idx = *self.id_map.get(&id)?;
+        let idx = match self.id_map.get(&id) {
+            Some(&i) => i,
+            None => return false,
+        };
         self.unlink(idx);
-        self.id_map.remove(&id);
-        let slot = core::mem::replace(&mut self.slots[idx as usize], Slot::Free);
-        self.free.push(idx);
-        match slot {
-            Slot::Node(Node {
-                kind: NodeKind::Synth(synth),
-                ..
-            }) => Some(synth),
-            _ => None,
+        self.destroy(idx, sink);
+        true
+    }
+
+    /// Free every node in group `id` (deeply), leaving the group itself empty (scsynth's
+    /// `/g_freeAll`). Returns whether the group existed.
+    pub fn free_all(&mut self, id: i32, sink: &mut Vec<FreedNode>) -> bool {
+        let group_idx = match self.id_map.get(&id) {
+            Some(&i) if self.is_group(i) => i,
+            _ => return false,
+        };
+        let mut cur = self.group_links(group_idx).0;
+        while let Some(child) = cur {
+            let next = self.node_next(child);
+            self.destroy(child, sink);
+            cur = next;
         }
+        self.set_group_links(group_idx, None, None);
+        true
+    }
+
+    /// Free every *synth* in group `id` and its subgroups, leaving the group structure intact
+    /// (scsynth's `/g_deepFree`). Returns whether the group existed.
+    pub fn deep_free(&mut self, id: i32, sink: &mut Vec<FreedNode>) -> bool {
+        let group_idx = match self.id_map.get(&id) {
+            Some(&i) if self.is_group(i) => i,
+            _ => return false,
+        };
+        self.deep_free_group(group_idx, sink);
+        true
     }
 
     /// Mutable access to the synth with client id `id`, if it is a synth.
@@ -284,6 +355,150 @@ impl NodeTree {
         }
     }
 
+    /// Resolve a `target`/`action` to a concrete [`Placement`], or `None` if it is invalid (a
+    /// head/tail target that is not a group, a before/after target with no parent, or an unknown id).
+    fn resolve_placement(&self, target: i32, action: AddAction) -> Option<Placement> {
+        let target_idx = *self.id_map.get(&target)?;
+        match action {
+            AddAction::Head => self
+                .is_group(target_idx)
+                .then_some(Placement::Head(target_idx)),
+            AddAction::Tail => self
+                .is_group(target_idx)
+                .then_some(Placement::Tail(target_idx)),
+            AddAction::Before => self.node_parent(target_idx).map(|group| Placement::Before {
+                group,
+                node: target_idx,
+            }),
+            AddAction::After => self.node_parent(target_idx).map(|group| Placement::After {
+                group,
+                node: target_idx,
+            }),
+        }
+    }
+
+    /// The group a placement lands a node in.
+    fn dest_group(&self, placement: Placement) -> u32 {
+        match placement {
+            Placement::Head(group) | Placement::Tail(group) => group,
+            Placement::Before { group, .. } | Placement::After { group, .. } => group,
+        }
+    }
+
+    /// Whether `idx` is `ancestor` or sits anywhere below it.
+    fn is_descendant(&self, idx: u32, ancestor: u32) -> bool {
+        let mut cur = self.node_parent(idx);
+        while let Some(p) = cur {
+            if p == ancestor {
+                return true;
+            }
+            cur = self.node_parent(p);
+        }
+        false
+    }
+
+    /// Link `node_idx` into the tree per `placement`.
+    fn link_at(&mut self, node_idx: u32, placement: Placement) {
+        match placement {
+            Placement::Head(group) => {
+                let (head, _) = self.group_links(group);
+                self.insert(node_idx, group, None, head);
+            }
+            Placement::Tail(group) => {
+                let (_, tail) = self.group_links(group);
+                self.insert(node_idx, group, tail, None);
+            }
+            Placement::Before { group, node } => {
+                let prev = self.node_prev(node);
+                self.insert(node_idx, group, prev, Some(node));
+            }
+            Placement::After { group, node } => {
+                let next = self.node_next(node);
+                self.insert(node_idx, group, Some(node), next);
+            }
+        }
+    }
+
+    /// Insert `node_idx` into `group_idx` between siblings `prev` and `next` (either may be `None`,
+    /// making it the group's new head/tail).
+    fn insert(&mut self, node_idx: u32, group_idx: u32, prev: Option<u32>, next: Option<u32>) {
+        if let Some(node) = self.node_mut(node_idx) {
+            node.parent = Some(group_idx);
+            node.prev = prev;
+            node.next = next;
+        }
+        match prev {
+            Some(p) => {
+                if let Some(pn) = self.node_mut(p) {
+                    pn.next = Some(node_idx);
+                }
+            }
+            None => {
+                let (_, tail) = self.group_links(group_idx);
+                self.set_group_links(group_idx, Some(node_idx), tail);
+            }
+        }
+        match next {
+            Some(n) => {
+                if let Some(nn) = self.node_mut(n) {
+                    nn.prev = Some(node_idx);
+                }
+            }
+            None => {
+                let (head, _) = self.group_links(group_idx);
+                self.set_group_links(group_idx, head, Some(node_idx));
+            }
+        }
+    }
+
+    /// Recursively remove `idx` and its whole subtree, pushing each removed node to `sink`. The
+    /// caller must have already unlinked `idx` from its parent.
+    fn destroy(&mut self, idx: u32, sink: &mut Vec<FreedNode>) {
+        let head = match &self.slots[idx as usize] {
+            Slot::Node(Node {
+                kind: NodeKind::Group { head, .. },
+                ..
+            }) => *head,
+            Slot::Node(_) => None,
+            Slot::Free => return,
+        };
+        let mut cur = head;
+        while let Some(child) = cur {
+            let next = self.node_next(child);
+            self.destroy(child, sink);
+            cur = next;
+        }
+        let id = match &self.slots[idx as usize] {
+            Slot::Node(node) => node.id,
+            Slot::Free => return,
+        };
+        self.id_map.remove(&id);
+        let slot = core::mem::replace(&mut self.slots[idx as usize], Slot::Free);
+        self.free.push(idx);
+        let synth = match slot {
+            Slot::Node(Node {
+                kind: NodeKind::Synth(synth),
+                ..
+            }) => Some(synth),
+            _ => None,
+        };
+        sink.push((id, synth));
+    }
+
+    /// Free every synth in `group_idx` and its subgroups, keeping the groups.
+    fn deep_free_group(&mut self, group_idx: u32, sink: &mut Vec<FreedNode>) {
+        let mut cur = self.group_links(group_idx).0;
+        while let Some(child) = cur {
+            let next = self.node_next(child);
+            if self.is_group(child) {
+                self.deep_free_group(child, sink);
+            } else if let Some((id, synth)) = self.free_by_index(child) {
+                sink.push((id, Some(synth)));
+            }
+            cur = next;
+        }
+    }
+
     fn is_group(&self, idx: u32) -> bool {
         matches!(
             &self.slots[idx as usize],
@@ -292,6 +507,27 @@ impl NodeTree {
                 ..
             })
         )
+    }
+
+    fn node_parent(&self, idx: u32) -> Option<u32> {
+        match &self.slots[idx as usize] {
+            Slot::Node(node) => node.parent,
+            Slot::Free => None,
+        }
+    }
+
+    fn node_prev(&self, idx: u32) -> Option<u32> {
+        match &self.slots[idx as usize] {
+            Slot::Node(node) => node.prev,
+            Slot::Free => None,
+        }
+    }
+
+    fn node_next(&self, idx: u32) -> Option<u32> {
+        match &self.slots[idx as usize] {
+            Slot::Node(node) => node.next,
+            Slot::Free => None,
+        }
     }
 
     fn group_links(&self, idx: u32) -> (Option<u32>, Option<u32>) {
@@ -319,45 +555,6 @@ impl NodeTree {
         match &mut self.slots[idx as usize] {
             Slot::Node(node) => Some(node),
             Slot::Free => None,
-        }
-    }
-
-    fn link_into_group(&mut self, node_idx: u32, group_idx: u32, action: AddAction) {
-        let (head, tail) = self.group_links(group_idx);
-        if let Some(node) = self.node_mut(node_idx) {
-            node.parent = Some(group_idx);
-        }
-        match action {
-            AddAction::Head => {
-                if let Some(node) = self.node_mut(node_idx) {
-                    node.prev = None;
-                    node.next = head;
-                }
-                match head {
-                    Some(h) => {
-                        if let Some(hn) = self.node_mut(h) {
-                            hn.prev = Some(node_idx);
-                        }
-                        self.set_group_links(group_idx, Some(node_idx), tail);
-                    }
-                    None => self.set_group_links(group_idx, Some(node_idx), Some(node_idx)),
-                }
-            }
-            AddAction::Tail => {
-                if let Some(node) = self.node_mut(node_idx) {
-                    node.prev = tail;
-                    node.next = None;
-                }
-                match tail {
-                    Some(t) => {
-                        if let Some(tn) = self.node_mut(t) {
-                            tn.next = Some(node_idx);
-                        }
-                        self.set_group_links(group_idx, head, Some(node_idx));
-                    }
-                    None => self.set_group_links(group_idx, Some(node_idx), Some(node_idx)),
-                }
-            }
         }
     }
 

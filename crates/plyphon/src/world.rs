@@ -17,7 +17,7 @@ use crate::command::{Command, Event, Trash};
 use crate::engine::Options;
 use crate::io::Io;
 use crate::rate::RateInfo;
-use crate::tree::NodeTree;
+use crate::tree::{FreedNode, NodeTree};
 use crate::ugen::{DoneAction, ProcessContext};
 use crate::wavetable::Wavetables;
 
@@ -38,6 +38,8 @@ pub struct World {
     pending_events: Vec<Event>,
     /// Scratch list of `(slot index, action)` for nodes whose UGens requested a done action.
     done_nodes: Vec<(u32, DoneAction)>,
+    /// Scratch sink for nodes removed by a free, so freeing a whole group allocates nothing.
+    freed_nodes: Vec<FreedNode>,
     buf_counter: u64,
     block_size: usize,
     /// How many frames of the current control block have already been emitted to the host.
@@ -73,6 +75,7 @@ impl World {
             pending_trash: Vec::with_capacity(capacity),
             pending_events: Vec::with_capacity(capacity),
             done_nodes: Vec::with_capacity(capacity),
+            freed_nodes: Vec::with_capacity(capacity),
             buf_counter: 0,
             block_size: options.block_size,
             // Force a fresh control block on the first fill.
@@ -226,10 +229,32 @@ impl World {
                 self.trash_slot(old);
             }
             Command::FreeNode { node } => {
-                if let Some(synth) = self.tree.free_node(node) {
-                    self.trash(Trash::Synth(synth));
-                    self.emit(Event::NodeEnded { id: node });
-                }
+                let mut sink = core::mem::take(&mut self.freed_nodes);
+                sink.clear();
+                self.tree.free_node(node, &mut sink);
+                self.drain_freed(&mut sink);
+                self.freed_nodes = sink;
+            }
+            Command::MoveNode {
+                node,
+                target,
+                action,
+            } => {
+                self.tree.move_node(node, target, action);
+            }
+            Command::FreeAll { group } => {
+                let mut sink = core::mem::take(&mut self.freed_nodes);
+                sink.clear();
+                self.tree.free_all(group, &mut sink);
+                self.drain_freed(&mut sink);
+                self.freed_nodes = sink;
+            }
+            Command::DeepFree { group } => {
+                let mut sink = core::mem::take(&mut self.freed_nodes);
+                sink.clear();
+                self.tree.deep_free(group, &mut sink);
+                self.drain_freed(&mut sink);
+                self.freed_nodes = sink;
             }
             Command::NodeRun { node, run } => {
                 if let Some(id) = self.tree.set_run(node, run) {
@@ -258,6 +283,16 @@ impl World {
             Some(BufferSlot::Loaded(buffer)) => self.trash(Trash::Buffer(buffer)),
             Some(BufferSlot::Stream(stream)) => self.trash(Trash::Stream(stream)),
             Some(BufferSlot::Empty) | None => {}
+        }
+    }
+
+    /// Trash each freed synth and notify each freed node (`NodeEnded`), off the audio thread.
+    fn drain_freed(&mut self, sink: &mut Vec<FreedNode>) {
+        for (id, synth) in sink.drain(..) {
+            if let Some(synth) = synth {
+                self.trash(Trash::Synth(synth));
+            }
+            self.emit(Event::NodeEnded { id });
         }
     }
 

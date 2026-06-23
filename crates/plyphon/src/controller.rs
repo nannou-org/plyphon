@@ -196,10 +196,41 @@ impl Controller {
         Ok(())
     }
 
-    /// Free node `node`.
+    /// Free node `node` (deeply for a group: the group and its whole subtree).
     pub fn free(&mut self, node: i32) -> Result<(), QueueFull> {
         self.tx
             .push(Command::FreeNode { node })
+            .map_err(|_| QueueFull)
+    }
+
+    /// Move node `node` to `target`/`action` (scsynth's `/g_head`, `/g_tail`, `/n_before`,
+    /// `/n_after`).
+    pub fn move_node(
+        &mut self,
+        node: i32,
+        target: i32,
+        action: AddAction,
+    ) -> Result<(), QueueFull> {
+        self.tx
+            .push(Command::MoveNode {
+                node,
+                target,
+                action,
+            })
+            .map_err(|_| QueueFull)
+    }
+
+    /// Free every node in group `group`, leaving it empty (scsynth's `/g_freeAll`).
+    pub fn free_all(&mut self, group: i32) -> Result<(), QueueFull> {
+        self.tx
+            .push(Command::FreeAll { group })
+            .map_err(|_| QueueFull)
+    }
+
+    /// Free every synth in group `group` and its subgroups, keeping the groups (`/g_deepFree`).
+    pub fn deep_free(&mut self, group: i32) -> Result<(), QueueFull> {
+        self.tx
+            .push(Command::DeepFree { group })
             .map_err(|_| QueueFull)
     }
 

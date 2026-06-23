@@ -62,10 +62,29 @@ pub enum Command {
         /// Control bus channel to read from, or `None` to unmap.
         bus: Option<u32>,
     },
-    /// Free node `node`, returning any owned synth to the trash ring.
+    /// Free node `node` (deeply for a group), trashing any owned synths.
     FreeNode {
         /// Target node's client id.
         node: i32,
+    },
+    /// Move node `node` to `target`/`action` (scsynth's `/g_head`/`/g_tail`/`/n_before`/`/n_after`).
+    MoveNode {
+        /// The node to move.
+        node: i32,
+        /// The target node or group.
+        target: i32,
+        /// Where to place `node` relative to `target`.
+        action: AddAction,
+    },
+    /// Free every node in group `group`, leaving it empty (scsynth's `/g_freeAll`).
+    FreeAll {
+        /// Target group's client id.
+        group: i32,
+    },
+    /// Free every synth in group `group` and its subgroups, keeping the groups (`/g_deepFree`).
+    DeepFree {
+        /// Target group's client id.
+        group: i32,
     },
     /// Pause or resume node `node` (scsynth's `/n_run`).
     NodeRun {
