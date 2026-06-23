@@ -1,6 +1,7 @@
 [package]
 name = "plyphon-example-motif"
 version = "0.1.0"
+default-run = "plyphon-example-motif"
 description = "A plyphon demo: a looping motif of self-freeing notes via cpal, natively and on the web."
 authors.workspace = true
 edition.workspace = true
