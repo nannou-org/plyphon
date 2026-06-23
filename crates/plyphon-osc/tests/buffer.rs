@@ -1,0 +1,204 @@
+//! Drive the buffer commands over OSC: `/b_allocRead` loads through a `BufferSource` (driven by
+//! `run_pending`), `/done` is replied, a `PlayBuf` synth plays the loaded buffer, and `/b_query`
+//! answers with `/b_info`.
+
+use std::f32::consts::TAU;
+use std::future::Future;
+
+use plyphon::{InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine};
+use plyphon_buffers::{BufFuture, BufferData, BufferSource, LoadError, ReadRegion};
+use plyphon_osc::OscDispatcher;
+use rosc::{OscMessage, OscPacket, OscType};
+
+const SR: f32 = 48_000.0;
+
+/// A one-sound `BufferSource`: "tone" -> a seamless 440 Hz mono buffer.
+struct ToneSource;
+
+impl BufferSource for ToneSource {
+    fn load<'a>(
+        &'a self,
+        key: &'a str,
+        _region: ReadRegion,
+    ) -> BufFuture<'a, Result<BufferData, LoadError>> {
+        let result = if key == "tone" {
+            let samples = (0..4800)
+                .map(|i| (TAU * 44.0 * i as f32 / 4800.0).sin() * 0.6)
+                .collect();
+            Ok(BufferData {
+                samples,
+                num_channels: 1,
+                sample_rate: SR as f64,
+            })
+        } else {
+            Err(LoadError::NotFound(key.to_string()))
+        };
+        Box::pin(async move { result })
+    }
+}
+
+fn msg(addr: &str, args: Vec<OscType>) -> Vec<u8> {
+    rosc::encoder::encode(&OscPacket::Message(OscMessage {
+        addr: addr.to_string(),
+        args,
+    }))
+    .expect("encode OSC")
+}
+
+fn find<'a>(replies: &'a [OscPacket], addr: &str) -> Option<&'a OscMessage> {
+    replies.iter().find_map(|packet| match packet {
+        OscPacket::Message(message) if message.addr == addr => Some(message),
+        _ => None,
+    })
+}
+
+fn block_on<F: Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    loop {
+        if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut cx) {
+            return value;
+        }
+    }
+}
+
+fn goertzel(samples: &[f32], freq: f32) -> f32 {
+    let n = samples.len();
+    let k = (0.5 + n as f32 * freq / SR).floor();
+    let w = 2.0 * std::f32::consts::PI * k / n as f32;
+    let coeff = 2.0 * w.cos();
+    let (mut s1, mut s2) = (0.0f32, 0.0f32);
+    for &x in samples {
+        let s = x + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s;
+    }
+    (s1 * s1 + s2 * s2 - coeff * s1 * s2).max(0.0).sqrt() / n as f32
+}
+
+fn render(world: &mut World, frames: usize) -> Vec<f32> {
+    let mut out = Vec::with_capacity(frames + 512);
+    let mut buf = vec![0.0f32; 256];
+    while out.len() < frames {
+        world.fill(&mut buf, 1);
+        out.extend_from_slice(&buf);
+    }
+    out.truncate(frames);
+    out
+}
+
+/// `PlayBuf.ar(1, 0, 1, ..., loop) -> Out.ar(0)`.
+fn player_def() -> SynthDef {
+    SynthDef {
+        name: "player".to_string(),
+        params: vec![],
+        ugens: vec![
+            UgenSpec::new(
+                "PlayBuf",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Constant(1.0),
+                    InputRef::Constant(0.0),
+                    InputRef::Constant(0.0),
+                    InputRef::Constant(1.0),
+                    InputRef::Constant(0.0),
+                ],
+                1,
+            ),
+            UgenSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Ugen { ugen: 0, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    }
+}
+
+#[test]
+fn loads_a_buffer_over_osc_and_plays_it() {
+    let (controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    let mut osc = OscDispatcher::with_buffer_source(controller, Box::new(ToneSource));
+    osc.controller().add_synthdef(player_def());
+
+    // /b_allocRead queues an async load; nothing happens until run_pending.
+    osc.apply_bytes(&msg(
+        "/b_allocRead",
+        vec![OscType::Int(0), OscType::String("tone".to_string())],
+    ))
+    .expect("/b_allocRead");
+    assert!(
+        osc.take_replies().is_empty(),
+        "no reply until the load runs"
+    );
+
+    block_on(osc.run_pending());
+    let replies = osc.take_replies();
+    let done = find(&replies, "/done").expect("/done after the load");
+    assert_eq!(
+        done.args,
+        vec![OscType::String("/b_allocRead".to_string()), OscType::Int(0)]
+    );
+
+    // Start a PlayBuf on the loaded buffer and confirm it plays the tone.
+    osc.apply_bytes(&msg(
+        "/s_new",
+        vec![
+            OscType::String("player".to_string()),
+            OscType::Int(1000),
+            OscType::Int(1),
+            OscType::Int(ROOT_GROUP_ID),
+        ],
+    ))
+    .expect("/s_new");
+    let out = render(&mut world, SR as usize / 4);
+    assert!(
+        out.iter().any(|s| s.abs() > 0.1),
+        "the loaded buffer was silent"
+    );
+    assert!(
+        goertzel(&out, 440.0) > 5.0 * goertzel(&out, 880.0),
+        "expected the 440 Hz loaded buffer"
+    );
+
+    // /b_query answers with the mirrored dimensions.
+    osc.apply_bytes(&msg("/b_query", vec![OscType::Int(0)]))
+        .expect("/b_query");
+    let replies = osc.take_replies();
+    let info = find(&replies, "/b_info").expect("/b_info reply");
+    assert_eq!(
+        info.args,
+        vec![
+            OscType::Int(0),
+            OscType::Int(4800),
+            OscType::Int(1),
+            OscType::Float(SR),
+        ]
+    );
+}
+
+#[test]
+fn alloc_read_without_a_source_fails() {
+    let (controller, _nrt, _world) = engine(Options::default());
+    let mut osc = OscDispatcher::new(controller); // no buffer source
+    osc.apply_bytes(&msg(
+        "/b_allocRead",
+        vec![OscType::Int(0), OscType::String("tone".to_string())],
+    ))
+    .expect("/b_allocRead");
+    block_on(osc.run_pending());
+    let replies = osc.take_replies();
+    let fail = find(&replies, "/fail").expect("/fail without a source");
+    assert_eq!(
+        fail.args.first(),
+        Some(&OscType::String("/b_allocRead".to_string()))
+    );
+}

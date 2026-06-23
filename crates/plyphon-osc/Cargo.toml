@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 plyphon.workspace = true
+plyphon-buffers.workspace = true
 rosc.workspace = true
 thiserror.workspace = true
 

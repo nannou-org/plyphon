@@ -68,6 +68,11 @@ impl Controller {
         &mut self.registry
     }
 
+    /// The engine's audio sample rate in Hz (e.g. to stamp a freshly allocated buffer).
+    pub fn sample_rate(&self) -> f64 {
+        self.audio.sample_rate
+    }
+
     /// Add (or replace) a synth definition.
     pub fn add_synthdef(&mut self, def: SynthDef) {
         self.defs.insert(def);
