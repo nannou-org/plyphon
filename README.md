@@ -7,8 +7,7 @@ scsynth-compatible synthesis core that can be driven by any pure-Rust audio back
 [`cpal`][cpal]), preserving scsynth's hard real-time guarantees (no locks, blocking, or
 allocation on the audio thread).
 
-This is early-stage research, developed in parallel with [`scsynth-rs`][scsynth-rs] (which
-embeds the C++ engine via FFI). plyphon already runs a lock-free `World`/`Controller`/`Nrt`
+This is early-stage research. plyphon already runs a lock-free `World`/`Controller`/`Nrt`
 engine with a growing set of UGens, loads SuperCollider SynthDefs (SCgf), accepts OSC commands,
 and plays both natively and in the browser.
 
@@ -218,5 +217,4 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 Licensed under [GPL-3.0-or-later](LICENSE), matching SuperCollider's license.
 
 [scsynth]: https://github.com/supercollider/supercollider
-[scsynth-rs]: https://github.com/mitchmindtree/scsynth-rs
 [cpal]: https://github.com/RustAudio/cpal
