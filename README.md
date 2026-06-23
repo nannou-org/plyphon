@@ -22,6 +22,8 @@ and plays both natively and in the browser.
 | [`plyphon-example-motif`](crates/plyphon-example-motif) | A looping motif of self-freeing notes via `cpal` (the web demo). |
 | [`plyphon-example-sine`](crates/plyphon-example-sine) | The simplest example: a continuous sine. |
 | [`plyphon-example-routing`](crates/plyphon-example-routing) | Bus routing: an LFO-swept filter on noise, wired through audio and control buses. |
+| [`plyphon-example-control`](crates/plyphon-example-control) | Host-driven control buses: an arpeggio steered by `/n_map` + `/c_set`. |
+| [`plyphon-example-scgf`](crates/plyphon-example-scgf) | Loads a SuperCollider SCgf-compiled SynthDef and plays it. |
 
 ## Building
 
@@ -34,6 +36,8 @@ cargo build
 cargo test
 cargo run -p plyphon-example-sine      # the simplest demo: a continuous sine
 cargo run -p plyphon-example-routing   # bus routing: an LFO-swept filter on noise
+cargo run -p plyphon-example-control   # host-driven control buses: a bus-steered arpeggio
+cargo run -p plyphon-example-scgf      # load and play a SuperCollider SCgf SynthDef
 cargo build --target wasm32-unknown-unknown -p plyphon-example-motif
 ```
 
