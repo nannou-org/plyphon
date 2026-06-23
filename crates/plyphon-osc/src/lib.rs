@@ -1,7 +1,8 @@
 //! A SuperCollider-compatible OSC front-end for the plyphon engine.
 //!
 //! [`OscDispatcher`] wraps a plyphon [`Controller`] and applies the OSC server commands a typical
-//! SuperCollider client sends - `/d_recv`, `/s_new`, `/n_set`, `/n_free`, `/g_new`, the control-bus
+//! SuperCollider client sends - `/d_recv`, `/s_new`, `/n_set`, `/n_free`, `/g_new`, the node-tree ops
+//! `/g_head`/`/g_tail`/`/n_before`/`/n_after`/`/n_order`/`/g_freeAll`/`/g_deepFree`, the control-bus
 //! setters `/c_set`/`/c_setn`, the control mappers `/n_map`/`/n_mapn`, and the buffer commands
 //! `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_free`, `/b_zero`, and `/b_query` - translating them
 //! into [`Controller`] calls. OSC handling is strictly control-side; the audio thread is never
@@ -208,6 +209,13 @@ impl OscDispatcher {
             "/b_query" => self.b_query(&message.args),
             "/b_allocRead" => self.b_alloc_read(&message.args),
             "/b_read" => self.b_read(&message.args),
+            "/g_head" => self.group_moves(&message.args, AddAction::Head),
+            "/g_tail" => self.group_moves(&message.args, AddAction::Tail),
+            "/n_before" => self.node_moves(&message.args, AddAction::Before),
+            "/n_after" => self.node_moves(&message.args, AddAction::After),
+            "/n_order" => self.n_order(&message.args),
+            "/g_freeAll" => self.g_free_all(&message.args),
+            "/g_deepFree" => self.g_deep_free(&message.args),
             other => Err(OscError::UnsupportedCommand(other.to_string())),
         }
     }
@@ -287,6 +295,79 @@ impl OscDispatcher {
                     .new_group_with_id(id, target, action)
                     .map_err(|_| OscError::QueueFull)?;
             }
+        }
+        Ok(())
+    }
+
+    /// `/g_head`/`/g_tail`: `(group, node)` pairs - move each node to the group's head/tail.
+    fn group_moves(&mut self, args: &[OscType], action: AddAction) -> Result<(), OscError> {
+        if !args.len().is_multiple_of(2) {
+            return Err(OscError::BadArguments("expects group/node pairs"));
+        }
+        for pair in args.chunks_exact(2) {
+            let group = int_arg(&pair[0])?;
+            let node = int_arg(&pair[1])?;
+            self.controller
+                .move_node(node, group, action)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        Ok(())
+    }
+
+    /// `/n_before`/`/n_after`: `(node, target)` pairs - move each node before/after its target.
+    fn node_moves(&mut self, args: &[OscType], action: AddAction) -> Result<(), OscError> {
+        if !args.len().is_multiple_of(2) {
+            return Err(OscError::BadArguments("expects node/target pairs"));
+        }
+        for pair in args.chunks_exact(2) {
+            let node = int_arg(&pair[0])?;
+            let target = int_arg(&pair[1])?;
+            self.controller
+                .move_node(node, target, action)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        Ok(())
+    }
+
+    /// `/n_order addAction target node...`: place the nodes consecutively, in order, at the location.
+    fn n_order(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        if args.len() < 3 {
+            return Err(OscError::BadArguments(
+                "n_order expects addAction, target, nodes",
+            ));
+        }
+        let mut anchor = int_arg(&args[1])?;
+        let mut action = add_action(int_arg(&args[0])?)?;
+        for arg in &args[2..] {
+            let node = int_arg(arg)?;
+            self.controller
+                .move_node(node, anchor, action)
+                .map_err(|_| OscError::QueueFull)?;
+            // Subsequent nodes follow the previous one, preserving the given order.
+            anchor = node;
+            action = AddAction::After;
+        }
+        Ok(())
+    }
+
+    /// `/g_freeAll group...`: empty each group, keeping the group.
+    fn g_free_all(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        for arg in args {
+            let group = int_arg(arg)?;
+            self.controller
+                .free_all(group)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        Ok(())
+    }
+
+    /// `/g_deepFree group...`: free each group's synths recursively, keeping the groups.
+    fn g_deep_free(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        for arg in args {
+            let group = int_arg(arg)?;
+            self.controller
+                .deep_free(group)
+                .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }
@@ -596,6 +677,9 @@ fn add_action(code: i32) -> Result<AddAction, OscError> {
     match code {
         0 => Ok(AddAction::Head),
         1 => Ok(AddAction::Tail),
+        2 => Ok(AddAction::Before),
+        3 => Ok(AddAction::After),
+        // 4 is addReplace, not yet supported.
         other => Err(OscError::UnsupportedAddAction(other)),
     }
 }
