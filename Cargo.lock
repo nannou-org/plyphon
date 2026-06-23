@@ -616,6 +616,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plyphon-example-waveforms"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-timers",
+ "plyphon",
+]
+
+[[package]]
 name = "plyphon-osc"
 version = "0.1.0"
 dependencies = [

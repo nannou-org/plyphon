@@ -27,6 +27,7 @@ and plays both natively and in the browser.
 | [`plyphon-example-scgf`](crates/plyphon-example-scgf) | Loads a SuperCollider SCgf-compiled SynthDef and plays it. |
 | [`plyphon-example-sampler`](crates/plyphon-example-sampler) | Implements a `BufferSource` that loads a checked-in WAV (filesystem natively, `fetch` on the web) and loops it with `PlayBuf`. |
 | [`plyphon-example-stream`](crates/plyphon-example-stream) | Streams a WAV from storage in chunks via a `BufferStream`/`StreamFeeder` and plays it with `DiskIn`. |
+| [`plyphon-example-waveforms`](crates/plyphon-example-waveforms) | Cycles through the oscillators (`Saw`/`Pulse`/`LFSaw`/`LFPulse`/`Impulse`) through a filter. |
 
 ## Building
 
@@ -43,6 +44,7 @@ cargo run -p plyphon-example-control   # host-driven control buses: a bus-steere
 cargo run -p plyphon-example-scgf      # load and play a SuperCollider SCgf SynthDef
 cargo run -p plyphon-example-sampler   # implement a BufferSource and play a loaded sample
 cargo run -p plyphon-example-stream    # stream a WAV in chunks and play it with DiskIn
+cargo run -p plyphon-example-waveforms # cycle through the oscillators through a filter
 cargo build --target wasm32-unknown-unknown -p plyphon-example-motif
 ```
 

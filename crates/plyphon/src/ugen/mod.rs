@@ -10,10 +10,12 @@
 //! an output borrow at the same time without aliasing - the safe equivalent of scsynth's raw
 //! aliasing `float*` wires.
 
+pub mod band_limited;
 pub mod binary_op;
 pub mod disk_in;
 pub mod filter;
 pub mod input;
+pub mod lf;
 pub mod line;
 pub mod noise;
 pub mod out;
@@ -50,10 +52,12 @@ impl DoneAction {
     }
 }
 
+pub use band_limited::{Pulse, Saw};
 pub use binary_op::BinaryOp;
 pub use disk_in::DiskIn;
 pub use filter::Butter;
 pub use input::In;
+pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
 pub use noise::WhiteNoise;
 pub use out::Out;

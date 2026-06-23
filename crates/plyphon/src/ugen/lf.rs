@@ -1,0 +1,137 @@
+//! Non-band-limited low-frequency oscillators - plyphon's ports of scsynth's `LFSaw`, `LFPulse`, and
+//! `Impulse`.
+//!
+//! These are control/LFO sources (and raw audio waves); for clean band-limited audio use [`Saw`] and
+//! [`Pulse`]. Frequency is read at control rate (one value per block), so frequency modulation is at
+//! block resolution. Each writes a full block; a `.kr` instance just publishes the first sample.
+//!
+//! [`Saw`]: crate::ugen::Saw
+//! [`Pulse`]: crate::ugen::Pulse
+
+use crate::error::BuildError;
+use crate::io::Io;
+use crate::ugen::registry::{BuildContext, UgenCtor};
+use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+
+/// `LFSaw.ar/kr(freq)`: a non-band-limited sawtooth ramping from -1 to 1 each cycle.
+pub struct LFSaw {
+    phase: f32,
+}
+
+impl Ugen for LFSaw {
+    fn process(
+        &mut self,
+        ctx: &ProcessContext<'_>,
+        ins: Inputs<'_>,
+        outs: &mut Outputs<'_>,
+        _io: &mut Io,
+    ) -> DoneAction {
+        let inc = ins.control(0) * ctx.audio.sample_dur as f32;
+        for o in outs.audio(0).iter_mut() {
+            *o = 2.0 * self.phase - 1.0;
+            self.phase = wrap(self.phase + inc);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`LFSaw`].
+pub struct LFSawCtor;
+
+impl UgenCtor for LFSawCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+        Ok(Box::new(LFSaw { phase: 0.0 }))
+    }
+}
+
+/// `LFPulse.ar/kr(freq, iphase, width)`: a non-band-limited pulse, output 0 or 1 with duty `width`
+/// (default 0.5). `iphase` is currently ignored.
+pub struct LFPulse {
+    phase: f32,
+}
+
+impl LFPulse {
+    const FREQ: usize = 0;
+    const WIDTH: usize = 2;
+}
+
+impl Ugen for LFPulse {
+    fn process(
+        &mut self,
+        ctx: &ProcessContext<'_>,
+        ins: Inputs<'_>,
+        outs: &mut Outputs<'_>,
+        _io: &mut Io,
+    ) -> DoneAction {
+        let inc = ins.control(Self::FREQ) * ctx.audio.sample_dur as f32;
+        let width = if ins.len() > Self::WIDTH {
+            ins.control(Self::WIDTH)
+        } else {
+            0.5
+        };
+        for o in outs.audio(0).iter_mut() {
+            *o = if self.phase < width { 1.0 } else { 0.0 };
+            self.phase = wrap(self.phase + inc);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`LFPulse`].
+pub struct LFPulseCtor;
+
+impl UgenCtor for LFPulseCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+        Ok(Box::new(LFPulse { phase: 0.0 }))
+    }
+}
+
+/// `Impulse.ar/kr(freq, phase)`: a single-sample impulse of 1.0 at the start of each period, 0
+/// otherwise. `phase` is currently ignored (it starts firing immediately).
+pub struct Impulse {
+    phase: f32,
+}
+
+impl Ugen for Impulse {
+    fn process(
+        &mut self,
+        ctx: &ProcessContext<'_>,
+        ins: Inputs<'_>,
+        outs: &mut Outputs<'_>,
+        _io: &mut Io,
+    ) -> DoneAction {
+        let inc = ins.control(0) * ctx.audio.sample_dur as f32;
+        for o in outs.audio(0).iter_mut() {
+            if self.phase >= 1.0 {
+                self.phase -= 1.0;
+                *o = 1.0;
+            } else {
+                *o = 0.0;
+            }
+            self.phase += inc;
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`Impulse`].
+pub struct ImpulseCtor;
+
+impl UgenCtor for ImpulseCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+        // Start at the cycle boundary so the first sample is an impulse.
+        Ok(Box::new(Impulse { phase: 1.0 }))
+    }
+}
+
+/// Wrap a phase into `[0, 1)` (assuming a single cycle's worth of drift at most).
+#[inline]
+fn wrap(phase: f32) -> f32 {
+    if phase >= 1.0 {
+        phase - 1.0
+    } else if phase < 0.0 {
+        phase + 1.0
+    } else {
+        phase
+    }
+}

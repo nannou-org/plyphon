@@ -9,10 +9,12 @@ use std::collections::HashMap;
 use crate::error::BuildError;
 use crate::rate::{Rate, RateInfo};
 use crate::ugen::Ugen;
+use crate::ugen::band_limited::{PulseCtor, SawCtor};
 use crate::ugen::binary_op::BinaryOpCtor;
 use crate::ugen::disk_in::DiskInCtor;
 use crate::ugen::filter::{ButterCtor, Kind};
 use crate::ugen::input::InCtor;
+use crate::ugen::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
 use crate::ugen::line::LineCtor;
 use crate::ugen::noise::WhiteNoiseCtor;
 use crate::ugen::out::OutCtor;
@@ -71,6 +73,11 @@ impl UgenRegistry {
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
+        registry.register("LFSaw", Box::new(LFSawCtor));
+        registry.register("LFPulse", Box::new(LFPulseCtor));
+        registry.register("Impulse", Box::new(ImpulseCtor));
+        registry.register("Saw", Box::new(SawCtor));
+        registry.register("Pulse", Box::new(PulseCtor));
         registry
     }
 
