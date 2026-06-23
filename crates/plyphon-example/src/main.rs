@@ -1,15 +1,16 @@
-//! Minimal SinOsc example driven by [`cpal`], working both natively and on the web.
+//! Minimal cpal example, working natively and on the web.
 //!
-//! The audio loop is identical on both targets - a `cpal` output stream whose callback asks the
-//! engine (a `plyphon::World` playing a SinOsc, built in [`sine`]) to fill an interleaved `f32`
-//! buffer via `World::fill`. The native/web split (the `engine` module) exists so each side can
-//! diverge later (e.g. an AudioWorklet backend on the web) without touching the other. This keeps
-//! `cpal` the uniform audio backend the engine slots into.
+//! A `cpal` output stream's callback asks the engine's `plyphon::World` to fill an interleaved
+//! `f32` buffer (`World::fill`). The control plane - a `Controls` (a `Controller` + `Nrt`, built in
+//! [`demo`]) - is kept alive and ticked off the audio thread: it starts a looping motif of
+//! self-freeing notes and runs the `Nrt` to drop the freed synths and drain notifications. Ticking
+//! runs on a dedicated cadence per target (a thread loop natively, a timer on the web), which is the
+//! whole point: the `Nrt` is *run*, not dropped.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 
-mod sine;
+mod demo;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "engine_native.rs"]
@@ -38,12 +39,13 @@ fn main() {
     }
 }
 
-/// Build and play an output stream fed by the target's engine `World`.
+/// Play the demo: the `World` feeds the cpal stream, while the `Controls` are ticked off the audio
+/// thread to start notes and run the NRT cleanup.
 fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate.0 as f32;
 
-    let mut source = engine::new(sample_rate, channels);
+    let (controls, mut source) = engine::new(sample_rate, channels);
     // Reused interleaved `f32` scratch buffer; the source fills it, then we convert to `T`.
     let mut scratch: Vec<f32> = Vec::new();
 
@@ -64,12 +66,27 @@ fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::S
         .expect("failed to build output stream");
     stream.play().expect("failed to start audio stream");
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        println!("playing a 440 Hz sine for 10s...");
-        std::thread::sleep(std::time::Duration::from_secs(10));
+    run_control_plane(controls, stream);
+}
+
+/// Tick the control plane (`Controls`) off the audio thread for the demo's lifetime, holding the
+/// stream alive meanwhile.
+#[cfg(not(target_arch = "wasm32"))]
+fn run_control_plane(mut controls: demo::Controls, _stream: cpal::Stream) {
+    use std::time::Duration;
+    println!("playing a looping motif for 10s...");
+    let ticks = 10_000 / demo::TICK_MS;
+    for _ in 0..ticks {
+        controls.tick();
+        std::thread::sleep(Duration::from_millis(u64::from(demo::TICK_MS)));
     }
-    // On the web `main` returns immediately; keep the stream (and its callback) alive.
-    #[cfg(target_arch = "wasm32")]
+}
+
+/// On the web, `main` returns immediately, so run the control plane on a periodic timer and keep
+/// both it and the audio stream alive.
+#[cfg(target_arch = "wasm32")]
+fn run_control_plane(mut controls: demo::Controls, stream: cpal::Stream) {
+    let interval = gloo_timers::callback::Interval::new(demo::TICK_MS, move || controls.tick());
+    interval.forget();
     std::mem::forget(stream);
 }

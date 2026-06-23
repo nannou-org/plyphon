@@ -1,7 +1,7 @@
 [package]
 name = "plyphon-example"
 version = "0.1.0"
-description = "Minimal SinOsc example played via cpal, natively and on the web."
+description = "Minimal plyphon example played via cpal, natively and on the web."
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -16,7 +16,8 @@ path = "src/main.rs"
 cpal.workspace = true
 plyphon.workspace = true
 
-# Web-only: cpal's WebAudio backend plus the wasm glue.
+# Web-only: cpal's WebAudio backend, the wasm glue, and a timer to tick the NRT side.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cpal = { workspace = true, features = ["wasm-bindgen"] }
 console_error_panic_hook.workspace = true
+gloo-timers = "0.3"
