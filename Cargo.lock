@@ -485,6 +485,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "plyphon-buffers"
+version = "0.1.0"
+dependencies = [
+ "plyphon",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "plyphon-example-control"
 version = "0.1.0"
 dependencies = [
@@ -511,6 +519,16 @@ dependencies = [
  "console_error_panic_hook",
  "cpal",
  "plyphon",
+]
+
+[[package]]
+name = "plyphon-example-sampler"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "plyphon",
+ "plyphon-buffers",
 ]
 
 [[package]]

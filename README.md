@@ -19,11 +19,13 @@ and plays both natively and in the browser.
 | [`plyphon`](crates/plyphon) | The pure-Rust engine core. |
 | [`scgf`](crates/scgf) | Parser and encoder for SuperCollider's binary SynthDef format (SCgf). |
 | [`plyphon-osc`](crates/plyphon-osc) | SuperCollider-compatible OSC command front-end. |
+| [`plyphon-buffers`](crates/plyphon-buffers) | Async `BufferSource` traits for loading sample data (the I/O seam; impls are the app's). |
 | [`plyphon-example-motif`](crates/plyphon-example-motif) | A looping motif of self-freeing notes via `cpal` (the web demo). |
 | [`plyphon-example-sine`](crates/plyphon-example-sine) | The simplest example: a continuous sine. |
 | [`plyphon-example-routing`](crates/plyphon-example-routing) | Bus routing: an LFO-swept filter on noise, wired through audio and control buses. |
 | [`plyphon-example-control`](crates/plyphon-example-control) | Host-driven control buses: an arpeggio steered by `/n_map` + `/c_set`. |
 | [`plyphon-example-scgf`](crates/plyphon-example-scgf) | Loads a SuperCollider SCgf-compiled SynthDef and plays it. |
+| [`plyphon-example-sampler`](crates/plyphon-example-sampler) | Implements a `BufferSource` (a WAV loader) and plays a loaded sample with `PlayBuf`. |
 
 ## Building
 
@@ -38,6 +40,7 @@ cargo run -p plyphon-example-sine      # the simplest demo: a continuous sine
 cargo run -p plyphon-example-routing   # bus routing: an LFO-swept filter on noise
 cargo run -p plyphon-example-control   # host-driven control buses: a bus-steered arpeggio
 cargo run -p plyphon-example-scgf      # load and play a SuperCollider SCgf SynthDef
+cargo run -p plyphon-example-sampler   # implement a BufferSource and play a loaded sample
 cargo build --target wasm32-unknown-unknown -p plyphon-example-motif
 ```
 
