@@ -602,6 +602,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "plyphon-example-stream"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-net",
+ "gloo-timers",
+ "hound",
+ "plyphon",
+ "plyphon-buffers",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "plyphon-osc"
 version = "0.1.0"
 dependencies = [
