@@ -44,6 +44,8 @@ pub struct Synth {
     /// into the parameter's wire at the start of every block; `None` leaves it at its set value.
     param_maps: Box<[Option<u32>]>,
     block_size: usize,
+    /// Whether the one-time [`Ugen::init`] seeding pass has run (it runs on the first control block).
+    initialized: bool,
 }
 
 impl Synth {
@@ -70,6 +72,7 @@ impl Synth {
             param_wires,
             param_maps,
             block_size,
+            initialized: false,
         }
     }
 
@@ -88,6 +91,7 @@ impl Synth {
             param_wires,
             param_maps,
             block_size,
+            initialized,
         } = self;
         let bs = *block_size;
         // Apply control-bus mappings (`/n_map`): a mapped parameter takes the bus's current value.
@@ -96,6 +100,10 @@ impl Synth {
                 control_wires[param_wires[p] as usize] = io.control_in(bus as usize);
             }
         }
+        // On the first block only, run each UGen's one-time `init` seeding pass (in topo order, just
+        // before its first `process`) so state is seeded from now-live inputs - see [`Ugen::init`].
+        let first = !*initialized;
+        *initialized = true;
         let mut done = DoneAction::Nothing;
         for u in 0..ugens.len() {
             let ins = Inputs::new(
@@ -104,6 +112,9 @@ impl Synth {
                 control_wires.as_slice(),
                 bs,
             );
+            if first {
+                ugens[u].init(ctx, ins, io);
+            }
             let mut outs = Outputs::new(scratch.as_mut_slice(), bs);
             done = done.max(ugens[u].process(ctx, ins, &mut outs, io));
             // Publish this UGen's scratch outputs into the arena wires.

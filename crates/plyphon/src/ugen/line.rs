@@ -12,7 +12,6 @@ use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
 /// sample. When the ramp completes it requests its `doneAction` once (e.g. free the enclosing synth).
 pub struct Line {
     audio: bool,
-    started: bool,
     done: bool,
     done_action: DoneAction,
     value: f64,
@@ -38,35 +37,36 @@ impl Line {
 }
 
 impl Ugen for Line {
+    fn init(&mut self, ctx: &ProcessContext<'_>, ins: Inputs<'_>, _io: &mut Io) {
+        // Latch the ramp arguments from the (now live) inputs, as SuperCollider does at first calc.
+        let start = ins.control(Self::START) as f64;
+        let end = ins.control(Self::END) as f64;
+        let dur = (ins.control(Self::DUR) as f64).max(0.0);
+        // Frames to ramp over: samples at audio rate, control blocks at control rate.
+        let rate = if self.audio {
+            ctx.audio.sample_rate
+        } else {
+            ctx.control.sample_rate
+        };
+        let frames = (dur * rate).max(1.0);
+        self.value = start;
+        self.end = end;
+        self.slope = (end - start) / frames;
+        self.remaining = frames;
+        self.done_action = if ins.len() > Self::DONE {
+            DoneAction::from_code(ins.control(Self::DONE))
+        } else {
+            DoneAction::Nothing
+        };
+    }
+
     fn process(
         &mut self,
-        ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
+        _ctx: &ProcessContext<'_>,
+        _ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
         _io: &mut Io,
     ) -> DoneAction {
-        if !self.started {
-            let start = ins.control(Self::START) as f64;
-            let end = ins.control(Self::END) as f64;
-            let dur = (ins.control(Self::DUR) as f64).max(0.0);
-            // Frames to ramp over: samples at audio rate, control blocks at control rate.
-            let rate = if self.audio {
-                ctx.audio.sample_rate
-            } else {
-                ctx.control.sample_rate
-            };
-            let frames = (dur * rate).max(1.0);
-            self.value = start;
-            self.end = end;
-            self.slope = (end - start) / frames;
-            self.remaining = frames;
-            self.done_action = if ins.len() > Self::DONE {
-                DoneAction::from_code(ins.control(Self::DONE))
-            } else {
-                DoneAction::Nothing
-            };
-            self.started = true;
-        }
         if self.audio {
             let out = outs.audio(0);
             for o in out.iter_mut() {
@@ -98,7 +98,6 @@ impl UgenCtor for LineCtor {
         }
         Ok(Box::new(Line {
             audio: ctx.rate == Rate::Audio,
-            started: false,
             done: false,
             done_action: DoneAction::Nothing,
             value: 0.0,

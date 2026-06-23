@@ -79,6 +79,13 @@ impl Lag {
 }
 
 impl Ugen for Lag {
+    fn init(&mut self, _ctx: &ProcessContext<'_>, ins: Inputs<'_>, _io: &mut Io) {
+        // Start at the input value (scsynth's `m_y1 = ZIN0(0)`) so the first block holds steady
+        // instead of ramping up from zero - the coefficient is still computed lazily in `process`,
+        // whose sentinel also catches later `lagTime` changes.
+        self.y = ins.control(Self::IN);
+    }
+
     fn process(
         &mut self,
         ctx: &ProcessContext<'_>,

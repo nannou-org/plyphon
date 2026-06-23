@@ -211,6 +211,20 @@ impl<'a> Outputs<'a> {
 
 /// A unit generator: constructed off the audio thread, processed on it.
 pub trait Ugen: Send {
+    /// Seed state from the UGen's initial inputs.
+    ///
+    /// Called once, on the first control block, in topological order immediately before this UGen's
+    /// first [`Ugen::process`] - on the audio thread, where inputs are live. By then every input is
+    /// readable at its real starting value: constants, control parameters (including `/s_new` args
+    /// and `/n_map`ped buses), and the first-block outputs of upstream UGens. Stateful UGens seed
+    /// here so their first block is already correct - e.g. a smoother starts *at* its input rather
+    /// than ramping up from zero - which is what avoids onset clicks.
+    ///
+    /// This mirrors the seeding an scsynth `*_Ctor` does at its first calc; *allocation*, by
+    /// contrast, happens earlier and off the audio thread when the UGen is built. Like
+    /// [`Ugen::process`] it must not allocate, block, or take locks. The default is a no-op.
+    fn init(&mut self, _ctx: &ProcessContext<'_>, _ins: Inputs<'_>, _io: &mut Io) {}
+
     /// Compute one control block.
     ///
     /// Reads `ins`, writes its outputs into `outs`, and (for I/O UGens like `In`/`Out`/`PlayBuf`)
