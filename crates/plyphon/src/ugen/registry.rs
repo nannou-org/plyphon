@@ -12,6 +12,7 @@ use crate::ugen::Ugen;
 use crate::ugen::band_limited::{PulseCtor, SawCtor};
 use crate::ugen::binary_op::BinaryOpCtor;
 use crate::ugen::disk_in::DiskInCtor;
+use crate::ugen::env::EnvGenCtor;
 use crate::ugen::filter::{ButterCtor, Kind};
 use crate::ugen::input::InCtor;
 use crate::ugen::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
@@ -84,6 +85,7 @@ impl UgenRegistry {
         registry.register("MulAdd", Box::new(MulAddCtor));
         registry.register("Lag", Box::new(LagCtor));
         registry.register("Amplitude", Box::new(AmplitudeCtor));
+        registry.register("EnvGen", Box::new(EnvGenCtor));
         registry
     }
 

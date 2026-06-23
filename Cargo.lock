@@ -551,6 +551,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plyphon-example-envelope"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-timers",
+ "plyphon",
+]
+
+[[package]]
 name = "plyphon-example-motif"
 version = "0.1.0"
 dependencies = [

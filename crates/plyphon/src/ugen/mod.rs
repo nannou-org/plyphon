@@ -13,6 +13,7 @@
 pub mod band_limited;
 pub mod binary_op;
 pub mod disk_in;
+pub mod env;
 pub mod filter;
 pub mod input;
 pub mod lf;
@@ -57,6 +58,7 @@ impl DoneAction {
 pub use band_limited::{Pulse, Saw};
 pub use binary_op::BinaryOp;
 pub use disk_in::DiskIn;
+pub use env::EnvGen;
 pub use filter::Butter;
 pub use input::In;
 pub use lf::{Impulse, LFPulse, LFSaw};

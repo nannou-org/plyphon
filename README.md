@@ -29,6 +29,7 @@ and plays both natively and in the browser.
 | [`plyphon-example-stream`](crates/plyphon-example-stream) | Streams a WAV from storage in chunks via a `BufferStream`/`StreamFeeder` and plays it with `DiskIn`. |
 | [`plyphon-example-waveforms`](crates/plyphon-example-waveforms) | Cycles through the oscillators (`Saw`/`Pulse`/`LFSaw`/`LFPulse`/`Impulse`) through a filter. |
 | [`plyphon-example-pan`](crates/plyphon-example-pan) | A tone auto-panned across the stereo field with `Pan2`. |
+| [`plyphon-example-envelope`](crates/plyphon-example-envelope) | Percussive plucks shaped by multi-segment `EnvGen` envelopes that free their own synths. |
 
 ## Building
 
@@ -47,6 +48,7 @@ cargo run -p plyphon-example-sampler   # implement a BufferSource and play a loa
 cargo run -p plyphon-example-stream    # stream a WAV in chunks and play it with DiskIn
 cargo run -p plyphon-example-waveforms # cycle through the oscillators through a filter
 cargo run -p plyphon-example-pan       # a tone auto-panned across the stereo field
+cargo run -p plyphon-example-envelope  # percussive plucks shaped by EnvGen envelopes
 cargo build --target wasm32-unknown-unknown -p plyphon-example-motif
 ```
 
