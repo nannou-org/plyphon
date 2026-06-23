@@ -7,6 +7,7 @@
 //! [`Event`] carries notifications (node started/ended/paused/resumed) for the consumer.
 
 use crate::buffer::Buffer;
+use crate::stream::StreamPlayback;
 use crate::synth::Synth;
 use crate::tree::AddAction;
 
@@ -82,7 +83,15 @@ pub enum Command {
         /// The pre-built buffer (all allocation and loading already done off the audio thread).
         buffer: Box<Buffer>,
     },
-    /// Free the buffer at `index` (scsynth's `/b_free`), routing it to the trash ring.
+    /// Install (or replace) a disk-streaming endpoint at buffer `index` (scsynth's
+    /// `Buffer.cueSoundFile`). Any slot previously at `index` is routed to the trash ring.
+    CueStream {
+        /// Buffer table index.
+        index: usize,
+        /// The pre-built RT-side stream endpoint (its rings allocated off the audio thread).
+        playback: Box<StreamPlayback>,
+    },
+    /// Free the buffer at `index` (scsynth's `/b_free`), routing any slot to the trash ring.
     FreeBuffer {
         /// Buffer table index.
         index: usize,
@@ -95,6 +104,8 @@ pub enum Trash {
     Synth(Box<Synth>),
     /// A freed or replaced buffer.
     Buffer(Box<Buffer>),
+    /// A freed or replaced streaming endpoint (its rings drop off the audio thread).
+    Stream(Box<StreamPlayback>),
 }
 
 /// A notification flowing RT-side -> NRT-side, surfaced to the consumer by the

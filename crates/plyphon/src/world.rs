@@ -11,7 +11,7 @@
 
 use rtrb::{Consumer, Producer, PushError};
 
-use crate::buffer::BufferTable;
+use crate::buffer::{BufferSlot, BufferTable};
 use crate::bus::Buses;
 use crate::command::{Command, Event, Trash};
 use crate::engine::Options;
@@ -214,14 +214,16 @@ impl World {
                 }
             }
             Command::SetBuffer { index, buffer } => {
-                if let Some(old) = self.buffers.set(index, buffer) {
-                    self.trash(Trash::Buffer(old));
-                }
+                let old = self.buffers.set(index, buffer);
+                self.trash_slot(old);
+            }
+            Command::CueStream { index, playback } => {
+                let old = self.buffers.cue(index, playback);
+                self.trash_slot(old);
             }
             Command::FreeBuffer { index } => {
-                if let Some(old) = self.buffers.free(index) {
-                    self.trash(Trash::Buffer(old));
-                }
+                let old = self.buffers.free(index);
+                self.trash_slot(old);
             }
             Command::FreeNode { node } => {
                 if let Some(synth) = self.tree.free_node(node) {
@@ -247,6 +249,15 @@ impl World {
     fn trash(&mut self, item: Trash) {
         if let Err(PushError::Full(item)) = self.trash_tx.push(item) {
             self.pending_trash.push(item);
+        }
+    }
+
+    /// Route a displaced buffer-table slot to the trash ring (an empty slot needs no dropping).
+    fn trash_slot(&mut self, slot: Option<BufferSlot>) {
+        match slot {
+            Some(BufferSlot::Loaded(buffer)) => self.trash(Trash::Buffer(buffer)),
+            Some(BufferSlot::Stream(stream)) => self.trash(Trash::Stream(stream)),
+            Some(BufferSlot::Empty) | None => {}
         }
     }
 

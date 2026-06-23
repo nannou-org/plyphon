@@ -13,6 +13,7 @@
 
 use crate::buffer::{Buffer, BufferTable};
 use crate::bus::Buses;
+use crate::stream::StreamPlayback;
 
 /// The borrowed, restricted view of the World's shared storage handed to [`Ugen::process`].
 ///
@@ -71,5 +72,10 @@ impl<'a> Io<'a> {
     /// The (flat, in-memory) buffer at `index`, if one is installed, for `PlayBuf`.
     pub fn buffer(&self, index: usize) -> Option<&Buffer> {
         self.buffers.get(index)
+    }
+
+    /// The streaming endpoint at `index`, mutably (to pull chunks), for `DiskIn`.
+    pub fn stream_mut(&mut self, index: usize) -> Option<&mut StreamPlayback> {
+        self.buffers.stream_mut(index)
     }
 }

@@ -11,6 +11,7 @@
 //! aliasing `float*` wires.
 
 pub mod binary_op;
+pub mod disk_in;
 pub mod filter;
 pub mod input;
 pub mod line;
@@ -50,6 +51,7 @@ impl DoneAction {
 }
 
 pub use binary_op::BinaryOp;
+pub use disk_in::DiskIn;
 pub use filter::Butter;
 pub use input::In;
 pub use line::Line;

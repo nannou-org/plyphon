@@ -14,6 +14,7 @@ use crate::buffer::Buffer;
 use crate::command::Command;
 use crate::error::BuildError;
 use crate::rate::RateInfo;
+use crate::stream::{StreamProducer, cue};
 use crate::synthdef::{SynthDef, SynthDefLibrary};
 use crate::tree::AddAction;
 use crate::ugen::registry::UgenRegistry;
@@ -231,5 +232,25 @@ impl Controller {
         self.tx
             .push(Command::FreeBuffer { index })
             .map_err(|_| QueueFull)
+    }
+
+    /// Cue a disk-streaming buffer at `index` (scsynth's `Buffer.cueSoundFile`).
+    ///
+    /// Allocates a queue of `num_chunks` chunks of `chunk_frames` frames each (off the audio thread)
+    /// and installs the RT-side playback endpoint. Returns the [`StreamProducer`] for a feeder to
+    /// fill from a sound source; `DiskIn.ar(channels, index)` plays it.
+    pub fn buffer_cue(
+        &mut self,
+        index: usize,
+        channels: usize,
+        sample_rate: f64,
+        chunk_frames: usize,
+        num_chunks: usize,
+    ) -> Result<StreamProducer, QueueFull> {
+        let (playback, producer) = cue(channels, sample_rate, chunk_frames, num_chunks);
+        self.tx
+            .push(Command::CueStream { index, playback })
+            .map_err(|_| QueueFull)?;
+        Ok(producer)
     }
 }

@@ -5,9 +5,13 @@
 //! audio thread (allocating, possibly loading from storage - a host concern) and then installed into
 //! the [`World`](crate::world::World)'s buffer table with [`Controller::buffer_set`] over the command
 //! ring, exactly like a synth. The audio thread only ever reads a finished `Buffer`; UGens such as
-//! `PlayBuf` reach it (read-only) through [`ProcessContext`](crate::ugen::ProcessContext).
+//! `PlayBuf` reach it (read-only) through their [`Io`](crate::io::Io) handle.
+//!
+//! A table slot can instead hold a disk-streaming endpoint (see [`crate::stream`]), read by `DiskIn`.
 //!
 //! [`Controller::buffer_set`]: crate::controller::Controller::buffer_set
+
+use crate::stream::StreamPlayback;
 
 /// A bank of interleaved audio samples (scsynth's `SndBuf`).
 ///
@@ -89,13 +93,14 @@ impl Buffer {
     }
 }
 
-/// One slot in the [`BufferTable`]. An enum (rather than `Option`) so a streaming variant can be
-/// added later without changing the table API (see the `buffer` module docs).
-enum BufferSlot {
+/// One slot in the [`BufferTable`]: empty, a flat in-memory buffer, or a disk-streaming endpoint.
+pub(crate) enum BufferSlot {
     /// No buffer installed.
     Empty,
-    /// An in-memory buffer.
+    /// An in-memory buffer (read by `PlayBuf`).
     Loaded(Box<Buffer>),
+    /// A streaming buffer endpoint (read by `DiskIn`).
+    Stream(Box<StreamPlayback>),
 }
 
 /// The [`World`](crate::world::World)'s fixed-capacity table of buffers, indexed by buffer number.
@@ -116,7 +121,8 @@ impl BufferTable {
         BufferTable { slots }
     }
 
-    /// The buffer at `index`, or `None` if the slot is empty or out of range. RT-safe (no panic).
+    /// The flat buffer at `index`, or `None` if the slot is empty, a stream, or out of range.
+    /// RT-safe (no panic).
     pub fn get(&self, index: usize) -> Option<&Buffer> {
         match self.slots.get(index) {
             Some(BufferSlot::Loaded(buffer)) => Some(buffer),
@@ -124,26 +130,41 @@ impl BufferTable {
         }
     }
 
-    /// Install `buffer` at `index`, returning whatever buffer must now be dropped off the audio
-    /// thread: the one it replaced, or - if `index` is out of range - `buffer` itself (uninstalled).
-    pub fn set(&mut self, index: usize, buffer: Box<Buffer>) -> Option<Box<Buffer>> {
+    /// The streaming endpoint at `index`, mutably (for `DiskIn` to pull chunks), or `None` if the
+    /// slot is empty, a flat buffer, or out of range. RT-safe (no panic).
+    pub fn stream_mut(&mut self, index: usize) -> Option<&mut StreamPlayback> {
         match self.slots.get_mut(index) {
-            Some(slot) => match core::mem::replace(slot, BufferSlot::Loaded(buffer)) {
-                BufferSlot::Loaded(old) => Some(old),
-                BufferSlot::Empty => None,
-            },
-            None => Some(buffer),
+            Some(BufferSlot::Stream(stream)) => Some(stream),
+            _ => None,
         }
     }
 
-    /// Empty `index`, returning the buffer it held (if any) for off-audio-thread dropping.
-    pub fn free(&mut self, index: usize) -> Option<Box<Buffer>> {
+    /// Install flat `buffer` at `index`, returning the slot it replaced (or `buffer` itself if
+    /// `index` is out of range) so the caller can drop it off the audio thread.
+    pub(crate) fn set(&mut self, index: usize, buffer: Box<Buffer>) -> Option<BufferSlot> {
+        self.replace(index, BufferSlot::Loaded(buffer))
+    }
+
+    /// Install a streaming endpoint at `index` (scsynth's `Buffer.cueSoundFile`), returning the
+    /// replaced slot for off-audio-thread dropping.
+    pub(crate) fn cue(&mut self, index: usize, stream: Box<StreamPlayback>) -> Option<BufferSlot> {
+        self.replace(index, BufferSlot::Stream(stream))
+    }
+
+    /// Empty `index`, returning the slot it held (if any) for off-audio-thread dropping.
+    pub(crate) fn free(&mut self, index: usize) -> Option<BufferSlot> {
+        self.replace(index, BufferSlot::Empty)
+    }
+
+    /// Swap `slot` into `index`, returning the displaced slot to be dropped off the audio thread
+    /// (an `Empty` displacement is reported as `None`; an out-of-range index returns `slot` itself).
+    fn replace(&mut self, index: usize, slot: BufferSlot) -> Option<BufferSlot> {
         match self.slots.get_mut(index) {
-            Some(slot) => match core::mem::replace(slot, BufferSlot::Empty) {
-                BufferSlot::Loaded(old) => Some(old),
+            Some(existing) => match core::mem::replace(existing, slot) {
                 BufferSlot::Empty => None,
+                old => Some(old),
             },
-            None => None,
+            None => Some(slot),
         }
     }
 }

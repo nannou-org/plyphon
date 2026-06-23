@@ -10,6 +10,7 @@ use crate::error::BuildError;
 use crate::rate::{Rate, RateInfo};
 use crate::ugen::Ugen;
 use crate::ugen::binary_op::BinaryOpCtor;
+use crate::ugen::disk_in::DiskInCtor;
 use crate::ugen::filter::{ButterCtor, Kind};
 use crate::ugen::input::InCtor;
 use crate::ugen::line::LineCtor;
@@ -69,6 +70,7 @@ impl UgenRegistry {
         registry.register("HPF", Box::new(ButterCtor(Kind::HighPass)));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
+        registry.register("DiskIn", Box::new(DiskInCtor));
         registry
     }
 
