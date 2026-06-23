@@ -8,16 +8,19 @@ scsynth-compatible synthesis core that can be driven by any pure-Rust audio back
 allocation on the audio thread).
 
 This is early-stage research, developed in parallel with [`scsynth-rs`][scsynth-rs] (which
-embeds the C++ engine via FFI). plyphon currently ships a minimal placeholder - a `SinOsc`
-playing through `cpal` natively and on the web - while the real lock-free engine is built up
-incrementally.
+embeds the C++ engine via FFI). plyphon already runs a lock-free `World`/`Controller`/`Nrt`
+engine with a growing set of UGens, loads SuperCollider SynthDefs (SCgf), accepts OSC commands,
+and plays both natively and in the browser.
 
 ## Crates
 
 | Crate | Description |
 | --- | --- |
-| [`plyphon`](crates/plyphon) | The pure-Rust engine core (currently a `SinOsc` placeholder). |
-| [`plyphon-example`](crates/plyphon-example) | Minimal native + web SinOsc demo driven by `cpal`. |
+| [`plyphon`](crates/plyphon) | The pure-Rust engine core. |
+| [`scgf`](crates/scgf) | Parser and encoder for SuperCollider's binary SynthDef format (SCgf). |
+| [`plyphon-osc`](crates/plyphon-osc) | SuperCollider-compatible OSC command front-end. |
+| [`plyphon-example-motif`](crates/plyphon-example-motif) | A looping motif of self-freeing notes via `cpal` (the web demo). |
+| [`plyphon-example-sine`](crates/plyphon-example-sine) | The simplest example: a continuous sine. |
 
 ## Building
 
@@ -28,7 +31,8 @@ wasm tooling) are provided by the Nix flake:
 nix develop            # or `direnv allow` (uses ./.envrc)
 cargo build
 cargo test
-cargo build --target wasm32-unknown-unknown -p plyphon-example
+cargo run -p plyphon-example-sine   # the simplest demo: a continuous sine
+cargo build --target wasm32-unknown-unknown -p plyphon-example-motif
 ```
 
 ## The web demo
@@ -42,8 +46,8 @@ trunk serve
 Open `localhost:8088` and click once to start audio (browsers hold audio until a user gesture).
 
 `cpal` is the audio backend on both targets: natively via ALSA/CoreAudio/WASAPI, on the web via
-its WebAudio backend (the `wasm-bindgen` cpal feature). The audio *source* is the same
-`plyphon::SinOsc` on both.
+its WebAudio backend (the `wasm-bindgen` cpal feature). The `plyphon` engine that feeds it is
+identical on both - the only platform-specific part of the demo is how its control plane is ticked.
 
 ## License
 

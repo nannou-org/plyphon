@@ -1,5 +1,5 @@
 [build]
-target = "crates/plyphon-example/web/index.html"
+target = "crates/plyphon-example-motif/web/index.html"
 public_url = "./"
 filehash = false
 
