@@ -11,6 +11,7 @@ use crate::rate::{Rate, RateInfo};
 use crate::ugen::Ugen;
 use crate::ugen::binary_op::BinaryOpCtor;
 use crate::ugen::filter::{ButterCtor, Kind};
+use crate::ugen::input::InCtor;
 use crate::ugen::line::LineCtor;
 use crate::ugen::noise::WhiteNoiseCtor;
 use crate::ugen::out::OutCtor;
@@ -23,6 +24,8 @@ pub struct BuildContext<'a> {
     pub input_rates: &'a [Rate],
     /// The UGen's own calculation rate (so it can specialize its output: a block vs one value).
     pub rate: Rate,
+    /// Number of outputs the SynthDef assigns this UGen (e.g. how many channels `In` reads).
+    pub num_outputs: usize,
     /// Audio-rate constants.
     pub audio: &'a RateInfo,
     /// Control-rate constants.
@@ -57,6 +60,7 @@ impl UgenRegistry {
         let mut registry = Self::new();
         registry.register("SinOsc", Box::new(SinOscCtor));
         registry.register("Out", Box::new(OutCtor));
+        registry.register("In", Box::new(InCtor));
         registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));
         registry.register("UnaryOpUGen", Box::new(UnaryOpCtor));
         registry.register("Line", Box::new(LineCtor));

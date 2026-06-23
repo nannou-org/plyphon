@@ -7,7 +7,7 @@
 
 use std::f64::consts::{PI, SQRT_2};
 
-use crate::bus::AudioBus;
+use crate::bus::Buses;
 use crate::error::BuildError;
 use crate::ugen::registry::{BuildContext, UgenCtor};
 use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
@@ -77,7 +77,7 @@ impl Ugen for Butter {
         ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
-        _out_bus: &mut AudioBus,
+        _buses: &mut Buses,
     ) -> DoneAction {
         let freq = ins.control(Self::FREQ);
         if freq != self.freq {

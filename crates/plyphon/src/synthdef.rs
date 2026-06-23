@@ -173,6 +173,7 @@ impl SynthDef {
                 audio,
                 control,
                 rate: spec.rate,
+                num_outputs: spec.num_outputs,
                 special_index: spec.special_index,
                 seed: base_seed.wrapping_add((u as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
             };

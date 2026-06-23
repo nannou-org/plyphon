@@ -11,7 +11,7 @@
 
 use rtrb::{Consumer, Producer, PushError};
 
-use crate::bus::AudioBus;
+use crate::bus::Buses;
 use crate::command::{Command, Event, Trash};
 use crate::engine::Options;
 use crate::rate::RateInfo;
@@ -24,7 +24,7 @@ pub struct World {
     audio: RateInfo,
     control: RateInfo,
     wavetables: Wavetables,
-    out_bus: AudioBus,
+    buses: Buses,
     tree: NodeTree,
     rx: Consumer<Command>,
     trash_tx: Producer<Trash>,
@@ -55,7 +55,13 @@ impl World {
             audio,
             control,
             wavetables: Wavetables::new(),
-            out_bus: AudioBus::new(options.output_channels, options.block_size),
+            buses: Buses::new(
+                options.output_channels,
+                options.input_channels,
+                options.audio_bus_channels,
+                options.control_bus_channels,
+                options.block_size,
+            ),
             tree: NodeTree::new(options.max_nodes, crate::engine::ROOT_GROUP_ID),
             rx,
             trash_tx,
@@ -74,14 +80,36 @@ impl World {
     ///
     /// Reblocks the fixed control-block size to `output`'s arbitrary length. RT-safe.
     pub fn fill(&mut self, output: &mut [f32], out_channels: usize) {
+        self.fill_duplex(output, out_channels, &[], 0);
+    }
+
+    /// Like [`World::fill`], but also feeds interleaved host `input` (`in_channels` wide) into the
+    /// input bus region for `In.ar` to read.
+    ///
+    /// Input is deinterleaved one control block at a time, so for exact input/output alignment call
+    /// this with `output`/`input` lengths that are whole multiples of the block size (and do not
+    /// interleave it with plain [`World::fill`] on the same `World`); otherwise the tail of a block
+    /// that straddles a buffer boundary reads as zero. RT-safe.
+    pub fn fill_duplex(
+        &mut self,
+        output: &mut [f32],
+        out_channels: usize,
+        input: &[f32],
+        in_channels: usize,
+    ) {
         if out_channels == 0 {
             return;
         }
         let frames = output.len() / out_channels;
-        let bus_channels = self.out_bus.num_channels();
+        let out_bus_channels = self.buses.output_channels();
         let mut frame = 0;
         while frame < frames {
             if self.block_frames_emitted >= self.block_size {
+                if in_channels > 0 {
+                    let avail = (frames - frame).min(self.block_size);
+                    let block_in = &input[frame * in_channels..(frame + avail) * in_channels];
+                    self.buses.write_input(block_in, in_channels);
+                }
                 self.run_one_block();
                 self.block_frames_emitted = 0;
             }
@@ -89,8 +117,8 @@ impl World {
             let n = avail.min(frames - frame);
             let offset = self.block_frames_emitted;
             for c in 0..out_channels {
-                if c < bus_channels {
-                    let chan = self.out_bus.channel(c);
+                if c < out_bus_channels {
+                    let chan = self.buses.audio().channel(c);
                     for i in 0..n {
                         output[(frame + i) * out_channels + c] = chan[offset + i];
                     }
@@ -119,8 +147,8 @@ impl World {
         };
         self.done_nodes.clear();
         self.tree
-            .process(&ctx, &mut self.out_bus, &mut self.done_nodes);
-        self.out_bus.silence_untouched(buf_counter);
+            .process(&ctx, &mut self.buses, &mut self.done_nodes);
+        self.buses.silence_untouched_outputs(buf_counter);
         self.apply_done_actions();
     }
 
@@ -172,6 +200,14 @@ impl World {
             Command::SetControl { node, param, value } => {
                 if let Some(synth) = self.tree.synth_mut(node) {
                     synth.set_control(param, value);
+                }
+            }
+            Command::SetControlBus { bus, value } => {
+                self.buses.control_mut().set(bus as usize, value);
+            }
+            Command::MapControl { node, param, bus } => {
+                if let Some(synth) = self.tree.synth_mut(node) {
+                    synth.map_control(param, bus);
                 }
             }
             Command::FreeNode { node } => {

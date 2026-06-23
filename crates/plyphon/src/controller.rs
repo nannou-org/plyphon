@@ -145,6 +145,50 @@ impl Controller {
             .map_err(|_| QueueFull)
     }
 
+    /// Set control bus channel `bus` to `value` (scsynth's `/c_set`).
+    pub fn set_control_bus(&mut self, bus: u32, value: f32) -> Result<(), QueueFull> {
+        self.tx
+            .push(Command::SetControlBus { bus, value })
+            .map_err(|_| QueueFull)
+    }
+
+    /// Set consecutive control bus channels from `start` to `values` (scsynth's `/c_setn`).
+    pub fn set_control_bus_n(&mut self, start: u32, values: &[f32]) -> Result<(), QueueFull> {
+        for (i, &value) in values.iter().enumerate() {
+            self.set_control_bus(start + i as u32, value)?;
+        }
+        Ok(())
+    }
+
+    /// Map control parameter `param` of node `node` to control `bus`, or unmap it with `None`
+    /// (scsynth's `/n_map`). While mapped, the parameter reads the bus each block.
+    pub fn map_control(
+        &mut self,
+        node: i32,
+        param: usize,
+        bus: Option<u32>,
+    ) -> Result<(), QueueFull> {
+        self.tx
+            .push(Command::MapControl { node, param, bus })
+            .map_err(|_| QueueFull)
+    }
+
+    /// Map `count` consecutive control parameters of `node` (from `param`) to consecutive control
+    /// buses (from `bus`), or unmap them all with `None` (scsynth's `/n_mapn`).
+    pub fn map_control_n(
+        &mut self,
+        node: i32,
+        param: usize,
+        bus: Option<u32>,
+        count: usize,
+    ) -> Result<(), QueueFull> {
+        for i in 0..count {
+            let mapped = bus.map(|b| b + i as u32);
+            self.map_control(node, param + i, mapped)?;
+        }
+        Ok(())
+    }
+
     /// Free node `node`.
     pub fn free(&mut self, node: i32) -> Result<(), QueueFull> {
         self.tx

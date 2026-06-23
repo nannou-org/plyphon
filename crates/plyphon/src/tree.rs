@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::bus::AudioBus;
+use crate::bus::Buses;
 use crate::synth::Synth;
 use crate::ugen::{DoneAction, ProcessContext};
 
@@ -191,18 +191,18 @@ impl NodeTree {
     pub fn process(
         &mut self,
         ctx: &ProcessContext<'_>,
-        out_bus: &mut AudioBus,
+        buses: &mut Buses,
         done: &mut Vec<(u32, DoneAction)>,
     ) {
         let root = self.root_index;
-        self.process_group(root, ctx, out_bus, done);
+        self.process_group(root, ctx, buses, done);
     }
 
     fn process_group(
         &mut self,
         group_idx: u32,
         ctx: &ProcessContext<'_>,
-        out_bus: &mut AudioBus,
+        buses: &mut Buses,
         done: &mut Vec<(u32, DoneAction)>,
     ) {
         let mut cur = match &self.slots[group_idx as usize] {
@@ -218,7 +218,7 @@ impl NodeTree {
                 Slot::Free => None,
             };
             if self.is_group(idx) {
-                self.process_group(idx, ctx, out_bus, done);
+                self.process_group(idx, ctx, buses, done);
             } else {
                 let active = matches!(&self.slots[idx as usize], Slot::Node(node) if !node.paused);
                 if active
@@ -227,7 +227,7 @@ impl NodeTree {
                         ..
                     }) = &mut self.slots[idx as usize]
                 {
-                    let action = synth.process(ctx, out_bus);
+                    let action = synth.process(ctx, buses);
                     if action != DoneAction::Nothing {
                         done.push((idx, action));
                     }

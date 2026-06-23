@@ -1,13 +1,17 @@
-//! `Out` - writes signals to output-bus channels, plyphon's port of scsynth's `Out`.
+//! `Out` - writes signals to audio or control bus channels, plyphon's port of scsynth's `Out`.
 
-use crate::bus::AudioBus;
+use crate::bus::Buses;
 use crate::error::BuildError;
+use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
 use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
 
-/// `Out.ar(bus, channelsArray)`: writes each signal input to a consecutive output-bus channel
-/// starting at `bus`, summing with anything already written to that channel this block.
-pub struct Out;
+/// `Out.ar(bus, signals)` / `Out.kr(bus, signals)`: writes each signal input to a consecutive bus
+/// channel starting at `bus`, summing with anything already written to that channel this block.
+/// `Out.ar` targets the audio bus bank, `Out.kr` the control bus bank, chosen by the UGen's rate.
+pub struct Out {
+    audio: bool,
+}
 
 impl Ugen for Out {
     fn process(
@@ -15,19 +19,26 @@ impl Ugen for Out {
         ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         _outs: &mut Outputs<'_>,
-        out_bus: &mut AudioBus,
+        buses: &mut Buses,
     ) -> DoneAction {
         if ins.is_empty() {
             return DoneAction::Nothing;
         }
         // Input 0 is the starting bus channel; the rest are signals to write.
         let base = ins.control(0) as usize;
-        let num_channels = out_bus.num_channels();
-        for k in 1..ins.len() {
-            let ch = base + (k - 1);
-            if ch < num_channels {
-                let signal = ins.audio(k);
-                out_bus.write_accumulate(ch, ctx.buf_counter, signal);
+        if self.audio {
+            for k in 1..ins.len() {
+                buses
+                    .audio_mut()
+                    .write_accumulate(base + (k - 1), ctx.buf_counter, ins.audio(k));
+            }
+        } else {
+            for k in 1..ins.len() {
+                buses.control_mut().write_accumulate(
+                    base + (k - 1),
+                    ctx.buf_counter,
+                    ins.control(k),
+                );
             }
         }
         DoneAction::Nothing
@@ -38,7 +49,9 @@ impl Ugen for Out {
 pub struct OutCtor;
 
 impl UgenCtor for OutCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(Out))
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+        Ok(Box::new(Out {
+            audio: ctx.rate == Rate::Audio,
+        }))
     }
 }

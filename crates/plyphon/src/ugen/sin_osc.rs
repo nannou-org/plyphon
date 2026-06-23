@@ -2,7 +2,7 @@
 
 use core::f32::consts::TAU;
 
-use crate::bus::AudioBus;
+use crate::bus::Buses;
 use crate::error::BuildError;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
@@ -38,7 +38,7 @@ impl Ugen for SinOsc {
         ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
-        _out_bus: &mut AudioBus,
+        _buses: &mut Buses,
     ) -> DoneAction {
         let table = ctx.wavetables.sine();
         let sample_dur = ctx.audio.sample_dur as f32;

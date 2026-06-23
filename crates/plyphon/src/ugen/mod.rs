@@ -12,6 +12,7 @@
 
 pub mod binary_op;
 pub mod filter;
+pub mod input;
 pub mod line;
 pub mod noise;
 pub mod out;
@@ -19,7 +20,7 @@ pub mod registry;
 pub mod sin_osc;
 pub mod unary_op;
 
-use crate::bus::AudioBus;
+use crate::bus::Buses;
 use crate::rate::{Rate, RateInfo};
 use crate::wavetable::Wavetables;
 
@@ -49,6 +50,7 @@ impl DoneAction {
 
 pub use binary_op::BinaryOp;
 pub use filter::Butter;
+pub use input::In;
 pub use line::Line;
 pub use noise::WhiteNoise;
 pub use out::Out;
@@ -196,15 +198,15 @@ impl<'a> Outputs<'a> {
 pub trait Ugen: Send {
     /// Compute one control block.
     ///
-    /// Reads `ins`, writes its outputs into `outs`, and (for output UGens like `Out`) writes into
-    /// `out_bus`. Must not allocate, block, or take locks. Returns the [`DoneAction`] the UGen wants
-    /// applied to its enclosing synth (almost always [`DoneAction::Nothing`]).
+    /// Reads `ins`, writes its outputs into `outs`, and (for I/O UGens like `In`/`Out`) reads or
+    /// writes `buses`. Must not allocate, block, or take locks. Returns the [`DoneAction`] the UGen
+    /// wants applied to its enclosing synth (almost always [`DoneAction::Nothing`]).
     #[must_use]
     fn process(
         &mut self,
         ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
-        out_bus: &mut AudioBus,
+        buses: &mut Buses,
     ) -> DoneAction;
 }

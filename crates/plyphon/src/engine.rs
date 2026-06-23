@@ -19,8 +19,14 @@ pub struct Options {
     pub sample_rate: f64,
     /// Samples per control block (scsynth's `mBufLength`, typically 64).
     pub block_size: usize,
-    /// Number of output bus channels.
+    /// Number of hardware output bus channels (the first audio bus channels).
     pub output_channels: usize,
+    /// Number of hardware input bus channels (the audio bus channels following the outputs).
+    pub input_channels: usize,
+    /// Number of private audio bus channels for routing between synths (after output and input).
+    pub audio_bus_channels: usize,
+    /// Number of control bus channels (for `In.kr`/`Out.kr`, `/c_set`, and `/n_map`).
+    pub control_bus_channels: usize,
     /// Maximum number of live nodes (sizes the node arena and id map; never exceeded at runtime).
     pub max_nodes: usize,
     /// Capacity of the control -> RT command ring.
@@ -33,6 +39,9 @@ impl Default for Options {
             sample_rate: 48_000.0,
             block_size: 64,
             output_channels: 2,
+            input_channels: 2,
+            audio_bus_channels: 128,
+            control_bus_channels: 4096,
             max_nodes: 1024,
             command_capacity: 1024,
         }

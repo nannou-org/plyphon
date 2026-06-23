@@ -10,7 +10,7 @@
 //! single value for control-rate outputs). Inputs and outputs are therefore never borrowed both
 //! mutably and immutably at once.
 
-use crate::bus::AudioBus;
+use crate::bus::Buses;
 use crate::rate::Rate;
 use crate::ugen::{DoneAction, InputSource, Inputs, Outputs, ProcessContext, Ugen};
 
@@ -40,6 +40,9 @@ pub struct Synth {
     outputs_plan: Vec<Box<[OutputWire]>>,
     /// Control-parameter index -> control wire index.
     param_wires: Vec<u32>,
+    /// Per-parameter control-bus mapping (scsynth's `/n_map`). `Some(bus)` copies that control bus
+    /// into the parameter's wire at the start of every block; `None` leaves it at its set value.
+    param_maps: Box<[Option<u32>]>,
     block_size: usize,
 }
 
@@ -56,6 +59,7 @@ impl Synth {
         param_wires: Vec<u32>,
         block_size: usize,
     ) -> Self {
+        let param_maps = vec![None; param_wires.len()].into_boxed_slice();
         Synth {
             ugens,
             audio_wires,
@@ -64,14 +68,16 @@ impl Synth {
             inputs_plan,
             outputs_plan,
             param_wires,
+            param_maps,
             block_size,
         }
     }
 
-    /// Compute one control block, writing into `out_bus` via any `Out` UGens. Returns the strongest
-    /// [`DoneAction`] any of its UGens requested this block (e.g. an envelope asking to free).
+    /// Compute one control block, reading/writing `buses` via any `In`/`Out` UGens. Returns the
+    /// strongest [`DoneAction`] any of its UGens requested this block (e.g. an envelope asking to
+    /// free).
     #[must_use]
-    pub fn process(&mut self, ctx: &ProcessContext<'_>, out_bus: &mut AudioBus) -> DoneAction {
+    pub fn process(&mut self, ctx: &ProcessContext<'_>, buses: &mut Buses) -> DoneAction {
         let Synth {
             ugens,
             audio_wires,
@@ -79,10 +85,17 @@ impl Synth {
             scratch,
             inputs_plan,
             outputs_plan,
+            param_wires,
+            param_maps,
             block_size,
-            ..
         } = self;
         let bs = *block_size;
+        // Apply control-bus mappings (`/n_map`): a mapped parameter takes the bus's current value.
+        for (p, &maybe_bus) in param_maps.iter().enumerate() {
+            if let Some(bus) = maybe_bus {
+                control_wires[param_wires[p] as usize] = buses.control().read(bus as usize);
+            }
+        }
         let mut done = DoneAction::Nothing;
         for u in 0..ugens.len() {
             let ins = Inputs::new(
@@ -92,7 +105,7 @@ impl Synth {
                 bs,
             );
             let mut outs = Outputs::new(scratch.as_mut_slice(), bs);
-            done = done.max(ugens[u].process(ctx, ins, &mut outs, out_bus));
+            done = done.max(ugens[u].process(ctx, ins, &mut outs, buses));
             // Publish this UGen's scratch outputs into the arena wires.
             for (k, output) in outputs_plan[u].iter().enumerate() {
                 let src = k * bs;
@@ -114,6 +127,14 @@ impl Synth {
     pub fn set_control(&mut self, param: usize, value: f32) {
         if let Some(&wire) = self.param_wires.get(param) {
             self.control_wires[wire as usize] = value;
+        }
+    }
+
+    /// Map control parameter `param` to control `bus` (or unmap it with `None`). While mapped, the
+    /// parameter takes the bus's value at the start of every block. No-op if out of range.
+    pub fn map_control(&mut self, param: usize, bus: Option<u32>) {
+        if let Some(slot) = self.param_maps.get_mut(param) {
+            *slot = bus;
         }
     }
 }

@@ -41,6 +41,25 @@ pub enum Command {
         /// New value.
         value: f32,
     },
+    /// Set control bus channel `bus` to `value` (scsynth's `/c_set`).
+    SetControlBus {
+        /// Control bus channel index.
+        bus: u32,
+        /// New value.
+        value: f32,
+    },
+    /// Map control parameter `param` of node `node` to a control bus, or unmap it (`bus = None`).
+    ///
+    /// While mapped, the parameter reads the bus's value at the start of every control block
+    /// (scsynth's `/n_map`).
+    MapControl {
+        /// Target node's client id.
+        node: i32,
+        /// Parameter index.
+        param: usize,
+        /// Control bus channel to read from, or `None` to unmap.
+        bus: Option<u32>,
+    },
     /// Free node `node`, returning any owned synth to the trash ring.
     FreeNode {
         /// Target node's client id.

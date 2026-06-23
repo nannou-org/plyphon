@@ -1,6 +1,6 @@
 //! `Line` - a line generator that ramps from a start to an end value over a duration.
 
-use crate::bus::AudioBus;
+use crate::bus::Buses;
 use crate::error::BuildError;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
@@ -43,7 +43,7 @@ impl Ugen for Line {
         ctx: &ProcessContext<'_>,
         ins: Inputs<'_>,
         outs: &mut Outputs<'_>,
-        _out_bus: &mut AudioBus,
+        _buses: &mut Buses,
     ) -> DoneAction {
         if !self.started {
             let start = ins.control(Self::START) as f64;
