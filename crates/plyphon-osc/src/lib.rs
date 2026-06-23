@@ -9,10 +9,13 @@
 //! involved. `/s_new`, `/n_set`, and `/n_map` accept a string control name, resolved against the
 //! node's SynthDef, so the dispatcher tracks which definition each node was created from.
 //!
-//! # Replies
+//! # Replies and notifications
 //!
 //! Commands that report back - `/b_query` (`/b_info`), the asynchronous buffer loads (`/done`), and
 //! failures (`/fail`) - queue OSC packets the transport drains with [`OscDispatcher::take_replies`].
+//! Node lifecycle is reported the same way: feed the engine [`Event`]s drained from the
+//! [`Nrt`](plyphon::Nrt) to [`OscDispatcher::notify`], which queues the matching `/n_go`/`/n_end`/
+//! `/n_off`/`/n_on` reply - so a self-freeing synth's `/n_end` reaches the client over OSC too.
 //!
 //! # Asynchronous buffer loading
 //!
@@ -28,7 +31,7 @@ use std::collections::HashMap;
 
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
-use plyphon::{AddAction, Controller};
+use plyphon::{AddAction, Controller, Event};
 use plyphon_buffers::{BufferSource, ReadRegion};
 use rosc::{OscMessage, OscPacket, OscType};
 use thiserror::Error;
@@ -129,10 +132,33 @@ impl OscDispatcher {
         self.controller
     }
 
-    /// Take the OSC replies queued since the last call (`/done`, `/b_info`, `/fail`) for the
-    /// transport to send back to the client.
+    /// Take the OSC replies queued since the last call (`/done`, `/b_info`, `/fail`, and the
+    /// `/n_*` node notifications) for the transport to send back to the client.
     pub fn take_replies(&mut self) -> Vec<OscPacket> {
         std::mem::take(&mut self.replies)
+    }
+
+    /// Translate an engine [`Event`] into the matching SuperCollider node-notification reply and
+    /// queue it for [`take_replies`](Self::take_replies): `/n_go` (started), `/n_end` (freed),
+    /// `/n_off` (paused), `/n_on` (resumed).
+    ///
+    /// Feed this the events drained from the [`Nrt`](plyphon::Nrt), so node lifecycle - including
+    /// synths that free themselves via a done action - is reported back over OSC alongside the
+    /// command replies. plyphon's events carry only the node id, so, unlike scsynth, the
+    /// parent/sibling/group fields are omitted and the id is the lone argument.
+    pub fn notify(&mut self, event: Event) {
+        let (addr, id) = match event {
+            Event::NodeStarted { id } => ("/n_go", id),
+            Event::NodeEnded { id } => ("/n_end", id),
+            Event::NodePaused { id } => ("/n_off", id),
+            Event::NodeResumed { id } => ("/n_on", id),
+        };
+        // A freed node's def tracking is no longer needed; self-freed synths never reach `/n_free`,
+        // so this is where their entry is reclaimed.
+        if let Event::NodeEnded { id } = event {
+            self.node_defs.remove(&id);
+        }
+        self.reply_msg(addr, vec![OscType::Int(id)]);
     }
 
     /// Run the buffer loads queued by `apply` (`/b_allocRead`, `/b_read`), in order.

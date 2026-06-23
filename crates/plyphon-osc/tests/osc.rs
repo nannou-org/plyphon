@@ -77,6 +77,23 @@ fn goertzel(samples: &[f32], freq: f32) -> f32 {
     (s1 * s1 + s2 * s2 - coeff * s1 * s2).max(0.0).sqrt() / n as f32
 }
 
+/// Surface the engine's pending node events as OSC notifications (`/n_go`, `/n_end`, ...) and take
+/// them, the way a transport would after polling the `Nrt`.
+fn drain_notifications(dispatcher: &mut OscDispatcher, nrt: &mut plyphon::Nrt) -> Vec<OscMessage> {
+    nrt.process();
+    while let Some(event) = nrt.poll() {
+        dispatcher.notify(event);
+    }
+    dispatcher
+        .take_replies()
+        .into_iter()
+        .filter_map(|packet| match packet {
+            OscPacket::Message(message) => Some(message),
+            OscPacket::Bundle(_) => None,
+        })
+        .collect()
+}
+
 fn render(world: &mut plyphon::World, frames: usize) -> Vec<f32> {
     let sizes = [64usize, 100, 128, 480, 512, 333];
     let mut out = Vec::with_capacity(frames + 512);
@@ -154,6 +171,54 @@ fn drives_engine_over_osc() {
     );
 
     nrt.process();
+}
+
+#[test]
+fn notifies_node_lifecycle_over_osc() {
+    let (controller, mut nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    let mut dispatcher = OscDispatcher::new(controller);
+
+    dispatcher
+        .apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
+        .expect("/d_recv");
+    dispatcher
+        .apply_bytes(&osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ))
+        .expect("/s_new");
+
+    // The World links the synth and emits a NodeStarted event; notify turns it into /n_go.
+    let _ = render(&mut world, 1024);
+    let started = drain_notifications(&mut dispatcher, &mut nrt);
+    assert!(
+        started
+            .iter()
+            .any(|m| m.addr == "/n_go" && m.args == vec![OscType::Int(1000)]),
+        "expected an /n_go 1000 notification, got {started:?}"
+    );
+
+    // Free it; the World emits NodeEnded, surfaced as /n_end.
+    dispatcher
+        .apply_bytes(&osc("/n_free", vec![OscType::Int(1000)]))
+        .expect("/n_free");
+    let _ = render(&mut world, 1024);
+    let ended = drain_notifications(&mut dispatcher, &mut nrt);
+    assert!(
+        ended
+            .iter()
+            .any(|m| m.addr == "/n_end" && m.args == vec![OscType::Int(1000)]),
+        "expected an /n_end 1000 notification, got {ended:?}"
+    );
 }
 
 #[test]
