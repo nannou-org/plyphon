@@ -13,6 +13,7 @@ repository = "https://github.com/mitchmindtree/plyphon"
 # Internal crates.
 plyphon = { version = "0.1.0", path = "crates/plyphon" }
 plyphon-buffers = { version = "0.1.0", path = "crates/plyphon-buffers" }
+plyphon-osc = { version = "0.1.0", path = "crates/plyphon-osc" }
 scgf = { version = "0.1.0", path = "crates/scgf" }
 
 # Shared dependencies.

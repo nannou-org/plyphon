@@ -30,6 +30,7 @@ and plays both natively and in the browser.
 | [`plyphon-example-waveforms`](crates/plyphon-example-waveforms) | Cycles through the oscillators (`Saw`/`Pulse`/`LFSaw`/`LFPulse`/`Impulse`) through a filter. |
 | [`plyphon-example-pan`](crates/plyphon-example-pan) | A tone auto-panned across the stereo field with `Pan2`. |
 | [`plyphon-example-envelope`](crates/plyphon-example-envelope) | Percussive plucks shaped by multi-segment `EnvGen` envelopes that free their own synths. |
+| [`plyphon-example-osc`](crates/plyphon-example-osc) | Drives the engine through encoded SuperCollider OSC packets (no sockets) and prints the control commands and the replies/notifications that flow back. |
 
 ## Building
 
@@ -49,6 +50,7 @@ cargo run -p plyphon-example-stream    # stream a WAV in chunks and play it with
 cargo run -p plyphon-example-waveforms # cycle through the oscillators through a filter
 cargo run -p plyphon-example-pan       # a tone auto-panned across the stereo field
 cargo run -p plyphon-example-envelope  # percussive plucks shaped by EnvGen envelopes
+cargo run -p plyphon-example-osc       # drive the engine over OSC packets and print the replies
 cargo build --target wasm32-unknown-unknown -p plyphon-example-motif
 ```
 

@@ -1,0 +1,22 @@
+[package]
+name = "plyphon-example-osc"
+version = "0.1.0"
+description = "A plyphon example: driving the engine through encoded OSC packets (no networking) and printing the replies."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cpal.workspace = true
+plyphon.workspace = true
+plyphon-osc.workspace = true
+rosc.workspace = true
+scgf.workspace = true
+
+# Web-only: cpal's WebAudio backend, the wasm glue, and a timer to tick the control plane.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpal = { workspace = true, features = ["wasm-bindgen"] }
+console_error_panic_hook.workspace = true
+gloo-timers = "0.3"
