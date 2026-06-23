@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>plyphon sampler</title>
+    <link
+      data-trunk
+      rel="rust"
+      href="../Cargo.toml"
+      data-bin="plyphon-example-sampler"
+      data-cargo-profile-release="wasm_release"
+      data-wasm-opt="z"
+      data-wasm-opt-params="--enable-bulk-memory --enable-reference-types --enable-multivalue --enable-tail-call --enable-nontrapping-float-to-int"
+    />
+    <!-- Serve the sample alongside the page so the web build can `fetch` it at runtime. -->
+    <link data-trunk rel="copy-file" href="../assets/tone.wav" />
+    <script>
+      // Browsers start every AudioContext suspended until a user gesture, and cpal does not
+      // re-resume its context on a later click. Proxy the AudioContext constructor so we can track
+      // each context cpal creates and resume them all on the first user interaction.
+      // https://developer.chrome.com/blog/web-audio-autoplay/#moving-forward
+      (function () {
+        const contexts = [];
+        const events = [
+          "click", "auxclick", "dblclick", "mousedown", "mouseup",
+          "pointerup", "touchend", "keydown", "keyup",
+        ];
+        const Original = self.AudioContext;
+        if (!Original) return;
+        self.AudioContext = new Proxy(Original, {
+          construct(target, args) {
+            const ctx = new target(...args);
+            contexts.push(ctx);
+            return ctx;
+          },
+        });
+        function resumeAll() {
+          let running = 0;
+          contexts.forEach((ctx) => {
+            if (ctx.state !== "running") ctx.resume();
+            else running++;
+          });
+          if (contexts.length > 0 && running === contexts.length) {
+            events.forEach((e) => document.removeEventListener(e, resumeAll));
+          }
+        }
+        events.forEach((e) => document.addEventListener(e, resumeAll));
+      })();
+    </script>
+  </head>
+  <body>
+    <main>
+      <h1>plyphon sampler</h1>
+      <p>Loads a WAV through a BufferSource (fetched on the web) and loops it. Click to start audio.</p>
+    </main>
+  </body>
+</html>

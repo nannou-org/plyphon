@@ -25,7 +25,7 @@ and plays both natively and in the browser.
 | [`plyphon-example-routing`](crates/plyphon-example-routing) | Bus routing: an LFO-swept filter on noise, wired through audio and control buses. |
 | [`plyphon-example-control`](crates/plyphon-example-control) | Host-driven control buses: an arpeggio steered by `/n_map` + `/c_set`. |
 | [`plyphon-example-scgf`](crates/plyphon-example-scgf) | Loads a SuperCollider SCgf-compiled SynthDef and plays it. |
-| [`plyphon-example-sampler`](crates/plyphon-example-sampler) | Implements a `BufferSource` (a WAV loader) and plays a loaded sample with `PlayBuf`. |
+| [`plyphon-example-sampler`](crates/plyphon-example-sampler) | Implements a `BufferSource` that loads a checked-in WAV (filesystem natively, `fetch` on the web) and loops it with `PlayBuf`. |
 
 ## Building
 

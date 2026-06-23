@@ -12,8 +12,11 @@ repository.workspace = true
 cpal.workspace = true
 plyphon.workspace = true
 plyphon-buffers.workspace = true
+hound = "3"
 
-# Web-only: cpal's WebAudio backend plus the wasm glue.
+# Web-only: cpal's WebAudio backend, the wasm glue, async task spawning, and HTTP fetch.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cpal = { workspace = true, features = ["wasm-bindgen"] }
 console_error_panic_hook.workspace = true
+wasm-bindgen-futures = "0.4"
+gloo-net = { version = "0.6", default-features = false, features = ["http"] }

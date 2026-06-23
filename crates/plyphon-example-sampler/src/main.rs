@@ -2,76 +2,135 @@
 //!
 //! This is the downstream side of plyphon's buffer model: the engine only installs finished
 //! buffers, so *loading* sample data is the application's job, expressed by implementing
-//! [`plyphon_buffers::BufferSource`]. Here we implement a small reference source inline - an
-//! in-memory map of name -> WAV bytes plus a minimal WAV decoder. A real application would swap the
-//! map for a filesystem read, a key-value store (e.g. `bevy_pkv`), or a network fetch; only the body
-//! of `load` changes.
+//! [`plyphon_buffers::BufferSource`]. The same checked-in `assets/tone.wav` is read the way each
+//! platform actually reads a bundled asset - from the filesystem natively, and over HTTP (`fetch`)
+//! on the web - decoded with `hound`. Only the body of `load` differs between the two.
 //!
-//! The source is async (the general shape - see the crate docs), so we drive it to completion with a
-//! tiny `block_on`. Because this source resolves synchronously, the future is ready on first poll; a
-//! genuinely async source would be driven on a background thread (native) or `spawn_local` (web).
+//! Loading is async, so the example is *build-then-load*: the (initially silent) audio stream starts
+//! immediately, the sample is loaded off to the side, and the `PlayBuf` synth is started once the
+//! buffer is installed. Natively the filesystem read resolves at once (driven by a small `block_on`);
+//! on the web the `fetch` genuinely awaits, driven by `spawn_local`.
+//!
+//! To run the web build, serve it with the asset, e.g.
+//! `trunk serve crates/plyphon-example-sampler/web/index.html`.
 
-use std::collections::HashMap;
-use std::future::Future;
-use std::pin::pin;
-use std::task::{Context, Poll, Waker};
+use std::io::Cursor;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use plyphon::{
-    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, Controller, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World,
+    engine,
 };
 use plyphon_buffers::{BufFuture, BufferData, BufferSource, LoadError, ReadRegion};
 
+/// The asset key, resolved per platform (a path under `assets/` natively, a URL on the web).
+const SAMPLE: &str = "tone.wav";
 /// A gentle master gain.
 const GAIN: f32 = 0.5;
 
-/// A reference [`BufferSource`]: an in-memory library of WAV-encoded sounds, keyed by name.
-struct SampleLibrary {
-    sounds: HashMap<String, Vec<u8>>,
-}
+/// Native [`BufferSource`]: reads the asset from the crate's `assets/` directory.
+#[cfg(not(target_arch = "wasm32"))]
+struct FsSource;
 
-impl BufferSource for SampleLibrary {
+#[cfg(not(target_arch = "wasm32"))]
+impl BufferSource for FsSource {
     fn load<'a>(
         &'a self,
         key: &'a str,
         _region: ReadRegion,
     ) -> BufFuture<'a, Result<BufferData, LoadError>> {
-        // A real source would read these bytes from disk / a KV store / the network here (and could
-        // honour `region`); ours just looks them up and decodes synchronously.
-        let result = self
-            .sounds
-            .get(key)
-            .ok_or_else(|| LoadError::NotFound(key.to_string()))
-            .and_then(|bytes| decode_wav(bytes));
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join(key);
+        let result = std::fs::read(&path)
+            .map_err(|e| LoadError::Io(e.to_string()))
+            .and_then(|bytes| decode_wav(&bytes));
         Box::pin(async move { result })
     }
 }
 
-/// Build a `World` looping a sample loaded through a [`SampleLibrary`].
-fn build(sample_rate: f32, channels: usize) -> World {
-    let channels = channels.max(1);
-    let (mut controller, _nrt, world) = engine(Options {
-        sample_rate: sample_rate as f64,
-        output_channels: channels,
-        ..Options::default()
-    });
+/// Web [`BufferSource`]: fetches the asset over HTTP from the page's own origin.
+#[cfg(target_arch = "wasm32")]
+struct FetchSource;
 
-    // The "sample library": a 440 Hz tone WAV, standing in for a sound you'd load from storage.
-    let mut sounds = HashMap::new();
-    sounds.insert("tone".to_string(), demo_wav(sample_rate));
-    let library = SampleLibrary { sounds };
+#[cfg(target_arch = "wasm32")]
+impl BufferSource for FetchSource {
+    fn load<'a>(
+        &'a self,
+        key: &'a str,
+        _region: ReadRegion,
+    ) -> BufFuture<'a, Result<BufferData, LoadError>> {
+        let url = key.to_string();
+        Box::pin(async move {
+            let response = gloo_net::http::Request::get(&url)
+                .send()
+                .await
+                .map_err(|e| LoadError::Io(e.to_string()))?;
+            let bytes = response
+                .binary()
+                .await
+                .map_err(|e| LoadError::Io(e.to_string()))?;
+            decode_wav(&bytes)
+        })
+    }
+}
 
-    // Load it through the BufferSource and install the finished buffer.
-    let data = block_on(library.load("tone", ReadRegion::all())).expect("load sample");
-    controller.buffer_set(0, Box::new(data.into())).unwrap();
+/// Decode WAV bytes (any bit depth, PCM or float) into interleaved `f32` samples, using `hound`.
+fn decode_wav(bytes: &[u8]) -> Result<BufferData, LoadError> {
+    let reader =
+        hound::WavReader::new(Cursor::new(bytes)).map_err(|e| LoadError::Decode(e.to_string()))?;
+    let spec = reader.spec();
+    let decode = |e: hound::Error| LoadError::Decode(e.to_string());
+    let samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => reader
+            .into_samples::<f32>()
+            .collect::<Result<_, _>>()
+            .map_err(decode)?,
+        hound::SampleFormat::Int => {
+            let scale = 1.0 / (1i64 << (spec.bits_per_sample - 1)) as f32;
+            reader
+                .into_samples::<i32>()
+                .map(|s| s.map(|v| v as f32 * scale))
+                .collect::<Result<_, _>>()
+                .map_err(decode)?
+        }
+    };
+    Ok(BufferData {
+        samples,
+        num_channels: spec.channels.max(1) as usize,
+        sample_rate: spec.sample_rate as f64,
+    })
+}
 
-    // PlayBuf the loaded buffer (looping) to the output.
+/// Load the sample through `source`, install it, and start a looping `PlayBuf` for it.
+async fn load_and_play(
+    mut controller: Controller,
+    source: impl BufferSource,
+    engine_sample_rate: f32,
+    channels: usize,
+) {
+    match source.load(SAMPLE, ReadRegion::all()).await {
+        Ok(data) => {
+            // Play at the sample's natural pitch on any device: scale the play rate by the ratio of
+            // the buffer's sample rate to the engine's (PlayBuf advances in buffer frames per sample).
+            let rate = (data.sample_rate / engine_sample_rate as f64) as f32;
+            let _ = controller.buffer_set(0, Box::new(data.into()));
+            controller.add_synthdef(player_def(channels, rate));
+            let _ = controller.synth_new("player", ROOT_GROUP_ID, AddAction::Tail);
+        }
+        // On the web this prints to nowhere; a real app would log via the console.
+        Err(err) => eprintln!("failed to load {SAMPLE}: {err}"),
+    }
+}
+
+/// `PlayBuf.ar(1, bufnum = 0, rate, loop: 1) -> Out`, copied to every channel.
+fn player_def(channels: usize, rate: f32) -> SynthDef {
     let mut out_inputs = vec![InputRef::Constant(0.0)];
     for _ in 0..channels {
         out_inputs.push(InputRef::Ugen { ugen: 0, output: 0 });
     }
-    let def = SynthDef {
+    SynthDef {
         name: "player".to_string(),
         params: vec![],
         ugens: vec![
@@ -79,128 +138,28 @@ fn build(sample_rate: f32, channels: usize) -> World {
                 "PlayBuf",
                 Rate::Audio,
                 vec![
-                    InputRef::Constant(0.0), // bufnum
-                    InputRef::Constant(1.0), // rate
-                    InputRef::Constant(0.0), // trigger
-                    InputRef::Constant(0.0), // startPos
-                    InputRef::Constant(1.0), // loop
-                    InputRef::Constant(0.0), // doneAction
+                    InputRef::Constant(0.0),  // bufnum
+                    InputRef::Constant(rate), // rate
+                    InputRef::Constant(0.0),  // trigger
+                    InputRef::Constant(0.0),  // startPos
+                    InputRef::Constant(1.0),  // loop
+                    InputRef::Constant(0.0),  // doneAction
                 ],
                 1,
             ),
             UgenSpec::new("Out", Rate::Audio, out_inputs, 0),
         ],
-    };
-    controller.add_synthdef(def);
-    let _ = controller.synth_new("player", ROOT_GROUP_ID, AddAction::Tail);
-
-    world
+    }
 }
 
-/// A mono 16-bit WAV holding a seamless 440 Hz tone at `sample_rate` (44 whole cycles).
-fn demo_wav(sample_rate: f32) -> Vec<u8> {
-    let frames = (sample_rate / 10.0) as usize; // 0.1 s => 44 cycles of 440 Hz
-    let samples: Vec<f32> = (0..frames)
-        .map(|i| (std::f32::consts::TAU * 44.0 * i as f32 / frames as f32).sin() * 0.6)
-        .collect();
-    encode_wav_pcm16(&samples, 1, sample_rate as u32)
-}
-
-/// Encode interleaved `f32` samples as a canonical 16-bit PCM WAV.
-fn encode_wav_pcm16(samples: &[f32], channels: u16, sample_rate: u32) -> Vec<u8> {
-    let bytes_per_sample = 2u32;
-    let data_len = samples.len() as u32 * bytes_per_sample;
-    let byte_rate = sample_rate * channels as u32 * bytes_per_sample;
-    let block_align = channels * bytes_per_sample as u16;
-    let mut wav = Vec::with_capacity(44 + data_len as usize);
-    wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
-    wav.extend_from_slice(b"WAVE");
-    wav.extend_from_slice(b"fmt ");
-    wav.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
-    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    wav.extend_from_slice(&channels.to_le_bytes());
-    wav.extend_from_slice(&sample_rate.to_le_bytes());
-    wav.extend_from_slice(&byte_rate.to_le_bytes());
-    wav.extend_from_slice(&block_align.to_le_bytes());
-    wav.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
-    wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&data_len.to_le_bytes());
-    for &s in samples {
-        let v = (s.clamp(-1.0, 1.0) * 32767.0).round() as i16;
-        wav.extend_from_slice(&v.to_le_bytes());
-    }
-    wav
-}
-
-/// Decode a canonical PCM16 or float32 WAV into interleaved `f32` samples - a minimal reference
-/// decoder. A real loader would use a full decoder crate (and likely more formats).
-fn decode_wav(bytes: &[u8]) -> Result<BufferData, LoadError> {
-    let bad = |msg: &str| LoadError::Decode(msg.to_string());
-    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Err(bad("not a RIFF/WAVE file"));
-    }
-    let u16le = |b: &[u8]| u16::from_le_bytes([b[0], b[1]]);
-    let u32le = |b: &[u8]| u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-
-    let mut fmt: Option<(u16, u16, u32, u16)> = None; // (format, channels, sample_rate, bits)
-    let mut data: Option<&[u8]> = None;
-    let mut pos = 12;
-    while pos + 8 <= bytes.len() {
-        let id = &bytes[pos..pos + 4];
-        let size = u32le(&bytes[pos + 4..pos + 8]) as usize;
-        let start = pos + 8;
-        let body = &bytes[start..(start + size).min(bytes.len())];
-        match id {
-            b"fmt " if body.len() >= 16 => {
-                fmt = Some((
-                    u16le(body),
-                    u16le(&body[2..]),
-                    u32le(&body[4..]),
-                    u16le(&body[14..]),
-                ));
-            }
-            b"data" => data = Some(body),
-            _ => {}
-        }
-        pos = start + size + (size & 1); // chunks are word-aligned
-    }
-
-    let (format, channels, sample_rate, bits) = fmt.ok_or_else(|| bad("missing fmt chunk"))?;
-    let data = data.ok_or_else(|| bad("missing data chunk"))?;
-    let samples: Vec<f32> = match (format, bits) {
-        (1, 16) => data
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
-            .collect(),
-        (3, 32) => data
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect(),
-        _ => {
-            return Err(LoadError::Unsupported(format!(
-                "WAV format {format}, {bits}-bit"
-            )));
-        }
-    };
-    Ok(BufferData {
-        samples,
-        num_channels: channels.max(1) as usize,
+/// Build the engine with no synths yet (they start once the sample loads).
+fn build_engine(sample_rate: f32, channels: usize) -> (Controller, World) {
+    let (controller, _nrt, world) = engine(Options {
         sample_rate: sample_rate as f64,
-    })
-}
-
-/// Drive a future to completion. Sufficient for sources that resolve synchronously (the future is
-/// ready on first poll); a genuinely async source would use a real executor (a background thread
-/// natively, `spawn_local` on the web).
-fn block_on<F: Future>(future: F) -> F::Output {
-    let mut future = pin!(future);
-    let mut cx = Context::from_waker(Waker::noop());
-    loop {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
-            return value;
-        }
-    }
+        output_channels: channels.max(1),
+        ..Options::default()
+    });
+    (controller, world)
 }
 
 fn main() {
@@ -223,12 +182,13 @@ fn main() {
     }
 }
 
-/// Build and play an output stream fed by the engine `World`.
+/// Start the audio stream, then load the sample and begin playback when it arrives.
 fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate.0 as f32;
 
-    let mut source = build(sample_rate, channels);
+    let (controller, world) = build_engine(sample_rate, channels);
+    let mut source = world;
     let mut scratch: Vec<f32> = Vec::new();
 
     let stream = device
@@ -250,14 +210,38 @@ fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::S
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        println!("playing a sample loaded through a BufferSource for 10s...");
+        // The filesystem read resolves immediately, so the sample starts right away.
+        block_on(load_and_play(controller, FsSource, sample_rate, channels));
+        println!("playing a sample loaded from assets/{SAMPLE} for 10s...");
         std::thread::sleep(std::time::Duration::from_secs(10));
     }
     #[cfg(target_arch = "wasm32")]
-    std::mem::forget(stream);
+    {
+        // The fetch genuinely awaits; playback begins when it completes.
+        wasm_bindgen_futures::spawn_local(load_and_play(
+            controller,
+            FetchSource,
+            sample_rate,
+            channels,
+        ));
+        std::mem::forget(stream);
+    }
 }
 
-#[cfg(test)]
+/// Drive a future to completion. Sufficient for sources that resolve synchronously (the filesystem
+/// source's future is ready on first poll); the web build uses `spawn_local` instead.
+#[cfg(not(target_arch = "wasm32"))]
+fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    loop {
+        if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut cx) {
+            return value;
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
@@ -277,22 +261,11 @@ mod tests {
         (s1 * s1 + s2 * s2 - coeff * s1 * s2).max(0.0).sqrt() / n as f32
     }
 
-    #[test]
-    fn wav_round_trips() {
-        let samples = vec![0.0, 0.5, -0.5, 1.0, -1.0, 0.25];
-        let wav = encode_wav_pcm16(&samples, 1, 48_000);
-        let decoded = decode_wav(&wav).expect("decode");
-        assert_eq!(decoded.num_channels, 1);
-        assert_eq!(decoded.sample_rate, 48_000.0);
-        assert_eq!(decoded.samples.len(), samples.len());
-        for (a, b) in samples.iter().zip(&decoded.samples) {
-            assert!((a - b).abs() < 1e-3, "{a} vs {b}");
-        }
-    }
-
+    /// The checked-in asset should load from the filesystem through `FsSource` and play (440 Hz).
     #[test]
     fn loaded_sample_plays() {
-        let mut world = build(SR, 1);
+        let (controller, mut world) = build_engine(SR, 1);
+        block_on(load_and_play(controller, FsSource, SR, 1));
         let mut out = vec![0.0f32; SR as usize / 4];
         world.fill(&mut out, 1);
         assert!(
