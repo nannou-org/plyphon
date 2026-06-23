@@ -155,3 +155,61 @@ fn drives_engine_over_osc() {
 
     nrt.process();
 }
+
+#[test]
+fn maps_and_sets_control_buses_over_osc() {
+    let (controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    let mut dispatcher = OscDispatcher::new(controller);
+
+    dispatcher
+        .apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
+        .expect("/d_recv");
+    dispatcher
+        .apply_bytes(&osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ))
+        .expect("/s_new");
+
+    // Map the `freq` control (by name) to control bus 3, then drive that bus with /c_set: the
+    // synth ignores its 440 default and follows the bus.
+    dispatcher
+        .apply_bytes(&osc(
+            "/n_map",
+            vec![
+                OscType::Int(1000),
+                OscType::String("freq".to_string()),
+                OscType::Int(3),
+            ],
+        ))
+        .expect("/n_map");
+    dispatcher
+        .apply_bytes(&osc("/c_set", vec![OscType::Int(3), OscType::Float(220.0)]))
+        .expect("/c_set");
+    let _ = render(&mut world, 512);
+    let a = render(&mut world, SR as usize / 2);
+    assert!(
+        goertzel(&a, 220.0) > 5.0 * goertzel(&a, 440.0),
+        "expected the mapped control to follow bus 3 at 220 Hz"
+    );
+
+    // Move the bus; the mapped control follows.
+    dispatcher
+        .apply_bytes(&osc("/c_set", vec![OscType::Int(3), OscType::Float(660.0)]))
+        .expect("/c_set");
+    let _ = render(&mut world, 512);
+    let b = render(&mut world, SR as usize / 2);
+    assert!(
+        goertzel(&b, 660.0) > 5.0 * goertzel(&b, 220.0),
+        "expected the mapped control to follow bus 3 to 660 Hz"
+    );
+}

@@ -239,7 +239,11 @@ impl Buses {
     pub fn write_input(&mut self, input_block: &[f32], in_channels: usize) {
         let bs = self.audio.block_size();
         let base = self.output_channels;
-        let frames = input_block.len().checked_div(in_channels).unwrap_or(0).min(bs);
+        let frames = input_block
+            .len()
+            .checked_div(in_channels)
+            .unwrap_or(0)
+            .min(bs);
         for c in 0..self.input_channels {
             let chan = self.audio.channel_mut(base + c);
             for (i, sample) in chan.iter_mut().enumerate() {
