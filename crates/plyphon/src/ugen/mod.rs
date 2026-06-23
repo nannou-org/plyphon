@@ -19,10 +19,12 @@ pub mod lf;
 pub mod line;
 pub mod noise;
 pub mod out;
+pub mod pan;
 pub mod play_buf;
 pub mod registry;
 pub mod sin_osc;
 pub mod unary_op;
+pub mod util;
 
 use crate::io::Io;
 use crate::rate::{Rate, RateInfo};
@@ -61,10 +63,12 @@ pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
 pub use noise::WhiteNoise;
 pub use out::Out;
+pub use pan::Pan2;
 pub use play_buf::PlayBuf;
 pub use registry::{BuildContext, UgenCtor, UgenRegistry};
 pub use sin_osc::SinOsc;
 pub use unary_op::UnaryOp;
+pub use util::{Amplitude, Lag, MulAdd};
 
 /// Immutable per-block context handed to every [`Ugen::process`] call.
 ///

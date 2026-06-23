@@ -18,9 +18,11 @@ use crate::ugen::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
 use crate::ugen::line::LineCtor;
 use crate::ugen::noise::WhiteNoiseCtor;
 use crate::ugen::out::OutCtor;
+use crate::ugen::pan::Pan2Ctor;
 use crate::ugen::play_buf::PlayBufCtor;
 use crate::ugen::sin_osc::SinOscCtor;
 use crate::ugen::unary_op::UnaryOpCtor;
+use crate::ugen::util::{AmplitudeCtor, LagCtor, MulAddCtor};
 
 /// Build-time context for constructing a UGen. Runs off the audio thread, so allocation is fine.
 pub struct BuildContext<'a> {
@@ -78,6 +80,10 @@ impl UgenRegistry {
         registry.register("Impulse", Box::new(ImpulseCtor));
         registry.register("Saw", Box::new(SawCtor));
         registry.register("Pulse", Box::new(PulseCtor));
+        registry.register("Pan2", Box::new(Pan2Ctor));
+        registry.register("MulAdd", Box::new(MulAddCtor));
+        registry.register("Lag", Box::new(LagCtor));
+        registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry
     }
 
