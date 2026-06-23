@@ -21,6 +21,7 @@ and plays both natively and in the browser.
 | [`plyphon-osc`](crates/plyphon-osc) | SuperCollider-compatible OSC command front-end. |
 | [`plyphon-example-motif`](crates/plyphon-example-motif) | A looping motif of self-freeing notes via `cpal` (the web demo). |
 | [`plyphon-example-sine`](crates/plyphon-example-sine) | The simplest example: a continuous sine. |
+| [`plyphon-example-routing`](crates/plyphon-example-routing) | Bus routing: an LFO-swept filter on noise, wired through audio and control buses. |
 
 ## Building
 
@@ -31,7 +32,8 @@ wasm tooling) are provided by the Nix flake:
 nix develop            # or `direnv allow` (uses ./.envrc)
 cargo build
 cargo test
-cargo run -p plyphon-example-sine   # the simplest demo: a continuous sine
+cargo run -p plyphon-example-sine      # the simplest demo: a continuous sine
+cargo run -p plyphon-example-routing   # bus routing: an LFO-swept filter on noise
 cargo build --target wasm32-unknown-unknown -p plyphon-example-motif
 ```
 
