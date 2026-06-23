@@ -16,10 +16,12 @@ pub mod input;
 pub mod line;
 pub mod noise;
 pub mod out;
+pub mod play_buf;
 pub mod registry;
 pub mod sin_osc;
 pub mod unary_op;
 
+use crate::buffer::BufferTable;
 use crate::bus::Buses;
 use crate::rate::{Rate, RateInfo};
 use crate::wavetable::Wavetables;
@@ -54,6 +56,7 @@ pub use input::In;
 pub use line::Line;
 pub use noise::WhiteNoise;
 pub use out::Out;
+pub use play_buf::PlayBuf;
 pub use registry::{BuildContext, UgenCtor, UgenRegistry};
 pub use sin_osc::SinOsc;
 pub use unary_op::UnaryOp;
@@ -69,6 +72,8 @@ pub struct ProcessContext<'a> {
     pub buf_counter: u64,
     /// Shared wavetables (sine, ...), owned by the engine.
     pub wavetables: &'a Wavetables,
+    /// The engine's buffer table, for sample-playback UGens like `PlayBuf` to read.
+    pub buffers: &'a BufferTable,
 }
 
 /// How a single UGen input is sourced. Resolved once at build time from the SynthDef.

@@ -11,14 +11,16 @@
 //!   the threading lifecycle.
 //!
 //! They communicate only through lock-free rings, so the audio thread never allocates, blocks, or
-//! locks. The synthesis primitives live in [`rate`], [`wavetable`], [`bus`], [`ugen`] (the [`Ugen`]
-//! trait plus oscillators/filters/noise/ops, and [`DoneAction`]s), [`synth`], and [`synthdef`].
+//! locks. The synthesis primitives live in [`rate`], [`wavetable`], [`bus`], [`buffer`], [`ugen`]
+//! (the [`Ugen`] trait plus oscillators/filters/noise/ops, and [`DoneAction`]s), [`synth`], and
+//! [`synthdef`].
 //!
 //! The whole crate is `unsafe`-free and free of global mutable state - everything a UGen needs is
 //! passed by argument - and compiles for native and `wasm32-unknown-unknown` alike.
 
 #![forbid(unsafe_code)]
 
+pub mod buffer;
 pub mod bus;
 pub mod command;
 pub mod controller;
@@ -34,6 +36,7 @@ pub mod ugen;
 pub mod wavetable;
 pub mod world;
 
+pub use buffer::Buffer;
 pub use command::Event;
 pub use controller::Controller;
 pub use engine::{Options, ROOT_GROUP_ID, engine};

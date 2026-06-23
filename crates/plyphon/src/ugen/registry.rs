@@ -15,6 +15,7 @@ use crate::ugen::input::InCtor;
 use crate::ugen::line::LineCtor;
 use crate::ugen::noise::WhiteNoiseCtor;
 use crate::ugen::out::OutCtor;
+use crate::ugen::play_buf::PlayBufCtor;
 use crate::ugen::sin_osc::SinOscCtor;
 use crate::ugen::unary_op::UnaryOpCtor;
 
@@ -67,6 +68,7 @@ impl UgenRegistry {
         registry.register("LPF", Box::new(ButterCtor(Kind::LowPass)));
         registry.register("HPF", Box::new(ButterCtor(Kind::HighPass)));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
+        registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry
     }
 

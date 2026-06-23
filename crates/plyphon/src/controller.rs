@@ -10,6 +10,7 @@
 use rtrb::Producer;
 use thiserror::Error;
 
+use crate::buffer::Buffer;
 use crate::command::Command;
 use crate::error::BuildError;
 use crate::rate::RateInfo;
@@ -200,6 +201,35 @@ impl Controller {
     pub fn node_run(&mut self, node: i32, run: bool) -> Result<(), QueueFull> {
         self.tx
             .push(Command::NodeRun { node, run })
+            .map_err(|_| QueueFull)
+    }
+
+    /// Install (or replace) the buffer at `index` with an already-built buffer.
+    ///
+    /// The buffer is built off the audio thread (this is where any allocation or sample loading
+    /// happens); the `World` only does an O(1) swap and routes any previous buffer to the trash ring.
+    pub fn buffer_set(&mut self, index: usize, buffer: Box<Buffer>) -> Result<(), QueueFull> {
+        self.tx
+            .push(Command::SetBuffer { index, buffer })
+            .map_err(|_| QueueFull)
+    }
+
+    /// Allocate a zeroed buffer of `num_frames` x `num_channels` at `index` (scsynth's `/b_alloc`).
+    pub fn buffer_alloc(
+        &mut self,
+        index: usize,
+        num_frames: usize,
+        num_channels: usize,
+        sample_rate: f64,
+    ) -> Result<(), QueueFull> {
+        let buffer = Box::new(Buffer::zeroed(num_frames, num_channels, sample_rate));
+        self.buffer_set(index, buffer)
+    }
+
+    /// Free the buffer at `index` (scsynth's `/b_free`).
+    pub fn buffer_free(&mut self, index: usize) -> Result<(), QueueFull> {
+        self.tx
+            .push(Command::FreeBuffer { index })
             .map_err(|_| QueueFull)
     }
 }

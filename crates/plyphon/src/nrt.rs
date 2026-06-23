@@ -9,15 +9,18 @@
 //!
 //! - **Frees memory off the audio thread.** When a node is freed - explicitly via
 //!   [`Controller::free`](crate::controller::Controller::free) or by a UGen's
-//!   [`DoneAction`](crate::ugen::DoneAction) - the [`World`](crate::world::World) only unlinks it
-//!   (O(1)) and ships its `Box` over the trash ring; the actual `Drop`/`free` happens here, in
-//!   [`Nrt::process`].
+//!   [`DoneAction`](crate::ugen::DoneAction) - or a buffer is replaced or freed, the
+//!   [`World`](crate::world::World) only unlinks/swaps it (O(1)) and ships its `Box` over the trash
+//!   ring; the actual `Drop`/`free` happens here, in [`Nrt::process`].
 //! - **Surfaces notifications.** Node started/ended/paused/resumed [`Event`]s flow over the events
 //!   ring; the consumer drains them with [`Nrt::poll`].
 //!
-//! (Future work - asynchronous buffer/SynthDef file I/O - will also live here, mirroring scsynth's
-//! NRT command stages, where parsing/allocation/I/O happen off the RT thread and only an atomic
-//! pointer swap happens on it.)
+//! Buffers follow the same off-RT→RT→off-RT pattern as synths: a buffer is built off the audio
+//! thread, the `World` swaps it into its table on the audio thread (O(1)), and the replaced buffer
+//! is dropped here. *Loading* sample data from storage (sound files, key-value stores, the network)
+//! is deliberately left to the application - see [`Buffer`](crate::buffer::Buffer) and
+//! [`Controller::buffer_set`](crate::controller::Controller::buffer_set) - so it can use whatever
+//! native or web I/O it likes; plyphon only ever installs a finished buffer.
 //!
 //! # Lifecycle
 //!
@@ -62,8 +65,8 @@ impl Nrt {
         }
     }
 
-    /// Drain the trash ring, dropping every freed synth here (off the audio thread). Returns the
-    /// number dropped, so a shutdown loop can tell when the audio thread's trash is clear.
+    /// Drain the trash ring, dropping every freed synth and buffer here (off the audio thread).
+    /// Returns the number dropped, so a shutdown loop can tell when the audio thread's trash is clear.
     pub fn process(&mut self) -> usize {
         let mut dropped = 0;
         while let Ok(trash) = self.trash_rx.pop() {

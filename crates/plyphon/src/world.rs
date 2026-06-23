@@ -11,6 +11,7 @@
 
 use rtrb::{Consumer, Producer, PushError};
 
+use crate::buffer::BufferTable;
 use crate::bus::Buses;
 use crate::command::{Command, Event, Trash};
 use crate::engine::Options;
@@ -25,6 +26,7 @@ pub struct World {
     control: RateInfo,
     wavetables: Wavetables,
     buses: Buses,
+    buffers: BufferTable,
     tree: NodeTree,
     rx: Consumer<Command>,
     trash_tx: Producer<Trash>,
@@ -62,6 +64,7 @@ impl World {
                 options.control_bus_channels,
                 options.block_size,
             ),
+            buffers: BufferTable::new(options.max_buffers),
             tree: NodeTree::new(options.max_nodes, crate::engine::ROOT_GROUP_ID),
             rx,
             trash_tx,
@@ -144,6 +147,7 @@ impl World {
             control: &self.control,
             buf_counter,
             wavetables: &self.wavetables,
+            buffers: &self.buffers,
         };
         self.done_nodes.clear();
         self.tree
@@ -208,6 +212,16 @@ impl World {
             Command::MapControl { node, param, bus } => {
                 if let Some(synth) = self.tree.synth_mut(node) {
                     synth.map_control(param, bus);
+                }
+            }
+            Command::SetBuffer { index, buffer } => {
+                if let Some(old) = self.buffers.set(index, buffer) {
+                    self.trash(Trash::Buffer(old));
+                }
+            }
+            Command::FreeBuffer { index } => {
+                if let Some(old) = self.buffers.free(index) {
+                    self.trash(Trash::Buffer(old));
                 }
             }
             Command::FreeNode { node } => {

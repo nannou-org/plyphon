@@ -6,6 +6,7 @@
 //! [`Nrt`](crate::nrt::Nrt): [`Trash`] carries freed `Box`es to be dropped off the audio thread, and
 //! [`Event`] carries notifications (node started/ended/paused/resumed) for the consumer.
 
+use crate::buffer::Buffer;
 use crate::synth::Synth;
 use crate::tree::AddAction;
 
@@ -72,12 +73,28 @@ pub enum Command {
         /// Run the node (`true`) or pause it (`false`).
         run: bool,
     },
+    /// Install (or replace) the buffer at `index` with an already-built buffer (scsynth's
+    /// `/b_alloc`/`/b_allocRead` stage that swaps the new buffer into the live table). Any buffer
+    /// previously at `index` is routed to the trash ring.
+    SetBuffer {
+        /// Buffer table index.
+        index: usize,
+        /// The pre-built buffer (all allocation and loading already done off the audio thread).
+        buffer: Box<Buffer>,
+    },
+    /// Free the buffer at `index` (scsynth's `/b_free`), routing it to the trash ring.
+    FreeBuffer {
+        /// Buffer table index.
+        index: usize,
+    },
 }
 
 /// Heap-owning values handed back to the NRT side to be dropped off the audio thread.
 pub enum Trash {
     /// A freed synth.
     Synth(Box<Synth>),
+    /// A freed or replaced buffer.
+    Buffer(Box<Buffer>),
 }
 
 /// A notification flowing RT-side -> NRT-side, surfaced to the consumer by the

@@ -29,6 +29,8 @@ pub struct Options {
     pub control_bus_channels: usize,
     /// Maximum number of live nodes (sizes the node arena and id map; never exceeded at runtime).
     pub max_nodes: usize,
+    /// Number of buffer table slots (sizes the buffer table; indices `0..max_buffers` are valid).
+    pub max_buffers: usize,
     /// Capacity of the control -> RT command ring.
     pub command_capacity: usize,
 }
@@ -43,6 +45,7 @@ impl Default for Options {
             audio_bus_channels: 128,
             control_bus_channels: 4096,
             max_nodes: 1024,
+            max_buffers: 1024,
             command_capacity: 1024,
         }
     }
@@ -55,7 +58,9 @@ impl Default for Options {
 /// the [`nrt`](crate::nrt) module for the intended threading lifecycle.
 pub fn engine(options: Options) -> (Controller, Nrt, World) {
     let (cmd_tx, cmd_rx) = RingBuffer::<Command>::new(options.command_capacity.max(1));
-    let (trash_tx, trash_rx) = RingBuffer::<Trash>::new(options.max_nodes.max(1));
+    // The trash ring carries both freed synths and freed/replaced buffers.
+    let (trash_tx, trash_rx) =
+        RingBuffer::<Trash>::new((options.max_nodes + options.max_buffers).max(1));
     let (events_tx, events_rx) = RingBuffer::<Event>::new(options.max_nodes.max(1));
 
     let audio = RateInfo::new(options.sample_rate, options.block_size);
