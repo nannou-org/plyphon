@@ -2,13 +2,15 @@
 //!
 //! A [`Ugen`] is constructed off the audio thread (it may allocate) and then [`Ugen::process`]ed
 //! once per control block on the audio thread, where it must not allocate or block. Everything a
-//! UGen reads from the wider engine is passed by argument via [`ProcessContext`], [`Inputs`],
-//! [`Outputs`] and the output bus - there is no global state.
+//! UGen reads from the wider engine arrives in one [`ProcessCtx`] argument - the read-only
+//! [`Inputs`], the writable [`Outputs`], the engine constants, and the shared buses/buffers - so
+//! there is no global state.
 //!
-//! Inputs (read-only views into the synth's wires) and outputs (mutable scratch slices) are
-//! deliberately *separate* arguments rather than one bundle, so a UGen can hold an input borrow and
-//! an output borrow at the same time without aliasing - the safe equivalent of scsynth's raw
-//! aliasing `float*` wires.
+//! `ProcessCtx` is a plain field aggregate, and the operations on the shared buses/buffers are free
+//! fns in the [`io`] submodule that take only the field they need (e.g. `io::audio_in(&ctx.buses,
+//! ..)`). That keeps them borrow-friendly: because `ins`, `outs`, and `buses` are disjoint fields, a
+//! UGen can read an input and write an output (or a bus) in the same expression - the safe
+//! equivalent of scsynth's raw aliasing `float*` wires.
 
 pub mod band_limited;
 pub mod binary_op;
@@ -16,6 +18,7 @@ pub mod disk_in;
 pub mod env;
 pub mod filter;
 pub mod input;
+pub mod io;
 pub mod lf;
 pub mod line;
 pub mod noise;
@@ -27,7 +30,8 @@ pub mod sin_osc;
 pub mod unary_op;
 pub mod util;
 
-use crate::io::Io;
+use crate::buffer::BufferTable;
+use crate::bus::Buses;
 use crate::rate::{Rate, RateInfo};
 use crate::wavetable::Wavetables;
 
@@ -61,6 +65,7 @@ pub use disk_in::DiskIn;
 pub use env::EnvGen;
 pub use filter::Butter;
 pub use input::In;
+pub use io::{audio_in, audio_out, buffer_at, control_in, control_out, stream_at_mut};
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
 pub use noise::WhiteNoise;
@@ -72,18 +77,53 @@ pub use sin_osc::SinOsc;
 pub use unary_op::UnaryOp;
 pub use util::{Amplitude, Lag, MulAdd};
 
-/// Immutable per-block context handed to every [`Ugen::process`] call.
+/// Everything a UGen touches while processing one control block - plyphon's safe decomposition of
+/// scsynth's `unit` (which reaches inputs, outputs, and the world through one pointer).
 ///
-/// The block counter and access to the World's shared buses and buffers live on the mutable
-/// [`Io`] handle instead; this holds only the read-only per-block constants.
-#[derive(Copy, Clone)]
-pub struct ProcessContext<'a> {
+/// The signal ports ([`ins`](Self::ins)/[`outs`](Self::outs)) and engine constants are plain fields.
+/// The shared [`buses`](Self::buses)/[`buffers`](Self::buffers) are fields too, but their dangerous
+/// mutators are crate-private - a UGen touches them only through the audited free fns in
+/// [`io`], so it cannot resize a bus or swap a buffer. Those fns take individual
+/// fields rather than `&self`, so reading `ins` and writing `buses` in one expression borrows
+/// disjoint fields.
+pub struct ProcessCtx<'a> {
     /// Audio-rate constants.
     pub audio: &'a RateInfo,
     /// Control-rate constants.
     pub control: &'a RateInfo,
     /// Shared wavetables (sine, ...), owned by the engine.
     pub wavetables: &'a Wavetables,
+    /// This UGen's inputs for the block (read-only).
+    pub ins: Inputs<'a>,
+    /// This UGen's output scratch for the block.
+    pub outs: Outputs<'a>,
+    /// The World's shared buses, via the [`io`] free fns (`In`/`Out`).
+    pub buses: &'a mut Buses,
+    /// The World's shared buffer table, via the [`io`] free fns (`PlayBuf`/`DiskIn`).
+    pub buffers: &'a mut BufferTable,
+    /// The current block counter (stamps bus writes: the first writer clears, the rest sum).
+    pub buf_counter: u64,
+}
+
+/// What a UGen may touch while *seeding* state on the first block - see [`Ugen::init`].
+///
+/// Like [`ProcessCtx`] but read-only on the world and without [`outs`](ProcessCtx::outs): `init`
+/// seeds the UGen's own state from live inputs; it does not produce output or mutate the world.
+pub struct InitCtx<'a> {
+    /// Audio-rate constants.
+    pub audio: &'a RateInfo,
+    /// Control-rate constants.
+    pub control: &'a RateInfo,
+    /// Shared wavetables.
+    pub wavetables: &'a Wavetables,
+    /// This UGen's inputs for the block (read-only).
+    pub ins: Inputs<'a>,
+    /// The World's shared buses (read-only), via the [`io`] free fns.
+    pub buses: &'a Buses,
+    /// The World's shared buffer table (read-only), via the [`io`] free fns.
+    pub buffers: &'a BufferTable,
+    /// The current block counter.
+    pub buf_counter: u64,
 }
 
 /// How a single UGen input is sourced. Resolved once at build time from the SynthDef.
@@ -223,20 +263,14 @@ pub trait Ugen: Send {
     /// This mirrors the seeding an scsynth `*_Ctor` does at its first calc; *allocation*, by
     /// contrast, happens earlier and off the audio thread when the UGen is built. Like
     /// [`Ugen::process`] it must not allocate, block, or take locks. The default is a no-op.
-    fn init(&mut self, _ctx: &ProcessContext<'_>, _ins: Inputs<'_>, _io: &mut Io) {}
+    fn init(&mut self, _ctx: &InitCtx<'_>) {}
 
     /// Compute one control block.
     ///
-    /// Reads `ins`, writes its outputs into `outs`, and (for I/O UGens like `In`/`Out`/`PlayBuf`)
-    /// reads or writes the World's shared buses and buffers through `io`. Must not allocate, block,
-    /// or take locks. Returns the [`DoneAction`] the UGen wants applied to its enclosing synth
-    /// (almost always [`DoneAction::Nothing`]).
+    /// Reads `ctx.ins`, writes `ctx.outs`, and (for I/O UGens like `In`/`Out`/`PlayBuf`) reads or
+    /// writes the World's shared buses and buffers via the [`io`] free fns. Must
+    /// not allocate, block, or take locks. Returns the [`DoneAction`] the UGen wants applied to its
+    /// enclosing synth (almost always [`DoneAction::Nothing`]).
     #[must_use]
-    fn process(
-        &mut self,
-        ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        io: &mut Io,
-    ) -> DoneAction;
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction;
 }

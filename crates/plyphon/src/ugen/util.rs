@@ -1,10 +1,9 @@
 //! Utility UGens - plyphon's ports of scsynth's `MulAdd`, `Lag`, and `Amplitude`.
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, InitCtx, ProcessCtx, Ugen};
 
 /// `ln(0.001)` - the decay target scsynth uses for its `-60 dB time` smoothing coefficients.
 const LOG001: f32 = -6.907_755;
@@ -32,22 +31,16 @@ impl MulAdd {
 }
 
 impl Ugen for MulAdd {
-    fn process(
-        &mut self,
-        _ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
-        let mul = ins.control(Self::MUL);
-        let add = ins.control(Self::ADD);
-        let out = outs.audio(0);
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let mul = ctx.ins.control(Self::MUL);
+        let add = ctx.ins.control(Self::ADD);
+        let out = ctx.outs.audio(0);
         if self.in_audio {
-            for (o, &x) in out.iter_mut().zip(ins.audio(Self::IN)) {
+            for (o, &x) in out.iter_mut().zip(ctx.ins.audio(Self::IN)) {
                 *o = x * mul + add;
             }
         } else {
-            out.fill(ins.control(Self::IN) * mul + add);
+            out.fill(ctx.ins.control(Self::IN) * mul + add);
         }
         DoneAction::Nothing
     }
@@ -79,35 +72,29 @@ impl Lag {
 }
 
 impl Ugen for Lag {
-    fn init(&mut self, _ctx: &ProcessContext<'_>, ins: Inputs<'_>, _io: &mut Io) {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
         // Start at the input value (scsynth's `m_y1 = ZIN0(0)`) so the first block holds steady
         // instead of ramping up from zero - the coefficient is still computed lazily in `process`,
         // whose sentinel also catches later `lagTime` changes.
-        self.y = ins.control(Self::IN);
+        self.y = ctx.ins.control(Self::IN);
     }
 
-    fn process(
-        &mut self,
-        ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
-        let lag_time = ins.control(Self::TIME);
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let lag_time = ctx.ins.control(Self::TIME);
         if lag_time != self.lag_time {
             self.b1 = smoothing_coef(lag_time, ctx.audio.sample_rate as f32);
             self.lag_time = lag_time;
         }
         let b1 = self.b1;
         let mut y = self.y;
-        let out = outs.audio(0);
+        let out = ctx.outs.audio(0);
         if self.in_audio {
-            for (o, &x) in out.iter_mut().zip(ins.audio(Self::IN)) {
+            for (o, &x) in out.iter_mut().zip(ctx.ins.audio(Self::IN)) {
                 y = x + b1 * (y - x);
                 *o = y;
             }
         } else {
-            let x = ins.control(Self::IN);
+            let x = ctx.ins.control(Self::IN);
             for o in out.iter_mut() {
                 y = x + b1 * (y - x);
                 *o = y;
@@ -149,21 +136,15 @@ impl Amplitude {
 }
 
 impl Ugen for Amplitude {
-    fn process(
-        &mut self,
-        ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let sample_rate = ctx.audio.sample_rate as f32;
-        let attack = if ins.len() > Self::ATTACK {
-            ins.control(Self::ATTACK)
+        let attack = if ctx.ins.len() > Self::ATTACK {
+            ctx.ins.control(Self::ATTACK)
         } else {
             0.01
         };
-        let release = if ins.len() > Self::RELEASE {
-            ins.control(Self::RELEASE)
+        let release = if ctx.ins.len() > Self::RELEASE {
+            ctx.ins.control(Self::RELEASE)
         } else {
             0.01
         };
@@ -177,8 +158,8 @@ impl Ugen for Amplitude {
         }
         let (attack_coef, release_coef) = (self.attack_coef, self.release_coef);
         let mut prev = self.prev;
-        let out = outs.audio(0);
-        for (o, &x) in out.iter_mut().zip(ins.audio(Self::IN)) {
+        let out = ctx.outs.audio(0);
+        for (o, &x) in out.iter_mut().zip(ctx.ins.audio(Self::IN)) {
             let val = x.abs();
             // Rise quickly (attack) when the level grows, fall slowly (release) when it shrinks.
             let coef = if val < prev {

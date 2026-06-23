@@ -9,9 +9,8 @@
 
 use std::collections::HashMap;
 
-use crate::io::Io;
-use crate::synth::Synth;
-use crate::ugen::{DoneAction, ProcessContext};
+use crate::synth::{Block, Synth};
+use crate::ugen::DoneAction;
 
 /// Where to place a node relative to a target, mirroring scsynth's `addAction` codes.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -259,21 +258,15 @@ impl NodeTree {
     /// Process the whole tree for one block, walking groups head-to-tail. Paused nodes are skipped.
     /// Any node whose synth requested a done action is recorded in `done` as `(slot index, action)`
     /// for the caller to apply after the walk.
-    pub fn process(
-        &mut self,
-        ctx: &ProcessContext<'_>,
-        io: &mut Io,
-        done: &mut Vec<(u32, DoneAction)>,
-    ) {
+    pub(crate) fn process(&mut self, block: &mut Block<'_>, done: &mut Vec<(u32, DoneAction)>) {
         let root = self.root_index;
-        self.process_group(root, ctx, io, done);
+        self.process_group(root, block, done);
     }
 
     fn process_group(
         &mut self,
         group_idx: u32,
-        ctx: &ProcessContext<'_>,
-        io: &mut Io,
+        block: &mut Block<'_>,
         done: &mut Vec<(u32, DoneAction)>,
     ) {
         let mut cur = match &self.slots[group_idx as usize] {
@@ -289,7 +282,7 @@ impl NodeTree {
                 Slot::Free => None,
             };
             if self.is_group(idx) {
-                self.process_group(idx, ctx, io, done);
+                self.process_group(idx, block, done);
             } else {
                 let active = matches!(&self.slots[idx as usize], Slot::Node(node) if !node.paused);
                 if active
@@ -298,7 +291,7 @@ impl NodeTree {
                         ..
                     }) = &mut self.slots[idx as usize]
                 {
-                    let action = synth.process(ctx, io);
+                    let action = synth.process(block);
                     if action != DoneAction::Nothing {
                         done.push((idx, action));
                     }

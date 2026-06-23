@@ -9,9 +9,8 @@
 //! handled.
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, Inputs, ProcessCtx, Ugen};
 
 /// Where the generator is in the envelope.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -89,26 +88,20 @@ impl EnvGen {
 }
 
 impl Ugen for EnvGen {
-    fn process(
-        &mut self,
-        ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
-        let gate = ins.control(Self::GATE);
-        let level_scale = ins.control(Self::LEVEL_SCALE) as f64;
-        let level_bias = ins.control(Self::LEVEL_BIAS) as f64;
-        let time_scale = (ins.control(Self::TIME_SCALE) as f64).max(0.0);
-        let done_action = DoneAction::from_code(ins.control(Self::DONE_ACTION));
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let gate = ctx.ins.control(Self::GATE);
+        let level_scale = ctx.ins.control(Self::LEVEL_SCALE) as f64;
+        let level_bias = ctx.ins.control(Self::LEVEL_BIAS) as f64;
+        let time_scale = (ctx.ins.control(Self::TIME_SCALE) as f64).max(0.0);
+        let done_action = DoneAction::from_code(ctx.ins.control(Self::DONE_ACTION));
         let sample_rate = ctx.audio.sample_rate;
-        let num_segments = self.num_segments(&ins);
-        let release_node = self.release_node(&ins);
+        let num_segments = self.num_segments(&ctx.ins);
+        let release_node = self.release_node(&ctx.ins);
 
         if !self.started {
-            self.level = get(&ins, Self::ENV) as f64; // initialLevel
+            self.level = get(&ctx.ins, Self::ENV) as f64; // initialLevel
             if num_segments > 0 {
-                self.load_segment(&ins, 0, sample_rate, time_scale);
+                self.load_segment(&ctx.ins, 0, sample_rate, time_scale);
                 self.phase = Phase::Attack;
             } else {
                 self.phase = Phase::Done;
@@ -128,7 +121,7 @@ impl Ugen for EnvGen {
         {
             let release_seg = release_node as usize;
             if release_seg < num_segments {
-                self.load_segment(&ins, release_seg, sample_rate, time_scale);
+                self.load_segment(&ctx.ins, release_seg, sample_rate, time_scale);
                 self.phase = Phase::Release;
             } else {
                 self.phase = Phase::Done;
@@ -137,7 +130,7 @@ impl Ugen for EnvGen {
         self.prev_gate = gate;
 
         let mut action = DoneAction::Nothing;
-        for o in outs.audio(0).iter_mut() {
+        for o in ctx.outs.audio(0).iter_mut() {
             match self.phase {
                 Phase::Sustain | Phase::Done => {
                     *o = (self.level * level_scale + level_bias) as f32;
@@ -163,7 +156,7 @@ impl Ugen for EnvGen {
                         if self.phase == Phase::Attack && reached_release_node {
                             self.phase = Phase::Sustain;
                         } else if self.seg + 1 < num_segments {
-                            self.load_segment(&ins, self.seg + 1, sample_rate, time_scale);
+                            self.load_segment(&ctx.ins, self.seg + 1, sample_rate, time_scale);
                         } else {
                             self.phase = Phase::Done;
                             if !self.fired {

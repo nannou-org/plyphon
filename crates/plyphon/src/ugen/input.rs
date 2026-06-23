@@ -1,10 +1,9 @@
 //! `In` - reads signals from audio or control bus channels, plyphon's port of scsynth's `In`.
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{self, DoneAction, ProcessCtx, Ugen};
 
 /// `In.ar(bus, numChannels)` / `In.kr(bus, numChannels)`: reads `numChannels` consecutive bus
 /// channels starting at `bus`, one per output. `In.ar` reads the audio bus bank, `In.kr` the
@@ -20,18 +19,12 @@ impl In {
 }
 
 impl Ugen for In {
-    fn process(
-        &mut self,
-        _ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        io: &mut Io,
-    ) -> DoneAction {
-        let base = ins.control(Self::BUS) as usize;
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let base = ctx.ins.control(Self::BUS) as usize;
         if self.audio {
             for o in 0..self.num_channels {
-                let dst = outs.audio(o);
-                let chan = io.audio_in(base + o);
+                let dst = ctx.outs.audio(o);
+                let chan = ugen::audio_in(ctx.buses, base + o);
                 if chan.len() == dst.len() {
                     dst.copy_from_slice(chan);
                 } else {
@@ -40,7 +33,7 @@ impl Ugen for In {
             }
         } else {
             for o in 0..self.num_channels {
-                *outs.control(o) = io.control_in(base + o);
+                *ctx.outs.control(o) = ugen::control_in(ctx.buses, base + o);
             }
         }
         DoneAction::Nothing

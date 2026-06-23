@@ -15,10 +15,10 @@ use crate::buffer::{BufferSlot, BufferTable};
 use crate::bus::Buses;
 use crate::command::{Command, Event, Trash};
 use crate::engine::Options;
-use crate::io::Io;
 use crate::rate::RateInfo;
+use crate::synth::Block;
 use crate::tree::{FreedNode, NodeTree};
-use crate::ugen::{DoneAction, ProcessContext};
+use crate::ugen::DoneAction;
 use crate::wavetable::Wavetables;
 
 /// The real-time engine half.
@@ -145,16 +145,17 @@ impl World {
     fn run_one_block(&mut self) {
         self.drain_commands();
         self.buf_counter += 1;
-        let buf_counter = self.buf_counter;
-        let ctx = ProcessContext {
+        let mut block = Block {
             audio: &self.audio,
             control: &self.control,
             wavetables: &self.wavetables,
+            buses: &mut self.buses,
+            buffers: &mut self.buffers,
+            buf_counter: self.buf_counter,
         };
-        let mut io = Io::new(&mut self.buses, &mut self.buffers, buf_counter);
         self.done_nodes.clear();
-        self.tree.process(&ctx, &mut io, &mut self.done_nodes);
-        self.buses.silence_untouched_outputs(buf_counter);
+        self.tree.process(&mut block, &mut self.done_nodes);
+        self.buses.silence_untouched_outputs(self.buf_counter);
         self.apply_done_actions();
     }
 

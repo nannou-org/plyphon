@@ -8,9 +8,8 @@
 //! [`LFPulse`]: crate::ugen::lf::LFPulse
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, ProcessCtx, Ugen};
 
 /// `Saw.ar(freq)`: a band-limited sawtooth, output -1 to 1.
 pub struct Saw {
@@ -18,16 +17,10 @@ pub struct Saw {
 }
 
 impl Ugen for Saw {
-    fn process(
-        &mut self,
-        ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
-        let inc = ins.control(0) * ctx.audio.sample_dur as f32;
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let inc = ctx.ins.control(0) * ctx.audio.sample_dur as f32;
         let dt = inc.abs().max(f32::MIN_POSITIVE);
-        for o in outs.audio(0).iter_mut() {
+        for o in ctx.outs.audio(0).iter_mut() {
             *o = (2.0 * self.phase - 1.0) - poly_blep(self.phase, dt);
             self.phase = wrap(self.phase + inc);
         }
@@ -55,21 +48,15 @@ impl Pulse {
 }
 
 impl Ugen for Pulse {
-    fn process(
-        &mut self,
-        ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
-        let inc = ins.control(Self::FREQ) * ctx.audio.sample_dur as f32;
-        let width = if ins.len() > Self::WIDTH {
-            ins.control(Self::WIDTH).clamp(0.0, 1.0)
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let inc = ctx.ins.control(Self::FREQ) * ctx.audio.sample_dur as f32;
+        let width = if ctx.ins.len() > Self::WIDTH {
+            ctx.ins.control(Self::WIDTH).clamp(0.0, 1.0)
         } else {
             0.5
         };
         let dt = inc.abs().max(f32::MIN_POSITIVE);
-        for o in outs.audio(0).iter_mut() {
+        for o in ctx.outs.audio(0).iter_mut() {
             let mut value = if self.phase < width { 1.0 } else { -1.0 };
             value += poly_blep(self.phase, dt); // rising edge at the cycle start
             value -= poly_blep(wrap(self.phase + 1.0 - width), dt); // falling edge at `width`

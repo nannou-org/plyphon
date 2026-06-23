@@ -3,10 +3,9 @@
 use core::f32::consts::TAU;
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, ProcessCtx, Ugen};
 use crate::wavetable::lookup_cycle;
 
 /// Which calc variant to use, chosen from the frequency input's rate at build time (scsynth picks
@@ -33,29 +32,22 @@ impl SinOsc {
 }
 
 impl Ugen for SinOsc {
-    fn process(
-        &mut self,
-        ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let table = ctx.wavetables.sine();
         let sample_dur = ctx.audio.sample_dur as f32;
         // Phase offset in cycles (radians / 2pi). Constant/control rate for now.
-        let phase_offset = ins.control(Self::PHASE) / TAU;
-        let out = outs.audio(0);
+        let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
         match self.calc {
             Calc::FreqControl => {
-                let inc = ins.control(Self::FREQ) * sample_dur;
-                for o in out.iter_mut() {
+                let inc = ctx.ins.control(Self::FREQ) * sample_dur;
+                for o in ctx.outs.audio(0).iter_mut() {
                     *o = lookup_cycle(table, self.phase + phase_offset);
                     self.phase = wrap_unit(self.phase + inc);
                 }
             }
             Calc::FreqAudio => {
-                let freq = ins.audio(Self::FREQ);
-                for (o, &f) in out.iter_mut().zip(freq) {
+                let freq = ctx.ins.audio(Self::FREQ);
+                for (o, &f) in ctx.outs.audio(0).iter_mut().zip(freq) {
                     *o = lookup_cycle(table, self.phase + phase_offset);
                     self.phase = wrap_unit(self.phase + f * sample_dur);
                 }

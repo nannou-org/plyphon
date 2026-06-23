@@ -1,10 +1,9 @@
 //! `Out` - writes signals to audio or control bus channels, plyphon's port of scsynth's `Out`.
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{self, DoneAction, ProcessCtx, Ugen};
 
 /// `Out.ar(bus, signals)` / `Out.kr(bus, signals)`: writes each signal input to a consecutive bus
 /// channel starting at `bus`, summing with anything already written to that channel this block.
@@ -14,25 +13,24 @@ pub struct Out {
 }
 
 impl Ugen for Out {
-    fn process(
-        &mut self,
-        _ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        _outs: &mut Outputs<'_>,
-        io: &mut Io,
-    ) -> DoneAction {
-        if ins.is_empty() {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        if ctx.ins.is_empty() {
             return DoneAction::Nothing;
         }
         // Input 0 is the starting bus channel; the rest are signals to write.
-        let base = ins.control(0) as usize;
+        let base = ctx.ins.control(0) as usize;
         if self.audio {
-            for k in 1..ins.len() {
-                io.write_audio(base + (k - 1), ins.audio(k));
+            for k in 1..ctx.ins.len() {
+                ugen::audio_out(ctx.buses, ctx.buf_counter, base + (k - 1), ctx.ins.audio(k));
             }
         } else {
-            for k in 1..ins.len() {
-                io.write_control(base + (k - 1), ins.control(k));
+            for k in 1..ctx.ins.len() {
+                ugen::control_out(
+                    ctx.buses,
+                    ctx.buf_counter,
+                    base + (k - 1),
+                    ctx.ins.control(k),
+                );
             }
         }
         DoneAction::Nothing

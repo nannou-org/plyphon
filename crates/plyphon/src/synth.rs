@@ -10,9 +10,31 @@
 //! single value for control-rate outputs). Inputs and outputs are therefore never borrowed both
 //! mutably and immutably at once.
 
-use crate::io::Io;
-use crate::rate::Rate;
-use crate::ugen::{DoneAction, InputSource, Inputs, Outputs, ProcessContext, Ugen};
+use crate::buffer::BufferTable;
+use crate::bus::Buses;
+use crate::rate::{Rate, RateInfo};
+use crate::ugen::{
+    DoneAction, InitCtx, InputSource, Inputs, Outputs, ProcessCtx, Ugen, control_in,
+};
+use crate::wavetable::Wavetables;
+
+/// The per-block materials the synth process loop draws on to assemble each UGen's [`ProcessCtx`]
+/// and [`InitCtx`]. Built once per control block by the [`World`](crate::world::World) and threaded
+/// through the node tree.
+pub(crate) struct Block<'a> {
+    /// Audio-rate constants.
+    pub audio: &'a RateInfo,
+    /// Control-rate constants.
+    pub control: &'a RateInfo,
+    /// Shared wavetables.
+    pub wavetables: &'a Wavetables,
+    /// The World's shared buses.
+    pub buses: &'a mut Buses,
+    /// The World's shared buffer table.
+    pub buffers: &'a mut BufferTable,
+    /// The current block counter.
+    pub buf_counter: u64,
+}
 
 /// Where a UGen output is published: an audio wire (a block) or a control wire (one value).
 #[derive(Copy, Clone, Debug)]
@@ -80,7 +102,7 @@ impl Synth {
     /// `In`/`Out`/`PlayBuf` UGens. Returns the strongest [`DoneAction`] any of its UGens requested
     /// this block (e.g. an envelope asking to free).
     #[must_use]
-    pub fn process(&mut self, ctx: &ProcessContext<'_>, io: &mut Io) -> DoneAction {
+    pub(crate) fn process(&mut self, block: &mut Block<'_>) -> DoneAction {
         let Synth {
             ugens,
             audio_wires,
@@ -97,7 +119,7 @@ impl Synth {
         // Apply control-bus mappings (`/n_map`): a mapped parameter takes the bus's current value.
         for (p, &maybe_bus) in param_maps.iter().enumerate() {
             if let Some(bus) = maybe_bus {
-                control_wires[param_wires[p] as usize] = io.control_in(bus as usize);
+                control_wires[param_wires[p] as usize] = control_in(block.buses, bus as usize);
             }
         }
         // On the first block only, run each UGen's one-time `init` seeding pass (in topo order, just
@@ -113,10 +135,31 @@ impl Synth {
                 bs,
             );
             if first {
-                ugens[u].init(ctx, ins, io);
+                let init_ctx = InitCtx {
+                    audio: block.audio,
+                    control: block.control,
+                    wavetables: block.wavetables,
+                    ins,
+                    buses: &*block.buses,
+                    buffers: &*block.buffers,
+                    buf_counter: block.buf_counter,
+                };
+                ugens[u].init(&init_ctx);
             }
-            let mut outs = Outputs::new(scratch.as_mut_slice(), bs);
-            done = done.max(ugens[u].process(ctx, ins, &mut outs, io));
+            // Scoped so the context's borrows of the arena/scratch/buses end before we publish.
+            done = done.max({
+                let mut ctx = ProcessCtx {
+                    audio: block.audio,
+                    control: block.control,
+                    wavetables: block.wavetables,
+                    ins,
+                    outs: Outputs::new(scratch.as_mut_slice(), bs),
+                    buses: &mut *block.buses,
+                    buffers: &mut *block.buffers,
+                    buf_counter: block.buf_counter,
+                };
+                ugens[u].process(&mut ctx)
+            });
             // Publish this UGen's scratch outputs into the arena wires.
             for (k, output) in outputs_plan[u].iter().enumerate() {
                 let src = k * bs;

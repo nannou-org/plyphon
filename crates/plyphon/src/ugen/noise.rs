@@ -1,11 +1,10 @@
 //! `WhiteNoise` - uniform white noise, plyphon's port of scsynth's `WhiteNoise`.
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::rate::Rate;
 use crate::rng::Rng;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, ProcessCtx, Ugen};
 
 /// `WhiteNoise.ar/kr`: samples drawn uniformly from `[-1, 1)`.
 pub struct WhiteNoise {
@@ -14,19 +13,13 @@ pub struct WhiteNoise {
 }
 
 impl Ugen for WhiteNoise {
-    fn process(
-        &mut self,
-        _ctx: &ProcessContext<'_>,
-        _ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if self.audio {
-            for o in outs.audio(0).iter_mut() {
+            for o in ctx.outs.audio(0).iter_mut() {
                 *o = self.rng.next_bipolar();
             }
         } else {
-            *outs.control(0) = self.rng.next_bipolar();
+            *ctx.outs.control(0) = self.rng.next_bipolar();
         }
         DoneAction::Nothing
     }

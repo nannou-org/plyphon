@@ -1,9 +1,8 @@
 //! `PlayBuf` - plays a buffer back at a given rate, plyphon's port of scsynth's `PlayBuf`.
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{self, DoneAction, Inputs, Outputs, ProcessCtx, Ugen};
 
 /// `PlayBuf.ar(numChannels, bufnum, rate, trigger, startPos, loop, doneAction)`: reads consecutive
 /// frames of buffer `bufnum`, one output per buffer channel, advancing the play head by `rate`
@@ -39,30 +38,24 @@ impl PlayBuf {
 }
 
 impl Ugen for PlayBuf {
-    fn process(
-        &mut self,
-        _ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        io: &mut Io,
-    ) -> DoneAction {
-        let bufnum = ins.control(Self::BUFNUM).max(0.0) as usize;
-        let buffer = match io.buffer(bufnum) {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
+        let buffer = match ugen::buffer_at(ctx.buffers, bufnum) {
             Some(buffer) if buffer.num_frames() > 0 => buffer,
             _ => {
-                self.silence(outs);
+                self.silence(&mut ctx.outs);
                 return DoneAction::Nothing;
             }
         };
         let frames = buffer.num_frames();
         let last = (frames - 1) as f64;
 
-        let rate = read_input(&ins, Self::RATE, 1.0) as f64;
-        let looping = read_input(&ins, Self::LOOP, 0.0) != 0.0;
-        let start_pos = read_input(&ins, Self::START, 0.0) as f64;
-        let trig = read_input(&ins, Self::TRIG, 0.0);
-        let done_action = if ins.len() > Self::DONE {
-            DoneAction::from_code(ins.control(Self::DONE))
+        let rate = read_input(&ctx.ins, Self::RATE, 1.0) as f64;
+        let looping = read_input(&ctx.ins, Self::LOOP, 0.0) != 0.0;
+        let start_pos = read_input(&ctx.ins, Self::START, 0.0) as f64;
+        let trig = read_input(&ctx.ins, Self::TRIG, 0.0);
+        let done_action = if ctx.ins.len() > Self::DONE {
+            DoneAction::from_code(ctx.ins.control(Self::DONE))
         } else {
             DoneAction::Nothing
         };
@@ -79,7 +72,7 @@ impl Ugen for PlayBuf {
         self.prev_trig = trig;
 
         let mut action = DoneAction::Nothing;
-        let block = outs.audio(0).len();
+        let block = ctx.outs.audio(0).len();
         for i in 0..block {
             let floor = self.phase.floor();
             let frac = (self.phase - floor) as f32;
@@ -92,7 +85,7 @@ impl Ugen for PlayBuf {
             for ch in 0..self.num_channels {
                 let a = buffer.sample(i0, ch);
                 let b = buffer.sample(i1, ch);
-                outs.audio(ch)[i] = a + (b - a) * frac;
+                ctx.outs.audio(ch)[i] = a + (b - a) * frac;
             }
 
             self.phase += rate;

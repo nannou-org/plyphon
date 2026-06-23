@@ -1,10 +1,9 @@
 //! `Line` - a line generator that ramps from a start to an end value over a duration.
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, InitCtx, ProcessCtx, Ugen};
 
 /// `Line.ar/kr(start, end, dur, doneAction)`: ramps linearly from `start` to `end` over `dur`
 /// seconds, then holds at `end`. The arguments are latched on the first block (as in SuperCollider).
@@ -37,11 +36,11 @@ impl Line {
 }
 
 impl Ugen for Line {
-    fn init(&mut self, ctx: &ProcessContext<'_>, ins: Inputs<'_>, _io: &mut Io) {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
         // Latch the ramp arguments from the (now live) inputs, as SuperCollider does at first calc.
-        let start = ins.control(Self::START) as f64;
-        let end = ins.control(Self::END) as f64;
-        let dur = (ins.control(Self::DUR) as f64).max(0.0);
+        let start = ctx.ins.control(Self::START) as f64;
+        let end = ctx.ins.control(Self::END) as f64;
+        let dur = (ctx.ins.control(Self::DUR) as f64).max(0.0);
         // Frames to ramp over: samples at audio rate, control blocks at control rate.
         let rate = if self.audio {
             ctx.audio.sample_rate
@@ -53,28 +52,22 @@ impl Ugen for Line {
         self.end = end;
         self.slope = (end - start) / frames;
         self.remaining = frames;
-        self.done_action = if ins.len() > Self::DONE {
-            DoneAction::from_code(ins.control(Self::DONE))
+        self.done_action = if ctx.ins.len() > Self::DONE {
+            DoneAction::from_code(ctx.ins.control(Self::DONE))
         } else {
             DoneAction::Nothing
         };
     }
 
-    fn process(
-        &mut self,
-        _ctx: &ProcessContext<'_>,
-        _ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if self.audio {
-            let out = outs.audio(0);
+            let out = ctx.outs.audio(0);
             for o in out.iter_mut() {
                 *o = self.value as f32;
                 self.advance();
             }
         } else {
-            *outs.control(0) = self.value as f32;
+            *ctx.outs.control(0) = self.value as f32;
             self.advance();
         }
         // Signal the done action exactly once, on the block the ramp completes.

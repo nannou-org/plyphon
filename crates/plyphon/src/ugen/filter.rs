@@ -8,9 +8,8 @@
 use std::f64::consts::{PI, SQRT_2};
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, ProcessCtx, Ugen};
 
 /// Which Butterworth response to compute.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -72,14 +71,8 @@ impl Butter {
 }
 
 impl Ugen for Butter {
-    fn process(
-        &mut self,
-        ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
-        let freq = ins.control(Self::FREQ);
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let freq = ctx.ins.control(Self::FREQ);
         if freq != self.freq {
             let pfreq = freq as f64 * ctx.audio.sample_rate.recip() * PI;
             let (a0, b1, b2) = self.kind.coeffs(pfreq);
@@ -91,8 +84,8 @@ impl Ugen for Butter {
 
         let (a0, b1, b2, mid) = (self.a0, self.b1, self.b2, self.kind.mid());
         let (mut y1, mut y2) = (self.y1, self.y2);
-        let input = ins.audio(Self::IN);
-        let out = outs.audio(0);
+        let input = ctx.ins.audio(Self::IN);
+        let out = ctx.outs.audio(0);
         for (o, &x) in out.iter_mut().zip(input) {
             let y0 = x as f64 + b1 * y1 + b2 * y2;
             *o = (a0 * (y0 + mid * y1 + y2)) as f32;

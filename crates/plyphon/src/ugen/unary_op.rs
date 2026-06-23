@@ -1,10 +1,9 @@
 //! `UnaryOpUGen` - applies a unary math operator (chosen by `special_index`) to one input.
 
 use crate::error::BuildError;
-use crate::io::Io;
 use crate::rate::Rate;
 use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, Outputs, ProcessContext, Ugen};
+use crate::ugen::{DoneAction, ProcessCtx, Ugen};
 
 /// `<op>(a)`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
 /// unary operator indices). The input may be audio- or control-rate; the output is audio-rate.
@@ -14,22 +13,16 @@ pub struct UnaryOp {
 }
 
 impl Ugen for UnaryOp {
-    fn process(
-        &mut self,
-        _ctx: &ProcessContext<'_>,
-        ins: Inputs<'_>,
-        outs: &mut Outputs<'_>,
-        _io: &mut Io,
-    ) -> DoneAction {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let op = self.op;
-        let out = outs.audio(0);
+        let out = ctx.outs.audio(0);
         if self.a_audio {
-            let a = ins.audio(0);
+            let a = ctx.ins.audio(0);
             for (o, &x) in out.iter_mut().zip(a) {
                 *o = op(x);
             }
         } else {
-            out.fill(op(ins.control(0)));
+            out.fill(op(ctx.ins.control(0)));
         }
         DoneAction::Nothing
     }
