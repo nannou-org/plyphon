@@ -17,7 +17,7 @@ use crate::synthdef::{InputRef, Param, SynthDef, UgenSpec};
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum ReadError {
     /// The bytes failed to parse as SCgf.
-    #[error("invalid SCgf: {0}")]
+    #[error("invalid SCgf")]
     Scgf(#[from] scgf::Error),
     /// A rate plyphon does not yet support (e.g. demand rate) was used.
     #[error("unsupported calculation rate")]

@@ -21,7 +21,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum OscError {
     /// The bytes failed to decode as an OSC packet.
-    #[error("OSC decode error: {0}")]
+    #[error("OSC decode error")]
     Decode(#[from] rosc::OscError),
     /// The command address is not supported.
     #[error("unsupported OSC command: {0}")]
@@ -33,10 +33,10 @@ pub enum OscError {
     #[error("unsupported addAction: {0}")]
     UnsupportedAddAction(i32),
     /// A `/d_recv` payload failed to load as a SynthDef.
-    #[error("bad SynthDef: {0}")]
+    #[error("bad SynthDef")]
     SynthDef(#[from] ReadError),
     /// A `/s_new` failed to instantiate.
-    #[error("s_new failed: {0}")]
+    #[error("s_new failed")]
     SynthNew(#[from] SynthNewError),
     /// A command ring was full.
     #[error("command queue full")]
