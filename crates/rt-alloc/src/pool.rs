@@ -12,7 +12,6 @@
 //! the pool into those disjoint borrows and orchestrate.
 
 use core::ops::Range;
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use bytemuck::{cast_slice, cast_slice_mut, Pod};
 
@@ -21,21 +20,21 @@ use crate::layout::{
     request_to_size, Align64, FreeLinks, Header, HEADER, INUSE, LINKS, MIN_CHUNK, NIL, PROLOGUE,
 };
 
-/// Hands out process-unique ids so a [`Region`] can be checked against the pool it came from.
-static NEXT_POOL_ID: AtomicU32 = AtomicU32::new(1);
-
 /// A fixed-size real-time memory pool over a `[Align64]` backing buffer.
 ///
 /// Construct with [`RtPool::with_capacity_bytes`] (heap-backed, needs the `alloc` feature) or
 /// [`RtPool::from_blocks`] (over any caller-owned `[Align64]` store, e.g. a `static` array - fully
 /// `no_std`). The type parameter `S` is the backing store and is normally inferred.
+///
+/// The pool is fully self-contained - no globals, statics, or thread-local state - so any number of
+/// independent pools can coexist. Allocation and freeing take `&mut self`, so a single pool is driven
+/// by one thread at a time; a parallel engine gives each DSP thread its own pool.
 pub struct RtPool<S> {
     buf: S,
     /// Free-list head (a chunk offset, or [`NIL`]) per bin.
     bins: [u64; 128],
     /// One bit per bin: set while the bin is non-empty.
     binmap: [u32; 4],
-    pool_id: u32,
 }
 
 /// An owned handle to one allocation: exclusive access to a byte sub-range of the pool's buffer.
@@ -43,12 +42,15 @@ pub struct RtPool<S> {
 /// Obtain a payload slice via [`RtPool::slice`]/[`RtPool::slice_mut`] (or a typed
 /// [view](RtPool::view)). Return the memory with [`RtPool::dealloc`], which *consumes* the handle -
 /// so a freed region is unnameable, making use-after-free a compile error rather than UB.
+///
+/// A handle is only meaningful to the pool that produced it; using it with a different pool reads or
+/// frees the wrong bytes (always bounds-checked, never unsound), so keep each pool's handles together
+/// with their pool.
 #[derive(Debug)]
 #[must_use = "dropping a Region leaks its allocation; pass it to RtPool::dealloc to reclaim it"]
 pub struct Region {
     user_offset: u64,
     len: u32,
-    pool_id: u32,
 }
 
 impl Region {
@@ -80,7 +82,6 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
             buf,
             bins: [NIL; 128],
             binmap: [0; 4],
-            pool_id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
         };
         pool.init();
         pool
@@ -118,12 +119,10 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
     /// returning the remainder to the free lists (scsynth's `Alloc`).
     pub fn alloc(&mut self, bytes: usize) -> Option<Region> {
         let need = request_to_size(bytes);
-        let pool_id = self.pool_id;
         let Self {
             buf,
             bins,
             binmap,
-            ..
         } = self;
         let buf: &mut [u8] = cast_slice_mut(buf.as_mut());
 
@@ -142,7 +141,6 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
         Some(Region {
             user_offset: (chunk + HEADER) as u64,
             len: bytes as u32,
-            pool_id,
         })
     }
 
@@ -155,12 +153,8 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
     /// Return a region's memory to the pool, coalescing with free neighbours (scsynth's `Free`).
     /// Consumes the handle.
     pub fn dealloc(&mut self, region: Region) {
-        debug_assert_eq!(
-            region.pool_id, self.pool_id,
-            "Region passed to the wrong RtPool",
-        );
         let Self {
-            buf, bins, binmap, ..
+            buf, bins, binmap,
         } = self;
         let buf: &mut [u8] = cast_slice_mut(buf.as_mut());
         let chunk = region.user_offset as usize - HEADER;
@@ -175,14 +169,12 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
     /// otherwise allocates fresh, copies the payload, and frees the old region. (scsynth also shifts
     /// back into a free *preceding* chunk; that extra case is left to the copy path here.)
     pub fn realloc(&mut self, region: Region, bytes: usize) -> Result<Region, Region> {
-        debug_assert_eq!(region.pool_id, self.pool_id, "Region passed to the wrong RtPool");
         let need = request_to_size(bytes);
 
         // Phase 1: attempt in place. Scoped so the disjoint borrows end before phase 2 needs `self`.
         let in_place = {
-            let pool_id = self.pool_id;
             let Self {
-                buf, bins, binmap, ..
+                buf, bins, binmap,
             } = self;
             let buf: &mut [u8] = cast_slice_mut(buf.as_mut());
             let chunk = region.user_offset as usize - HEADER;
@@ -205,7 +197,6 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
             kept.map(|user_offset| Region {
                 user_offset,
                 len: bytes as u32,
-                pool_id,
             })
         };
         if let Some(grown) = in_place {
@@ -229,14 +220,12 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
 
     /// Shared read-only access to a region's payload.
     pub fn slice(&self, region: &Region) -> &[u8] {
-        debug_assert_eq!(region.pool_id, self.pool_id, "Region passed to the wrong RtPool");
         let buf: &[u8] = cast_slice(self.buf.as_ref());
         &buf[region.range()]
     }
 
     /// Exclusive mutable access to a region's payload.
     pub fn slice_mut(&mut self, region: &Region) -> &mut [u8] {
-        debug_assert_eq!(region.pool_id, self.pool_id, "Region passed to the wrong RtPool");
         let buf: &mut [u8] = cast_slice_mut(self.buf.as_mut());
         &mut buf[region.range()]
     }
@@ -263,9 +252,6 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
         &'a mut self,
         regions: [&Region; N],
     ) -> Option<[&'a mut [u8]; N]> {
-        for region in regions {
-            debug_assert_eq!(region.pool_id, self.pool_id, "Region passed to the wrong RtPool");
-        }
         let ranges = regions.map(Region::range);
         let buf: &mut [u8] = cast_slice_mut(self.buf.as_mut());
         buf.get_disjoint_mut(ranges).ok()
