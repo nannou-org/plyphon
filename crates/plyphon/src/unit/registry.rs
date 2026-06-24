@@ -1,37 +1,37 @@
-//! The UGen registry: maps UGen names to their definitions for SynthDef compilation.
+//! The unit registry: maps unit names to their definitions for SynthDef compilation.
 //!
-//! This is plyphon's instance-based replacement for scsynth's global `gUnitDefLib` (a [`UgenDef`] is
-//! plyphon's `UnitDef`). A [`UgenRegistry`] is owned by the control-side
+//! This is plyphon's instance-based replacement for scsynth's global `gUnitDefLib` (a [`UnitDef`] is
+//! plyphon's `UnitDef`). A [`UnitRegistry`] is owned by the control-side
 //! [`crate::controller::Controller`]; the audio thread never touches it.
 
 use std::collections::HashMap;
 
 use crate::error::BuildError;
 use crate::rate::{Rate, RateInfo};
-use crate::ugen::BuiltUgen;
-use crate::ugen::band_limited::{PulseCtor, SawCtor};
-use crate::ugen::binary_op::BinaryOpCtor;
-use crate::ugen::disk_in::DiskInCtor;
-use crate::ugen::env::EnvGenCtor;
-use crate::ugen::filter::{ButterCtor, Kind};
-use crate::ugen::input::InCtor;
-use crate::ugen::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
-use crate::ugen::line::LineCtor;
-use crate::ugen::noise::WhiteNoiseCtor;
-use crate::ugen::out::OutCtor;
-use crate::ugen::pan::Pan2Ctor;
-use crate::ugen::play_buf::PlayBufCtor;
-use crate::ugen::sin_osc::SinOscCtor;
-use crate::ugen::unary_op::UnaryOpCtor;
-use crate::ugen::util::{AmplitudeCtor, LagCtor, MulAddCtor};
+use crate::unit::BuiltUnit;
+use crate::unit::band_limited::{PulseCtor, SawCtor};
+use crate::unit::binary_op::BinaryOpCtor;
+use crate::unit::disk_in::DiskInCtor;
+use crate::unit::env::EnvGenCtor;
+use crate::unit::filter::{ButterCtor, Kind};
+use crate::unit::input::InCtor;
+use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
+use crate::unit::line::LineCtor;
+use crate::unit::noise::WhiteNoiseCtor;
+use crate::unit::out::OutCtor;
+use crate::unit::pan::Pan2Ctor;
+use crate::unit::play_buf::PlayBufCtor;
+use crate::unit::sin_osc::SinOscCtor;
+use crate::unit::unary_op::UnaryOpCtor;
+use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor};
 
-/// Build-time context for constructing a UGen. Runs off the audio thread, so allocation is fine.
+/// Build-time context for constructing a unit. Runs off the audio thread, so allocation is fine.
 pub struct BuildContext<'a> {
     /// The resolved calc rate of each input, in order - drives input rate specialization.
     pub input_rates: &'a [Rate],
-    /// The UGen's own calculation rate (so it can specialize its output: a block vs one value).
+    /// The unit's own calculation rate (so it can specialize its output: a block vs one value).
     pub rate: Rate,
-    /// Number of outputs the SynthDef assigns this UGen (e.g. how many channels `In` reads).
+    /// Number of outputs the SynthDef assigns this unit (e.g. how many channels `In` reads).
     pub num_outputs: usize,
     /// Audio-rate constants.
     pub audio: &'a RateInfo,
@@ -39,31 +39,31 @@ pub struct BuildContext<'a> {
     pub control: &'a RateInfo,
     /// scsynth's `mSpecialIndex` (e.g. which binary/unary operator).
     pub special_index: i16,
-    /// A seed for this UGen's random number generator (distinct per UGen and per synth instance).
+    /// A seed for this unit's random number generator (distinct per unit and per synth instance).
     pub seed: u64,
 }
 
-/// A UGen definition - scsynth's `UnitDef`. Builds a [`BuiltUgen`] (vtable + initial state image)
+/// A unit definition - scsynth's `UnitDef`. Builds a [`BuiltUnit`] (vtable + initial state image)
 /// from a [`BuildContext`] when a SynthDef is compiled, off the audio thread.
-pub trait UgenDef: Send + Sync {
-    /// Build a UGen, or fail (e.g. an unsupported operator or bad input count).
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError>;
+pub trait UnitDef: Send + Sync {
+    /// Build a unit, or fail (e.g. an unsupported operator or bad input count).
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError>;
 }
 
-/// Maps UGen names to their definitions.
-pub struct UgenRegistry {
-    map: HashMap<String, Box<dyn UgenDef>>,
+/// Maps unit names to their definitions.
+pub struct UnitRegistry {
+    map: HashMap<String, Box<dyn UnitDef>>,
 }
 
-impl UgenRegistry {
+impl UnitRegistry {
     /// An empty registry.
     pub fn new() -> Self {
-        UgenRegistry {
+        UnitRegistry {
             map: HashMap::new(),
         }
     }
 
-    /// A registry pre-populated with the built-in UGens.
+    /// A registry pre-populated with the built-in units.
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
         registry.register("SinOsc", Box::new(SinOscCtor));
@@ -91,17 +91,17 @@ impl UgenRegistry {
     }
 
     /// Register `def` under `name`, replacing any existing entry.
-    pub fn register(&mut self, name: &str, def: Box<dyn UgenDef>) {
+    pub fn register(&mut self, name: &str, def: Box<dyn UnitDef>) {
         self.map.insert(name.to_string(), def);
     }
 
     /// Look up a definition by name.
-    pub fn get(&self, name: &str) -> Option<&dyn UgenDef> {
+    pub fn get(&self, name: &str) -> Option<&dyn UnitDef> {
         self.map.get(name).map(|boxed| boxed.as_ref())
     }
 }
 
-impl Default for UgenRegistry {
+impl Default for UnitRegistry {
     fn default() -> Self {
         Self::new()
     }

@@ -1,7 +1,7 @@
 //! Exercise `WhiteNoise` and the RNG: raw noise is bounded and broadband, and low-passing it
 //! (subtractive synthesis: `LPF.ar(WhiteNoise.ar, 500)`) shifts the energy to low frequencies.
 
-use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, engine};
+use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine};
 
 const SR: f32 = 48_000.0;
 
@@ -49,14 +49,14 @@ fn white_noise_is_bounded_and_broadband() {
     let def = SynthDef {
         name: "raw".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new("WhiteNoise", Rate::Audio, vec![], 1),
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new("WhiteNoise", Rate::Audio, vec![], 1),
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),
@@ -87,23 +87,23 @@ fn lowpassed_white_noise_has_more_low_energy() {
     let def = SynthDef {
         name: "noise".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new("WhiteNoise", Rate::Audio, vec![], 1),
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new("WhiteNoise", Rate::Audio, vec![], 1),
+            UnitSpec::new(
                 "LPF",
                 Rate::Audio,
                 vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(500.0),
                 ],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                 ],
                 0,
             ),

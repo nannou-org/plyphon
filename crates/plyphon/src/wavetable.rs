@@ -2,7 +2,7 @@
 //!
 //! SuperCollider keeps its sine table in process-global statics reached through the plugin
 //! `InterfaceTable`. plyphon instead owns the tables in a [`Wavetables`] value held by the engine
-//! and lends them to UGens by argument (see [`crate::ugen::ProcessCtx`]), so there is no global
+//! and lends them to units by argument (see [`crate::unit::ProcessCtx`]), so there is no global
 //! mutable state and multiple engines can coexist.
 
 use core::f64::consts::TAU;
@@ -10,7 +10,7 @@ use core::f64::consts::TAU;
 /// Number of samples in one cycle of the sine table (matching scsynth's default).
 pub const SINE_SIZE: usize = 16384;
 
-/// The wavetables shared by oscillator UGens.
+/// The wavetables shared by oscillator units.
 ///
 /// Tables carry one guard sample (a copy of index 0) past the end so linear interpolation can read
 /// `table[i + 1]` without bounds juggling.

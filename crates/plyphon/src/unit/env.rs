@@ -11,8 +11,8 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, Inputs, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
 
 /// Where the generator is in the envelope, stored as a `u32` so the state is [`Pod`].
 mod phase {
@@ -98,7 +98,7 @@ impl EnvGen {
     }
 }
 
-impl Ugen for EnvGen {
+impl Unit for EnvGen {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let gate = ctx.ins.control(Self::GATE);
         let level_scale = ctx.ins.control(Self::LEVEL_SCALE) as f64;
@@ -192,9 +192,9 @@ impl Ugen for EnvGen {
 /// Constructor for [`EnvGen`].
 pub struct EnvGenCtor;
 
-impl UgenDef for EnvGenCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(EnvGen {
+impl UnitDef for EnvGenCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(EnvGen {
             level: 0.0,
             pos: 0.0,
             seg_dur: 1.0,
@@ -211,7 +211,7 @@ impl UgenDef for EnvGenCtor {
     }
 }
 
-/// Read input `i` as a single value, or 0.0 if the UGen was built with fewer inputs.
+/// Read input `i` as a single value, or 0.0 if the unit was built with fewer inputs.
 fn get(ins: &Inputs<'_>, i: usize) -> f32 {
     if i < ins.len() { ins.control(i) } else { 0.0 }
 }

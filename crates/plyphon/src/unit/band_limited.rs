@@ -4,14 +4,14 @@
 //! PolyBLEP correction, so they stay reasonably clean across the spectrum (unlike the raw [`LFSaw`]/
 //! [`LFPulse`]). Frequency is read at control rate (one value per block).
 //!
-//! [`LFSaw`]: crate::ugen::lf::LFSaw
-//! [`LFPulse`]: crate::ugen::lf::LFPulse
+//! [`LFSaw`]: crate::unit::lf::LFSaw
+//! [`LFPulse`]: crate::unit::lf::LFPulse
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `Saw.ar(freq)`: a band-limited sawtooth, output -1 to 1.
 #[repr(C)]
@@ -20,7 +20,7 @@ pub struct Saw {
     phase: f32,
 }
 
-impl Ugen for Saw {
+impl Unit for Saw {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let inc = ctx.ins.control(0) * ctx.audio.sample_dur as f32;
         let dt = inc.abs().max(f32::MIN_POSITIVE);
@@ -35,9 +35,9 @@ impl Ugen for Saw {
 /// Constructor for [`Saw`].
 pub struct SawCtor;
 
-impl UgenDef for SawCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(Saw { phase: 0.0 }))
+impl UnitDef for SawCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Saw { phase: 0.0 }))
     }
 }
 
@@ -53,7 +53,7 @@ impl Pulse {
     const WIDTH: usize = 1;
 }
 
-impl Ugen for Pulse {
+impl Unit for Pulse {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let inc = ctx.ins.control(Self::FREQ) * ctx.audio.sample_dur as f32;
         let width = if ctx.ins.len() > Self::WIDTH {
@@ -76,9 +76,9 @@ impl Ugen for Pulse {
 /// Constructor for [`Pulse`].
 pub struct PulseCtor;
 
-impl UgenDef for PulseCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(Pulse { phase: 0.0 }))
+impl UnitDef for PulseCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Pulse { phase: 0.0 }))
     }
 }
 

@@ -7,7 +7,7 @@ use std::f32::consts::TAU;
 use std::future::Future;
 
 use plyphon::{
-    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 use plyphon_buffers::{BufFuture, BufferStream, LoadError, StreamFeeder, StreamInfo};
 
@@ -72,14 +72,14 @@ fn disk_in_def() -> SynthDef {
     SynthDef {
         name: "stream".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new("DiskIn", Rate::Audio, vec![InputRef::Constant(0.0)], 1),
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new("DiskIn", Rate::Audio, vec![InputRef::Constant(0.0)], 1),
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),

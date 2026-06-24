@@ -6,7 +6,7 @@
 //! plane then plays a melody by writing that one bus over time with `/c_set`/
 //! [`Controller::set_control_bus`] - retuning both voices at once. This is what a control bus buys
 //! you over setting each control directly: one value drives many synths (and could equally be driven
-//! by an in-engine UGen, as in `plyphon-example-routing`).
+//! by an in-engine unit, as in `plyphon-example-routing`).
 //!
 //! Retuning a running oscillator is click-free (its phase is continuous), so no per-note envelopes
 //! are needed. As in `plyphon-example-motif`, the only platform-specific part is how the control
@@ -15,7 +15,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use plyphon::{
-    AddAction, Controller, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec,
+    AddAction, Controller, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec,
     World, engine,
 };
 
@@ -61,12 +61,12 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
     });
 
     // voice := SinOsc.ar(freq * ratio) -> Out, with `freq` and `ratio` controls.
-    //   ugen 0: BinaryOpUGen freq * ratio (control rate)
-    //   ugen 1: SinOsc.ar(freq * ratio)
-    //   ugen 2: Out, copied to every channel.
+    //   unit 0: BinaryOpUGen freq * ratio (control rate)
+    //   unit 1: SinOsc.ar(freq * ratio)
+    //   unit 2: Out, copied to every channel.
     let mut out_inputs = vec![InputRef::Constant(0.0)];
     for _ in 0..channels {
-        out_inputs.push(InputRef::Ugen { ugen: 1, output: 0 });
+        out_inputs.push(InputRef::Unit { unit: 1, output: 0 });
     }
     let def = SynthDef {
         name: "voice".to_string(),
@@ -80,8 +80,8 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
                 default: 1.0,
             },
         ],
-        ugens: vec![
-            UgenSpec {
+        units: vec![
+            UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Control,
                 inputs: vec![
@@ -91,16 +91,16 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
                 num_outputs: 1,
                 special_index: OP_MUL,
             },
-            UgenSpec::new(
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(0.0),
                 ],
                 1,
             ),
-            UgenSpec::new("Out", Rate::Audio, out_inputs, 0),
+            UnitSpec::new("Out", Rate::Audio, out_inputs, 0),
         ],
     };
     controller.add_synthdef(def);

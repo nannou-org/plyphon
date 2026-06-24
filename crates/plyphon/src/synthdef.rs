@@ -12,10 +12,10 @@ pub mod read;
 use std::collections::HashMap;
 
 use crate::error::BuildError;
-use crate::graphdef::{GraphDef, OutputWire, UgenVtbl, build_layout};
+use crate::graphdef::{GraphDef, OutputWire, UnitVtbl, build_layout};
 use crate::rate::{Rate, RateInfo};
-use crate::ugen::registry::{BuildContext, UgenRegistry};
-use crate::ugen::{BuiltUgen, InputSource};
+use crate::unit::registry::{BuildContext, UnitRegistry};
+use crate::unit::{BuiltUnit, InputSource};
 
 /// A named control parameter with a default value (settable later via `set_control`).
 #[derive(Clone, Debug)]
@@ -26,23 +26,23 @@ pub struct Param {
     pub default: f32,
 }
 
-/// Where a UGen input comes from, as specified in a [`SynthDef`].
+/// Where a unit input comes from, as specified in a [`SynthDef`].
 #[derive(Clone, Copy, Debug)]
 pub enum InputRef {
     /// A constant value baked into the def.
     Constant(f32),
     /// The value of control parameter `index`.
     Param(u32),
-    /// Output `output` of an earlier UGen `ugen` in the def.
-    Ugen { ugen: u32, output: u32 },
+    /// Output `output` of an earlier unit `unit` in the def.
+    Unit { unit: u32, output: u32 },
 }
 
-/// One UGen within a [`SynthDef`] graph. UGens are listed in topological calc order.
+/// One unit within a [`SynthDef`] graph. units are listed in topological calc order.
 #[derive(Clone, Debug)]
-pub struct UgenSpec {
+pub struct UnitSpec {
     /// Registry name (e.g. `"SinOsc"`).
     pub name: String,
-    /// The UGen's calc rate.
+    /// The unit's calc rate.
     pub rate: Rate,
     /// Inputs, in order.
     pub inputs: Vec<InputRef>,
@@ -52,7 +52,7 @@ pub struct UgenSpec {
     pub special_index: i16,
 }
 
-impl UgenSpec {
+impl UnitSpec {
     /// A convenience constructor with `special_index = 0`.
     pub fn new(
         name: impl Into<String>,
@@ -60,7 +60,7 @@ impl UgenSpec {
         inputs: Vec<InputRef>,
         num_outputs: usize,
     ) -> Self {
-        UgenSpec {
+        UnitSpec {
             name: name.into(),
             rate,
             inputs,
@@ -77,8 +77,8 @@ pub struct SynthDef {
     pub name: String,
     /// Control parameters.
     pub params: Vec<Param>,
-    /// UGens in topological calc order.
-    pub ugens: Vec<UgenSpec>,
+    /// units in topological calc order.
+    pub units: Vec<UnitSpec>,
 }
 
 impl SynthDef {
@@ -87,19 +87,19 @@ impl SynthDef {
         self.params.iter().position(|p| p.name == name)
     }
 
-    /// Compile this def into an immutable [`GraphDef`] using `registry` for UGen construction.
+    /// Compile this def into an immutable [`GraphDef`] using `registry` for unit construction.
     ///
     /// Runs entirely off the audio thread (the analogue of scsynth's `GraphDef_Recv`): it resolves
-    /// the wiring, builds each UGen's vtable + initial state image, and computes the per-graph block
-    /// layout. `max_wire_bufs`/`max_ugen_outputs` are the engine's shared-scratch capacities; a def
+    /// the wiring, builds each unit's vtable + initial state image, and computes the per-graph block
+    /// layout. `max_wire_bufs`/`max_unit_outputs` are the engine's shared-scratch capacities; a def
     /// exceeding either fails here rather than on the audio thread.
     pub fn compile(
         &self,
-        registry: &UgenRegistry,
+        registry: &UnitRegistry,
         audio: &RateInfo,
         control: &RateInfo,
         max_wire_bufs: usize,
-        max_ugen_outputs: usize,
+        max_unit_outputs: usize,
     ) -> Result<GraphDef, BuildError> {
         let block_size = audio.block_size;
 
@@ -107,12 +107,12 @@ impl SynthDef {
         let num_params = self.params.len();
         let param_wires: Vec<u32> = (0..num_params as u32).collect();
 
-        // Pass 1: assign a wire to each (ugen, output) by rate. Audio outputs go to audio wires;
+        // Pass 1: assign a wire to each (unit, output) by rate. Audio outputs go to audio wires;
         // control/scalar outputs go to control wires following the parameter wires.
         let mut num_audio_wires = 0u32;
         let mut num_control_wires = num_params as u32;
-        let mut outputs_plan: Vec<Box<[OutputWire]>> = Vec::with_capacity(self.ugens.len());
-        for spec in &self.ugens {
+        let mut outputs_plan: Vec<Box<[OutputWire]>> = Vec::with_capacity(self.units.len());
+        for spec in &self.units {
             let mut wires = Vec::with_capacity(spec.num_outputs);
             for _ in 0..spec.num_outputs {
                 let wire = match spec.rate {
@@ -138,18 +138,18 @@ impl SynthDef {
             outputs_plan.push(wires.into_boxed_slice());
         }
 
-        // Control-wire defaults: parameters at their defaults, the rest (control-rate UGen outputs)
+        // Control-wire defaults: parameters at their defaults, the rest (control-rate unit outputs)
         // zeroed. These seed the per-graph control wires when an instance is built on the RT thread.
         let mut control_defaults = vec![0.0f32; num_control_wires as usize];
         for (i, param) in self.params.iter().enumerate() {
             control_defaults[i] = param.default;
         }
 
-        // Pass 2: build each UGen and resolve its inputs against the assigned wires.
-        let mut built: Vec<BuiltUgen> = Vec::with_capacity(self.ugens.len());
-        let mut inputs_plan: Vec<Box<[InputSource]>> = Vec::with_capacity(self.ugens.len());
+        // Pass 2: build each unit and resolve its inputs against the assigned wires.
+        let mut built: Vec<BuiltUnit> = Vec::with_capacity(self.units.len());
+        let mut inputs_plan: Vec<Box<[InputSource]>> = Vec::with_capacity(self.units.len());
         let mut max_outputs = 0usize;
-        for (u, spec) in self.ugens.iter().enumerate() {
+        for (u, spec) in self.units.iter().enumerate() {
             let mut sources = Vec::with_capacity(spec.inputs.len());
             for input in &spec.inputs {
                 let source = match *input {
@@ -158,9 +158,9 @@ impl SynthDef {
                         let wire = *param_wires.get(p as usize).ok_or(BuildError::BadInputRef)?;
                         InputSource::Control(wire)
                     }
-                    InputRef::Ugen { ugen, output } => {
+                    InputRef::Unit { unit, output } => {
                         let from = outputs_plan
-                            .get(ugen as usize)
+                            .get(unit as usize)
                             .and_then(|outs| outs.get(output as usize))
                             .ok_or(BuildError::BadInputRef)?;
                         match from.rate {
@@ -174,7 +174,7 @@ impl SynthDef {
 
             let input_rates: Vec<Rate> = sources.iter().map(|s| s.rate()).collect();
             // A deterministic build-time seed; the real per-instance seed is applied on the RT thread
-            // via `Ugen::reseed`, so this is only a placeholder for the baked state image.
+            // via `Unit::reseed`, so this is only a placeholder for the baked state image.
             let build_ctx = BuildContext {
                 input_rates: &input_rates,
                 audio,
@@ -186,7 +186,7 @@ impl SynthDef {
             };
             let def = registry
                 .get(&spec.name)
-                .ok_or_else(|| BuildError::UnknownUgen(spec.name.clone()))?;
+                .ok_or_else(|| BuildError::UnknownUnit(spec.name.clone()))?;
             built.push(def.build(&build_ctx)?);
             inputs_plan.push(sources.into_boxed_slice());
             max_outputs = max_outputs.max(spec.num_outputs);
@@ -199,15 +199,15 @@ impl SynthDef {
                 limit: max_wire_bufs,
             });
         }
-        if max_outputs > max_ugen_outputs {
+        if max_outputs > max_unit_outputs {
             return Err(BuildError::TooManyOutputs {
                 needed: max_outputs,
-                limit: max_ugen_outputs,
+                limit: max_unit_outputs,
             });
         }
 
         // Lay out the per-graph block (state arena | control wires | param maps) and pack the initial
-        // state-arena image from each UGen's initial state bytes.
+        // state-arena image from each unit's initial state bytes.
         let state_slots: Vec<(usize, usize)> = built.iter().map(|b| (b.size, b.align)).collect();
         let (layout, state_offsets) =
             build_layout(&state_slots, num_control_wires as usize, num_params);
@@ -216,12 +216,12 @@ impl SynthDef {
             state_image[off..off + b.size].copy_from_slice(&b.init_bytes);
         }
 
-        let ugens: Vec<UgenVtbl> = built
+        let units: Vec<UnitVtbl> = built
             .into_iter()
             .zip(inputs_plan)
             .zip(outputs_plan)
             .zip(state_offsets)
-            .map(|(((b, inputs), outputs), state_offset)| UgenVtbl {
+            .map(|(((b, inputs), outputs), state_offset)| UnitVtbl {
                 process: b.process,
                 init: b.init,
                 reseed: b.reseed,
@@ -233,7 +233,7 @@ impl SynthDef {
             .collect();
 
         Ok(GraphDef {
-            ugens: ugens.into_boxed_slice(),
+            units: units.into_boxed_slice(),
             layout,
             state_image: state_image.into_boxed_slice(),
             control_defaults: control_defaults.into_boxed_slice(),

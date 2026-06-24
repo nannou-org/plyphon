@@ -1,8 +1,8 @@
-//! The utility UGens: Pan2 (equal-power stereo), MulAdd (scale/offset), Lag (smoothing), and
+//! The utility units: Pan2 (equal-power stereo), MulAdd (scale/offset), Lag (smoothing), and
 //! Amplitude (envelope following).
 
 use plyphon::{
-    AddAction, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 const SR: f32 = 48_000.0;
@@ -30,8 +30,8 @@ fn rms(samples: &[f32]) -> f32 {
     (samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32).sqrt()
 }
 
-fn ugen(name: &str, inputs: Vec<InputRef>, outputs: usize) -> UgenSpec {
-    UgenSpec::new(name, Rate::Audio, inputs, outputs)
+fn unit(name: &str, inputs: Vec<InputRef>, outputs: usize) -> UnitSpec {
+    UnitSpec::new(name, Rate::Audio, inputs, outputs)
 }
 
 #[test]
@@ -45,13 +45,13 @@ fn lag_seeds_to_its_input_on_the_first_block() {
             name: "in".to_string(),
             default: 0.0,
         }],
-        ugens: vec![
-            ugen("Lag", vec![InputRef::Param(0), InputRef::Constant(1.0)], 1),
-            ugen(
+        units: vec![
+            unit("Lag", vec![InputRef::Param(0), InputRef::Constant(1.0)], 1),
+            unit(
                 "Out",
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),
@@ -82,23 +82,23 @@ fn pan2_places_a_signal_in_the_stereo_field() {
     let def = SynthDef {
         name: "test".to_string(),
         params: vec![],
-        ugens: vec![
-            ugen("Saw", vec![InputRef::Constant(220.0)], 1),
-            ugen(
+        units: vec![
+            unit("Saw", vec![InputRef::Constant(220.0)], 1),
+            unit(
                 "Pan2",
                 vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(-1.0), // hard left
                     InputRef::Constant(1.0),
                 ],
                 2,
             ),
-            ugen(
+            unit(
                 "Out",
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 1, output: 0 },
-                    InputRef::Ugen { ugen: 1, output: 1 },
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Unit { unit: 1, output: 1 },
                 ],
                 0,
             ),
@@ -124,26 +124,26 @@ fn mul_add_scales_and_offsets() {
     let def = SynthDef {
         name: "test".to_string(),
         params: vec![],
-        ugens: vec![
-            ugen(
+        units: vec![
+            unit(
                 "SinOsc",
                 vec![InputRef::Constant(440.0), InputRef::Constant(0.0)],
                 1,
             ),
-            ugen(
+            unit(
                 "MulAdd",
                 vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(0.0),
                     InputRef::Constant(0.3),
                 ],
                 1,
             ),
-            ugen(
+            unit(
                 "Out",
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                 ],
                 0,
             ),
@@ -168,13 +168,13 @@ fn lag_smooths_a_step() {
             name: "in".to_string(),
             default: 0.0,
         }],
-        ugens: vec![
-            ugen("Lag", vec![InputRef::Param(0), InputRef::Constant(0.1)], 1),
-            ugen(
+        units: vec![
+            unit("Lag", vec![InputRef::Param(0), InputRef::Constant(0.1)], 1),
+            unit(
                 "Out",
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),
@@ -221,36 +221,36 @@ fn amplitude_follows_the_envelope() {
     let def = SynthDef {
         name: "test".to_string(),
         params: vec![],
-        ugens: vec![
-            ugen(
+        units: vec![
+            unit(
                 "SinOsc",
                 vec![InputRef::Constant(440.0), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec {
+            UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Audio,
                 inputs: vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(0.5),
                 ],
                 num_outputs: 1,
                 special_index: 2, // multiply
             },
-            ugen(
+            unit(
                 "Amplitude",
                 vec![
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                     InputRef::Constant(0.01),
                     InputRef::Constant(0.05),
                 ],
                 1,
             ),
-            ugen(
+            unit(
                 "Out",
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 2, output: 0 },
+                    InputRef::Unit { unit: 2, output: 0 },
                 ],
                 0,
             ),

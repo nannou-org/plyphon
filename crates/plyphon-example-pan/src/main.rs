@@ -7,7 +7,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use plyphon::{
-    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 /// The panned tone (Hz).
@@ -31,31 +31,31 @@ fn build(sample_rate: f32, channels: usize) -> World {
     let def = SynthDef {
         name: "pan".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Control,
                 vec![InputRef::Constant(PAN_RATE), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec::new("Saw", Rate::Audio, vec![InputRef::Constant(FREQ)], 1),
-            UgenSpec::new(
+            UnitSpec::new("Saw", Rate::Audio, vec![InputRef::Constant(FREQ)], 1),
+            UnitSpec::new(
                 "Pan2",
                 Rate::Audio,
                 vec![
-                    InputRef::Ugen { ugen: 1, output: 0 }, // in
-                    InputRef::Ugen { ugen: 0, output: 0 }, // pos = LFO
+                    InputRef::Unit { unit: 1, output: 0 }, // in
+                    InputRef::Unit { unit: 0, output: 0 }, // pos = LFO
                     InputRef::Constant(1.0),               // level
                 ],
                 2,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 2, output: 0 },
-                    InputRef::Ugen { ugen: 2, output: 1 },
+                    InputRef::Unit { unit: 2, output: 0 },
+                    InputRef::Unit { unit: 2, output: 1 },
                 ],
                 0,
             ),

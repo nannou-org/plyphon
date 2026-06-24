@@ -1,4 +1,4 @@
-//! A per-UGen random number generator - plyphon's port of scsynth's `RGen` (Taus88).
+//! A per-unit random number generator - plyphon's port of scsynth's `RGen` (Taus88).
 //!
 //! scsynth seeds its generators from a process-global source; plyphon instead seeds each generator
 //! from a value threaded down through the builder (see [`crate::synthdef::SynthDef::instantiate`]),
@@ -6,9 +6,9 @@
 
 /// A Taus88 combined Tausworthe generator (the algorithm scsynth uses).
 ///
-/// `repr(C)` + `Pod` so it embeds directly in a UGen's pool-resident state (e.g. [`WhiteNoise`]).
+/// `repr(C)` + `Pod` so it embeds directly in a unit's pool-resident state (e.g. [`WhiteNoise`]).
 ///
-/// [`WhiteNoise`]: crate::ugen::WhiteNoise
+/// [`WhiteNoise`]: crate::unit::WhiteNoise
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Rng {

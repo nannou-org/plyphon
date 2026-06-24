@@ -1,7 +1,7 @@
-//! Exercise control-rate UGen outputs: a `Line.kr` ramp feeding a `SinOsc.ar` frequency input, so a
-//! control-rate signal drives an audio-rate UGen. The pitch should glide from 220 Hz to 660 Hz.
+//! Exercise control-rate unit outputs: a `Line.kr` ramp feeding a `SinOsc.ar` frequency input, so a
+//! control-rate signal drives an audio-rate unit. The pitch should glide from 220 Hz to 660 Hz.
 
-use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, engine};
+use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine};
 
 const SR: f32 = 48_000.0;
 
@@ -40,9 +40,9 @@ fn glide_def() -> SynthDef {
     SynthDef {
         name: "glide".to_string(),
         params: vec![],
-        ugens: vec![
+        units: vec![
             // Line.kr(220, 660, 1.0): a control-rate ramp (one output value per block).
-            UgenSpec {
+            UnitSpec {
                 name: "Line".to_string(),
                 rate: Rate::Control,
                 inputs: vec![
@@ -54,21 +54,21 @@ fn glide_def() -> SynthDef {
                 special_index: 0,
             },
             // SinOsc.ar(freq = Line.kr output) - the freq input is control-rate.
-            UgenSpec::new(
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(0.0),
                 ],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                 ],
                 0,
             ),

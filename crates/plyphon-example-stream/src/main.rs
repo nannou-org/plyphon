@@ -18,7 +18,7 @@ use std::io::Cursor;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use plyphon::{
-    AddAction, Controller, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World,
+    AddAction, Controller, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
     engine,
 };
 use plyphon_buffers::{BufFuture, BufferStream, LoadError, StreamFeeder, StreamInfo};
@@ -150,22 +150,22 @@ async fn setup(
 fn disk_in_def(stream_channels: usize, device_channels: usize) -> SynthDef {
     let mut out_inputs = vec![InputRef::Constant(0.0)];
     for c in 0..device_channels {
-        out_inputs.push(InputRef::Ugen {
-            ugen: 0,
+        out_inputs.push(InputRef::Unit {
+            unit: 0,
             output: (c % stream_channels) as u32,
         });
     }
     SynthDef {
         name: "stream".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "DiskIn",
                 Rate::Audio,
                 vec![InputRef::Constant(0.0)],
                 stream_channels,
             ),
-            UgenSpec::new("Out", Rate::Audio, out_inputs, 0),
+            UnitSpec::new("Out", Rate::Audio, out_inputs, 0),
         ],
     }
 }

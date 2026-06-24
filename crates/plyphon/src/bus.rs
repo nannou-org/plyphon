@@ -1,6 +1,6 @@
-//! Buses - the shared signal storage that `Out`/`In` UGens write to and read from.
+//! Buses - the shared signal storage that `Out`/`In` units write to and read from.
 //!
-//! plyphon mirrors scsynth's two bus banks, both owned by [`Buses`] and lent to UGens (by `&mut`)
+//! plyphon mirrors scsynth's two bus banks, both owned by [`Buses`] and lent to units (by `&mut`)
 //! through the synth process loop:
 //!
 //! - an audio bus bank ([`AudioBus`]): `block_size` samples per channel, laid out as the hardware
@@ -165,7 +165,7 @@ impl ControlBus {
 }
 
 /// The engine's bus banks: an [`AudioBus`] (output, then input, then private channels) and a
-/// [`ControlBus`]. Owned by the [`World`](crate::world::World) and lent to UGens during processing.
+/// [`ControlBus`]. Owned by the [`World`](crate::world::World) and lent to units during processing.
 #[derive(Clone, Debug)]
 pub struct Buses {
     audio: AudioBus,

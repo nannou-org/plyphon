@@ -3,7 +3,7 @@
 //! a `NodeEnded` event.
 
 use plyphon::{
-    AddAction, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, engine,
+    AddAction, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine,
 };
 
 const SR: f32 = 48_000.0;
@@ -30,9 +30,9 @@ fn enveloped_sine() -> SynthDef {
     SynthDef {
         name: "env".to_string(),
         params: vec![],
-        ugens: vec![
+        units: vec![
             // Line.kr(1, 0, 0.1, 2): amplitude 1 -> 0, then doneAction 2 (free self).
-            UgenSpec {
+            UnitSpec {
                 name: "Line".to_string(),
                 rate: Rate::Control,
                 inputs: vec![
@@ -44,29 +44,29 @@ fn enveloped_sine() -> SynthDef {
                 num_outputs: 1,
                 special_index: 0,
             },
-            UgenSpec::new(
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Constant(440.0), InputRef::Constant(0.0)],
                 1,
             ),
             // SinOsc * Line (BinaryOpUGen, special index 2 = multiply).
-            UgenSpec {
+            UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Audio,
                 inputs: vec![
-                    InputRef::Ugen { ugen: 1, output: 0 },
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 num_outputs: 1,
                 special_index: 2,
             },
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 2, output: 0 },
+                    InputRef::Unit { unit: 2, output: 0 },
                 ],
                 0,
             ),

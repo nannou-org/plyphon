@@ -2,7 +2,7 @@
 //! group but keeps it, and moving a node relocates it (so it survives its old group being freed).
 
 use plyphon::{
-    AddAction, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 const SR: f32 = 48_000.0;
@@ -37,19 +37,19 @@ fn sine_def(freq: f32) -> SynthDef {
     SynthDef {
         name: format!("sine{freq}"),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Constant(freq), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),

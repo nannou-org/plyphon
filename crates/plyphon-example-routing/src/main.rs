@@ -16,7 +16,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use plyphon::{
-    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 /// LFO rate in Hz (how fast the filter sweeps).
@@ -51,39 +51,39 @@ fn build(sample_rate: f32, channels: usize) -> World {
     let lfo = SynthDef {
         name: "lfo".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Control,
                 vec![InputRef::Constant(LFO_FREQ), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec {
+            UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Control,
                 inputs: vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(CUTOFF_DEPTH),
                 ],
                 num_outputs: 1,
                 special_index: OP_MUL,
             },
-            UgenSpec {
+            UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Control,
                 inputs: vec![
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                     InputRef::Constant(CUTOFF_CENTRE),
                 ],
                 num_outputs: 1,
                 special_index: OP_ADD,
             },
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Control,
                 vec![
                     InputRef::Constant(cutoff_bus),
-                    InputRef::Ugen { ugen: 2, output: 0 },
+                    InputRef::Unit { unit: 2, output: 0 },
                 ],
                 0,
             ),
@@ -94,14 +94,14 @@ fn build(sample_rate: f32, channels: usize) -> World {
     let source = SynthDef {
         name: "source".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new("WhiteNoise", Rate::Audio, vec![], 1),
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new("WhiteNoise", Rate::Audio, vec![], 1),
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(noise_bus),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),
@@ -111,24 +111,24 @@ fn build(sample_rate: f32, channels: usize) -> World {
     // filter: LPF(In.ar(noise_bus), In.kr(cutoff_bus)) -> Out.ar(0, ..), copied to every channel.
     let mut out_inputs = vec![InputRef::Constant(0.0)]; // input 0: starting output channel
     for _ in 0..channels {
-        out_inputs.push(InputRef::Ugen { ugen: 2, output: 0 });
+        out_inputs.push(InputRef::Unit { unit: 2, output: 0 });
     }
     let filter = SynthDef {
         name: "filter".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new("In", Rate::Audio, vec![InputRef::Constant(noise_bus)], 1),
-            UgenSpec::new("In", Rate::Control, vec![InputRef::Constant(cutoff_bus)], 1),
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new("In", Rate::Audio, vec![InputRef::Constant(noise_bus)], 1),
+            UnitSpec::new("In", Rate::Control, vec![InputRef::Constant(cutoff_bus)], 1),
+            UnitSpec::new(
                 "LPF",
                 Rate::Audio,
                 vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                 ],
                 1,
             ),
-            UgenSpec::new("Out", Rate::Audio, out_inputs, 0),
+            UnitSpec::new("Out", Rate::Audio, out_inputs, 0),
         ],
     };
 

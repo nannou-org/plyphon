@@ -7,7 +7,7 @@
 //! `curveType`, `curveValue`).
 
 use plyphon::{
-    AddAction, Event, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, engine,
+    AddAction, Event, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine,
 };
 
 const SR: f32 = 48_000.0;
@@ -49,32 +49,32 @@ fn enveloped_sine(name: &str, params: Vec<Param>, gate: InputRef, env: Vec<f32>)
     SynthDef {
         name: name.to_string(),
         params,
-        ugens: vec![
+        units: vec![
             // EnvGen.kr(env, ...): a control-rate amplitude envelope.
-            UgenSpec::new("EnvGen", Rate::Control, env_inputs, 1),
-            UgenSpec::new(
+            UnitSpec::new("EnvGen", Rate::Control, env_inputs, 1),
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Constant(440.0), InputRef::Constant(0.0)],
                 1,
             ),
             // SinOsc * EnvGen (BinaryOpUGen, special index 2 = multiply).
-            UgenSpec {
+            UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Audio,
                 inputs: vec![
-                    InputRef::Ugen { ugen: 1, output: 0 },
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 num_outputs: 1,
                 special_index: 2,
             },
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 2, output: 0 },
+                    InputRef::Unit { unit: 2, output: 0 },
                 ],
                 0,
             ),

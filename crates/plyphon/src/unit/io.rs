@@ -1,14 +1,14 @@
-//! Free functions for the audited operations a UGen performs on the World's shared buses and
-//! buffers - plyphon's safe-Rust answer to scsynth's "UGens reach everything through `mWorld`".
+//! Free functions for the audited operations a unit performs on the World's shared buses and
+//! buffers - plyphon's safe-Rust answer to scsynth's "units reach everything through `mWorld`".
 //!
 //! [`ProcessCtx`]/[`InitCtx`] expose the buses and buffer table as plain fields, but those types'
-//! dangerous mutators are crate-private; these free fns are the public, audited surface a UGen uses
+//! dangerous mutators are crate-private; these free fns are the public, audited surface a unit uses
 //! to touch shared storage. Taking only the field each needs - rather than `&self`/`&mut self` on
-//! the whole context - keeps them borrow-friendly: a UGen can read its inputs and write a bus in one
+//! the whole context - keeps them borrow-friendly: a unit can read its inputs and write a bus in one
 //! expression, because the borrows land on disjoint fields (`ctx.ins` vs `ctx.buses`).
 //!
-//! [`ProcessCtx`]: crate::ugen::ProcessCtx
-//! [`InitCtx`]: crate::ugen::InitCtx
+//! [`ProcessCtx`]: crate::unit::ProcessCtx
+//! [`InitCtx`]: crate::unit::InitCtx
 
 use crate::buffer::{Buffer, BufferTable};
 use crate::bus::Buses;

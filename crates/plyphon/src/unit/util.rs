@@ -1,11 +1,11 @@
-//! Utility UGens - plyphon's ports of scsynth's `MulAdd`, `Lag`, and `Amplitude`.
+//! Utility units - plyphon's ports of scsynth's `MulAdd`, `Lag`, and `Amplitude`.
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::rate::Rate;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, InitCtx, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
 
 /// `ln(0.001)` - the decay target scsynth uses for its `-60 dB time` smoothing coefficients.
 const LOG001: f32 = -6.907_755;
@@ -35,7 +35,7 @@ impl MulAdd {
     const ADD: usize = 2;
 }
 
-impl Ugen for MulAdd {
+impl Unit for MulAdd {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let mul = ctx.ins.control(Self::MUL);
         let add = ctx.ins.control(Self::ADD);
@@ -54,9 +54,9 @@ impl Ugen for MulAdd {
 /// Constructor for [`MulAdd`].
 pub struct MulAddCtor;
 
-impl UgenDef for MulAddCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(MulAdd {
+impl UnitDef for MulAddCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(MulAdd {
             in_audio: (ctx.input_rates.first() == Some(&Rate::Audio)) as u32,
         }))
     }
@@ -79,7 +79,7 @@ impl Lag {
     const TIME: usize = 1;
 }
 
-impl Ugen for Lag {
+impl Unit for Lag {
     fn init(&mut self, ctx: &InitCtx<'_>) {
         // Start at the input value (scsynth's `m_y1 = ZIN0(0)`) so the first block holds steady
         // instead of ramping up from zero - the coefficient is still computed lazily in `process`,
@@ -116,9 +116,9 @@ impl Ugen for Lag {
 /// Constructor for [`Lag`].
 pub struct LagCtor;
 
-impl UgenDef for LagCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(Lag {
+impl UnitDef for LagCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Lag {
             lag_time: -1.0, // force coefficient computation on the first block
             b1: 0.0,
             y: 0.0,
@@ -145,7 +145,7 @@ impl Amplitude {
     const RELEASE: usize = 2;
 }
 
-impl Ugen for Amplitude {
+impl Unit for Amplitude {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let sample_rate = ctx.audio.sample_rate as f32;
         let attack = if ctx.ins.len() > Self::ATTACK {
@@ -188,9 +188,9 @@ impl Ugen for Amplitude {
 /// Constructor for [`Amplitude`].
 pub struct AmplitudeCtor;
 
-impl UgenDef for AmplitudeCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(Amplitude {
+impl UnitDef for AmplitudeCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Amplitude {
             attack_time: -1.0,
             release_time: -1.0,
             attack_coef: 0.0,

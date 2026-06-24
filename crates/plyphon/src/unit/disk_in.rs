@@ -3,8 +3,8 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{self, BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `DiskIn.ar(numChannels, bufnum)`: plays the disk-streamed buffer `bufnum`, one output per channel,
 /// at the stream's native rate. It pulls pre-filled chunks from the stream's queue (filled off the
@@ -19,12 +19,12 @@ impl DiskIn {
     const BUFNUM: usize = 0;
 }
 
-impl Ugen for DiskIn {
+impl Unit for DiskIn {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let num_channels = self.num_channels as usize;
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let block = ctx.outs.audio(0).len();
-        let produced = match ugen::stream_at_mut(ctx.buffers, bufnum) {
+        let produced = match unit::stream_at_mut(ctx.buffers, bufnum) {
             Some(stream) => stream.read(block, num_channels, |frame, ch, value| {
                 ctx.outs.audio(ch)[frame] = value;
             }),
@@ -41,9 +41,9 @@ impl Ugen for DiskIn {
 /// Constructor for [`DiskIn`]. The output count (the stream's channel count) is fixed here.
 pub struct DiskInCtor;
 
-impl UgenDef for DiskInCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(DiskIn {
+impl UnitDef for DiskInCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(DiskIn {
             num_channels: ctx.num_outputs as u32,
         }))
     }

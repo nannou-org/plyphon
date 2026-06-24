@@ -1,7 +1,7 @@
 //! Node-tree commands over OSC: `/g_new` + `/s_new` build a group, `/g_freeAll` empties it, and
 //! `/g_tail` moves a synth between groups (so it survives its old group being freed).
 
-use plyphon::{Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine};
+use plyphon::{Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine};
 use plyphon_osc::OscDispatcher;
 use rosc::{OscMessage, OscPacket, OscType};
 
@@ -53,19 +53,19 @@ fn sine_def() -> SynthDef {
     SynthDef {
         name: "sine".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Constant(440.0), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),

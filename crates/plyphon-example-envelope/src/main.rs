@@ -13,7 +13,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use plyphon::{
     AddAction, Controller, Event, InputRef, Nrt, Options, Param, ROOT_GROUP_ID, Rate, SynthDef,
-    UgenSpec, World, engine,
+    UnitSpec, World, engine,
 };
 
 /// A C-major pentatonic scale (Hz) the plucks walk through.
@@ -83,7 +83,7 @@ impl Controls {
 
 /// The flat `EnvGen` input array for a percussive envelope: a linear attack to [`AMP`] then an
 /// exponential decay to silence, freeing the synth at the end. Mirrors SuperCollider's
-/// `Env.perc(ATTACK, RELEASE, AMP, CURVE)` unrolled for the `EnvGen` UGen.
+/// `Env.perc(ATTACK, RELEASE, AMP, CURVE)` unrolled for the `EnvGen` unit.
 fn perc_env_inputs() -> Vec<InputRef> {
     let values = [
         1.0,   // gate (held open; a perc with no release node just plays through)
@@ -113,13 +113,13 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
     });
 
     // pluck := SinOsc.ar(freq) * EnvGen.kr(Env.perc, doneAction: 2) -> Out
-    //   ugen 0: EnvGen.kr - the percussive amplitude envelope that frees the synth when faded.
-    //   ugen 1: SinOsc.ar(freq)
-    //   ugen 2: SinOsc * EnvGen (BinaryOpUGen multiply)
-    //   ugen 3: Out, the product copied to each channel.
+    //   unit 0: EnvGen.kr - the percussive amplitude envelope that frees the synth when faded.
+    //   unit 1: SinOsc.ar(freq)
+    //   unit 2: SinOsc * EnvGen (BinaryOpUGen multiply)
+    //   unit 3: Out, the product copied to each channel.
     let mut out_inputs = vec![InputRef::Constant(0.0)];
     for _ in 0..channels {
-        out_inputs.push(InputRef::Ugen { ugen: 2, output: 0 });
+        out_inputs.push(InputRef::Unit { unit: 2, output: 0 });
     }
     let def = SynthDef {
         name: "pluck".to_string(),
@@ -127,25 +127,25 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
             name: "freq".to_string(),
             default: 440.0,
         }],
-        ugens: vec![
-            UgenSpec::new("EnvGen", Rate::Control, perc_env_inputs(), 1),
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new("EnvGen", Rate::Control, perc_env_inputs(), 1),
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Param(0), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec {
+            UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Audio,
                 inputs: vec![
-                    InputRef::Ugen { ugen: 1, output: 0 },
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 num_outputs: 1,
                 special_index: 2, // multiply
             },
-            UgenSpec::new("Out", Rate::Audio, out_inputs, 0),
+            UnitSpec::new("Out", Rate::Audio, out_inputs, 0),
         ],
     };
     controller.add_synthdef(def);

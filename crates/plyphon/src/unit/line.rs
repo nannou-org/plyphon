@@ -4,8 +4,8 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::rate::Rate;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, InitCtx, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
 
 /// `Line.ar/kr(start, end, dur, doneAction)`: ramps linearly from `start` to `end` over `dur`
 /// seconds, then holds at `end`. The arguments are latched on the first block (as in SuperCollider).
@@ -46,7 +46,7 @@ impl Line {
     }
 }
 
-impl Ugen for Line {
+impl Unit for Line {
     fn init(&mut self, ctx: &InitCtx<'_>) {
         // Latch the ramp arguments from the (now live) inputs, as SuperCollider does at first calc.
         let start = ctx.ins.control(Self::START) as f64;
@@ -95,13 +95,13 @@ impl Ugen for Line {
 /// Constructor for [`Line`].
 pub struct LineCtor;
 
-impl UgenDef for LineCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+impl UnitDef for LineCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         // start, end, dur, and an optional trailing doneAction input.
         if ctx.input_rates.len() < 3 {
             return Err(BuildError::WrongInputCount);
         }
-        Ok(ugen_spec(Line {
+        Ok(unit_spec(Line {
             value: 0.0,
             end: 0.0,
             slope: 0.0,

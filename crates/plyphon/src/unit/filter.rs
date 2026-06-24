@@ -10,8 +10,8 @@ use std::f64::consts::{PI, SQRT_2};
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// Which Butterworth response to compute. The build-time domain; stored in [`Butter`] as a `u32` tag
 /// (via [`Kind::to_tag`]) so the state is [`Pod`] and lives in the rt-pool.
@@ -95,7 +95,7 @@ impl Butter {
     const FREQ: usize = 1;
 }
 
-impl Ugen for Butter {
+impl Unit for Butter {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let kind = Kind::from_tag(self.kind);
         let freq = ctx.ins.control(Self::FREQ);
@@ -127,12 +127,12 @@ impl Ugen for Butter {
 /// Constructor for [`Butter`], parameterized by filter [`Kind`].
 pub struct ButterCtor(pub Kind);
 
-impl UgenDef for ButterCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+impl UnitDef for ButterCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         if ctx.input_rates.len() < 2 {
             return Err(BuildError::WrongInputCount);
         }
-        Ok(ugen_spec(Butter {
+        Ok(unit_spec(Butter {
             a0: 0.0,
             b1: 0.0,
             b2: 0.0,

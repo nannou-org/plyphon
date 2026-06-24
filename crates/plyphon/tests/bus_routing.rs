@@ -3,7 +3,7 @@
 //! Each case is verified with a Goertzel tone detector on the rendered output.
 
 use plyphon::{
-    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 const SR: f32 = 48_000.0;
@@ -64,19 +64,19 @@ fn audio_writer(name: &str, freq: f32, bus: f32) -> SynthDef {
     SynthDef {
         name: name.to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Constant(freq), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(bus),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),
@@ -89,14 +89,14 @@ fn audio_reader(name: &str, bus: f32) -> SynthDef {
     SynthDef {
         name: name.to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new("In", Rate::Audio, vec![InputRef::Constant(bus)], 1),
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new("In", Rate::Audio, vec![InputRef::Constant(bus)], 1),
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),
@@ -109,23 +109,23 @@ fn control_reader(name: &str, bus: f32) -> SynthDef {
     SynthDef {
         name: name.to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new("In", Rate::Control, vec![InputRef::Constant(bus)], 1),
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new("In", Rate::Control, vec![InputRef::Constant(bus)], 1),
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(0.0),
                 ],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                 ],
                 0,
             ),
@@ -164,7 +164,7 @@ fn control_bus_routes_out_kr_to_in_kr() {
     let producer = SynthDef {
         name: "kwriter".to_string(),
         params: vec![],
-        ugens: vec![UgenSpec::new(
+        units: vec![UnitSpec::new(
             "Out",
             Rate::Control,
             vec![InputRef::Constant(5.0), InputRef::Constant(330.0)],
@@ -214,19 +214,19 @@ fn n_map_maps_control_to_bus() {
             name: "freq".to_string(),
             default: 440.0,
         }],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Param(0), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),

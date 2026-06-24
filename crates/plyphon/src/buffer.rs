@@ -4,8 +4,8 @@
 //! count, and sample rate. The engine never reads or decodes sound files; a buffer is built off the
 //! audio thread (allocating, possibly loading from storage - a host concern) and then installed into
 //! the [`World`](crate::world::World)'s buffer table with [`Controller::buffer_set`] over the command
-//! ring, exactly like a synth. The audio thread only ever reads a finished `Buffer`; UGens such as
-//! `PlayBuf` reach it (read-only) through the [`io`](crate::ugen::io) free fns.
+//! ring, exactly like a synth. The audio thread only ever reads a finished `Buffer`; units such as
+//! `PlayBuf` reach it (read-only) through the [`io`](crate::unit::io) free fns.
 //!
 //! A table slot can instead hold a disk-streaming endpoint (see [`crate::stream`]), read by `DiskIn`.
 //!
@@ -62,7 +62,7 @@ impl Buffer {
         self.num_channels
     }
 
-    /// The buffer's own sample rate in Hz (so playback UGens can rate-correct against the engine's).
+    /// The buffer's own sample rate in Hz (so playback units can rate-correct against the engine's).
     pub fn sample_rate(&self) -> f64 {
         self.sample_rate
     }

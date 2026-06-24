@@ -3,8 +3,8 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{self, BuiltUgen, DoneAction, Inputs, Outputs, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{self, BuiltUnit, DoneAction, Inputs, Outputs, ProcessCtx, Unit, unit_spec};
 
 /// `PlayBuf.ar(numChannels, bufnum, rate, trigger, startPos, loop, doneAction)`: reads consecutive
 /// frames of buffer `bufnum`, one output per buffer channel, advancing the play head by `rate`
@@ -44,10 +44,10 @@ impl PlayBuf {
     }
 }
 
-impl Ugen for PlayBuf {
+impl Unit for PlayBuf {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
-        let buffer = match ugen::buffer_at(ctx.buffers, bufnum) {
+        let buffer = match unit::buffer_at(ctx.buffers, bufnum) {
             Some(buffer) if buffer.num_frames() > 0 => buffer,
             _ => {
                 self.silence(&mut ctx.outs);
@@ -116,7 +116,7 @@ impl Ugen for PlayBuf {
     }
 }
 
-/// Read input `i` as a single value, or `default` if the UGen was built with fewer inputs.
+/// Read input `i` as a single value, or `default` if the unit was built with fewer inputs.
 fn read_input(ins: &Inputs<'_>, i: usize, default: f32) -> f32 {
     if ins.len() > i {
         ins.control(i)
@@ -128,9 +128,9 @@ fn read_input(ins: &Inputs<'_>, i: usize, default: f32) -> f32 {
 /// Constructor for [`PlayBuf`]. The output count (the buffer's channel count) is fixed here.
 pub struct PlayBufCtor;
 
-impl UgenDef for PlayBufCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(PlayBuf {
+impl UnitDef for PlayBufCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(PlayBuf {
             phase: 0.0,
             num_channels: ctx.num_outputs as u32,
             prev_trig: 0.0,

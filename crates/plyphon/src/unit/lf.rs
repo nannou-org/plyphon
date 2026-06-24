@@ -5,14 +5,14 @@
 //! [`Pulse`]. Frequency is read at control rate (one value per block), so frequency modulation is at
 //! block resolution. Each writes a full block; a `.kr` instance just publishes the first sample.
 //!
-//! [`Saw`]: crate::ugen::Saw
-//! [`Pulse`]: crate::ugen::Pulse
+//! [`Saw`]: crate::unit::Saw
+//! [`Pulse`]: crate::unit::Pulse
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `LFSaw.ar/kr(freq)`: a non-band-limited sawtooth ramping from -1 to 1 each cycle.
 #[repr(C)]
@@ -21,7 +21,7 @@ pub struct LFSaw {
     phase: f32,
 }
 
-impl Ugen for LFSaw {
+impl Unit for LFSaw {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let inc = ctx.ins.control(0) * ctx.audio.sample_dur as f32;
         for o in ctx.outs.audio(0).iter_mut() {
@@ -35,9 +35,9 @@ impl Ugen for LFSaw {
 /// Constructor for [`LFSaw`].
 pub struct LFSawCtor;
 
-impl UgenDef for LFSawCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(LFSaw { phase: 0.0 }))
+impl UnitDef for LFSawCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(LFSaw { phase: 0.0 }))
     }
 }
 
@@ -54,7 +54,7 @@ impl LFPulse {
     const WIDTH: usize = 2;
 }
 
-impl Ugen for LFPulse {
+impl Unit for LFPulse {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let inc = ctx.ins.control(Self::FREQ) * ctx.audio.sample_dur as f32;
         let width = if ctx.ins.len() > Self::WIDTH {
@@ -73,9 +73,9 @@ impl Ugen for LFPulse {
 /// Constructor for [`LFPulse`].
 pub struct LFPulseCtor;
 
-impl UgenDef for LFPulseCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(LFPulse { phase: 0.0 }))
+impl UnitDef for LFPulseCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(LFPulse { phase: 0.0 }))
     }
 }
 
@@ -87,7 +87,7 @@ pub struct Impulse {
     phase: f32,
 }
 
-impl Ugen for Impulse {
+impl Unit for Impulse {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let inc = ctx.ins.control(0) * ctx.audio.sample_dur as f32;
         for o in ctx.outs.audio(0).iter_mut() {
@@ -106,10 +106,10 @@ impl Ugen for Impulse {
 /// Constructor for [`Impulse`].
 pub struct ImpulseCtor;
 
-impl UgenDef for ImpulseCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+impl UnitDef for ImpulseCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         // Start at the cycle boundary so the first sample is an impulse.
-        Ok(ugen_spec(Impulse { phase: 1.0 }))
+        Ok(unit_spec(Impulse { phase: 1.0 }))
     }
 }
 

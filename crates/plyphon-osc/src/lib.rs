@@ -122,7 +122,7 @@ impl OscDispatcher {
         }
     }
 
-    /// Access the wrapped controller (e.g. to add SynthDefs or register custom UGens).
+    /// Access the wrapped controller (e.g. to add SynthDefs or register custom units).
     pub fn controller(&mut self) -> &mut Controller {
         &mut self.controller
     }

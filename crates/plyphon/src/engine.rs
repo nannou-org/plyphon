@@ -38,9 +38,9 @@ pub struct Options {
     /// Max audio wires any one synth may use; sizes the World-shared wire scratch
     /// (`max_wire_bufs * block_size` f32). A def needing more fails to compile.
     pub max_wire_bufs: usize,
-    /// Max outputs any one UGen may have; sizes the World-shared output scratch
-    /// (`max_ugen_outputs * block_size` f32). A def with a wider UGen fails to compile.
-    pub max_ugen_outputs: usize,
+    /// Max outputs any one unit may have; sizes the World-shared output scratch
+    /// (`max_unit_outputs * block_size` f32). A def with a wider unit fails to compile.
+    pub max_unit_outputs: usize,
     /// Capacity of the control -> RT command ring.
     pub command_capacity: usize,
 }
@@ -60,7 +60,7 @@ impl Default for Options {
             // 8 MiB, matching scsynth's default real-time memory size.
             pool_bytes: 8 * 1024 * 1024,
             max_wire_bufs: 1024,
-            max_ugen_outputs: 128,
+            max_unit_outputs: 128,
             command_capacity: 1024,
         }
     }

@@ -1,8 +1,8 @@
 //! The control side of the engine - plyphon's port of the non-real-time half of scsynth's
 //! command handling.
 //!
-//! The `Controller` owns the [`SynthDefLibrary`] and the [`UgenRegistry`]; the audio thread never
-//! touches them. It *compiles* each def into an immutable [`GraphDef`] (all UGen construction happens
+//! The `Controller` owns the [`SynthDefLibrary`] and the [`UnitRegistry`]; the audio thread never
+//! touches them. It *compiles* each def into an immutable [`GraphDef`] (all unit construction happens
 //! here), installs it in the `World`'s resident def table once via [`Command::DefineGraphDef`], and
 //! thereafter `s_new` ships only a `def_id` - the synth itself is built on the audio thread. Reactive
 //! NRT work - dropping freed buffers/streams and surfacing notifications - lives in the
@@ -28,7 +28,7 @@ use crate::rate::RateInfo;
 use crate::stream::{StreamProducer, cue};
 use crate::synthdef::{SynthDef, SynthDefLibrary};
 use crate::tree::AddAction;
-use crate::ugen::registry::UgenRegistry;
+use crate::unit::registry::UnitRegistry;
 
 /// The command ring was full; the command was dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -54,7 +54,7 @@ pub enum SynthNewError {
 
 /// The control side of the engine.
 pub struct Controller {
-    registry: UgenRegistry,
+    registry: UnitRegistry,
     defs: SynthDefLibrary,
     /// Current compiled def per name (also the controller's retained `Arc` for it).
     compiled: HashMap<String, Arc<GraphDef>>,
@@ -67,7 +67,7 @@ pub struct Controller {
     control: RateInfo,
     max_synthdefs: usize,
     max_wire_bufs: usize,
-    max_ugen_outputs: usize,
+    max_unit_outputs: usize,
     tx: Producer<Command>,
     next_id: i32,
 }
@@ -80,7 +80,7 @@ impl Controller {
         tx: Producer<Command>,
     ) -> Self {
         Controller {
-            registry: UgenRegistry::with_builtins(),
+            registry: UnitRegistry::with_builtins(),
             defs: SynthDefLibrary::new(),
             compiled: HashMap::new(),
             def_ids: HashMap::new(),
@@ -90,15 +90,15 @@ impl Controller {
             control,
             max_synthdefs: options.max_synthdefs,
             max_wire_bufs: options.max_wire_bufs,
-            max_ugen_outputs: options.max_ugen_outputs,
+            max_unit_outputs: options.max_unit_outputs,
             tx,
             // Client node ids start above the root group (id 0).
             next_id: 1000,
         }
     }
 
-    /// Mutable access to the UGen registry, for registering custom UGens.
-    pub fn registry_mut(&mut self) -> &mut UgenRegistry {
+    /// Mutable access to the unit registry, for registering custom units.
+    pub fn registry_mut(&mut self) -> &mut UnitRegistry {
         &mut self.registry
     }
 
@@ -164,7 +164,7 @@ impl Controller {
         if self.compiled.contains_key(def_name) {
             return Ok(self.def_ids[def_name]);
         }
-        // Compile the authored def (the only place UGen construction / allocation happens).
+        // Compile the authored def (the only place unit construction / allocation happens).
         let graphdef = {
             let authored = self
                 .defs
@@ -175,7 +175,7 @@ impl Controller {
                 &self.audio,
                 &self.control,
                 self.max_wire_bufs,
-                self.max_ugen_outputs,
+                self.max_unit_outputs,
             )?
         };
         // Assign a stable def_id (reused if this name was compiled before).

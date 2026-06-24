@@ -6,8 +6,8 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::rate::Rate;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use crate::wavetable::lookup_cycle;
 
 /// Calc-variant tags, chosen from the frequency input's rate at build time (scsynth picks one of
@@ -36,7 +36,7 @@ impl SinOsc {
     const PHASE: usize = 1;
 }
 
-impl Ugen for SinOsc {
+impl Unit for SinOsc {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let table = ctx.wavetables.sine();
         let sample_dur = ctx.audio.sample_dur as f32;
@@ -71,12 +71,12 @@ fn wrap_unit(x: f32) -> f32 {
 /// Constructor for [`SinOsc`].
 pub struct SinOscCtor;
 
-impl UgenDef for SinOscCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+impl UnitDef for SinOscCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         let calc = match ctx.input_rates.first().copied() {
             Some(Rate::Audio) => calc::FREQ_AUDIO,
             _ => calc::FREQ_CONTROL,
         };
-        Ok(ugen_spec(SinOsc { phase: 0.0, calc }))
+        Ok(unit_spec(SinOsc { phase: 0.0, calc }))
     }
 }

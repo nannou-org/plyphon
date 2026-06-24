@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::rate::Rate;
-use crate::synthdef::{InputRef, Param, SynthDef, UgenSpec};
+use crate::synthdef::{InputRef, Param, SynthDef, UnitSpec};
 
 /// An error loading SynthDefs from SCgf bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -86,7 +86,7 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
         }
     }
 
-    let mut ugens = Vec::with_capacity(next as usize);
+    let mut units = Vec::with_capacity(next as usize);
     for ugen in &def.ugens {
         if is_control(&ugen.name) {
             continue;
@@ -105,18 +105,18 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
                     if let Some(&param) = param_of.get(&(ugen, output)) {
                         InputRef::Param(param)
                     } else {
-                        let ugen = remap
+                        let unit = remap
                             .get(ugen as usize)
                             .copied()
                             .flatten()
                             .ok_or(ReadError::BadInputRef)?;
-                        InputRef::Ugen { ugen, output }
+                        InputRef::Unit { unit, output }
                     }
                 }
             };
             inputs.push(input);
         }
-        ugens.push(UgenSpec {
+        units.push(UnitSpec {
             name: ugen.name.clone(),
             rate: rate(ugen.rate)?,
             inputs,
@@ -128,6 +128,6 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
     Ok(SynthDef {
         name: def.name.clone(),
         params,
-        ugens,
+        units,
     })
 }

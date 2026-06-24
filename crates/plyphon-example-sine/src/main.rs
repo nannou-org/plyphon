@@ -8,7 +8,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use plyphon::{
-    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 /// Demo frequency in Hz.
@@ -28,19 +28,19 @@ fn build(sample_rate: f32, channels: usize) -> World {
     // SinOsc.ar(FREQ) -> Out, the oscillator copied to every channel.
     let mut out_inputs = vec![InputRef::Constant(0.0)]; // input 0: starting bus channel
     for _ in 0..channels {
-        out_inputs.push(InputRef::Ugen { ugen: 0, output: 0 });
+        out_inputs.push(InputRef::Unit { unit: 0, output: 0 });
     }
     let def = SynthDef {
         name: "sine".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Constant(FREQ), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec::new("Out", Rate::Audio, out_inputs, 0),
+            UnitSpec::new("Out", Rate::Audio, out_inputs, 0),
         ],
     };
     controller.add_synthdef(def);

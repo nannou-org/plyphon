@@ -19,7 +19,7 @@ use std::io::Cursor;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use plyphon::{
-    AddAction, Controller, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World,
+    AddAction, Controller, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
     engine,
 };
 use plyphon_buffers::{BufFuture, BufferData, BufferSource, LoadError, ReadRegion};
@@ -128,13 +128,13 @@ async fn load_and_play(
 fn player_def(channels: usize, rate: f32) -> SynthDef {
     let mut out_inputs = vec![InputRef::Constant(0.0)];
     for _ in 0..channels {
-        out_inputs.push(InputRef::Ugen { ugen: 0, output: 0 });
+        out_inputs.push(InputRef::Unit { unit: 0, output: 0 });
     }
     SynthDef {
         name: "player".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "PlayBuf",
                 Rate::Audio,
                 vec![
@@ -147,7 +147,7 @@ fn player_def(channels: usize, rate: f32) -> SynthDef {
                 ],
                 1,
             ),
-            UgenSpec::new("Out", Rate::Audio, out_inputs, 0),
+            UnitSpec::new("Out", Rate::Audio, out_inputs, 0),
         ],
     }
 }

@@ -25,14 +25,14 @@ use crate::graph::{Block, Graph, Pool};
 use crate::graphdef::GraphDef;
 use crate::rate::RateInfo;
 use crate::tree::{AddAction, FreedNode, NodeTree};
-use crate::ugen::DoneAction;
+use crate::unit::DoneAction;
 use crate::wavetable::Wavetables;
 
 /// The seed the per-instance RNG counter starts from (any fixed non-zero value; keeps runs
 /// deterministic while decorrelating distinct synth instances).
 const SEED_INIT: u64 = 0x853c_49e6_748f_ea9b;
 
-/// The golden-ratio odd constant used to spread per-instance and per-UGen seeds.
+/// The golden-ratio odd constant used to spread per-instance and per-unit seeds.
 const SEED_STEP: u64 = 0x9e37_79b9_7f4a_7c15;
 
 /// The real-time engine half.
@@ -49,8 +49,8 @@ pub struct World {
     def_table: Vec<Option<Arc<GraphDef>>>,
     /// World-shared audio wire scratch, reused per graph (`max_wire_bufs * block_size` f32).
     wire_scratch: Box<[f32]>,
-    /// World-shared per-UGen output scratch, reused per UGen (`max_ugen_outputs * block_size` f32).
-    ugen_scratch: Box<[f32]>,
+    /// World-shared per-unit output scratch, reused per unit (`max_unit_outputs * block_size` f32).
+    unit_scratch: Box<[f32]>,
     /// Per-instance RNG seed counter, advanced for each synth built.
     next_seed: u64,
     rx: Consumer<Command>,
@@ -60,7 +60,7 @@ pub struct World {
     pending_trash: Vec<Trash>,
     /// Events awaiting space in the events ring (pre-allocated; never reallocates at runtime).
     pending_events: Vec<Event>,
-    /// Scratch list of `(slot index, action)` for nodes whose UGens requested a done action.
+    /// Scratch list of `(slot index, action)` for nodes whose units requested a done action.
     done_nodes: Vec<(u32, DoneAction)>,
     /// Scratch sink for nodes removed by a free, so freeing a whole group allocates nothing.
     freed_nodes: Vec<FreedNode>,
@@ -97,7 +97,7 @@ impl World {
             pool: Pool::with_capacity_bytes(options.pool_bytes),
             def_table: vec![None; options.max_synthdefs],
             wire_scratch: vec![0.0f32; options.max_wire_bufs * bs].into_boxed_slice(),
-            ugen_scratch: vec![0.0f32; options.max_ugen_outputs * bs].into_boxed_slice(),
+            unit_scratch: vec![0.0f32; options.max_unit_outputs * bs].into_boxed_slice(),
             next_seed: SEED_INIT,
             rx,
             trash_tx,
@@ -195,7 +195,7 @@ impl World {
             buf_counter: self.buf_counter,
             pool: &mut self.pool,
             wire_scratch: &mut self.wire_scratch[..],
-            ugen_scratch: &mut self.ugen_scratch[..],
+            unit_scratch: &mut self.unit_scratch[..],
         };
         self.tree.process(&mut block, &mut self.done_nodes);
         self.buses.silence_untouched_outputs(self.buf_counter);
@@ -337,7 +337,7 @@ impl World {
 
     /// Allocate and initialise a synth's per-instance block from `def`: one pool allocation, then copy
     /// the state-arena image, seed the control wires from the defaults, set the param maps unmapped,
-    /// and re-seed each UGen's randomness for this instance. Returns `None` if the pool is exhausted.
+    /// and re-seed each unit's randomness for this instance. Returns `None` if the pool is exhausted.
     fn build_graph(&mut self, def: &Arc<GraphDef>) -> Option<Graph> {
         let layout = def.layout;
         let region = self.pool.alloc(layout.total)?;
@@ -359,7 +359,7 @@ impl World {
         for m in cast_slice_mut::<u8, u32>(pmap_bytes) {
             *m = u32::MAX;
         }
-        for (u, v) in def.ugens.iter().enumerate() {
+        for (u, v) in def.units.iter().enumerate() {
             let slot = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
             (v.reseed)(slot, seed.wrapping_add((u as u64).wrapping_mul(SEED_STEP)));
         }

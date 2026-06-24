@@ -97,11 +97,11 @@ fn scgf_folds_control_into_param_and_plays() {
     assert_eq!(def.params.len(), 1);
     assert_eq!(def.params[0].name, "freq");
     assert_eq!(def.params[0].default, 440.0);
-    assert_eq!(def.ugens.len(), 2);
-    assert_eq!(def.ugens[0].name, "SinOsc");
-    assert_eq!(def.ugens[1].name, "Out");
+    assert_eq!(def.units.len(), 2);
+    assert_eq!(def.units[0].name, "SinOsc");
+    assert_eq!(def.units[1].name, "Out");
     // SinOsc's freq input now references the folded parameter.
-    assert!(matches!(def.ugens[0].inputs[0], InputRef::Param(0)));
+    assert!(matches!(def.units[0].inputs[0], InputRef::Param(0)));
 
     // Instantiate and play it: 440 Hz, then retune to 330 Hz via the folded parameter.
     let (mut controller, _nrt, mut world) = engine(Options {

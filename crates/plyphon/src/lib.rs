@@ -2,7 +2,7 @@
 //!
 //! A host builds the engine with [`engine()`], giving three handles for three roles:
 //!
-//! - [`Controller`] (control side): owns the SynthDef library and UGen registry, instantiates
+//! - [`Controller`] (control side): owns the SynthDef library and unit registry, instantiates
 //!   synths, and issues commands.
 //! - [`World`] (real-time side): owns the buses and node tree, drained once per block by the audio
 //!   callback via [`World::fill`].
@@ -11,12 +11,12 @@
 //!   the threading lifecycle.
 //!
 //! They communicate only through lock-free rings, so the audio thread never allocates, blocks, or
-//! locks. The synthesis primitives live in [`rate`], [`wavetable`], [`bus`], [`buffer`], [`ugen`]
-//! (the [`Ugen`] trait plus oscillators/filters/noise/ops, and [`DoneAction`]s), [`graph`],
+//! locks. The synthesis primitives live in [`rate`], [`wavetable`], [`bus`], [`buffer`], [`unit`](mod@unit)
+//! (the [`Unit`] trait plus oscillators/filters/noise/ops, and [`DoneAction`]s), [`graph`],
 //! [`graphdef`], and [`synthdef`].
 //!
 //! The crate uses no `unsafe` itself (the rt-pool and `bytemuck` keep theirs internal) and no global
-//! mutable state - everything a UGen needs is passed by argument - and compiles for native and
+//! mutable state - everything a unit needs is passed by argument - and compiles for native and
 //! `wasm32-unknown-unknown` alike.
 
 #![forbid(unsafe_code)]
@@ -35,7 +35,7 @@ pub mod rng;
 pub mod stream;
 pub mod synthdef;
 pub mod tree;
-pub mod ugen;
+pub mod unit;
 pub mod wavetable;
 pub mod world;
 
@@ -49,11 +49,11 @@ pub use graphdef::GraphDef;
 pub use nrt::Nrt;
 pub use rate::{Rate, RateInfo};
 pub use stream::{Chunk, StreamProducer};
-pub use synthdef::{InputRef, Param, SynthDef, UgenSpec};
+pub use synthdef::{InputRef, Param, SynthDef, UnitSpec};
 pub use tree::AddAction;
-pub use ugen::{
-    BuildContext, BuiltUgen, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx, Ugen, UgenDef,
-    UgenRegistry, ugen_spec,
+pub use unit::{
+    BuildContext, BuiltUnit, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx, Unit, UnitDef,
+    UnitRegistry, unit_spec,
 };
 pub use world::World;
 

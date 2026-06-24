@@ -266,7 +266,7 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
     }
 
     /// Exclusive mutable access to several distinct regions at once (e.g. to copy between two
-    /// ugens' buffers). Returns [`None`] if any two regions overlap - which never happens for
+    /// units' buffers). Returns [`None`] if any two regions overlap - which never happens for
     /// distinct live allocations, so this is really a guard against passing the same region twice.
     ///
     /// Fully safe: distinct allocations occupy disjoint ranges, handed out via the standard library's

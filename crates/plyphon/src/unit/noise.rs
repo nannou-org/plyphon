@@ -5,8 +5,8 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::rate::Rate;
 use crate::rng::Rng;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `WhiteNoise.ar/kr`: samples drawn uniformly from `[-1, 1)`.
 #[repr(C)]
@@ -17,7 +17,7 @@ pub struct WhiteNoise {
     audio: u32,
 }
 
-impl Ugen for WhiteNoise {
+impl Unit for WhiteNoise {
     fn reseed(&mut self, seed: u64) {
         self.rng = Rng::new(seed);
     }
@@ -37,9 +37,9 @@ impl Ugen for WhiteNoise {
 /// Constructor for [`WhiteNoise`].
 pub struct WhiteNoiseCtor;
 
-impl UgenDef for WhiteNoiseCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(WhiteNoise {
+impl UnitDef for WhiteNoiseCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(WhiteNoise {
             rng: Rng::new(ctx.seed),
             audio: (ctx.rate == Rate::Audio) as u32,
         }))

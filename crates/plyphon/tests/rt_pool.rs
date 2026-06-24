@@ -4,7 +4,7 @@
 
 use plyphon::{
     AddAction, BuildError, Event, InputRef, Nrt, Options, Param, ROOT_GROUP_ID, Rate, SynthDef,
-    SynthNewError, UgenSpec, World, engine,
+    SynthNewError, UnitSpec, World, engine,
 };
 
 const SR: f64 = 48_000.0;
@@ -17,19 +17,19 @@ fn sine_def() -> SynthDef {
             name: "freq".to_string(),
             default: 440.0,
         }],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Param(0), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),
@@ -39,9 +39,9 @@ fn sine_def() -> SynthDef {
 
 /// A def with `n` audio-rate `SinOsc`s (hence `n` audio wires) summed to one `Out`.
 fn wide_def(n: u32) -> SynthDef {
-    let mut ugens: Vec<UgenSpec> = (0..n)
+    let mut units: Vec<UnitSpec> = (0..n)
         .map(|_| {
-            UgenSpec::new(
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Constant(440.0), InputRef::Constant(0.0)],
@@ -50,13 +50,13 @@ fn wide_def(n: u32) -> SynthDef {
         })
         .collect();
     let out_inputs = std::iter::once(InputRef::Constant(0.0))
-        .chain((0..n).map(|u| InputRef::Ugen { ugen: u, output: 0 }))
+        .chain((0..n).map(|u| InputRef::Unit { unit: u, output: 0 }))
         .collect();
-    ugens.push(UgenSpec::new("Out", Rate::Audio, out_inputs, 0));
+    units.push(UnitSpec::new("Out", Rate::Audio, out_inputs, 0));
     SynthDef {
         name: "wide".to_string(),
         params: vec![],
-        ugens,
+        units,
     }
 }
 

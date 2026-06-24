@@ -5,12 +5,12 @@
 //!
 //! Two groups model how plyphon is expected to drive the pool, the way scsynth uses `World_Alloc`:
 //!
-//! - `synth_lifecycle` - the primary workload. Like scsynth, a synth's wire buffers and per-ugen
+//! - `synth_lifecycle` - the primary workload. Like scsynth, a synth's wire buffers and per-unit
 //!   working buffers (delay lines, etc.) are allocated from the shared RT pool at instantiation and
 //!   freed at node death, giving buffer reuse across synths. Medium, variable sizes (KB-range wire
 //!   arenas plus occasional tens-of-KB delay buffers), churned at voice rate, freed in non-LIFO
 //!   order - real fragmentation pressure, mostly large bins.
-//! - `scratch_churn` - per audio block, a handful of ugens borrow block-sized scratch (256 B = a
+//! - `scratch_churn` - per audio block, a handful of units borrow block-sized scratch (256 B = a
 //!   64-sample `f32` block) plus a few control values (4 B), released LIFO. Small, uniform, very
 //!   short-lived - the small-bin exact-size fast path, near-zero fragmentation.
 //!
@@ -134,19 +134,19 @@ fn synth_lifecycle(c: &mut Criterion) {
 }
 
 fn scratch_churn(c: &mut Criterion) {
-    const UGENS: usize = 16; // ugens borrowing scratch per block
+    const UNITS: usize = 16; // units borrowing scratch per block
     const BLOCKS: usize = 64;
     const AUDIO: usize = 64 * 4; // a 64-sample f32 block = 256 B
     let mut group = c.benchmark_group("scratch_churn");
-    group.throughput(Throughput::Elements((UGENS * BLOCKS) as u64));
+    group.throughput(Throughput::Elements((UNITS * BLOCKS) as u64));
 
     group.bench_function("rt_alloc", |b| {
         b.iter_batched_ref(
             || RtPool::<Box<[Align64]>>::with_capacity_bytes(256 * 1024),
             |pool| {
-                let mut held = Vec::with_capacity(UGENS);
+                let mut held = Vec::with_capacity(UNITS);
                 for _ in 0..BLOCKS {
-                    for i in 0..UGENS {
+                    for i in 0..UNITS {
                         let size = if i % 4 == 0 { 4 } else { AUDIO }; // mix in control-rate values
                         if let Some(r) = pool.alloc(size) {
                             held.push(r);
@@ -166,9 +166,9 @@ fn scratch_churn(c: &mut Criterion) {
         b.iter_batched_ref(
             || Allocator::<u32>::new(256 * 1024),
             |alloc| {
-                let mut held: Vec<Allocation> = Vec::with_capacity(UGENS);
+                let mut held: Vec<Allocation> = Vec::with_capacity(UNITS);
                 for _ in 0..BLOCKS {
-                    for i in 0..UGENS {
+                    for i in 0..UNITS {
                         let size = if i % 4 == 0 { 4 } else { AUDIO as u32 };
                         if let Some(a) = alloc.allocate(size) {
                             held.push(a);

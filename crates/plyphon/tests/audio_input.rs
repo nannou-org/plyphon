@@ -3,7 +3,7 @@
 //! actual duplex stream (cpal has none) - just interleaved input buffers handed to `fill_duplex`.
 
 use plyphon::{
-    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 const SR: f32 = 48_000.0;
@@ -50,15 +50,15 @@ fn in_ar_reads_hardware_input() {
     let reader = SynthDef {
         name: "thru".to_string(),
         params: vec![],
-        ugens: vec![
+        units: vec![
             // In.ar(1): read the first hardware input channel (just past the single output).
-            UgenSpec::new("In", Rate::Audio, vec![InputRef::Constant(1.0)], 1),
-            UgenSpec::new(
+            UnitSpec::new("In", Rate::Audio, vec![InputRef::Constant(1.0)], 1),
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),

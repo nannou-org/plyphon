@@ -8,8 +8,8 @@
 //! the audio thread is forbidden from doing. Concretely it:
 //!
 //! - **Frees memory off the audio thread.** When a node is freed - explicitly via
-//!   [`Controller::free`](crate::controller::Controller::free) or by a UGen's
-//!   [`DoneAction`](crate::ugen::DoneAction) - or a buffer is replaced or freed, the
+//!   [`Controller::free`](crate::controller::Controller::free) or by a unit's
+//!   [`DoneAction`](crate::unit::DoneAction) - or a buffer is replaced or freed, the
 //!   [`World`](crate::world::World) only unlinks/swaps it (O(1)) and ships its `Box` over the trash
 //!   ring; the actual `Drop`/`free` happens here, in [`Nrt::process`].
 //! - **Surfaces notifications.** Node started/ended/paused/resumed [`Event`]s flow over the events

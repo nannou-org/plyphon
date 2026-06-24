@@ -4,7 +4,7 @@
 use plyphon::controller::SynthNewError;
 use plyphon::error::BuildError;
 use plyphon::{
-    AddAction, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, engine,
+    AddAction, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine,
 };
 
 const SR: f32 = 48_000.0;
@@ -43,27 +43,27 @@ fn amped_sine() -> SynthDef {
                 default: 0.5,
             },
         ],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Param(0), InputRef::Constant(0.0)],
                 1,
             ),
             // BinaryOpUGen, special index 2 = multiply: SinOsc * amp.
-            UgenSpec {
+            UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Audio,
-                inputs: vec![InputRef::Ugen { ugen: 0, output: 0 }, InputRef::Param(1)],
+                inputs: vec![InputRef::Unit { unit: 0, output: 0 }, InputRef::Param(1)],
                 num_outputs: 1,
                 special_index: 2,
             },
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                 ],
                 0,
             ),
@@ -101,27 +101,27 @@ fn unary_op_abs_rectifies() {
             name: "freq".to_string(),
             default: 440.0,
         }],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Param(0), InputRef::Constant(0.0)],
                 1,
             ),
             // UnaryOpUGen, special index 5 = abs.
-            UgenSpec {
+            UnitSpec {
                 name: "UnaryOpUGen".to_string(),
                 rate: Rate::Audio,
-                inputs: vec![InputRef::Ugen { ugen: 0, output: 0 }],
+                inputs: vec![InputRef::Unit { unit: 0, output: 0 }],
                 num_outputs: 1,
                 special_index: 5,
             },
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                 ],
                 0,
             ),
@@ -154,7 +154,7 @@ fn unsupported_op_is_rejected() {
     let def = SynthDef {
         name: "bad".to_string(),
         params: vec![],
-        ugens: vec![UgenSpec {
+        units: vec![UnitSpec {
             name: "BinaryOpUGen".to_string(),
             rate: Rate::Audio,
             inputs: vec![InputRef::Constant(1.0), InputRef::Constant(2.0)],

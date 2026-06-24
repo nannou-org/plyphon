@@ -3,7 +3,7 @@
 //! `SetBuffer`/`FreeBuffer` install/swap path, and the `Nrt` dropping replaced/freed buffers.
 
 use plyphon::{
-    AddAction, Buffer, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World,
+    AddAction, Buffer, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
     engine,
 };
 
@@ -44,8 +44,8 @@ fn play_buf_def(name: &str, rate: f32, looping: f32, done_action: f32) -> SynthD
     SynthDef {
         name: name.to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "PlayBuf",
                 Rate::Audio,
                 vec![
@@ -58,12 +58,12 @@ fn play_buf_def(name: &str, rate: f32, looping: f32, done_action: f32) -> SynthD
                 ],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),

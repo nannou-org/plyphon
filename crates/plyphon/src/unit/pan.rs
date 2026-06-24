@@ -5,8 +5,8 @@ use std::f32::consts::FRAC_PI_4;
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `Pan2.ar(in, pos, level)`: pan a mono signal across two channels with an equal-power law - `pos`
 /// runs -1 (hard left) to +1 (hard right), `level` (default 1) scales. Has two outputs (left, right);
@@ -24,7 +24,7 @@ impl Pan2 {
     const LEVEL: usize = 2;
 }
 
-impl Ugen for Pan2 {
+impl Unit for Pan2 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let pos = ctx.ins.control(Self::POS).clamp(-1.0, 1.0);
         let level = if ctx.ins.len() > Self::LEVEL {
@@ -49,8 +49,8 @@ impl Ugen for Pan2 {
 /// Constructor for [`Pan2`].
 pub struct Pan2Ctor;
 
-impl UgenDef for Pan2Ctor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(Pan2 { _pad: 0 }))
+impl UnitDef for Pan2Ctor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Pan2 { _pad: 0 }))
     }
 }

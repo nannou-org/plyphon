@@ -1,4 +1,4 @@
-//! Calculation rates and the derived per-block constants UGens compute with.
+//! Calculation rates and the derived per-block constants units compute with.
 //!
 //! SuperCollider overloads the word "Rate" for two distinct things; plyphon splits them:
 //! [`Rate`] is the per-wire calculation rate (SC's `calc_*Rate` enum), while [`RateInfo`] is the
@@ -6,9 +6,9 @@
 
 use core::f64::consts::TAU;
 
-/// The calculation rate of a UGen output or input wire (SC's `calc_ScalarRate` etc.).
+/// The calculation rate of a unit output or input wire (SC's `calc_ScalarRate` etc.).
 ///
-/// Demand rate is intentionally omitted until demand-rate UGens are ported.
+/// Demand rate is intentionally omitted until demand-rate units are ported.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Rate {
     /// Computed once at construction; constant for the synth's lifetime.
@@ -21,8 +21,8 @@ pub enum Rate {
 
 /// Derived per-block constants for a given sample rate and block size.
 ///
-/// This is the struct SC also calls `Rate`. It is owned by the engine and lent to UGens through
-/// [`crate::ugen::ProcessCtx`] - plyphon keeps no global rate/wavetable state.
+/// This is the struct SC also calls `Rate`. It is owned by the engine and lent to units through
+/// [`crate::unit::ProcessCtx`] - plyphon keeps no global rate/wavetable state.
 #[derive(Copy, Clone, Debug)]
 pub struct RateInfo {
     /// Samples per second.

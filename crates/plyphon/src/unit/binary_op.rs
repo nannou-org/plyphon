@@ -4,8 +4,8 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::rate::Rate;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `a <op> b`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
 /// binary operator indices). Each input may be audio- or control-rate; the output is audio-rate.
@@ -20,7 +20,7 @@ pub struct BinaryOp {
     b_audio: u32,
 }
 
-impl Ugen for BinaryOp {
+impl Unit for BinaryOp {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let Some(op) = binary_op(self.op as i16) else {
             return DoneAction::Nothing;
@@ -57,14 +57,14 @@ impl Ugen for BinaryOp {
 /// Constructor for [`BinaryOp`].
 pub struct BinaryOpCtor;
 
-impl UgenDef for BinaryOpCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+impl UnitDef for BinaryOpCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         if ctx.input_rates.len() != 2 {
             return Err(BuildError::WrongInputCount);
         }
         // Validate now so a bad operator fails at build, not silently at runtime.
         binary_op(ctx.special_index).ok_or(BuildError::UnsupportedOp(ctx.special_index))?;
-        Ok(ugen_spec(BinaryOp {
+        Ok(unit_spec(BinaryOp {
             op: ctx.special_index as u32,
             a_audio: (ctx.input_rates[0] == Rate::Audio) as u32,
             b_audio: (ctx.input_rates[1] == Rate::Audio) as u32,

@@ -1,7 +1,7 @@
 //! Exercise the `LPF`/`HPF` Butterworth filters: a 200 Hz + 4000 Hz mix through a 1 kHz low-pass
 //! keeps the low tone and attenuates the high one; a 1 kHz high-pass does the reverse.
 
-use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, engine};
+use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine};
 
 const SR: f32 = 48_000.0;
 
@@ -40,46 +40,46 @@ fn filtered_mix(filter: &str) -> SynthDef {
     SynthDef {
         name: "filtered".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Constant(200.0), InputRef::Constant(0.0)],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "SinOsc",
                 Rate::Audio,
                 vec![InputRef::Constant(4000.0), InputRef::Constant(0.0)],
                 1,
             ),
             // BinaryOpUGen add (special index 0): mix the two tones.
-            UgenSpec {
+            UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Audio,
                 inputs: vec![
-                    InputRef::Ugen { ugen: 0, output: 0 },
-                    InputRef::Ugen { ugen: 1, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
                 ],
                 num_outputs: 1,
                 special_index: 0,
             },
             // filter.ar(mix, 1000)
-            UgenSpec::new(
+            UnitSpec::new(
                 filter,
                 Rate::Audio,
                 vec![
-                    InputRef::Ugen { ugen: 2, output: 0 },
+                    InputRef::Unit { unit: 2, output: 0 },
                     InputRef::Constant(1000.0),
                 ],
                 1,
             ),
-            UgenSpec::new(
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 3, output: 0 },
+                    InputRef::Unit { unit: 3, output: 0 },
                 ],
                 0,
             ),

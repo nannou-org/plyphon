@@ -2,7 +2,7 @@
 //! range, and not put energy at a non-harmonic frequency.
 
 use plyphon::{
-    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UgenSpec, World, engine,
+    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 const SR: f32 = 48_000.0;
@@ -43,14 +43,14 @@ fn render_osc(name: &str, inputs: Vec<InputRef>) -> Vec<f32> {
     controller.add_synthdef(SynthDef {
         name: "osc".to_string(),
         params: vec![],
-        ugens: vec![
-            UgenSpec::new(name, Rate::Audio, inputs, 1),
-            UgenSpec::new(
+        units: vec![
+            UnitSpec::new(name, Rate::Audio, inputs, 1),
+            UnitSpec::new(
                 "Out",
                 Rate::Audio,
                 vec![
                     InputRef::Constant(0.0),
-                    InputRef::Ugen { ugen: 0, output: 0 },
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 0,
             ),

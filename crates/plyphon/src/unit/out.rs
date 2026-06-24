@@ -4,12 +4,12 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::rate::Rate;
-use crate::ugen::registry::{BuildContext, UgenDef};
-use crate::ugen::{self, BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `Out.ar(bus, signals)` / `Out.kr(bus, signals)`: writes each signal input to a consecutive bus
 /// channel starting at `bus`, summing with anything already written to that channel this block.
-/// `Out.ar` targets the audio bus bank, `Out.kr` the control bus bank, chosen by the UGen's rate.
+/// `Out.ar` targets the audio bus bank, `Out.kr` the control bus bank, chosen by the unit's rate.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Out {
@@ -17,7 +17,7 @@ pub struct Out {
     audio: u32,
 }
 
-impl Ugen for Out {
+impl Unit for Out {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if ctx.ins.is_empty() {
             return DoneAction::Nothing;
@@ -26,11 +26,11 @@ impl Ugen for Out {
         let base = ctx.ins.control(0) as usize;
         if self.audio != 0 {
             for k in 1..ctx.ins.len() {
-                ugen::audio_out(ctx.buses, ctx.buf_counter, base + (k - 1), ctx.ins.audio(k));
+                unit::audio_out(ctx.buses, ctx.buf_counter, base + (k - 1), ctx.ins.audio(k));
             }
         } else {
             for k in 1..ctx.ins.len() {
-                ugen::control_out(
+                unit::control_out(
                     ctx.buses,
                     ctx.buf_counter,
                     base + (k - 1),
@@ -45,9 +45,9 @@ impl Ugen for Out {
 /// Constructor for [`Out`].
 pub struct OutCtor;
 
-impl UgenDef for OutCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
-        Ok(ugen_spec(Out {
+impl UnitDef for OutCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Out {
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }

@@ -1,15 +1,15 @@
 //! Unit generators - plyphon's port of scsynth's `Unit`/`UnitCalcFunc`.
 //!
-//! A [`Ugen`] is constructed off the audio thread (it may allocate) and then [`Ugen::process`]ed
+//! A [`Unit`] is constructed off the audio thread (it may allocate) and then [`Unit::process`]ed
 //! once per control block on the audio thread, where it must not allocate or block. Everything a
-//! UGen reads from the wider engine arrives in one [`ProcessCtx`] argument - the read-only
+//! unit reads from the wider engine arrives in one [`ProcessCtx`] argument - the read-only
 //! [`Inputs`], the writable [`Outputs`], the engine constants, and the shared buses/buffers - so
 //! there is no global state.
 //!
 //! `ProcessCtx` is a plain field aggregate, and the operations on the shared buses/buffers are free
 //! fns in the [`io`] submodule that take only the field they need (e.g. `io::audio_in(&ctx.buses,
 //! ..)`). That keeps them borrow-friendly: because `ins`, `outs`, and `buses` are disjoint fields, a
-//! UGen can read an input and write an output (or a bus) in the same expression - the safe
+//! unit can read an input and write an output (or a bus) in the same expression - the safe
 //! equivalent of scsynth's raw aliasing `float*` wires.
 
 pub mod band_limited;
@@ -37,7 +37,7 @@ use crate::bus::Buses;
 use crate::rate::{Rate, RateInfo};
 use crate::wavetable::Wavetables;
 
-/// What a UGen asks the engine to do with its enclosing synth when it finishes - plyphon's subset
+/// What a unit asks the engine to do with its enclosing synth when it finishes - plyphon's subset
 /// of scsynth's done-action codes. Ordered so the strongest action wins when combined.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub enum DoneAction {
@@ -51,7 +51,7 @@ pub enum DoneAction {
 }
 
 impl DoneAction {
-    /// Map a scsynth done-action code (carried as a float UGen input) to a [`DoneAction`].
+    /// Map a scsynth done-action code (carried as a float unit input) to a [`DoneAction`].
     pub fn from_code(code: f32) -> DoneAction {
         match code as i32 {
             1 => DoneAction::Pause,
@@ -60,7 +60,7 @@ impl DoneAction {
         }
     }
 
-    /// Encode as a small integer tag, so a UGen can hold a `DoneAction` in its `Pod` state.
+    /// Encode as a small integer tag, so a unit can hold a `DoneAction` in its `Pod` state.
     pub fn to_tag(self) -> u32 {
         self as u32
     }
@@ -88,17 +88,17 @@ pub use noise::WhiteNoise;
 pub use out::Out;
 pub use pan::Pan2;
 pub use play_buf::PlayBuf;
-pub use registry::{BuildContext, UgenDef, UgenRegistry};
+pub use registry::{BuildContext, UnitDef, UnitRegistry};
 pub use sin_osc::SinOsc;
 pub use unary_op::UnaryOp;
 pub use util::{Amplitude, Lag, MulAdd};
 
-/// Everything a UGen touches while processing one control block - plyphon's safe decomposition of
+/// Everything a unit touches while processing one control block - plyphon's safe decomposition of
 /// scsynth's `unit` (which reaches inputs, outputs, and the world through one pointer).
 ///
 /// The signal ports ([`ins`](Self::ins)/[`outs`](Self::outs)) and engine constants are plain fields.
 /// The shared [`buses`](Self::buses)/[`buffers`](Self::buffers) are fields too, but their dangerous
-/// mutators are crate-private - a UGen touches them only through the audited free fns in
+/// mutators are crate-private - a unit touches them only through the audited free fns in
 /// [`io`], so it cannot resize a bus or swap a buffer. Those fns take individual
 /// fields rather than `&self`, so reading `ins` and writing `buses` in one expression borrows
 /// disjoint fields.
@@ -109,9 +109,9 @@ pub struct ProcessCtx<'a> {
     pub control: &'a RateInfo,
     /// Shared wavetables (sine, ...), owned by the engine.
     pub wavetables: &'a Wavetables,
-    /// This UGen's inputs for the block (read-only).
+    /// This unit's inputs for the block (read-only).
     pub ins: Inputs<'a>,
-    /// This UGen's output scratch for the block.
+    /// This unit's output scratch for the block.
     pub outs: Outputs<'a>,
     /// The World's shared buses, via the [`io`] free fns (`In`/`Out`).
     pub buses: &'a mut Buses,
@@ -121,10 +121,10 @@ pub struct ProcessCtx<'a> {
     pub buf_counter: u64,
 }
 
-/// What a UGen may touch while *seeding* state on the first block - see [`Ugen::init`].
+/// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].
 ///
 /// Like [`ProcessCtx`] but read-only on the world and without [`outs`](ProcessCtx::outs): `init`
-/// seeds the UGen's own state from live inputs; it does not produce output or mutate the world.
+/// seeds the unit's own state from live inputs; it does not produce output or mutate the world.
 pub struct InitCtx<'a> {
     /// Audio-rate constants.
     pub audio: &'a RateInfo,
@@ -132,7 +132,7 @@ pub struct InitCtx<'a> {
     pub control: &'a RateInfo,
     /// Shared wavetables.
     pub wavetables: &'a Wavetables,
-    /// This UGen's inputs for the block (read-only).
+    /// This unit's inputs for the block (read-only).
     pub ins: Inputs<'a>,
     /// The World's shared buses (read-only), via the [`io`] free fns.
     pub buses: &'a Buses,
@@ -142,7 +142,7 @@ pub struct InitCtx<'a> {
     pub buf_counter: u64,
 }
 
-/// How a single UGen input is sourced. Resolved once at build time from the SynthDef.
+/// How a single unit input is sourced. Resolved once at build time from the SynthDef.
 #[derive(Copy, Clone, Debug)]
 pub enum InputSource {
     /// A constant baked into the SynthDef.
@@ -154,7 +154,7 @@ pub enum InputSource {
 }
 
 impl InputSource {
-    /// The calculation rate this source presents to a consuming UGen.
+    /// The calculation rate this source presents to a consuming unit.
     pub fn rate(self) -> Rate {
         match self {
             InputSource::Constant(_) => Rate::Scalar,
@@ -164,7 +164,7 @@ impl InputSource {
     }
 }
 
-/// Read-only view of a UGen's inputs for one block.
+/// Read-only view of a unit's inputs for one block.
 ///
 /// A small bundle of borrows (hence `Copy`). Audio wires are stored flat; wire `w` occupies
 /// `audio_wires[w*bs .. (w+1)*bs]`.
@@ -209,7 +209,7 @@ impl<'a> Inputs<'a> {
 
     /// Audio-rate input `i` as a `block_size` slice.
     ///
-    /// Only meaningful when input `i` is audio-rate; UGens select by [`Inputs::rate`] (they chose
+    /// Only meaningful when input `i` is audio-rate; units select by [`Inputs::rate`] (they chose
     /// their calc variant at build time from these same rates), so a correctly-built graph never
     /// calls this on a non-audio input. A non-audio input yields an empty slice rather than panic.
     pub fn audio(&self, i: usize) -> &'a [f32] {
@@ -234,7 +234,7 @@ impl<'a> Inputs<'a> {
     }
 }
 
-/// Mutable view of a UGen's output wires for one block.
+/// Mutable view of a unit's output wires for one block.
 ///
 /// Outputs are written into pre-allocated scratch (disjoint from the input wires), then the synth
 /// process loop copies them into the arena. Output `i` occupies `scratch[i*bs .. (i+1)*bs]`.
@@ -265,80 +265,80 @@ impl<'a> Outputs<'a> {
     }
 }
 
-/// A unit generator - plyphon's `Ugen` is scsynth's server-side `Unit` (the language-side `UGen` has
+/// A unit generator - plyphon's `Unit` is scsynth's server-side `Unit` (the language-side `UGen` has
 /// no plyphon analogue; we consume compiled SynthDefs directly). Its state must be [`Pod`] so it can
 /// live as bytes in the rt-pool and be reinterpreted without `unsafe`; behaviour is invoked through
-/// the [`ProcessFn`]/[`InitFn`] vtable a [`UgenDef`](registry::UgenDef) builds via [`ugen_spec`].
-pub trait Ugen: Pod {
+/// the [`ProcessFn`]/[`InitFn`] vtable a [`UnitDef`](registry::UnitDef) builds via [`unit_spec`].
+pub trait Unit: Pod {
     /// Re-seed any per-instance randomness from `seed`, called once when the synth is constructed on
-    /// the audio thread (before the first block). The default is a no-op; UGens with an
+    /// the audio thread (before the first block). The default is a no-op; units with an
     /// [`Rng`](crate::rng::Rng) override it so that two instances of the same def decorrelate -
     /// plyphon's stand-in for scsynth seeding each `Graph`'s `RGen`. Must not allocate or block.
     fn reseed(&mut self, _seed: u64) {}
 
-    /// Seed state from the UGen's initial inputs.
+    /// Seed state from the unit's initial inputs.
     ///
-    /// Called once, on the first control block, in topological order immediately before this UGen's
-    /// first [`Ugen::process`] - on the audio thread, where inputs are live. By then every input is
+    /// Called once, on the first control block, in topological order immediately before this unit's
+    /// first [`Unit::process`] - on the audio thread, where inputs are live. By then every input is
     /// readable at its real starting value: constants, control parameters (including `/s_new` args
-    /// and `/n_map`ped buses), and the first-block outputs of upstream UGens. Stateful UGens seed
+    /// and `/n_map`ped buses), and the first-block outputs of upstream units. Stateful units seed
     /// here so their first block is already correct - e.g. a smoother starts *at* its input rather
     /// than ramping up from zero - which is what avoids onset clicks.
     ///
     /// This mirrors the seeding an scsynth `*_Ctor` does at its first calc; *allocation*, by
-    /// contrast, happens earlier and off the audio thread when the UGen is built. Like
-    /// [`Ugen::process`] it must not allocate, block, or take locks. The default is a no-op.
+    /// contrast, happens earlier and off the audio thread when the unit is built. Like
+    /// [`Unit::process`] it must not allocate, block, or take locks. The default is a no-op.
     fn init(&mut self, _ctx: &InitCtx<'_>) {}
 
     /// Compute one control block.
     ///
-    /// Reads `ctx.ins`, writes `ctx.outs`, and (for I/O UGens like `In`/`Out`/`PlayBuf`) reads or
+    /// Reads `ctx.ins`, writes `ctx.outs`, and (for I/O units like `In`/`Out`/`PlayBuf`) reads or
     /// writes the World's shared buses and buffers via the [`io`] free fns. Must
-    /// not allocate, block, or take locks. Returns the [`DoneAction`] the UGen wants applied to its
+    /// not allocate, block, or take locks. Returns the [`DoneAction`] the unit wants applied to its
     /// enclosing synth (almost always [`DoneAction::Nothing`]).
     #[must_use]
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction;
 }
 
-/// A type-erased per-block calc function over a UGen's pool-resident state bytes - plyphon's
+/// A type-erased per-block calc function over a unit's pool-resident state bytes - plyphon's
 /// `UnitCalcFunc`/`mCalcFunc`. `state` is exactly `size_of::<T>()` bytes, aligned for `T`.
 pub type ProcessFn = fn(&mut [u8], &mut ProcessCtx<'_>) -> DoneAction;
 
-/// A type-erased one-time seeding function over a UGen's pool-resident state bytes (see
-/// [`Ugen::init`]).
+/// A type-erased one-time seeding function over a unit's pool-resident state bytes (see
+/// [`Unit::init`]).
 pub type InitFn = fn(&mut [u8], &InitCtx<'_>);
 
-/// A type-erased per-instance re-seed function over a UGen's pool-resident state bytes (see
-/// [`Ugen::reseed`]).
+/// A type-erased per-instance re-seed function over a unit's pool-resident state bytes (see
+/// [`Unit::reseed`]).
 pub type ReseedFn = fn(&mut [u8], u64);
 
-/// Reinterpret `bytes` as `T` and run its [`Ugen::process`]. Monomorphised per `T` and coerced to a
+/// Reinterpret `bytes` as `T` and run its [`Unit::process`]. Monomorphised per `T` and coerced to a
 /// [`ProcessFn`]; the cast cannot fail because the slot is sized and aligned for `T` by construction.
-fn process_thunk<T: Ugen>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) -> DoneAction {
+fn process_thunk<T: Unit>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) -> DoneAction {
     bytemuck::from_bytes_mut::<T>(bytes).process(ctx)
 }
 
-/// As [`process_thunk`], for [`Ugen::init`].
-fn init_thunk<T: Ugen>(bytes: &mut [u8], ctx: &InitCtx<'_>) {
+/// As [`process_thunk`], for [`Unit::init`].
+fn init_thunk<T: Unit>(bytes: &mut [u8], ctx: &InitCtx<'_>) {
     bytemuck::from_bytes_mut::<T>(bytes).init(ctx);
 }
 
-/// As [`process_thunk`], for [`Ugen::reseed`].
-fn reseed_thunk<T: Ugen>(bytes: &mut [u8], seed: u64) {
+/// As [`process_thunk`], for [`Unit::reseed`].
+fn reseed_thunk<T: Unit>(bytes: &mut [u8], seed: u64) {
     bytemuck::from_bytes_mut::<T>(bytes).reseed(seed);
 }
 
-/// A built UGen: its calc/seed vtable plus the initial state image to copy into the pool. Produced
-/// off the audio thread by a [`UgenDef`](registry::UgenDef) (via [`ugen_spec`]) and baked into a
+/// A built unit: its calc/seed vtable plus the initial state image to copy into the pool. Produced
+/// off the audio thread by a [`UnitDef`](registry::UnitDef) (via [`unit_spec`]) and baked into a
 /// [`GraphDef`](crate::graphdef::GraphDef).
-pub struct BuiltUgen {
+pub struct BuiltUnit {
     /// Per-block calc function.
     pub process: ProcessFn,
     /// One-time first-block seeding function.
     pub init: InitFn,
-    /// Per-instance re-seed function (no-op for UGens without randomness).
+    /// Per-instance re-seed function (no-op for units without randomness).
     pub reseed: ReseedFn,
-    /// `size_of::<T>()` - the bytes this UGen's state occupies in the arena.
+    /// `size_of::<T>()` - the bytes this unit's state occupies in the arena.
     pub size: usize,
     /// `align_of::<T>()` - the alignment its state slot needs.
     pub align: usize,
@@ -346,10 +346,10 @@ pub struct BuiltUgen {
     pub init_bytes: Box<[u8]>,
 }
 
-/// Build a [`BuiltUgen`] from an initial UGen state. The thunks are monomorphised for `T` here, so a
-/// [`UgenDef`](registry::UgenDef) only constructs its initial state and hands it to this helper.
-pub fn ugen_spec<T: Ugen>(state: T) -> BuiltUgen {
-    BuiltUgen {
+/// Build a [`BuiltUnit`] from an initial unit state. The thunks are monomorphised for `T` here, so a
+/// [`UnitDef`](registry::UnitDef) only constructs its initial state and hands it to this helper.
+pub fn unit_spec<T: Unit>(state: T) -> BuiltUnit {
+    BuiltUnit {
         process: process_thunk::<T>,
         init: init_thunk::<T>,
         reseed: reseed_thunk::<T>,

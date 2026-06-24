@@ -3,14 +3,14 @@
 //! A [`GraphDef`] is the immutable, shareable template a [`SynthDef`](crate::synthdef::SynthDef)
 //! compiles to (off the audio thread, once). Like scsynth's `GraphDef` it is system-allocated and
 //! long-lived - *not* in the rt-pool - and many live [`Graph`](crate::graph::Graph)s reference one
-//! via `Arc` (the `Arc` count is plyphon's `mRefCount`). It holds the per-UGen calc/seed vtable, the
+//! via `Arc` (the `Arc` count is plyphon's `mRefCount`). It holds the per-unit calc/seed vtable, the
 //! wiring, the layout of the per-graph pool block, and the images needed to construct an instance on
 //! the audio thread with a single allocation and a few `memcpy`s.
 
 use crate::rate::Rate;
-use crate::ugen::{InitFn, InputSource, ProcessFn, ReseedFn};
+use crate::unit::{InitFn, InputSource, ProcessFn, ReseedFn};
 
-/// Where a UGen output is published: an audio wire (a full block in the World's shared wire scratch)
+/// Where a unit output is published: an audio wire (a full block in the World's shared wire scratch)
 /// or a control wire (one value in the per-graph control wires).
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct OutputWire {
@@ -20,22 +20,22 @@ pub(crate) struct OutputWire {
     pub wire: u32,
 }
 
-/// One UGen's compiled record: its calc/seed vtable, resolved wiring, and state slot in the arena -
+/// One unit's compiled record: its calc/seed vtable, resolved wiring, and state slot in the arena -
 /// plyphon's per-unit `UnitSpec` plus `mCalcFunc`.
-pub(crate) struct UgenVtbl {
+pub(crate) struct UnitVtbl {
     /// Per-block calc function over the state slot.
     pub process: ProcessFn,
     /// One-time first-block seeding function over the state slot.
     pub init: InitFn,
-    /// Per-instance re-seed function over the state slot (no-op for UGens without randomness).
+    /// Per-instance re-seed function over the state slot (no-op for units without randomness).
     pub reseed: ReseedFn,
     /// Resolved input sources, in order.
     pub inputs: Box<[InputSource]>,
     /// Where each output is published.
     pub outputs: Box<[OutputWire]>,
-    /// Byte offset of this UGen's state within the state arena.
+    /// Byte offset of this unit's state within the state arena.
     pub state_offset: usize,
-    /// Exactly `size_of::<T>()` - the bytes this UGen's state occupies.
+    /// Exactly `size_of::<T>()` - the bytes this unit's state occupies.
     pub state_size: usize,
 }
 
@@ -56,7 +56,7 @@ impl Span {
 }
 
 /// How a per-graph pool block is carved. The block holds only the per-instance mutable state; audio
-/// wire buffers and per-UGen output scratch are World-shared and live outside the block (matching
+/// wire buffers and per-unit output scratch are World-shared and live outside the block (matching
 /// scsynth, which keeps those in `mWireBufSpace`, not the per-graph allocation).
 ///
 /// Laid out so every span is correctly aligned given a 64-byte-aligned block base: the state arena
@@ -65,9 +65,9 @@ impl Span {
 /// fails, and the `bytemuck` casts never hit an alignment error.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct BlockLayout {
-    /// Heterogeneous UGen state (each UGen's `Pod` bytes at its `state_offset`).
+    /// Heterogeneous unit state (each unit's `Pod` bytes at its `state_offset`).
     pub state: Span,
-    /// Control wires (`f32`): the parameters first, then control-rate UGen outputs.
+    /// Control wires (`f32`): the parameters first, then control-rate unit outputs.
     pub control: Span,
     /// Per-parameter control-bus map (`u32`; `u32::MAX` = unmapped).
     pub pmaps: Span,
@@ -78,11 +78,11 @@ pub(crate) struct BlockLayout {
 /// The compiled, immutable, shareable synth definition (scsynth's `GraphDef`). Public so it can ride
 /// in a [`Command`](crate::command::Command); its fields are crate-internal.
 pub struct GraphDef {
-    /// Per-UGen vtable + wiring, in topological calc order.
-    pub(crate) ugens: Box<[UgenVtbl]>,
+    /// Per-unit vtable + wiring, in topological calc order.
+    pub(crate) units: Box<[UnitVtbl]>,
     /// How a per-graph pool block is carved.
     pub(crate) layout: BlockLayout,
-    /// The initial state-arena image: each UGen's initial state bytes packed at its offset. Copied
+    /// The initial state-arena image: each unit's initial state bytes packed at its offset. Copied
     /// into a fresh block when a synth is built on the audio thread.
     pub(crate) state_image: Box<[u8]>,
     /// Initial control-wire values: parameter defaults in the first `num_params` slots, then zeros.
@@ -100,7 +100,7 @@ const fn align_up(x: usize, align: usize) -> usize {
     (x + align - 1) & !(align - 1)
 }
 
-/// Compute the per-graph [`BlockLayout`] and each UGen's state offset from the UGens' `(size, align)`
+/// Compute the per-graph [`BlockLayout`] and each unit's state offset from the units' `(size, align)`
 /// slots, the control-wire count, and the parameter count.
 ///
 /// The state arena packs the slots in order (each bumped to its own alignment), then the control
