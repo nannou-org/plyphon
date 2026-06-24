@@ -301,6 +301,19 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
         sum
     }
 
+    /// The largest free chunk's size (header included), or 0 if none is free - a fragmentation gauge.
+    /// `alloc(n)` succeeds exactly when `request_to_size(n) <= largest_free_block()`. Walks the heap,
+    /// so it's `O(chunks)`; intended for introspection, not the hot path.
+    pub fn largest_free_block(&self) -> usize {
+        let mut max = 0;
+        self.for_each_chunk(|size, in_use| {
+            if !in_use && size > max {
+                max = size;
+            }
+        });
+        max
+    }
+
     /// Visit each chunk in physical order as `(size, in_use)`.
     fn for_each_chunk(&self, mut f: impl FnMut(usize, bool)) {
         let buf: &[u8] = cast_slice(self.buf.as_ref());
@@ -519,6 +532,18 @@ mod tests {
         RtPool::with_capacity_bytes(bytes)
     }
 
+    /// A pool packed into exactly four equal 128-byte (`MIN_CHUNK`) chunks with no trailing free
+    /// space, so coalescing has unambiguous neighbours and no confounding remainder. Returns the
+    /// four regions in physical order.
+    fn filled_quad() -> (RtPool<alloc::boxed::Box<[Align64]>>, [Region; 4]) {
+        // 9 blocks = 576 bytes backing -> 512-byte arena -> four 128-byte chunks, exactly.
+        let mut p = pool(576);
+        let regions: alloc::vec::Vec<Region> = (0..4).map(|_| p.alloc(100).expect("alloc")).collect();
+        assert_eq!(p.free_bytes(), 0, "quad should fill the arena exactly");
+        let quad: [Region; 4] = regions.try_into().expect("four regions");
+        (p, quad)
+    }
+
     #[test]
     fn fresh_pool_is_one_free_chunk() {
         let p = pool(8 * 1024);
@@ -614,5 +639,236 @@ mod tests {
         assert!(p.slices_mut([&src, &src]).is_none());
         p.dealloc(src);
         p.dealloc(dst);
+    }
+
+    #[test]
+    fn free_with_no_free_neighbour_does_not_coalesce() {
+        let (mut p, [a, b, c, d]) = filled_quad();
+        p.dealloc(b); // both neighbours (a, c) are in use
+        assert_eq!(p.largest_free_block(), 128);
+        assert_eq!(p.free_bytes(), 128);
+        p.dealloc(a);
+        p.dealloc(c);
+        p.dealloc(d);
+    }
+
+    #[test]
+    fn free_coalesces_forward_only() {
+        let (mut p, [a, b, c, d]) = filled_quad();
+        p.dealloc(b); // standalone 128 (neighbours in use)
+        p.dealloc(a); // a's next (b) is free -> merge forward into 256
+        assert_eq!(p.largest_free_block(), 256);
+        p.dealloc(c);
+        p.dealloc(d);
+    }
+
+    #[test]
+    fn free_coalesces_backward_only() {
+        let (mut p, [a, b, c, d]) = filled_quad();
+        p.dealloc(a); // standalone 128 (prev is the left fence)
+        p.dealloc(b); // b's prev (a) is free -> merge backward into 256
+        assert_eq!(p.largest_free_block(), 256);
+        p.dealloc(c);
+        p.dealloc(d);
+    }
+
+    #[test]
+    fn free_coalesces_both_sides() {
+        let (mut p, [a, b, c, d]) = filled_quad();
+        p.dealloc(a);
+        p.dealloc(c); // two separate 128 holes, b still in use between them
+        assert_eq!(p.largest_free_block(), 128);
+        p.dealloc(b); // merges with a (prev) and c (next) into one 384 chunk
+        assert_eq!(p.largest_free_block(), 384);
+        assert_eq!(p.free_bytes(), 384);
+        p.dealloc(d);
+    }
+
+    #[test]
+    fn frees_at_arena_boundaries_do_not_cross_fences() {
+        // Freeing the last chunk must not coalesce past the right fence, nor the first past the left.
+        let (mut p, [a, b, c, d]) = filled_quad();
+        let last_addr = p.slice(&d).as_ptr();
+        p.dealloc(d); // adjacent to the right fence
+        assert_eq!(p.largest_free_block(), 128, "must not merge into the right fence");
+        // The freed slot is reusable and uncorrupted.
+        let reused = p.alloc(100).unwrap();
+        assert_eq!(p.slice(&reused).as_ptr(), last_addr);
+        p.dealloc(reused);
+        p.dealloc(a); // adjacent to the left fence
+        assert_eq!(p.largest_free_block(), 128, "must not merge below the left fence");
+        p.dealloc(b);
+        p.dealloc(c);
+    }
+
+    #[test]
+    fn large_bin_best_fit_picks_tightest_chunk() {
+        // Two free chunks in the same large bin (chunk sizes 1024 and 1088 both map to bin 64); a
+        // request needing a 1024 chunk must take the tighter one, leaving the 1088 untouched.
+        let mut p = pool(64 * 1024);
+        let a = p.alloc(1008).unwrap(); // chunk 1024
+        let g1 = p.alloc(16).unwrap(); // guard, prevents coalescing
+        let b = p.alloc(1072).unwrap(); // chunk 1088
+        let g2 = p.alloc(16).unwrap(); // guard
+        let a_addr = p.slice(&a).as_ptr();
+        let b_addr = p.slice(&b).as_ptr();
+        p.dealloc(a);
+        p.dealloc(b); // both standalone in bin 64 (sorted 1088 -> 1024)
+        let tight = p.alloc(1008).unwrap();
+        assert_eq!(p.slice(&tight).as_ptr(), a_addr, "best-fit should pick the 1024 chunk");
+        // The 1088 chunk is now the only fit for a second 1024 request.
+        let next = p.alloc(1008).unwrap();
+        assert_eq!(p.slice(&next).as_ptr(), b_addr);
+        p.dealloc(tight);
+        p.dealloc(next);
+        p.dealloc(g1);
+        p.dealloc(g2);
+    }
+
+    #[test]
+    fn exact_fit_reuses_slot_without_splitting() {
+        let mut p = pool(8 * 1024);
+        let r = p.alloc(100).unwrap(); // chunk 128
+        let addr = p.slice(&r).as_ptr();
+        let used = p.used_bytes();
+        p.dealloc(r);
+        let r = p.alloc(112).unwrap(); // also chunk 128 -> exact fit on the freed slot
+        assert_eq!(p.slice(&r).as_ptr(), addr, "exact fit should reuse the slot");
+        assert_eq!(p.used_bytes(), used, "no split: used bytes unchanged");
+        p.dealloc(r);
+    }
+
+    #[test]
+    fn small_remainder_is_kept_not_split() {
+        let mut p = pool(8 * 1024);
+        let filler = p.alloc(176).unwrap(); // chunk 192
+        let guard = p.alloc(16).unwrap(); // pins the slot so freeing leaves a 192 hole
+        p.dealloc(filler);
+        // A 128-chunk request from a 192 hole leaves 64 slack (< MIN_CHUNK) -> no split.
+        let before = p.used_bytes();
+        let r = p.alloc(100).unwrap();
+        assert_eq!(p.used_bytes() - before, 192, "sub-MIN_CHUNK slack stays inside the allocation");
+        p.dealloc(r);
+        p.dealloc(guard);
+    }
+
+    #[test]
+    fn fills_entire_arena_exactly() {
+        let mut p = pool(8 * 1024);
+        let cap = p.total_bytes();
+        // The biggest single payload is one chunk spanning the arena: cap - HEADER.
+        assert!(p.alloc(cap - HEADER + 1).is_none());
+        let r = p.alloc(cap - HEADER).expect("largest single allocation");
+        assert_eq!(p.free_bytes(), 0);
+        assert!(p.alloc(1).is_none());
+        p.dealloc(r);
+        assert_eq!(p.free_bytes(), p.total_bytes());
+    }
+
+    #[test]
+    fn realloc_same_size_is_a_noop() {
+        let mut p = pool(8 * 1024);
+        let r = p.alloc(100).unwrap();
+        let addr = p.slice(&r).as_ptr();
+        p.slice_mut(&r).fill(9);
+        let r = p.realloc(r, 110).unwrap(); // still chunk 128 -> in place, same slot
+        assert_eq!(p.slice(&r).as_ptr(), addr);
+        assert_eq!(r.len(), 110);
+        assert!(p.slice(&r)[..100].iter().all(|&b| b == 9));
+        p.dealloc(r);
+    }
+
+    #[test]
+    fn realloc_grows_into_free_neighbour_in_place() {
+        let mut p = pool(8 * 1024);
+        let a = p.alloc(100).unwrap(); // chunk 128
+        let b = p.alloc(100).unwrap(); // chunk 128
+        let c = p.alloc(100).unwrap(); // pins b's slot so it stays standalone when freed
+        let a_addr = p.slice(&a).as_ptr();
+        p.slice_mut(&a).fill(3);
+        p.dealloc(b); // a's forward neighbour is now a free 128 chunk
+        let free_before = p.free_bytes();
+        let a = p.realloc(a, 200).unwrap(); // needs 256 = 128 + 128 -> absorbs b in place
+        assert_eq!(p.slice(&a).as_ptr(), a_addr, "grew in place, no relocation");
+        assert_eq!(p.free_bytes(), free_before - 128, "absorbed the neighbour");
+        assert!(p.slice(&a)[..100].iter().all(|&x| x == 3));
+        p.dealloc(a);
+        p.dealloc(c);
+    }
+
+    #[test]
+    fn realloc_failure_returns_original_intact() {
+        // A full pool: a grow can neither expand in place (neighbour in use) nor relocate (no room).
+        let (mut p, [a, b, c, d]) = filled_quad();
+        p.slice_mut(&a).fill(5);
+        let a = match p.realloc(a, 200) {
+            Ok(_) => panic!("realloc should fail on a full pool"),
+            Err(orig) => orig,
+        };
+        assert_eq!(a.len(), 100, "original length preserved");
+        assert!(p.slice(&a).iter().all(|&b| b == 5), "original payload intact");
+        p.dealloc(a);
+        p.dealloc(b);
+        p.dealloc(c);
+        p.dealloc(d);
+    }
+
+    #[test]
+    fn zero_sized_alloc_yields_empty_region() {
+        let mut p = pool(4 * 1024);
+        let r = p.alloc(0).unwrap();
+        assert!(r.is_empty());
+        assert!(p.slice(&r).is_empty());
+        assert_eq!(p.used_bytes(), MIN_CHUNK, "still occupies a minimum chunk");
+        p.dealloc(r);
+        assert_eq!(p.free_bytes(), p.total_bytes());
+    }
+
+    #[test]
+    fn typed_views_roundtrip_and_reject_partial_lengths() {
+        let mut p = pool(8 * 1024);
+        // f32: the view exposes exactly the requested count.
+        let r = p.alloc_for::<f32>(10).unwrap();
+        assert_eq!(r.len(), 40);
+        p.view_mut::<f32>(&r).unwrap().copy_from_slice(&[2.5f32; 10]);
+        assert_eq!(p.view::<f32>(&r).unwrap(), &[2.5f32; 10]);
+        p.dealloc(r);
+        // f64 too.
+        let r = p.alloc_for::<f64>(4).unwrap();
+        assert_eq!(p.view::<f64>(&r).unwrap().len(), 4);
+        p.dealloc(r);
+        // A byte length that isn't a whole number of f32s can't be viewed as f32, but the raw bytes
+        // are still accessible.
+        let r = p.alloc(10).unwrap();
+        assert!(p.view::<f32>(&r).is_none());
+        assert_eq!(p.slice(&r).len(), 10);
+        p.dealloc(r);
+        // `alloc_for` reports overflow instead of wrapping.
+        assert!(p.alloc_for::<f32>(usize::MAX).is_none());
+    }
+}
+
+#[cfg(test)]
+mod backing_tests {
+    use super::*;
+    use crate::layout::Align64;
+
+    // Exercises the no-alloc constructor over caller-owned `[Align64]` storage - the path a
+    // `#![no_std]` build with no allocator uses. Compiles and runs even with `--no-default-features`.
+    #[test]
+    fn from_blocks_over_owned_array_works() {
+        // 9 blocks = 576 bytes -> 512-byte arena.
+        let mut p = RtPool::from_blocks([Align64::ZERO; 9]);
+        assert_eq!(p.free_bytes(), p.total_bytes());
+        let a = p.alloc(100).unwrap();
+        let b = p.alloc(100).unwrap();
+        p.slice_mut(&a).fill(1);
+        p.slice_mut(&b).fill(2);
+        assert!(p.slice(&a).iter().all(|&x| x == 1));
+        assert!(p.slice(&b).iter().all(|&x| x == 2));
+        assert_eq!(p.used_bytes() + p.free_bytes(), p.total_bytes());
+        p.dealloc(a);
+        p.dealloc(b);
+        assert_eq!(p.free_bytes(), p.total_bytes());
     }
 }

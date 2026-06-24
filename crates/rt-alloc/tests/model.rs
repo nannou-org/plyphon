@@ -3,6 +3,7 @@
 //! byte pattern; re-reading every pattern after every operation catches any overlap or corruption
 //! (an overlap would scribble one region's bytes over another's). We also assert the accounting
 //! balances after every step and that draining everything coalesces back to a single free arena.
+#![cfg(feature = "alloc")]
 
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -11,7 +12,8 @@ use rt_alloc::{Align64, Region, RtPool};
 type Pool = RtPool<Box<[Align64]>>;
 
 const POOL_BYTES: usize = 64 * 1024;
-const MAX_REQUEST: usize = 2048;
+// Spans small and large bins (chunk sizes up to ~4 KiB), exercising both fast paths.
+const MAX_REQUEST: usize = 4096;
 
 #[derive(Debug, Clone)]
 enum Op {
