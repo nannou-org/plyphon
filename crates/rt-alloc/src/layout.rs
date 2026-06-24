@@ -38,7 +38,7 @@ pub const SIZE_BITS: u64 = !INUSE;
 /// Free-list sentinel meaning "no chunk".
 pub const NIL: u64 = u64::MAX;
 
-/// A 64-byte-aligned block. The pool's backing buffer is `[Align64]`, so its bytes are [`ALIGN`]-
+/// A 64-byte-aligned block. The pool's backing buffer is `[Align64]`, so its bytes are 64-byte
 /// aligned wherever the buffer lives (heap, `static`, or stack) with no runtime alignment fix-up.
 #[repr(C, align(64))]
 #[derive(Clone, Copy, Pod, Zeroable)]

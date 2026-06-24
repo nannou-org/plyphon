@@ -13,11 +13,11 @@
 
 use core::ops::Range;
 
-use bytemuck::{cast_slice, cast_slice_mut, Pod};
+use bytemuck::{Pod, cast_slice, cast_slice_mut};
 
-use crate::bins::{bin_index, clear_bin, mark_bin, next_full_bin, NUM_SMALL_BINS};
+use crate::bins::{NUM_SMALL_BINS, bin_index, clear_bin, mark_bin, next_full_bin};
 use crate::layout::{
-    request_to_size, Align64, FreeLinks, Header, HEADER, INUSE, LINKS, MIN_CHUNK, NIL, PROLOGUE,
+    Align64, FreeLinks, HEADER, Header, INUSE, LINKS, MIN_CHUNK, NIL, PROLOGUE, request_to_size,
 };
 
 /// A fixed-size real-time memory pool over a `[Align64]` backing buffer.
@@ -43,9 +43,15 @@ pub struct RtPool<S> {
 /// [view](RtPool::view)). Return the memory with [`RtPool::dealloc`], which *consumes* the handle -
 /// so a freed region is unnameable, making use-after-free a compile error rather than UB.
 ///
-/// A handle is only meaningful to the pool that produced it; using it with a different pool reads or
-/// frees the wrong bytes (always bounds-checked, never unsound), so keep each pool's handles together
-/// with their pool.
+/// # Pool affinity
+///
+/// A handle belongs to the [`RtPool`] that produced it. Using it with a *different* pool is a logic
+/// error, never a soundness one: it may read or free the wrong bytes and corrupt that pool's
+/// free lists - breaking its later behaviour (leaks, overlapping regions) or panicking on an
+/// out-of-range index - but it can **never** violate memory safety. The crate is
+/// `#![forbid(unsafe_code)]`, so every access is bounds-checked, and exclusive `&mut` access stays
+/// mediated by the pool (and by [`slice::get_disjoint_mut`] in [`slices_mut`](RtPool::slices_mut)),
+/// regardless of allocator state. Keep each pool's handles with their pool.
 #[derive(Debug)]
 #[must_use = "dropping a Region leaks its allocation; pass it to RtPool::dealloc to reclaim it"]
 pub struct Region {
@@ -106,9 +112,23 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
         let size = fence - first; // multiple of ALIGN by construction
         debug_assert_eq!(size % crate::layout::ALIGN, 0);
         // Right fence: a perpetual in-use chunk so forward coalescing stops here.
-        write_header(bytes, fence, Header { prev_size: 0, size: INUSE });
+        write_header(
+            bytes,
+            fence,
+            Header {
+                prev_size: 0,
+                size: INUSE,
+            },
+        );
         // Left fence: encode "previous chunk in use" in the first chunk's prev tag.
-        write_header(bytes, first, Header { prev_size: INUSE, size: 0 });
+        write_header(
+            bytes,
+            first,
+            Header {
+                prev_size: INUSE,
+                size: 0,
+            },
+        );
         // Mark the whole arena free (sets first.size and the fence's prev tag) and bin it.
         set_free(bytes, first, size);
         link_free(bytes, bins, binmap, first);
@@ -119,11 +139,7 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
     /// returning the remainder to the free lists (scsynth's `Alloc`).
     pub fn alloc(&mut self, bytes: usize) -> Option<Region> {
         let need = request_to_size(bytes);
-        let Self {
-            buf,
-            bins,
-            binmap,
-        } = self;
+        let Self { buf, bins, binmap } = self;
         let buf: &mut [u8] = cast_slice_mut(buf.as_mut());
 
         let chunk = find_fit(buf, bins, binmap, need)?;
@@ -151,11 +167,9 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
     }
 
     /// Return a region's memory to the pool, coalescing with free neighbours (scsynth's `Free`).
-    /// Consumes the handle.
+    /// Consumes the handle. `region` must belong to this pool (see [`Region`]).
     pub fn dealloc(&mut self, region: Region) {
-        let Self {
-            buf, bins, binmap,
-        } = self;
+        let Self { buf, bins, binmap } = self;
         let buf: &mut [u8] = cast_slice_mut(buf.as_mut());
         let chunk = region.user_offset as usize - HEADER;
         let size = read_header(buf, chunk).chunk_size();
@@ -168,14 +182,14 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
     /// Shrinks and grows in place where it can (splitting, or absorbing a free following chunk);
     /// otherwise allocates fresh, copies the payload, and frees the old region. (scsynth also shifts
     /// back into a free *preceding* chunk; that extra case is left to the copy path here.)
+    ///
+    /// `region` must belong to this pool (see [`Region`]).
     pub fn realloc(&mut self, region: Region, bytes: usize) -> Result<Region, Region> {
         let need = request_to_size(bytes);
 
         // Phase 1: attempt in place. Scoped so the disjoint borrows end before phase 2 needs `self`.
         let in_place = {
-            let Self {
-                buf, bins, binmap,
-            } = self;
+            let Self { buf, bins, binmap } = self;
             let buf: &mut [u8] = cast_slice_mut(buf.as_mut());
             let chunk = region.user_offset as usize - HEADER;
             let old_size = read_header(buf, chunk).chunk_size();
@@ -188,7 +202,14 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
                 let next_hdr = read_header(buf, next);
                 if !next_hdr.in_use() && old_size + next_hdr.chunk_size() >= need {
                     unlink_free(buf, bins, binmap, next);
-                    split_tail(buf, bins, binmap, chunk, old_size + next_hdr.chunk_size(), need);
+                    split_tail(
+                        buf,
+                        bins,
+                        binmap,
+                        chunk,
+                        old_size + next_hdr.chunk_size(),
+                        need,
+                    );
                     Some(region.user_offset)
                 } else {
                     None
@@ -218,21 +239,23 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
         }
     }
 
-    /// Shared read-only access to a region's payload.
+    /// Shared read-only access to a region's payload. `region` must belong to this pool (see
+    /// [`Region`]).
     pub fn slice(&self, region: &Region) -> &[u8] {
         let buf: &[u8] = cast_slice(self.buf.as_ref());
         &buf[region.range()]
     }
 
-    /// Exclusive mutable access to a region's payload.
+    /// Exclusive mutable access to a region's payload. `region` must belong to this pool (see
+    /// [`Region`]).
     pub fn slice_mut(&mut self, region: &Region) -> &mut [u8] {
         let buf: &mut [u8] = cast_slice_mut(self.buf.as_mut());
         &mut buf[region.range()]
     }
 
     /// A typed read-only view of a region, or [`None`] if its byte length isn't a whole number of
-    /// `T`s. Alignment always holds (payloads are [`ALIGN`](crate::layout::ALIGN)-aligned), so this
-    /// only ever fails on the length check.
+    /// `T`s. Alignment always holds (payloads are 64-byte aligned), so this only ever fails on the
+    /// length check. `region` must belong to this pool (see [`Region`]).
     pub fn view<T: Pod>(&self, region: &Region) -> Option<&[T]> {
         bytemuck::try_cast_slice(self.slice(region)).ok()
     }
@@ -247,7 +270,7 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
     /// distinct live allocations, so this is really a guard against passing the same region twice.
     ///
     /// Fully safe: distinct allocations occupy disjoint ranges, handed out via the standard library's
-    /// [`slice::get_disjoint_mut`].
+    /// [`slice::get_disjoint_mut`]. Every `region` must belong to this pool (see [`Region`]).
     pub fn slices_mut<'a, const N: usize>(
         &'a mut self,
         regions: [&Region; N],
@@ -405,7 +428,13 @@ fn find_fit(buf: &[u8], bins: &[u64; 128], binmap: &[u32; 4], need: usize) -> Op
 
 /// Free chunk `[chunk, chunk+size)`: coalesce with a free previous and/or next chunk, then tag the
 /// merged span free and link it into its bin. The chunk's `prev_size` tag must already be correct.
-fn free_chunk(buf: &mut [u8], bins: &mut [u64; 128], binmap: &mut [u32; 4], chunk: usize, size: usize) {
+fn free_chunk(
+    buf: &mut [u8],
+    bins: &mut [u64; 128],
+    binmap: &mut [u32; 4],
+    chunk: usize,
+    size: usize,
+) {
     let mut off = chunk;
     let mut size = size;
 
@@ -454,7 +483,14 @@ fn link_free(buf: &mut [u8], bins: &mut [u64; 128], binmap: &mut [u32; 4], off: 
     let head = bins[index];
 
     if index < NUM_SMALL_BINS || head == NIL {
-        write_links(buf, off, FreeLinks { next: head, prev: NIL });
+        write_links(
+            buf,
+            off,
+            FreeLinks {
+                next: head,
+                prev: NIL,
+            },
+        );
         if head != NIL {
             let mut head_links = read_links(buf, head as usize);
             head_links.prev = off as u64;
@@ -524,7 +560,8 @@ mod tests {
     fn filled_quad() -> (RtPool<alloc::boxed::Box<[Align64]>>, [Region; 4]) {
         // 9 blocks = 576 bytes backing -> 512-byte arena -> four 128-byte chunks, exactly.
         let mut p = pool(576);
-        let regions: alloc::vec::Vec<Region> = (0..4).map(|_| p.alloc(100).expect("alloc")).collect();
+        let regions: alloc::vec::Vec<Region> =
+            (0..4).map(|_| p.alloc(100).expect("alloc")).collect();
         assert_eq!(p.free_bytes(), 0, "quad should fill the arena exactly");
         let quad: [Region; 4] = regions.try_into().expect("four regions");
         (p, quad)
@@ -676,13 +713,21 @@ mod tests {
         let (mut p, [a, b, c, d]) = filled_quad();
         let last_addr = p.slice(&d).as_ptr();
         p.dealloc(d); // adjacent to the right fence
-        assert_eq!(p.largest_free_block(), 128, "must not merge into the right fence");
+        assert_eq!(
+            p.largest_free_block(),
+            128,
+            "must not merge into the right fence"
+        );
         // The freed slot is reusable and uncorrupted.
         let reused = p.alloc(100).unwrap();
         assert_eq!(p.slice(&reused).as_ptr(), last_addr);
         p.dealloc(reused);
         p.dealloc(a); // adjacent to the left fence
-        assert_eq!(p.largest_free_block(), 128, "must not merge below the left fence");
+        assert_eq!(
+            p.largest_free_block(),
+            128,
+            "must not merge below the left fence"
+        );
         p.dealloc(b);
         p.dealloc(c);
     }
@@ -701,7 +746,11 @@ mod tests {
         p.dealloc(a);
         p.dealloc(b); // both standalone in bin 64 (sorted 1088 -> 1024)
         let tight = p.alloc(1008).unwrap();
-        assert_eq!(p.slice(&tight).as_ptr(), a_addr, "best-fit should pick the 1024 chunk");
+        assert_eq!(
+            p.slice(&tight).as_ptr(),
+            a_addr,
+            "best-fit should pick the 1024 chunk"
+        );
         // The 1088 chunk is now the only fit for a second 1024 request.
         let next = p.alloc(1008).unwrap();
         assert_eq!(p.slice(&next).as_ptr(), b_addr);
@@ -719,7 +768,11 @@ mod tests {
         let used = p.used_bytes();
         p.dealloc(r);
         let r = p.alloc(112).unwrap(); // also chunk 128 -> exact fit on the freed slot
-        assert_eq!(p.slice(&r).as_ptr(), addr, "exact fit should reuse the slot");
+        assert_eq!(
+            p.slice(&r).as_ptr(),
+            addr,
+            "exact fit should reuse the slot"
+        );
         assert_eq!(p.used_bytes(), used, "no split: used bytes unchanged");
         p.dealloc(r);
     }
@@ -733,7 +786,11 @@ mod tests {
         // A 128-chunk request from a 192 hole leaves 64 slack (< MIN_CHUNK) -> no split.
         let before = p.used_bytes();
         let r = p.alloc(100).unwrap();
-        assert_eq!(p.used_bytes() - before, 192, "sub-MIN_CHUNK slack stays inside the allocation");
+        assert_eq!(
+            p.used_bytes() - before,
+            192,
+            "sub-MIN_CHUNK slack stays inside the allocation"
+        );
         p.dealloc(r);
         p.dealloc(guard);
     }
@@ -792,7 +849,10 @@ mod tests {
             Err(orig) => orig,
         };
         assert_eq!(a.len(), 100, "original length preserved");
-        assert!(p.slice(&a).iter().all(|&b| b == 5), "original payload intact");
+        assert!(
+            p.slice(&a).iter().all(|&b| b == 5),
+            "original payload intact"
+        );
         p.dealloc(a);
         p.dealloc(b);
         p.dealloc(c);
@@ -816,7 +876,9 @@ mod tests {
         // f32: the view exposes exactly the requested count.
         let r = p.alloc_for::<f32>(10).unwrap();
         assert_eq!(r.len(), 40);
-        p.view_mut::<f32>(&r).unwrap().copy_from_slice(&[2.5f32; 10]);
+        p.view_mut::<f32>(&r)
+            .unwrap()
+            .copy_from_slice(&[2.5f32; 10]);
         assert_eq!(p.view::<f32>(&r).unwrap(), &[2.5f32; 10]);
         p.dealloc(r);
         // f64 too.

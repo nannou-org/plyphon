@@ -21,6 +21,10 @@
 //! [`None`], and because every allocation is 64-byte aligned by construction,
 //! typed [views](RtPool::view) over a region are always alignment-valid.
 //!
+//! A [`Region`] belongs to the pool that made it; using one with a *different*
+//! pool can corrupt that pool's bookkeeping but never memory safety - see
+//! [`Region`]'s "Pool affinity" note.
+//!
 //! The pool is single-threaded by design, mirroring scsynth: only the audio
 //! thread ever calls into it. The crate is `#![no_std]` and
 //! `#![forbid(unsafe_code)]`; the heap-owning constructor sits behind the
