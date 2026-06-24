@@ -14,6 +14,7 @@ repository = "https://github.com/mitchmindtree/plyphon"
 plyphon = { version = "0.1.0", path = "crates/plyphon" }
 plyphon-buffers = { version = "0.1.0", path = "crates/plyphon-buffers" }
 plyphon-osc = { version = "0.1.0", path = "crates/plyphon-osc" }
+rt-alloc = { version = "0.1.0", path = "crates/rt-alloc" }
 scgf = { version = "0.1.0", path = "crates/scgf" }
 
 # Shared dependencies.

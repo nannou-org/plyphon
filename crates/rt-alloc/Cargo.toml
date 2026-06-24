@@ -1,0 +1,31 @@
+[package]
+name = "rt-alloc"
+version = "0.1.0"
+description = "A safe, no_std real-time memory pool - a faithful port of scsynth's AllocPool."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["alloc"]
+# Enables the `RtPool::with_capacity_bytes` constructor, which owns a heap-allocated
+# backing buffer. Without it the crate is fully `core`-only and the pool must be built
+# over caller-provided backing via `RtPool::from_backing`.
+alloc = []
+
+[dependencies]
+# Safe, no_std-friendly slice/byte reinterpretation - lets us read the inline boundary-tag
+# headers and expose typed views over allocations without `unsafe`.
+bytemuck = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+proptest = "1"
+criterion = "0.5"
+# Comparison baseline only (benches): pcwalton's O(1) offset allocator.
+offset-allocator = "0.2"
+
+[[bench]]
+name = "alloc"
+harness = false
