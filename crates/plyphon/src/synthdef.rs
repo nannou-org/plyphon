@@ -70,7 +70,7 @@ impl UnitSpec {
     }
 }
 
-/// A synth definition: a template instantiated into a [`Synth`].
+/// A synth definition: a template instantiated into a [`crate::graph::Graph`].
 #[derive(Clone, Debug)]
 pub struct SynthDef {
     /// Definition name.

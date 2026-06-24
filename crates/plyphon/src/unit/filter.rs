@@ -14,7 +14,7 @@ use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// Which Butterworth response to compute. The build-time domain; stored in [`Butter`] as a `u32` tag
-/// (via [`Kind::to_tag`]) so the state is [`Pod`] and lives in the rt-pool.
+/// (via `Kind::to_tag`) so the state is [`Pod`] and lives in the rt-pool.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Kind {
     /// Low-pass (`LPF`).

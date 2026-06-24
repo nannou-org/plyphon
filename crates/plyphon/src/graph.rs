@@ -7,7 +7,7 @@
 //! wiring, layout) is shared via `Arc<GraphDef>`.
 //!
 //! Audio wire buffers and per-unit output scratch are *not* in the block: they are World-owned, fixed
-//! at boot, and reused across graphs (matching scsynth's `mWireBufSpace`), threaded in via [`Block`].
+//! at boot, and reused across graphs (matching scsynth's `mWireBufSpace`), threaded in via `Block`.
 //!
 //! The process loop avoids scsynth's aliasing raw `float*` wires while staying `unsafe`-free: it
 //! carves the block into its disjoint state/control/param-map spans in one `get_disjoint_mut` call,

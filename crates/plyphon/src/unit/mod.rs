@@ -268,7 +268,7 @@ impl<'a> Outputs<'a> {
 /// A unit generator - plyphon's `Unit` is scsynth's server-side `Unit` (the language-side `UGen` has
 /// no plyphon analogue; we consume compiled SynthDefs directly). Its state must be [`Pod`] so it can
 /// live as bytes in the rt-pool and be reinterpreted without `unsafe`; behaviour is invoked through
-/// the [`ProcessFn`]/[`InitFn`] vtable a [`UnitDef`](registry::UnitDef) builds via [`unit_spec`].
+/// the [`ProcessFn`]/[`InitFn`] vtable a [`UnitDef`] builds via [`unit_spec`].
 pub trait Unit: Pod {
     /// Re-seed any per-instance randomness from `seed`, called once when the synth is constructed on
     /// the audio thread (before the first block). The default is a no-op; units with an
@@ -329,7 +329,7 @@ fn reseed_thunk<T: Unit>(bytes: &mut [u8], seed: u64) {
 }
 
 /// A built unit: its calc/seed vtable plus the initial state image to copy into the pool. Produced
-/// off the audio thread by a [`UnitDef`](registry::UnitDef) (via [`unit_spec`]) and baked into a
+/// off the audio thread by a [`UnitDef`] (via [`unit_spec`]) and baked into a
 /// [`GraphDef`](crate::graphdef::GraphDef).
 pub struct BuiltUnit {
     /// Per-block calc function.
@@ -347,7 +347,7 @@ pub struct BuiltUnit {
 }
 
 /// Build a [`BuiltUnit`] from an initial unit state. The thunks are monomorphised for `T` here, so a
-/// [`UnitDef`](registry::UnitDef) only constructs its initial state and hands it to this helper.
+/// [`UnitDef`] only constructs its initial state and hands it to this helper.
 pub fn unit_spec<T: Unit>(state: T) -> BuiltUnit {
     BuiltUnit {
         process: process_thunk::<T>,

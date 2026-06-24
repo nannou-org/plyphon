@@ -1,7 +1,7 @@
 //! A per-unit random number generator - plyphon's port of scsynth's `RGen` (Taus88).
 //!
 //! scsynth seeds its generators from a process-global source; plyphon instead seeds each generator
-//! from a value threaded down through the builder (see [`crate::synthdef::SynthDef::instantiate`]),
+//! from a value threaded down through the builder (see [`crate::unit::BuildContext`]),
 //! so there is no global RNG state and two instances of the same synth still decorrelate.
 
 /// A Taus88 combined Tausworthe generator (the algorithm scsynth uses).

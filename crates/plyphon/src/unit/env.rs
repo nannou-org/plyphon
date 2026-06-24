@@ -29,7 +29,7 @@ mod phase {
 /// `EnvGen.ar/kr(env, gate, levelScale, levelBias, timeScale, doneAction)`.
 ///
 /// `Pod` state for the rt-pool: `f64`s first, then the 4-byte fields (`prev_gate`, `seg_curve`, the
-/// segment index, the [`phase`] tag, and two `0`/`1` flags) - six 4-byte fields after six `f64`s, so
+/// segment index, the `phase` tag, and two `0`/`1` flags) - six 4-byte fields after six `f64`s, so
 /// `repr(C)` packs it with no implicit padding (72 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]

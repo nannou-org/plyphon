@@ -1,7 +1,7 @@
 //! Convert parsed SCgf definitions (from the [`scgf`] crate) into plyphon [`SynthDef`]s.
 //!
 //! SC models a SynthDef's named parameters as `Control`-family UGens whose outputs feed the rest of
-//! the graph; plyphon handles parameters directly (see [`crate::synth::Synth::set_control`]), so
+//! the graph; plyphon handles parameters directly (see [`crate::controller::Controller::set_control`]), so
 //! this converter folds those control UGens into [`Param`]s and rewrites inputs that referenced them
 //! into [`InputRef::Param`]. The remaining UGens are renumbered and emitted as a plyphon
 //! [`SynthDef`], carrying their calculation rate (so audio- and control-rate UGens both load).
