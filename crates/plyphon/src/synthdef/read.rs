@@ -6,7 +6,10 @@
 //! into [`InputRef::Param`]. The remaining UGens are renumbered and emitted as a plyphon
 //! [`SynthDef`], carrying their calculation rate (so audio- and control-rate UGens both load).
 
-use std::collections::HashMap;
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use hashbrown::HashMap;
 
 use thiserror::Error;
 

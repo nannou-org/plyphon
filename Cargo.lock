@@ -855,6 +855,7 @@ dependencies = [
 name = "plyphon"
 version = "0.1.0"
 dependencies = [
+ "hashbrown",
  "plyphon-dsp",
  "plyphon-rt",
  "plyphon-unit",

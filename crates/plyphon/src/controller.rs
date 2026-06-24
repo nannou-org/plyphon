@@ -13,8 +13,12 @@
 //! `Arc<GraphDef>` dropped on the audio thread (a freed graph's, or a def-table slot replaced by a
 //! redefinition) is never the final reference, so the heavy drop never lands on the audio thread.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+
+use hashbrown::HashMap;
 
 use rtrb::Producer;
 use thiserror::Error;

@@ -9,7 +9,11 @@
 
 pub mod read;
 
-use std::collections::HashMap;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use hashbrown::HashMap;
 
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_unit::error::BuildError;

@@ -21,7 +21,11 @@
 //! The whole stack uses no `unsafe` (the rt-pool and `bytemuck` keep theirs internal) and no global
 //! mutable state, and compiles for native and `wasm32-unknown-unknown` alike.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+
+#[macro_use]
+extern crate alloc;
 
 pub mod controller;
 pub mod engine;
