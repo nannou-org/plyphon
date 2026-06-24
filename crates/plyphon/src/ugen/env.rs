@@ -8,38 +8,49 @@
 //! segments and fires its `doneAction`. Looping (`loopNode`) and gate retriggering are not yet
 //! handled.
 
-use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, Inputs, ProcessCtx, Ugen};
+use bytemuck::{Pod, Zeroable};
 
-/// Where the generator is in the envelope.
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Phase {
+use crate::error::BuildError;
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, Inputs, ProcessCtx, Ugen, ugen_spec};
+
+/// Where the generator is in the envelope, stored as a `u32` so the state is [`Pod`].
+mod phase {
     /// Playing the pre-release segments.
-    Attack,
+    pub const ATTACK: u32 = 0;
     /// Holding at the release node until the gate falls.
-    Sustain,
+    pub const SUSTAIN: u32 = 1;
     /// Playing the post-release segments.
-    Release,
+    pub const RELEASE: u32 = 2;
     /// Finished (holding the final level).
-    Done,
+    pub const DONE: u32 = 3;
 }
 
 /// `EnvGen.ar/kr(env, gate, levelScale, levelBias, timeScale, doneAction)`.
+///
+/// `Pod` state for the rt-pool: `f64`s first, then the 4-byte fields (`prev_gate`, `seg_curve`, the
+/// segment index, the [`phase`] tag, and two `0`/`1` flags) - six 4-byte fields after six `f64`s, so
+/// `repr(C)` packs it with no implicit padding (72 bytes).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct EnvGen {
-    started: bool,
-    fired: bool,
-    phase: Phase,
-    prev_gate: f32,
     /// Current envelope level, before `levelScale`/`levelBias`.
     level: f64,
-    seg: usize,
     pos: f64,
     seg_dur: f64,
     seg_start: f64,
     seg_end: f64,
-    seg_curve: i32,
     seg_curve_value: f64,
+    prev_gate: f32,
+    seg_curve: i32,
+    /// Current segment index.
+    seg: u32,
+    /// Envelope position tag (see [`phase`]).
+    phase: u32,
+    /// `0`/`1`: whether the first-block setup has run.
+    started: u32,
+    /// `0`/`1`: whether the done action has already fired.
+    fired: u32,
 }
 
 impl EnvGen {
@@ -77,7 +88,7 @@ impl EnvGen {
     /// Begin segment `i`, ramping from the current level over its (scaled) duration.
     fn load_segment(&mut self, ins: &Inputs<'_>, i: usize, sample_rate: f64, time_scale: f64) {
         let (target, time, curve, curve_value) = self.segment(ins, i);
-        self.seg = i;
+        self.seg = i as u32;
         self.seg_start = self.level;
         self.seg_end = target;
         self.seg_dur = (time * time_scale * sample_rate).max(1.0);
@@ -98,16 +109,16 @@ impl Ugen for EnvGen {
         let num_segments = self.num_segments(&ctx.ins);
         let release_node = self.release_node(&ctx.ins);
 
-        if !self.started {
+        if self.started == 0 {
             self.level = get(&ctx.ins, Self::ENV) as f64; // initialLevel
             if num_segments > 0 {
                 self.load_segment(&ctx.ins, 0, sample_rate, time_scale);
-                self.phase = Phase::Attack;
+                self.phase = phase::ATTACK;
             } else {
-                self.phase = Phase::Done;
+                self.phase = phase::DONE;
             }
             self.prev_gate = gate;
-            self.started = true;
+            self.started = 1;
         }
 
         // A falling gate begins the release phase: jump straight to the release segment (the segment
@@ -117,14 +128,14 @@ impl Ugen for EnvGen {
         if self.prev_gate >= 0.5
             && gate < 0.5
             && release_node >= 0
-            && matches!(self.phase, Phase::Attack | Phase::Sustain)
+            && matches!(self.phase, phase::ATTACK | phase::SUSTAIN)
         {
             let release_seg = release_node as usize;
             if release_seg < num_segments {
                 self.load_segment(&ctx.ins, release_seg, sample_rate, time_scale);
-                self.phase = Phase::Release;
+                self.phase = phase::RELEASE;
             } else {
-                self.phase = Phase::Done;
+                self.phase = phase::DONE;
             }
         }
         self.prev_gate = gate;
@@ -132,10 +143,7 @@ impl Ugen for EnvGen {
         let mut action = DoneAction::Nothing;
         for o in ctx.outs.audio(0).iter_mut() {
             match self.phase {
-                Phase::Sustain | Phase::Done => {
-                    *o = (self.level * level_scale + level_bias) as f32;
-                }
-                Phase::Attack | Phase::Release => {
+                phase::ATTACK | phase::RELEASE => {
                     let t = (self.pos / self.seg_dur).min(1.0);
                     self.level = shape(
                         self.seg_curve,
@@ -152,19 +160,28 @@ impl Ugen for EnvGen {
                         // just-completed segment is `releaseNode - 1` (scsynth's `m_stage + 1 ==
                         // releaseNode`). Hold there, still gated, until the gate falls.
                         let reached_release_node =
-                            release_node >= 0 && self.seg + 1 == release_node as usize;
-                        if self.phase == Phase::Attack && reached_release_node {
-                            self.phase = Phase::Sustain;
-                        } else if self.seg + 1 < num_segments {
-                            self.load_segment(&ctx.ins, self.seg + 1, sample_rate, time_scale);
+                            release_node >= 0 && self.seg as usize + 1 == release_node as usize;
+                        if self.phase == phase::ATTACK && reached_release_node {
+                            self.phase = phase::SUSTAIN;
+                        } else if self.seg as usize + 1 < num_segments {
+                            self.load_segment(
+                                &ctx.ins,
+                                self.seg as usize + 1,
+                                sample_rate,
+                                time_scale,
+                            );
                         } else {
-                            self.phase = Phase::Done;
-                            if !self.fired {
-                                self.fired = true;
+                            self.phase = phase::DONE;
+                            if self.fired == 0 {
+                                self.fired = 1;
                                 action = action.max(done_action);
                             }
                         }
                     }
+                }
+                // Sustain, Done, or any unexpected tag: hold the current level.
+                _ => {
+                    *o = (self.level * level_scale + level_bias) as f32;
                 }
             }
         }
@@ -175,21 +192,21 @@ impl Ugen for EnvGen {
 /// Constructor for [`EnvGen`].
 pub struct EnvGenCtor;
 
-impl UgenCtor for EnvGenCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(EnvGen {
-            started: false,
-            fired: false,
-            phase: Phase::Attack,
-            prev_gate: 0.0,
+impl UgenDef for EnvGenCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(EnvGen {
             level: 0.0,
-            seg: 0,
             pos: 0.0,
             seg_dur: 1.0,
             seg_start: 0.0,
             seg_end: 0.0,
-            seg_curve: 1,
             seg_curve_value: 0.0,
+            prev_gate: 0.0,
+            seg_curve: 1,
+            seg: 0,
+            phase: phase::ATTACK,
+            started: 0,
+            fired: 0,
         }))
     }
 }

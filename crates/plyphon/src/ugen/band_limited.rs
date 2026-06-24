@@ -7,11 +7,15 @@
 //! [`LFSaw`]: crate::ugen::lf::LFSaw
 //! [`LFPulse`]: crate::ugen::lf::LFPulse
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
 
 /// `Saw.ar(freq)`: a band-limited sawtooth, output -1 to 1.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Saw {
     phase: f32,
 }
@@ -31,13 +35,15 @@ impl Ugen for Saw {
 /// Constructor for [`Saw`].
 pub struct SawCtor;
 
-impl UgenCtor for SawCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(Saw { phase: 0.0 }))
+impl UgenDef for SawCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(Saw { phase: 0.0 }))
     }
 }
 
 /// `Pulse.ar(freq, width)`: a band-limited pulse/square, output -1 to 1, duty `width` (default 0.5).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Pulse {
     phase: f32,
 }
@@ -70,9 +76,9 @@ impl Ugen for Pulse {
 /// Constructor for [`Pulse`].
 pub struct PulseCtor;
 
-impl UgenCtor for PulseCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(Pulse { phase: 0.0 }))
+impl UgenDef for PulseCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(Pulse { phase: 0.0 }))
     }
 }
 

@@ -1,14 +1,14 @@
-//! The UGen registry: maps UGen names to constructors for SynthDef instantiation.
+//! The UGen registry: maps UGen names to their definitions for SynthDef compilation.
 //!
-//! This is plyphon's instance-based replacement for scsynth's global `gUnitDefLib`. A
-//! [`UgenRegistry`] is owned by the control-side [`crate::controller::Controller`]; the audio thread
-//! never touches it.
+//! This is plyphon's instance-based replacement for scsynth's global `gUnitDefLib` (a [`UgenDef`] is
+//! plyphon's `UnitDef`). A [`UgenRegistry`] is owned by the control-side
+//! [`crate::controller::Controller`]; the audio thread never touches it.
 
 use std::collections::HashMap;
 
 use crate::error::BuildError;
 use crate::rate::{Rate, RateInfo};
-use crate::ugen::Ugen;
+use crate::ugen::BuiltUgen;
 use crate::ugen::band_limited::{PulseCtor, SawCtor};
 use crate::ugen::binary_op::BinaryOpCtor;
 use crate::ugen::disk_in::DiskInCtor;
@@ -43,15 +43,16 @@ pub struct BuildContext<'a> {
     pub seed: u64,
 }
 
-/// Constructs a [`Ugen`] from a [`BuildContext`] during SynthDef instantiation.
-pub trait UgenCtor: Send + Sync {
-    /// Build a UGen instance, or fail (e.g. an unsupported operator or bad input count).
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError>;
+/// A UGen definition - scsynth's `UnitDef`. Builds a [`BuiltUgen`] (vtable + initial state image)
+/// from a [`BuildContext`] when a SynthDef is compiled, off the audio thread.
+pub trait UgenDef: Send + Sync {
+    /// Build a UGen, or fail (e.g. an unsupported operator or bad input count).
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError>;
 }
 
-/// Maps UGen names to their constructors.
+/// Maps UGen names to their definitions.
 pub struct UgenRegistry {
-    map: HashMap<String, Box<dyn UgenCtor>>,
+    map: HashMap<String, Box<dyn UgenDef>>,
 }
 
 impl UgenRegistry {
@@ -89,13 +90,13 @@ impl UgenRegistry {
         registry
     }
 
-    /// Register `ctor` under `name`, replacing any existing entry.
-    pub fn register(&mut self, name: &str, ctor: Box<dyn UgenCtor>) {
-        self.map.insert(name.to_string(), ctor);
+    /// Register `def` under `name`, replacing any existing entry.
+    pub fn register(&mut self, name: &str, def: Box<dyn UgenDef>) {
+        self.map.insert(name.to_string(), def);
     }
 
-    /// Look up a constructor by name.
-    pub fn get(&self, name: &str) -> Option<&dyn UgenCtor> {
+    /// Look up a definition by name.
+    pub fn get(&self, name: &str) -> Option<&dyn UgenDef> {
         self.map.get(name).map(|boxed| boxed.as_ref())
     }
 }

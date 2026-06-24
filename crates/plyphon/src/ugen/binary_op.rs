@@ -1,23 +1,32 @@
 //! `BinaryOpUGen` - applies a binary math operator (chosen by `special_index`) to two inputs.
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
 use crate::rate::Rate;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
 
 /// `a <op> b`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
 /// binary operator indices). Each input may be audio- or control-rate; the output is audio-rate.
+///
+/// The operator is stored as its `special_index` selector (re-resolved to a fn once per block) rather
+/// than a fn pointer, so the state is [`Pod`] and lives in the rt-pool; `*_audio` are `0`/`1` flags.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct BinaryOp {
-    op: fn(f32, f32) -> f32,
-    a_audio: bool,
-    b_audio: bool,
+    op: u32,
+    a_audio: u32,
+    b_audio: u32,
 }
 
 impl Ugen for BinaryOp {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let op = self.op;
+        let Some(op) = binary_op(self.op as i16) else {
+            return DoneAction::Nothing;
+        };
         let out = ctx.outs.audio(0);
-        match (self.a_audio, self.b_audio) {
+        match (self.a_audio != 0, self.b_audio != 0) {
             (true, true) => {
                 let a = ctx.ins.audio(0);
                 let b = ctx.ins.audio(1);
@@ -48,17 +57,17 @@ impl Ugen for BinaryOp {
 /// Constructor for [`BinaryOp`].
 pub struct BinaryOpCtor;
 
-impl UgenCtor for BinaryOpCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+impl UgenDef for BinaryOpCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
         if ctx.input_rates.len() != 2 {
             return Err(BuildError::WrongInputCount);
         }
-        let op =
-            binary_op(ctx.special_index).ok_or(BuildError::UnsupportedOp(ctx.special_index))?;
-        Ok(Box::new(BinaryOp {
-            op,
-            a_audio: ctx.input_rates[0] == Rate::Audio,
-            b_audio: ctx.input_rates[1] == Rate::Audio,
+        // Validate now so a bad operator fails at build, not silently at runtime.
+        binary_op(ctx.special_index).ok_or(BuildError::UnsupportedOp(ctx.special_index))?;
+        Ok(ugen_spec(BinaryOp {
+            op: ctx.special_index as u32,
+            a_audio: (ctx.input_rates[0] == Rate::Audio) as u32,
+            b_audio: (ctx.input_rates[1] == Rate::Audio) as u32,
         }))
     }
 }

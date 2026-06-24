@@ -98,10 +98,9 @@ fn freeing_a_group_frees_its_subtree() {
             .all(|s| s.abs() < 1e-6),
         "the whole group should be silent after a deep free"
     );
-    assert!(
-        nrt.process() >= 2,
-        "both child synths should reach the trash ring"
-    );
+    // Both child synths free on the audio thread (state back to the pool, no trash); their
+    // notifications still flow to the NRT side.
+    nrt.process();
     let ended = drain_ended(&mut nrt);
     for id in [group, a, b] {
         assert!(ended.contains(&id), "expected NodeEnded for {id}");

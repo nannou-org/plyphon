@@ -116,11 +116,9 @@ fn sine_engine_plays_and_responds_to_n_set() {
         c.iter().all(|s| s.abs() < 1e-6),
         "expected silence after free"
     );
-    // The NRT side drops the freed synth and surfaces the node-ended notification.
-    assert!(
-        nrt.process() >= 1,
-        "expected the freed synth to reach the trash ring"
-    );
+    // The freed synth's state returns to the rt-pool on the audio thread (no trash); the NRT side
+    // still surfaces the node-ended notification.
+    nrt.process();
     assert!(
         std::iter::from_fn(|| nrt.poll()).any(|e| e == plyphon::Event::NodeEnded { id: node }),
         "expected a NodeEnded event for the freed node"

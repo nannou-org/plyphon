@@ -1,20 +1,29 @@
 //! `WhiteNoise` - uniform white noise, plyphon's port of scsynth's `WhiteNoise`.
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
 use crate::rate::Rate;
 use crate::rng::Rng;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
 
 /// `WhiteNoise.ar/kr`: samples drawn uniformly from `[-1, 1)`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct WhiteNoise {
     rng: Rng,
-    audio: bool,
+    /// `0`/`1`: audio-rate (a full block) vs control-rate (one value).
+    audio: u32,
 }
 
 impl Ugen for WhiteNoise {
+    fn reseed(&mut self, seed: u64) {
+        self.rng = Rng::new(seed);
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        if self.audio {
+        if self.audio != 0 {
             for o in ctx.outs.audio(0).iter_mut() {
                 *o = self.rng.next_bipolar();
             }
@@ -28,11 +37,11 @@ impl Ugen for WhiteNoise {
 /// Constructor for [`WhiteNoise`].
 pub struct WhiteNoiseCtor;
 
-impl UgenCtor for WhiteNoiseCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(WhiteNoise {
+impl UgenDef for WhiteNoiseCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(WhiteNoise {
             rng: Rng::new(ctx.seed),
-            audio: ctx.rate == Rate::Audio,
+            audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
 }

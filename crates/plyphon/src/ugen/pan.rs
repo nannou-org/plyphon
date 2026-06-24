@@ -2,14 +2,21 @@
 
 use std::f32::consts::FRAC_PI_4;
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
 
 /// `Pan2.ar(in, pos, level)`: pan a mono signal across two channels with an equal-power law - `pos`
 /// runs -1 (hard left) to +1 (hard right), `level` (default 1) scales. Has two outputs (left, right);
 /// `pos`/`level` are taken at control rate (constant over the block).
-pub struct Pan2;
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct Pan2 {
+    /// The panner is stateless; this pad just keeps its `Pod` state non-zero-sized in the pool.
+    _pad: u32,
+}
 
 impl Pan2 {
     const IN: usize = 0;
@@ -42,8 +49,8 @@ impl Ugen for Pan2 {
 /// Constructor for [`Pan2`].
 pub struct Pan2Ctor;
 
-impl UgenCtor for Pan2Ctor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(Pan2))
+impl UgenDef for Pan2Ctor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(Pan2 { _pad: 0 }))
     }
 }

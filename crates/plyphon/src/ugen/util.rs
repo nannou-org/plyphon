@@ -1,9 +1,11 @@
 //! Utility UGens - plyphon's ports of scsynth's `MulAdd`, `Lag`, and `Amplitude`.
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
 use crate::rate::Rate;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, InitCtx, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, InitCtx, ProcessCtx, Ugen, ugen_spec};
 
 /// `ln(0.001)` - the decay target scsynth uses for its `-60 dB time` smoothing coefficients.
 const LOG001: f32 = -6.907_755;
@@ -20,8 +22,11 @@ fn smoothing_coef(time: f32, sample_rate: f32) -> f32 {
 
 /// `MulAdd.ar/kr(in, mul, add)`: `in * mul + add`, a fused scale-and-offset. `in` may be audio- or
 /// control-rate; `mul`/`add` are taken at control rate.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct MulAdd {
-    in_audio: bool,
+    /// `0`/`1`: whether `in` is audio-rate.
+    in_audio: u32,
 }
 
 impl MulAdd {
@@ -35,7 +40,7 @@ impl Ugen for MulAdd {
         let mul = ctx.ins.control(Self::MUL);
         let add = ctx.ins.control(Self::ADD);
         let out = ctx.outs.audio(0);
-        if self.in_audio {
+        if self.in_audio != 0 {
             for (o, &x) in out.iter_mut().zip(ctx.ins.audio(Self::IN)) {
                 *o = x * mul + add;
             }
@@ -49,21 +54,24 @@ impl Ugen for MulAdd {
 /// Constructor for [`MulAdd`].
 pub struct MulAddCtor;
 
-impl UgenCtor for MulAddCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(MulAdd {
-            in_audio: ctx.input_rates.first() == Some(&Rate::Audio),
+impl UgenDef for MulAddCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(MulAdd {
+            in_audio: (ctx.input_rates.first() == Some(&Rate::Audio)) as u32,
         }))
     }
 }
 
 /// `Lag.ar/kr(in, lagTime)`: a one-pole smoother that takes `lagTime` seconds to (mostly) reach a
 /// new value - the standard way to de-zipper control changes.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Lag {
-    in_audio: bool,
     lag_time: f32,
     b1: f32,
     y: f32,
+    /// `0`/`1`: whether `in` is audio-rate.
+    in_audio: u32,
 }
 
 impl Lag {
@@ -88,7 +96,7 @@ impl Ugen for Lag {
         let b1 = self.b1;
         let mut y = self.y;
         let out = ctx.outs.audio(0);
-        if self.in_audio {
+        if self.in_audio != 0 {
             for (o, &x) in out.iter_mut().zip(ctx.ins.audio(Self::IN)) {
                 y = x + b1 * (y - x);
                 *o = y;
@@ -108,19 +116,21 @@ impl Ugen for Lag {
 /// Constructor for [`Lag`].
 pub struct LagCtor;
 
-impl UgenCtor for LagCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(Lag {
-            in_audio: ctx.input_rates.first() == Some(&Rate::Audio),
+impl UgenDef for LagCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(Lag {
             lag_time: -1.0, // force coefficient computation on the first block
             b1: 0.0,
             y: 0.0,
+            in_audio: (ctx.input_rates.first() == Some(&Rate::Audio)) as u32,
         }))
     }
 }
 
 /// `Amplitude.ar/kr(in, attackTime, releaseTime)`: an amplitude follower tracking the peak magnitude
 /// of `in`, rising with `attackTime` and falling with `releaseTime` (both default 0.01 s).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Amplitude {
     attack_time: f32,
     release_time: f32,
@@ -178,9 +188,9 @@ impl Ugen for Amplitude {
 /// Constructor for [`Amplitude`].
 pub struct AmplitudeCtor;
 
-impl UgenCtor for AmplitudeCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(Amplitude {
+impl UgenDef for AmplitudeCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(Amplitude {
             attack_time: -1.0,
             release_time: -1.0,
             attack_coef: 0.0,

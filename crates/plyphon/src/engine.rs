@@ -31,6 +31,16 @@ pub struct Options {
     pub max_nodes: usize,
     /// Number of buffer table slots (sizes the buffer table; indices `0..max_buffers` are valid).
     pub max_buffers: usize,
+    /// Number of compiled-def table slots (sizes the resident def table; `def_id`s index it).
+    pub max_synthdefs: usize,
+    /// Bytes of real-time pool backing per-synth state blocks (scsynth's `mRealTimeMemorySize`).
+    pub pool_bytes: usize,
+    /// Max audio wires any one synth may use; sizes the World-shared wire scratch
+    /// (`max_wire_bufs * block_size` f32). A def needing more fails to compile.
+    pub max_wire_bufs: usize,
+    /// Max outputs any one UGen may have; sizes the World-shared output scratch
+    /// (`max_ugen_outputs * block_size` f32). A def with a wider UGen fails to compile.
+    pub max_ugen_outputs: usize,
     /// Capacity of the control -> RT command ring.
     pub command_capacity: usize,
 }
@@ -46,6 +56,11 @@ impl Default for Options {
             control_bus_channels: 4096,
             max_nodes: 1024,
             max_buffers: 1024,
+            max_synthdefs: 1024,
+            // 8 MiB, matching scsynth's default real-time memory size.
+            pool_bytes: 8 * 1024 * 1024,
+            max_wire_bufs: 1024,
+            max_ugen_outputs: 128,
             command_capacity: 1024,
         }
     }
@@ -58,9 +73,9 @@ impl Default for Options {
 /// the [`nrt`](crate::nrt) module for the intended threading lifecycle.
 pub fn engine(options: Options) -> (Controller, Nrt, World) {
     let (cmd_tx, cmd_rx) = RingBuffer::<Command>::new(options.command_capacity.max(1));
-    // The trash ring carries both freed synths and freed/replaced buffers.
-    let (trash_tx, trash_rx) =
-        RingBuffer::<Trash>::new((options.max_nodes + options.max_buffers).max(1));
+    // The trash ring carries freed/replaced buffers and streams (freed synths return to the pool
+    // directly, on the audio thread, so they never trash).
+    let (trash_tx, trash_rx) = RingBuffer::<Trash>::new(options.max_buffers.max(1));
     let (events_tx, events_rx) = RingBuffer::<Event>::new(options.max_nodes.max(1));
 
     let audio = RateInfo::new(options.sample_rate, options.block_size);
@@ -69,6 +84,6 @@ pub fn engine(options: Options) -> (Controller, Nrt, World) {
 
     let world = World::new(&options, audio, control, cmd_rx, trash_tx, events_tx);
     let nrt = Nrt::new(trash_rx, events_rx);
-    let controller = Controller::new(audio, control, cmd_tx);
+    let controller = Controller::new(&options, audio, control, cmd_tx);
     (controller, nrt, world)
 }

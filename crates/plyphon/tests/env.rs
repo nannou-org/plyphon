@@ -116,9 +116,10 @@ fn perc_envelope_shapes_a_note_then_frees_it() {
         rms(&early)
     );
 
-    // Render well past the ~0.22 s envelope; the done action frees the synth.
+    // Render well past the ~0.22 s envelope; the done action frees the synth (its state returns to
+    // the rt-pool on the audio thread; only the notification flows to the NRT side).
     let _ = render(&mut world, (SR * 0.3) as usize);
-    assert!(nrt.process() >= 1, "the freed synth should reach the trash");
+    nrt.process();
     let mut ended = false;
     while let Some(event) = nrt.poll() {
         if matches!(event, Event::NodeEnded { id } if id == node) {
@@ -180,10 +181,7 @@ fn adsr_sustains_until_the_gate_falls() {
     // Close the gate; the release segment falls to 0 over ~0.1 s and the done action frees the synth.
     controller.set_control(node, 0, 0.0).expect("set gate");
     let _ = render(&mut world, (SR * 0.3) as usize);
-    assert!(
-        nrt.process() >= 1,
-        "the released synth should reach the trash"
-    );
+    nrt.process();
     let mut ended = false;
     while let Some(event) = nrt.poll() {
         if matches!(event, Event::NodeEnded { id } if id == node) {

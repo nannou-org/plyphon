@@ -30,6 +30,8 @@ pub mod sin_osc;
 pub mod unary_op;
 pub mod util;
 
+use bytemuck::Pod;
+
 use crate::buffer::BufferTable;
 use crate::bus::Buses;
 use crate::rate::{Rate, RateInfo};
@@ -57,6 +59,20 @@ impl DoneAction {
             _ => DoneAction::Nothing,
         }
     }
+
+    /// Encode as a small integer tag, so a UGen can hold a `DoneAction` in its `Pod` state.
+    pub fn to_tag(self) -> u32 {
+        self as u32
+    }
+
+    /// Decode a tag produced by [`DoneAction::to_tag`] (any out-of-range tag maps to `FreeSelf`).
+    pub fn from_tag(tag: u32) -> DoneAction {
+        match tag {
+            0 => DoneAction::Nothing,
+            1 => DoneAction::Pause,
+            _ => DoneAction::FreeSelf,
+        }
+    }
 }
 
 pub use band_limited::{Pulse, Saw};
@@ -72,7 +88,7 @@ pub use noise::WhiteNoise;
 pub use out::Out;
 pub use pan::Pan2;
 pub use play_buf::PlayBuf;
-pub use registry::{BuildContext, UgenCtor, UgenRegistry};
+pub use registry::{BuildContext, UgenDef, UgenRegistry};
 pub use sin_osc::SinOsc;
 pub use unary_op::UnaryOp;
 pub use util::{Amplitude, Lag, MulAdd};
@@ -249,8 +265,17 @@ impl<'a> Outputs<'a> {
     }
 }
 
-/// A unit generator: constructed off the audio thread, processed on it.
-pub trait Ugen: Send {
+/// A unit generator - plyphon's `Ugen` is scsynth's server-side `Unit` (the language-side `UGen` has
+/// no plyphon analogue; we consume compiled SynthDefs directly). Its state must be [`Pod`] so it can
+/// live as bytes in the rt-pool and be reinterpreted without `unsafe`; behaviour is invoked through
+/// the [`ProcessFn`]/[`InitFn`] vtable a [`UgenDef`](registry::UgenDef) builds via [`ugen_spec`].
+pub trait Ugen: Pod {
+    /// Re-seed any per-instance randomness from `seed`, called once when the synth is constructed on
+    /// the audio thread (before the first block). The default is a no-op; UGens with an
+    /// [`Rng`](crate::rng::Rng) override it so that two instances of the same def decorrelate -
+    /// plyphon's stand-in for scsynth seeding each `Graph`'s `RGen`. Must not allocate or block.
+    fn reseed(&mut self, _seed: u64) {}
+
     /// Seed state from the UGen's initial inputs.
     ///
     /// Called once, on the first control block, in topological order immediately before this UGen's
@@ -273,4 +298,63 @@ pub trait Ugen: Send {
     /// enclosing synth (almost always [`DoneAction::Nothing`]).
     #[must_use]
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction;
+}
+
+/// A type-erased per-block calc function over a UGen's pool-resident state bytes - plyphon's
+/// `UnitCalcFunc`/`mCalcFunc`. `state` is exactly `size_of::<T>()` bytes, aligned for `T`.
+pub type ProcessFn = fn(&mut [u8], &mut ProcessCtx<'_>) -> DoneAction;
+
+/// A type-erased one-time seeding function over a UGen's pool-resident state bytes (see
+/// [`Ugen::init`]).
+pub type InitFn = fn(&mut [u8], &InitCtx<'_>);
+
+/// A type-erased per-instance re-seed function over a UGen's pool-resident state bytes (see
+/// [`Ugen::reseed`]).
+pub type ReseedFn = fn(&mut [u8], u64);
+
+/// Reinterpret `bytes` as `T` and run its [`Ugen::process`]. Monomorphised per `T` and coerced to a
+/// [`ProcessFn`]; the cast cannot fail because the slot is sized and aligned for `T` by construction.
+fn process_thunk<T: Ugen>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) -> DoneAction {
+    bytemuck::from_bytes_mut::<T>(bytes).process(ctx)
+}
+
+/// As [`process_thunk`], for [`Ugen::init`].
+fn init_thunk<T: Ugen>(bytes: &mut [u8], ctx: &InitCtx<'_>) {
+    bytemuck::from_bytes_mut::<T>(bytes).init(ctx);
+}
+
+/// As [`process_thunk`], for [`Ugen::reseed`].
+fn reseed_thunk<T: Ugen>(bytes: &mut [u8], seed: u64) {
+    bytemuck::from_bytes_mut::<T>(bytes).reseed(seed);
+}
+
+/// A built UGen: its calc/seed vtable plus the initial state image to copy into the pool. Produced
+/// off the audio thread by a [`UgenDef`](registry::UgenDef) (via [`ugen_spec`]) and baked into a
+/// [`GraphDef`](crate::graphdef::GraphDef).
+pub struct BuiltUgen {
+    /// Per-block calc function.
+    pub process: ProcessFn,
+    /// One-time first-block seeding function.
+    pub init: InitFn,
+    /// Per-instance re-seed function (no-op for UGens without randomness).
+    pub reseed: ReseedFn,
+    /// `size_of::<T>()` - the bytes this UGen's state occupies in the arena.
+    pub size: usize,
+    /// `align_of::<T>()` - the alignment its state slot needs.
+    pub align: usize,
+    /// The initial state, as bytes to `copy_from_slice` into the slot when a synth is built on-RT.
+    pub init_bytes: Box<[u8]>,
+}
+
+/// Build a [`BuiltUgen`] from an initial UGen state. The thunks are monomorphised for `T` here, so a
+/// [`UgenDef`](registry::UgenDef) only constructs its initial state and hands it to this helper.
+pub fn ugen_spec<T: Ugen>(state: T) -> BuiltUgen {
+    BuiltUgen {
+        process: process_thunk::<T>,
+        init: init_thunk::<T>,
+        reseed: reseed_thunk::<T>,
+        size: core::mem::size_of::<T>(),
+        align: core::mem::align_of::<T>(),
+        init_bytes: bytemuck::bytes_of(&state).to_vec().into_boxed_slice(),
+    }
 }

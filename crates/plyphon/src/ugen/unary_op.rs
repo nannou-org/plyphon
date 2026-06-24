@@ -1,22 +1,31 @@
 //! `UnaryOpUGen` - applies a unary math operator (chosen by `special_index`) to one input.
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
 use crate::rate::Rate;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
 
 /// `<op>(a)`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
 /// unary operator indices). The input may be audio- or control-rate; the output is audio-rate.
+///
+/// The operator is stored as its `special_index` selector (re-resolved to a fn once per block) rather
+/// than a fn pointer, so the state is [`Pod`] and lives in the rt-pool; `a_audio` is a `0`/`1` flag.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct UnaryOp {
-    op: fn(f32) -> f32,
-    a_audio: bool,
+    op: u32,
+    a_audio: u32,
 }
 
 impl Ugen for UnaryOp {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let op = self.op;
+        let Some(op) = unary_op(self.op as i16) else {
+            return DoneAction::Nothing;
+        };
         let out = ctx.outs.audio(0);
-        if self.a_audio {
+        if self.a_audio != 0 {
             let a = ctx.ins.audio(0);
             for (o, &x) in out.iter_mut().zip(a) {
                 *o = op(x);
@@ -31,15 +40,16 @@ impl Ugen for UnaryOp {
 /// Constructor for [`UnaryOp`].
 pub struct UnaryOpCtor;
 
-impl UgenCtor for UnaryOpCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+impl UgenDef for UnaryOpCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
         if ctx.input_rates.len() != 1 {
             return Err(BuildError::WrongInputCount);
         }
-        let op = unary_op(ctx.special_index).ok_or(BuildError::UnsupportedOp(ctx.special_index))?;
-        Ok(Box::new(UnaryOp {
-            op,
-            a_audio: ctx.input_rates[0] == Rate::Audio,
+        // Validate now so a bad operator fails at build, not silently at runtime.
+        unary_op(ctx.special_index).ok_or(BuildError::UnsupportedOp(ctx.special_index))?;
+        Ok(ugen_spec(UnaryOp {
+            op: ctx.special_index as u32,
+            a_audio: (ctx.input_rates[0] == Rate::Audio) as u32,
         }))
     }
 }

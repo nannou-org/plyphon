@@ -96,11 +96,9 @@ fn line_done_action_frees_synth() {
     // Render past completion; the done action frees the synth.
     let _ = render(&mut world, (SR * 0.2) as usize);
 
-    // The NRT side drops the freed synth and surfaces the lifecycle notifications.
-    assert!(
-        nrt.process() >= 1,
-        "the freed synth should reach the trash ring"
-    );
+    // The freed synth's state returns to the rt-pool on the audio thread (no trash); the NRT side
+    // still surfaces the lifecycle notifications.
+    nrt.process();
     let (mut started, mut ended) = (false, false);
     while let Some(event) = nrt.poll() {
         match event {

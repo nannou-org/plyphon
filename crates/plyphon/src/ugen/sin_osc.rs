@@ -2,28 +2,33 @@
 
 use core::f32::consts::TAU;
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
 use crate::rate::Rate;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
 use crate::wavetable::lookup_cycle;
 
-/// Which calc variant to use, chosen from the frequency input's rate at build time (scsynth picks
-/// one of `SinOsc_next_i{k,a}{k,a}`; we branch on the freq rate once per block, not per sample).
-#[derive(Copy, Clone, Debug)]
-enum Calc {
+/// Calc-variant tags, chosen from the frequency input's rate at build time (scsynth picks one of
+/// `SinOsc_next_i{k,a}{k,a}`; we branch on the freq rate once per block, not per sample). Stored as a
+/// `u32` so the state is [`Pod`] and lives in the rt-pool.
+mod calc {
     /// Frequency is constant or control-rate (one value per block).
-    FreqControl,
+    pub const FREQ_CONTROL: u32 = 0;
     /// Frequency is audio-rate (one value per sample).
-    FreqAudio,
+    pub const FREQ_AUDIO: u32 = 1;
 }
 
 /// `SinOsc.ar(freq, phase)`: a sine read from the shared wavetable via a normalised phase
 /// accumulator. `phase` is a phase offset in radians.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct SinOsc {
-    calc: Calc,
     /// Normalised phase accumulator in cycles, kept in `[0, 1)`.
     phase: f32,
+    /// Which calc variant (see [`calc`]), chosen from the freq input rate at build time.
+    calc: u32,
 }
 
 impl SinOsc {
@@ -38,18 +43,18 @@ impl Ugen for SinOsc {
         // Phase offset in cycles (radians / 2pi). Constant/control rate for now.
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
         match self.calc {
-            Calc::FreqControl => {
-                let inc = ctx.ins.control(Self::FREQ) * sample_dur;
-                for o in ctx.outs.audio(0).iter_mut() {
-                    *o = lookup_cycle(table, self.phase + phase_offset);
-                    self.phase = wrap_unit(self.phase + inc);
-                }
-            }
-            Calc::FreqAudio => {
+            calc::FREQ_AUDIO => {
                 let freq = ctx.ins.audio(Self::FREQ);
                 for (o, &f) in ctx.outs.audio(0).iter_mut().zip(freq) {
                     *o = lookup_cycle(table, self.phase + phase_offset);
                     self.phase = wrap_unit(self.phase + f * sample_dur);
+                }
+            }
+            _ => {
+                let inc = ctx.ins.control(Self::FREQ) * sample_dur;
+                for o in ctx.outs.audio(0).iter_mut() {
+                    *o = lookup_cycle(table, self.phase + phase_offset);
+                    self.phase = wrap_unit(self.phase + inc);
                 }
             }
         }
@@ -66,12 +71,12 @@ fn wrap_unit(x: f32) -> f32 {
 /// Constructor for [`SinOsc`].
 pub struct SinOscCtor;
 
-impl UgenCtor for SinOscCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+impl UgenDef for SinOscCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
         let calc = match ctx.input_rates.first().copied() {
-            Some(Rate::Audio) => Calc::FreqAudio,
-            _ => Calc::FreqControl,
+            Some(Rate::Audio) => calc::FREQ_AUDIO,
+            _ => calc::FREQ_CONTROL,
         };
-        Ok(Box::new(SinOsc { calc, phase: 0.0 }))
+        Ok(ugen_spec(SinOsc { phase: 0.0, calc }))
     }
 }

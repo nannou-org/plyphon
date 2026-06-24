@@ -5,7 +5,12 @@
 //! so there is no global RNG state and two instances of the same synth still decorrelate.
 
 /// A Taus88 combined Tausworthe generator (the algorithm scsynth uses).
-#[derive(Clone, Debug)]
+///
+/// `repr(C)` + `Pod` so it embeds directly in a UGen's pool-resident state (e.g. [`WhiteNoise`]).
+///
+/// [`WhiteNoise`]: crate::ugen::WhiteNoise
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Rng {
     s1: u32,
     s2: u32,

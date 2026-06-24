@@ -852,6 +852,8 @@ dependencies = [
 name = "plyphon"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "rt-alloc",
  "rtrb",
  "scgf",
  "thiserror 2.0.18",

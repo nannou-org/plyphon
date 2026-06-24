@@ -4,12 +4,17 @@
 //! moving on the audio thread is O(1) pointer (index) manipulation with no allocation. Client node
 //! ids map to slot indices through a pre-reserved [`HashMap`] that never rehashes while the node
 //! count stays within capacity. Synths removed from the tree are handed back to the caller (through a
-//! pre-allocated sink, so freeing even a whole group allocates nothing) to be dropped off the audio
-//! thread.
+//! pre-allocated sink, so freeing even a whole group allocates nothing) for it to reclaim each
+//! graph's pool block on the audio thread.
+//!
+//! This is plyphon's take on scsynth's pooled `Node`s + `mNodeLib`: scsynth `World_Alloc`s each
+//! `Node` from the rt-pool and frees it on death; plyphon instead collapses that into one contiguous
+//! fixed slab here, so node create/free is O(1) and never touches an allocator. Only the variable-
+//! size, churning per-instance *state* is pooled (inside each [`Graph`]'s own `Region`).
 
 use std::collections::HashMap;
 
-use crate::synth::{Block, Synth};
+use crate::graph::{Block, Graph};
 use crate::ugen::DoneAction;
 
 /// Where to place a node relative to a target, mirroring scsynth's `addAction` codes.
@@ -38,8 +43,9 @@ enum Placement {
     After { group: u32, node: u32 },
 }
 
-/// A node removed by a free, handed back for off-audio-thread dropping: its id and (for synths) box.
-pub(crate) type FreedNode = (i32, Option<Box<Synth>>);
+/// A node removed by a free, handed back to the caller: its id and (for synths) the graph, whose
+/// pool block the caller reclaims via `dealloc`.
+pub(crate) type FreedNode = (i32, Option<Graph>);
 
 /// A slot in the node arena.
 enum Slot {
@@ -59,7 +65,7 @@ struct Node {
 
 /// A node is either a group (with a child list) or a synth.
 enum NodeKind {
-    Synth(Box<Synth>),
+    Synth(Graph),
     Group {
         head: Option<u32>,
         tail: Option<u32>,
@@ -113,24 +119,24 @@ impl NodeTree {
         self.root_id
     }
 
-    /// Link a pre-built synth into the tree at `target`/`action`.
+    /// Link a freshly built graph into the tree at `target`/`action`.
     ///
-    /// On failure (unresolvable placement, or the tree is full) the synth is returned so the caller
-    /// can route it back to the trash ring.
-    pub fn add_synth(
+    /// On failure (unresolvable placement, or the tree is full) the graph is returned so the caller
+    /// can reclaim its pool block.
+    pub(crate) fn add_synth(
         &mut self,
         id: i32,
-        synth: Box<Synth>,
+        graph: Graph,
         target: i32,
         action: AddAction,
-    ) -> Result<(), Box<Synth>> {
+    ) -> Result<(), Graph> {
         let placement = match self.resolve_placement(target, action) {
             Some(p) => p,
-            None => return Err(synth),
+            None => return Err(graph),
         };
         let idx = match self.free.pop() {
             Some(i) => i,
-            None => return Err(synth),
+            None => return Err(graph),
         };
         self.slots[idx as usize] = Slot::Node(Node {
             id,
@@ -138,7 +144,7 @@ impl NodeTree {
             prev: None,
             next: None,
             paused: false,
-            kind: NodeKind::Synth(synth),
+            kind: NodeKind::Synth(graph),
         });
         self.id_map.insert(id, idx);
         self.link_at(idx, placement);
@@ -243,14 +249,14 @@ impl NodeTree {
         true
     }
 
-    /// Mutable access to the synth with client id `id`, if it is a synth.
-    pub fn synth_mut(&mut self, id: i32) -> Option<&mut Synth> {
+    /// Mutable access to the graph with client id `id`, if it is a synth.
+    pub(crate) fn synth_mut(&mut self, id: i32) -> Option<&mut Graph> {
         let idx = *self.id_map.get(&id)?;
         match &mut self.slots[idx as usize] {
             Slot::Node(Node {
-                kind: NodeKind::Synth(synth),
+                kind: NodeKind::Synth(graph),
                 ..
-            }) => Some(synth.as_mut()),
+            }) => Some(graph),
             _ => None,
         }
     }
@@ -302,8 +308,8 @@ impl NodeTree {
     }
 
     /// Free the synth at slot `idx` (done actions locate nodes by index during the walk), returning
-    /// its client id and synth for off-RT dropping. No-op for groups or empty slots.
-    pub fn free_by_index(&mut self, idx: u32) -> Option<(i32, Box<Synth>)> {
+    /// its client id and graph for the caller to `dealloc`. No-op for groups or empty slots.
+    pub(crate) fn free_by_index(&mut self, idx: u32) -> Option<(i32, Graph)> {
         let id = match &self.slots[idx as usize] {
             Slot::Node(Node {
                 id,
@@ -318,9 +324,9 @@ impl NodeTree {
         self.free.push(idx);
         match slot {
             Slot::Node(Node {
-                kind: NodeKind::Synth(synth),
+                kind: NodeKind::Synth(graph),
                 ..
-            }) => Some((id, synth)),
+            }) => Some((id, graph)),
             _ => None,
         }
     }

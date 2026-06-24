@@ -18,6 +18,8 @@ rt-alloc = { version = "0.1.0", path = "crates/rt-alloc" }
 scgf = { version = "0.1.0", path = "crates/scgf" }
 
 # Shared dependencies.
+# Safe, no_std byte/slice reinterpretation - backs Pod ugen state in the rt-pool.
+bytemuck = { version = "1", features = ["derive"] }
 cpal = "0.16"
 # Lock-free SPSC ring for control -> RT command delivery (wait-free, no_std-friendly).
 rtrb = "0.3"

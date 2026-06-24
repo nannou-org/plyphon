@@ -1,14 +1,18 @@
 //! `DiskIn` - plays audio streamed from a cued buffer, plyphon's port of scsynth's `DiskIn`.
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{self, DoneAction, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{self, BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
 
 /// `DiskIn.ar(numChannels, bufnum)`: plays the disk-streamed buffer `bufnum`, one output per channel,
 /// at the stream's native rate. It pulls pre-filled chunks from the stream's queue (filled off the
 /// audio thread); an empty queue (an underrun, or no stream cued at `bufnum`) plays silence.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct DiskIn {
-    num_channels: usize,
+    num_channels: u32,
 }
 
 impl DiskIn {
@@ -17,16 +21,17 @@ impl DiskIn {
 
 impl Ugen for DiskIn {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let num_channels = self.num_channels as usize;
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let block = ctx.outs.audio(0).len();
         let produced = match ugen::stream_at_mut(ctx.buffers, bufnum) {
-            Some(stream) => stream.read(block, self.num_channels, |frame, ch, value| {
+            Some(stream) => stream.read(block, num_channels, |frame, ch, value| {
                 ctx.outs.audio(ch)[frame] = value;
             }),
             None => 0,
         };
         // An underrun (or the no-stream case) plays silence for the rest of the block.
-        for ch in 0..self.num_channels {
+        for ch in 0..num_channels {
             ctx.outs.audio(ch)[produced..block].fill(0.0);
         }
         DoneAction::Nothing
@@ -36,10 +41,10 @@ impl Ugen for DiskIn {
 /// Constructor for [`DiskIn`]. The output count (the stream's channel count) is fixed here.
 pub struct DiskInCtor;
 
-impl UgenCtor for DiskInCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(DiskIn {
-            num_channels: ctx.num_outputs,
+impl UgenDef for DiskInCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(DiskIn {
+            num_channels: ctx.num_outputs as u32,
         }))
     }
 }

@@ -1,20 +1,21 @@
-//! Synth definitions and their instantiation into live [`Synth`]s.
+//! Synth definitions and their compilation into [`GraphDef`]s.
 //!
-//! A [`SynthDef`] is the template (the analogue of scsynth's `GraphDef`). It can be built
-//! programmatically or parsed from SuperCollider's binary SCgf format (see [`read`]), so
-//! `sclang`-compiled definitions load directly. [`SynthDef::instantiate`] turns it into a
-//! `Box<Synth>` off the audio thread - this is where all the per-synth allocation and UGen
-//! construction happens, so the audio thread only ever has to link the finished synth into the tree.
+//! A [`SynthDef`] is the authored/parsed definition - SuperCollider's client-side `SynthDef`. It can
+//! be built programmatically or parsed from the binary SCgf format (see [`read`]), so
+//! `sclang`-compiled definitions load directly. [`SynthDef::compile`] turns it (off the audio thread,
+//! once) into the immutable, shareable [`GraphDef`] - scsynth's server-side compiled form - from
+//! which the audio thread constructs live [`Graph`](crate::graph::Graph)s with a single pool
+//! allocation.
 
 pub mod read;
 
 use std::collections::HashMap;
 
 use crate::error::BuildError;
+use crate::graphdef::{GraphDef, OutputWire, UgenVtbl, build_layout};
 use crate::rate::{Rate, RateInfo};
-use crate::synth::{OutputWire, Synth};
-use crate::ugen::InputSource;
 use crate::ugen::registry::{BuildContext, UgenRegistry};
+use crate::ugen::{BuiltUgen, InputSource};
 
 /// A named control parameter with a default value (settable later via `set_control`).
 #[derive(Clone, Debug)]
@@ -86,16 +87,20 @@ impl SynthDef {
         self.params.iter().position(|p| p.name == name)
     }
 
-    /// Instantiate this def into a live [`Synth`] using `registry` for UGen construction.
+    /// Compile this def into an immutable [`GraphDef`] using `registry` for UGen construction.
     ///
-    /// Runs entirely off the audio thread. All wires, scratch, and UGen state are allocated here.
-    pub fn instantiate(
+    /// Runs entirely off the audio thread (the analogue of scsynth's `GraphDef_Recv`): it resolves
+    /// the wiring, builds each UGen's vtable + initial state image, and computes the per-graph block
+    /// layout. `max_wire_bufs`/`max_ugen_outputs` are the engine's shared-scratch capacities; a def
+    /// exceeding either fails here rather than on the audio thread.
+    pub fn compile(
         &self,
         registry: &UgenRegistry,
         audio: &RateInfo,
         control: &RateInfo,
-        base_seed: u64,
-    ) -> Result<Box<Synth>, BuildError> {
+        max_wire_bufs: usize,
+        max_ugen_outputs: usize,
+    ) -> Result<GraphDef, BuildError> {
         let block_size = audio.block_size;
 
         // Parameters occupy the first control wires.
@@ -133,16 +138,16 @@ impl SynthDef {
             outputs_plan.push(wires.into_boxed_slice());
         }
 
-        // Control wires: parameters initialised to their defaults, the rest (control-rate UGen
-        // outputs) zeroed.
-        let mut control_wires = vec![0.0f32; num_control_wires as usize];
+        // Control-wire defaults: parameters at their defaults, the rest (control-rate UGen outputs)
+        // zeroed. These seed the per-graph control wires when an instance is built on the RT thread.
+        let mut control_defaults = vec![0.0f32; num_control_wires as usize];
         for (i, param) in self.params.iter().enumerate() {
-            control_wires[i] = param.default;
+            control_defaults[i] = param.default;
         }
 
         // Pass 2: build each UGen and resolve its inputs against the assigned wires.
-        let mut ugens = Vec::with_capacity(self.ugens.len());
-        let mut inputs_plan = Vec::with_capacity(self.ugens.len());
+        let mut built: Vec<BuiltUgen> = Vec::with_capacity(self.ugens.len());
+        let mut inputs_plan: Vec<Box<[InputSource]>> = Vec::with_capacity(self.ugens.len());
         let mut max_outputs = 0usize;
         for (u, spec) in self.ugens.iter().enumerate() {
             let mut sources = Vec::with_capacity(spec.inputs.len());
@@ -168,6 +173,8 @@ impl SynthDef {
             }
 
             let input_rates: Vec<Rate> = sources.iter().map(|s| s.rate()).collect();
+            // A deterministic build-time seed; the real per-instance seed is applied on the RT thread
+            // via `Ugen::reseed`, so this is only a placeholder for the baked state image.
             let build_ctx = BuildContext {
                 input_rates: &input_rates,
                 audio,
@@ -175,29 +182,65 @@ impl SynthDef {
                 rate: spec.rate,
                 num_outputs: spec.num_outputs,
                 special_index: spec.special_index,
-                seed: base_seed.wrapping_add((u as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
+                seed: (u as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
             };
-            let ctor = registry
+            let def = registry
                 .get(&spec.name)
                 .ok_or_else(|| BuildError::UnknownUgen(spec.name.clone()))?;
-            ugens.push(ctor.build(&build_ctx)?);
+            built.push(def.build(&build_ctx)?);
             inputs_plan.push(sources.into_boxed_slice());
             max_outputs = max_outputs.max(spec.num_outputs);
         }
 
-        let audio_wires = vec![0.0f32; num_audio_wires as usize * block_size];
-        let scratch = vec![0.0f32; max_outputs * block_size];
+        // The shared-scratch capacities are fixed at boot; reject a def that would overflow them.
+        if num_audio_wires as usize > max_wire_bufs {
+            return Err(BuildError::TooManyWires {
+                needed: num_audio_wires as usize,
+                limit: max_wire_bufs,
+            });
+        }
+        if max_outputs > max_ugen_outputs {
+            return Err(BuildError::TooManyOutputs {
+                needed: max_outputs,
+                limit: max_ugen_outputs,
+            });
+        }
 
-        Ok(Box::new(Synth::from_parts(
-            ugens,
-            audio_wires,
-            control_wires,
-            scratch,
-            inputs_plan,
-            outputs_plan,
-            param_wires,
+        // Lay out the per-graph block (state arena | control wires | param maps) and pack the initial
+        // state-arena image from each UGen's initial state bytes.
+        let state_slots: Vec<(usize, usize)> = built.iter().map(|b| (b.size, b.align)).collect();
+        let (layout, state_offsets) =
+            build_layout(&state_slots, num_control_wires as usize, num_params);
+        let mut state_image = vec![0u8; layout.state.len];
+        for (b, &off) in built.iter().zip(&state_offsets) {
+            state_image[off..off + b.size].copy_from_slice(&b.init_bytes);
+        }
+
+        let ugens: Vec<UgenVtbl> = built
+            .into_iter()
+            .zip(inputs_plan)
+            .zip(outputs_plan)
+            .zip(state_offsets)
+            .map(|(((b, inputs), outputs), state_offset)| UgenVtbl {
+                process: b.process,
+                init: b.init,
+                reseed: b.reseed,
+                inputs,
+                outputs,
+                state_offset,
+                state_size: b.size,
+            })
+            .collect();
+
+        Ok(GraphDef {
+            ugens: ugens.into_boxed_slice(),
+            layout,
+            state_image: state_image.into_boxed_slice(),
+            control_defaults: control_defaults.into_boxed_slice(),
+            param_wires: param_wires.into_boxed_slice(),
+            num_params,
             block_size,
-        )))
+        })
     }
 }
 

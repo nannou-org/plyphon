@@ -8,11 +8,15 @@
 //! [`Saw`]: crate::ugen::Saw
 //! [`Pulse`]: crate::ugen::Pulse
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
 
 /// `LFSaw.ar/kr(freq)`: a non-band-limited sawtooth ramping from -1 to 1 each cycle.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFSaw {
     phase: f32,
 }
@@ -31,14 +35,16 @@ impl Ugen for LFSaw {
 /// Constructor for [`LFSaw`].
 pub struct LFSawCtor;
 
-impl UgenCtor for LFSawCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(LFSaw { phase: 0.0 }))
+impl UgenDef for LFSawCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(LFSaw { phase: 0.0 }))
     }
 }
 
 /// `LFPulse.ar/kr(freq, iphase, width)`: a non-band-limited pulse, output 0 or 1 with duty `width`
 /// (default 0.5). `iphase` is currently ignored.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFPulse {
     phase: f32,
 }
@@ -67,14 +73,16 @@ impl Ugen for LFPulse {
 /// Constructor for [`LFPulse`].
 pub struct LFPulseCtor;
 
-impl UgenCtor for LFPulseCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(LFPulse { phase: 0.0 }))
+impl UgenDef for LFPulseCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(LFPulse { phase: 0.0 }))
     }
 }
 
 /// `Impulse.ar/kr(freq, phase)`: a single-sample impulse of 1.0 at the start of each period, 0
 /// otherwise. `phase` is currently ignored (it starts firing immediately).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Impulse {
     phase: f32,
 }
@@ -98,10 +106,10 @@ impl Ugen for Impulse {
 /// Constructor for [`Impulse`].
 pub struct ImpulseCtor;
 
-impl UgenCtor for ImpulseCtor {
-    fn build(&self, _ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+impl UgenDef for ImpulseCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
         // Start at the cycle boundary so the first sample is an impulse.
-        Ok(Box::new(Impulse { phase: 1.0 }))
+        Ok(ugen_spec(Impulse { phase: 1.0 }))
     }
 }
 

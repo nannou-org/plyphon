@@ -9,6 +9,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bytemuck.workspace = true
+rt-alloc.workspace = true
 rtrb.workspace = true
 scgf.workspace = true
 thiserror.workspace = true

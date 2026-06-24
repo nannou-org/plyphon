@@ -152,6 +152,16 @@ impl OscDispatcher {
             Event::NodeEnded { id } => ("/n_end", id),
             Event::NodePaused { id } => ("/n_off", id),
             Event::NodeResumed { id } => ("/n_on", id),
+            // No node was created (empty def slot or pool exhaustion); report a `/s_new` failure,
+            // mirroring scsynth's `/fail` reply, and drop any def tracking for the would-be id.
+            Event::SynthFailed { id } => {
+                self.node_defs.remove(&id);
+                self.reply_msg(
+                    "/fail",
+                    vec![OscType::String("/s_new".to_string()), OscType::Int(id)],
+                );
+                return;
+            }
         };
         // A freed node's def tracking is no longer needed; self-freed synths never reach `/n_free`,
         // so this is where their entry is reclaimed.

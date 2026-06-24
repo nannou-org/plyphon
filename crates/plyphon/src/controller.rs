@@ -2,17 +2,28 @@
 //! command handling.
 //!
 //! The `Controller` owns the [`SynthDefLibrary`] and the [`UgenRegistry`]; the audio thread never
-//! touches them. It instantiates synths (all allocation and UGen construction happens here) and
-//! ships the finished `Box<Synth>` to the [`World`](crate::world::World) over the command ring.
-//! Reactive NRT work - dropping freed synths and surfacing notifications - lives in the
+//! touches them. It *compiles* each def into an immutable [`GraphDef`] (all UGen construction happens
+//! here), installs it in the `World`'s resident def table once via [`Command::DefineGraphDef`], and
+//! thereafter `s_new` ships only a `def_id` - the synth itself is built on the audio thread. Reactive
+//! NRT work - dropping freed buffers/streams and surfacing notifications - lives in the
 //! [`Nrt`](crate::nrt::Nrt) instead.
+//!
+//! The controller retains a strong `Arc` to every `GraphDef` it has ever compiled (current ones in
+//! `compiled`, superseded ones in `graveyard`), for the engine's lifetime. That way an
+//! `Arc<GraphDef>` dropped on the audio thread (a freed graph's, or a def-table slot replaced by a
+//! redefinition) is never the final reference, so the heavy drop never lands on the audio thread.
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use rtrb::Producer;
 use thiserror::Error;
 
 use crate::buffer::Buffer;
 use crate::command::Command;
+use crate::engine::Options;
 use crate::error::BuildError;
+use crate::graphdef::GraphDef;
 use crate::rate::RateInfo;
 use crate::stream::{StreamProducer, cue};
 use crate::synthdef::{SynthDef, SynthDefLibrary};
@@ -30,9 +41,12 @@ pub enum SynthNewError {
     /// No SynthDef registered under the given name.
     #[error("unknown synthdef: {0}")]
     UnknownDef(String),
-    /// The SynthDef failed to instantiate.
+    /// The SynthDef failed to compile.
     #[error(transparent)]
     Build(#[from] BuildError),
+    /// More distinct synthdefs were used than the engine's `max_synthdefs` allows.
+    #[error("too many synthdefs (limit reached)")]
+    TooManyDefs,
     /// The command ring was full.
     #[error("command queue full")]
     QueueFull,
@@ -42,24 +56,44 @@ pub enum SynthNewError {
 pub struct Controller {
     registry: UgenRegistry,
     defs: SynthDefLibrary,
+    /// Current compiled def per name (also the controller's retained `Arc` for it).
+    compiled: HashMap<String, Arc<GraphDef>>,
+    /// Stable name -> `def_id`, assigned on first compile and reused across recompiles.
+    def_ids: HashMap<String, u32>,
+    /// Superseded compiled defs, retained for the engine's lifetime (see the module docs).
+    graveyard: Vec<Arc<GraphDef>>,
+    next_def_id: u32,
     audio: RateInfo,
     control: RateInfo,
+    max_synthdefs: usize,
+    max_wire_bufs: usize,
+    max_ugen_outputs: usize,
     tx: Producer<Command>,
     next_id: i32,
-    next_seed: u64,
 }
 
 impl Controller {
-    pub(crate) fn new(audio: RateInfo, control: RateInfo, tx: Producer<Command>) -> Self {
+    pub(crate) fn new(
+        options: &Options,
+        audio: RateInfo,
+        control: RateInfo,
+        tx: Producer<Command>,
+    ) -> Self {
         Controller {
             registry: UgenRegistry::with_builtins(),
             defs: SynthDefLibrary::new(),
+            compiled: HashMap::new(),
+            def_ids: HashMap::new(),
+            graveyard: Vec::new(),
+            next_def_id: 0,
             audio,
             control,
+            max_synthdefs: options.max_synthdefs,
+            max_wire_bufs: options.max_wire_bufs,
+            max_ugen_outputs: options.max_ugen_outputs,
             tx,
             // Client node ids start above the root group (id 0).
             next_id: 1000,
-            next_seed: 0x123456789ABCDEF,
         }
     }
 
@@ -73,8 +107,13 @@ impl Controller {
         self.audio.sample_rate
     }
 
-    /// Add (or replace) a synth definition.
+    /// Add (or replace) a synth definition. Compilation is deferred to the first `synth_new` that
+    /// uses it (so it can surface a [`BuildError`]); redefining a name retires any current compiled
+    /// form to the graveyard and forces a recompile on next use.
     pub fn add_synthdef(&mut self, def: SynthDef) {
+        if let Some(old) = self.compiled.remove(&def.name) {
+            self.graveyard.push(old);
+        }
         self.defs.insert(def);
     }
 
@@ -83,10 +122,10 @@ impl Controller {
         self.defs.get(name)
     }
 
-    /// Instantiate a synth from definition `def_name` and link it under group `target`.
+    /// Create a synth from definition `def_name` and link it under group `target`.
     ///
-    /// All allocation happens here, off the audio thread; the finished synth is shipped to the
-    /// `World`. Returns the new synth's client id.
+    /// The def is compiled (and installed in the `World`'s def table) on first use; the synth itself
+    /// is constructed on the audio thread. Returns the new synth's client id.
     pub fn synth_new(
         &mut self,
         def_name: &str,
@@ -99,7 +138,7 @@ impl Controller {
         Ok(id)
     }
 
-    /// Instantiate a synth with a caller-chosen client id (e.g. an id from an OSC `/s_new`).
+    /// Create a synth with a caller-chosen client id (e.g. an id from an OSC `/s_new`).
     pub fn synth_new_with_id(
         &mut self,
         id: i32,
@@ -107,22 +146,60 @@ impl Controller {
         target: i32,
         action: AddAction,
     ) -> Result<(), SynthNewError> {
-        let seed = self.next_seed;
-        let def = self
-            .defs
-            .get(def_name)
-            .ok_or_else(|| SynthNewError::UnknownDef(def_name.to_string()))?;
-        let synth = def.instantiate(&self.registry, &self.audio, &self.control, seed)?;
+        let def_id = self.ensure_compiled(def_name)?;
         self.tx
             .push(Command::AddSynth {
                 id,
-                synth,
+                def_id,
                 target,
                 action,
             })
             .map_err(|_| SynthNewError::QueueFull)?;
-        self.next_seed = self.next_seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
         Ok(())
+    }
+
+    /// Ensure `def_name` is compiled and resident in the `World`'s def table, returning its `def_id`.
+    /// Compiles (and ships a [`Command::DefineGraphDef`]) on first use or after a redefinition.
+    fn ensure_compiled(&mut self, def_name: &str) -> Result<u32, SynthNewError> {
+        if self.compiled.contains_key(def_name) {
+            return Ok(self.def_ids[def_name]);
+        }
+        // Compile the authored def (the only place UGen construction / allocation happens).
+        let graphdef = {
+            let authored = self
+                .defs
+                .get(def_name)
+                .ok_or_else(|| SynthNewError::UnknownDef(def_name.to_string()))?;
+            authored.compile(
+                &self.registry,
+                &self.audio,
+                &self.control,
+                self.max_wire_bufs,
+                self.max_ugen_outputs,
+            )?
+        };
+        // Assign a stable def_id (reused if this name was compiled before).
+        let def_id = match self.def_ids.get(def_name).copied() {
+            Some(id) => id,
+            None => {
+                let id = self.next_def_id;
+                if id as usize >= self.max_synthdefs {
+                    return Err(SynthNewError::TooManyDefs);
+                }
+                self.next_def_id += 1;
+                self.def_ids.insert(def_name.to_string(), id);
+                id
+            }
+        };
+        let def = Arc::new(graphdef);
+        self.tx
+            .push(Command::DefineGraphDef {
+                def_id,
+                def: Arc::clone(&def),
+            })
+            .map_err(|_| SynthNewError::QueueFull)?;
+        self.compiled.insert(def_name.to_string(), def);
+        Ok(def_id)
     }
 
     /// Create an empty group under group `target`. Returns the new group's client id.

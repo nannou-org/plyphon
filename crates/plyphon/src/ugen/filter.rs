@@ -7,11 +7,14 @@
 
 use std::f64::consts::{PI, SQRT_2};
 
-use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{DoneAction, ProcessCtx, Ugen};
+use bytemuck::{Pod, Zeroable};
 
-/// Which Butterworth response to compute.
+use crate::error::BuildError;
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{BuiltUgen, DoneAction, ProcessCtx, Ugen, ugen_spec};
+
+/// Which Butterworth response to compute. The build-time domain; stored in [`Butter`] as a `u32` tag
+/// (via [`Kind::to_tag`]) so the state is [`Pod`] and lives in the rt-pool.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Kind {
     /// Low-pass (`LPF`).
@@ -21,6 +24,23 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// Encode as the `u32` tag stored in [`Butter`].
+    fn to_tag(self) -> u32 {
+        match self {
+            Kind::LowPass => 0,
+            Kind::HighPass => 1,
+        }
+    }
+
+    /// Decode the `u32` tag stored in [`Butter`] (any non-`1` tag is low-pass).
+    fn from_tag(tag: u32) -> Kind {
+        if tag == 1 {
+            Kind::HighPass
+        } else {
+            Kind::LowPass
+        }
+    }
+
     /// Biquad coefficients `(a0, b1, b2)` for pre-warped frequency `pfreq` radians.
     fn coeffs(self, pfreq: f64) -> (f64, f64, f64) {
         match self {
@@ -55,14 +75,19 @@ impl Kind {
 }
 
 /// A second-order Butterworth filter: `LPF.ar(in, freq)` / `HPF.ar(in, freq)`.
+///
+/// `Pod` state for the rt-pool: `f64` coefficients/history first, then the cached cutoff and the
+/// [`Kind`] tag (`repr(C)` lays this out with no implicit padding).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Butter {
-    kind: Kind,
-    freq: f32,
     a0: f64,
     b1: f64,
     b2: f64,
     y1: f64,
     y2: f64,
+    freq: f32,
+    kind: u32,
 }
 
 impl Butter {
@@ -72,17 +97,18 @@ impl Butter {
 
 impl Ugen for Butter {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let kind = Kind::from_tag(self.kind);
         let freq = ctx.ins.control(Self::FREQ);
         if freq != self.freq {
             let pfreq = freq as f64 * ctx.audio.sample_rate.recip() * PI;
-            let (a0, b1, b2) = self.kind.coeffs(pfreq);
+            let (a0, b1, b2) = kind.coeffs(pfreq);
             self.a0 = a0;
             self.b1 = b1;
             self.b2 = b2;
             self.freq = freq;
         }
 
-        let (a0, b1, b2, mid) = (self.a0, self.b1, self.b2, self.kind.mid());
+        let (a0, b1, b2, mid) = (self.a0, self.b1, self.b2, kind.mid());
         let (mut y1, mut y2) = (self.y1, self.y2);
         let input = ctx.ins.audio(Self::IN);
         let out = ctx.outs.audio(0);
@@ -101,19 +127,19 @@ impl Ugen for Butter {
 /// Constructor for [`Butter`], parameterized by filter [`Kind`].
 pub struct ButterCtor(pub Kind);
 
-impl UgenCtor for ButterCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
+impl UgenDef for ButterCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
         if ctx.input_rates.len() < 2 {
             return Err(BuildError::WrongInputCount);
         }
-        Ok(Box::new(Butter {
-            kind: self.0,
-            freq: f32::NAN, // force coefficient computation on the first block
+        Ok(ugen_spec(Butter {
             a0: 0.0,
             b1: 0.0,
             b2: 0.0,
             y1: 0.0,
             y2: 0.0,
+            freq: f32::NAN, // force coefficient computation on the first block
+            kind: self.0.to_tag(),
         }))
     }
 }

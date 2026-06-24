@@ -1,25 +1,36 @@
 //! The messages crossing the control/RT boundary.
 //!
-//! [`Command`]s flow control-side -> RT-side over a lock-free ring. Anything needing allocation
-//! (instantiating a synth) is pre-built control-side, so applying a command on the audio thread is
-//! pure link manipulation. Two streams flow back RT-side -> NRT-side, both drained by the
-//! [`Nrt`](crate::nrt::Nrt): [`Trash`] carries freed `Box`es to be dropped off the audio thread, and
-//! [`Event`] carries notifications (node started/ended/paused/resumed) for the consumer.
+//! [`Command`]s flow control-side -> RT-side over a lock-free ring. A [`GraphDef`] is compiled
+//! control-side and installed once via [`Command::DefineGraphDef`]; thereafter `s_new` just names a
+//! `def_id`, and the audio thread constructs the synth from the resident def. Two streams flow back
+//! RT-side -> NRT-side, both drained by the [`Nrt`](crate::nrt::Nrt): [`Trash`] carries freed `Box`es
+//! (buffers/streams) to be dropped off the audio thread - freed synths return their pool block
+//! directly, with no trash - and [`Event`] carries notifications for the consumer.
+
+use std::sync::Arc;
 
 use crate::buffer::Buffer;
+use crate::graphdef::GraphDef;
 use crate::stream::StreamPlayback;
-use crate::synth::Synth;
 use crate::tree::AddAction;
 
 /// A command from the [`Controller`](crate::controller::Controller) to the
 /// [`World`](crate::world::World).
 pub enum Command {
-    /// Link an already-built synth into the tree under group `target`.
+    /// Install (or replace) the compiled def at `def_id`, resident in the World's def table so
+    /// `s_new` can reference it by id (scsynth's `GraphDef_Recv`/`/d_recv`).
+    DefineGraphDef {
+        /// Def-table slot to install into.
+        def_id: u32,
+        /// The compiled def (built off the audio thread), shared via `Arc`.
+        def: Arc<GraphDef>,
+    },
+    /// Construct a synth from the def at `def_id` (on the audio thread) and link it under `target`.
     AddSynth {
         /// Client id for the new synth.
         id: i32,
-        /// The pre-built synth (all allocation already done control-side).
-        synth: Box<Synth>,
+        /// The resident def to instantiate.
+        def_id: u32,
         /// Target group's client id.
         target: i32,
         /// Placement within the target group.
@@ -117,10 +128,10 @@ pub enum Command {
     },
 }
 
-/// Heap-owning values handed back to the NRT side to be dropped off the audio thread.
+/// Heap-owning values handed back to the NRT side to be dropped off the audio thread. Freed synths
+/// no longer appear here: their state lives in the rt-pool and is reclaimed by `dealloc` on the audio
+/// thread (a cheap free-list return), and their `Arc<GraphDef>` is a non-final refcount decrement.
 pub enum Trash {
-    /// A freed synth.
-    Synth(Box<Synth>),
     /// A freed or replaced buffer.
     Buffer(Box<Buffer>),
     /// A freed or replaced streaming endpoint (its rings drop off the audio thread).
@@ -149,6 +160,12 @@ pub enum Event {
     /// A node was resumed (`/n_on`).
     NodeResumed {
         /// The node's client id.
+        id: i32,
+    },
+    /// An `s_new` could not be realised - the def-table slot was empty or the rt-pool was exhausted -
+    /// so no node with this id was created.
+    SynthFailed {
+        /// The client id that would have been assigned.
         id: i32,
     },
 }

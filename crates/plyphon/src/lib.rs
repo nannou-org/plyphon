@@ -12,11 +12,12 @@
 //!
 //! They communicate only through lock-free rings, so the audio thread never allocates, blocks, or
 //! locks. The synthesis primitives live in [`rate`], [`wavetable`], [`bus`], [`buffer`], [`ugen`]
-//! (the [`Ugen`] trait plus oscillators/filters/noise/ops, and [`DoneAction`]s), [`synth`], and
-//! [`synthdef`].
+//! (the [`Ugen`] trait plus oscillators/filters/noise/ops, and [`DoneAction`]s), [`graph`],
+//! [`graphdef`], and [`synthdef`].
 //!
-//! The whole crate is `unsafe`-free and free of global mutable state - everything a UGen needs is
-//! passed by argument - and compiles for native and `wasm32-unknown-unknown` alike.
+//! The crate uses no `unsafe` itself (the rt-pool and `bytemuck` keep theirs internal) and no global
+//! mutable state - everything a UGen needs is passed by argument - and compiles for native and
+//! `wasm32-unknown-unknown` alike.
 
 #![forbid(unsafe_code)]
 
@@ -26,11 +27,12 @@ pub mod command;
 pub mod controller;
 pub mod engine;
 pub mod error;
+pub mod graph;
+pub mod graphdef;
 pub mod nrt;
 pub mod rate;
 pub mod rng;
 pub mod stream;
-pub mod synth;
 pub mod synthdef;
 pub mod tree;
 pub mod ugen;
@@ -39,15 +41,20 @@ pub mod world;
 
 pub use buffer::Buffer;
 pub use command::Event;
-pub use controller::Controller;
+pub use controller::{Controller, SynthNewError};
 pub use engine::{Options, ROOT_GROUP_ID, engine};
+pub use error::BuildError;
+pub use graph::Graph;
+pub use graphdef::GraphDef;
 pub use nrt::Nrt;
 pub use rate::{Rate, RateInfo};
 pub use stream::{Chunk, StreamProducer};
-pub use synth::Synth;
 pub use synthdef::{InputRef, Param, SynthDef, UgenSpec};
 pub use tree::AddAction;
-pub use ugen::{DoneAction, Ugen, UgenRegistry};
+pub use ugen::{
+    BuildContext, BuiltUgen, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx, Ugen, UgenDef,
+    UgenRegistry, ugen_spec,
+};
 pub use world::World;
 
 /// Anything that can fill an interleaved, `channels`-wide block of `f32` output samples.

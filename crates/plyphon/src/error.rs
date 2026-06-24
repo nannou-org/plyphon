@@ -17,4 +17,20 @@ pub enum BuildError {
     /// A UGen was instantiated with the wrong number of inputs.
     #[error("wrong number of inputs for ugen")]
     WrongInputCount,
+    /// The def needs more audio wire buffers than the engine's `max_wire_bufs` allows.
+    #[error("def needs {needed} audio wires but the engine allows {limit}")]
+    TooManyWires {
+        /// Audio wires the def requires.
+        needed: usize,
+        /// The engine's `max_wire_bufs` limit.
+        limit: usize,
+    },
+    /// A UGen has more outputs than the engine's `max_ugen_outputs` scratch allows.
+    #[error("a ugen has {needed} outputs but the engine allows {limit}")]
+    TooManyOutputs {
+        /// Outputs the widest UGen requires.
+        needed: usize,
+        /// The engine's `max_ugen_outputs` limit.
+        limit: usize,
+    },
 }

@@ -1,8 +1,10 @@
 //! `PlayBuf` - plays a buffer back at a given rate, plyphon's port of scsynth's `PlayBuf`.
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::error::BuildError;
-use crate::ugen::registry::{BuildContext, UgenCtor};
-use crate::ugen::{self, DoneAction, Inputs, Outputs, ProcessCtx, Ugen};
+use crate::ugen::registry::{BuildContext, UgenDef};
+use crate::ugen::{self, BuiltUgen, DoneAction, Inputs, Outputs, ProcessCtx, Ugen, ugen_spec};
 
 /// `PlayBuf.ar(numChannels, bufnum, rate, trigger, startPos, loop, doneAction)`: reads consecutive
 /// frames of buffer `bufnum`, one output per buffer channel, advancing the play head by `rate`
@@ -10,16 +12,21 @@ use crate::ugen::{self, DoneAction, Inputs, Outputs, ProcessCtx, Ugen};
 /// sample (multiply by a buffer-rate scale for natural-pitch playback of an off-rate buffer). On a
 /// rising `trigger` the head jumps to `startPos`; at the end it either wraps (`loop != 0`) or holds
 /// the last frame and fires `doneAction` once. Reading a missing buffer outputs silence.
+///
+/// `Pod` state for the rt-pool: `f64` head first, then the channel count, previous trigger, and two
+/// `0`/`1` flags - four 4-byte fields, so `repr(C)` packs them with no implicit padding.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct PlayBuf {
-    num_channels: usize,
     /// Play head, in fractional buffer frames.
     phase: f64,
+    num_channels: u32,
     /// Previous trigger value, for rising-edge detection.
     prev_trig: f32,
-    /// Whether the head has been seeded with `startPos` yet.
-    started: bool,
-    /// Whether the end-of-buffer done action has already fired (non-looping).
-    done: bool,
+    /// `0`/`1`: whether the head has been seeded with `startPos` yet.
+    started: u32,
+    /// `0`/`1`: whether the end-of-buffer done action has already fired (non-looping).
+    done: u32,
 }
 
 impl PlayBuf {
@@ -31,7 +38,7 @@ impl PlayBuf {
     const DONE: usize = 5;
 
     fn silence(&self, outs: &mut Outputs<'_>) {
-        for ch in 0..self.num_channels {
+        for ch in 0..self.num_channels as usize {
             outs.audio(ch).fill(0.0);
         }
     }
@@ -60,14 +67,14 @@ impl Ugen for PlayBuf {
             DoneAction::Nothing
         };
 
-        if !self.started {
+        if self.started == 0 {
             self.phase = start_pos.clamp(0.0, last);
-            self.started = true;
+            self.started = 1;
         }
         // A rising trigger restarts playback from `startPos`.
         if self.prev_trig <= 0.0 && trig > 0.0 {
             self.phase = start_pos.clamp(0.0, last);
-            self.done = false;
+            self.done = 0;
         }
         self.prev_trig = trig;
 
@@ -82,7 +89,7 @@ impl Ugen for PlayBuf {
             } else {
                 (i0 + 1).min(frames - 1)
             };
-            for ch in 0..self.num_channels {
+            for ch in 0..self.num_channels as usize {
                 let a = buffer.sample(i0, ch);
                 let b = buffer.sample(i1, ch);
                 ctx.outs.audio(ch)[i] = a + (b - a) * frac;
@@ -93,14 +100,14 @@ impl Ugen for PlayBuf {
                 self.phase = self.phase.rem_euclid(frames as f64);
             } else if self.phase > last {
                 self.phase = last;
-                if !self.done {
-                    self.done = true;
+                if self.done == 0 {
+                    self.done = 1;
                     action = action.max(done_action);
                 }
             } else if self.phase < 0.0 {
                 self.phase = 0.0;
-                if !self.done {
-                    self.done = true;
+                if self.done == 0 {
+                    self.done = 1;
                     action = action.max(done_action);
                 }
             }
@@ -121,14 +128,14 @@ fn read_input(ins: &Inputs<'_>, i: usize, default: f32) -> f32 {
 /// Constructor for [`PlayBuf`]. The output count (the buffer's channel count) is fixed here.
 pub struct PlayBufCtor;
 
-impl UgenCtor for PlayBufCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<Box<dyn Ugen>, BuildError> {
-        Ok(Box::new(PlayBuf {
-            num_channels: ctx.num_outputs,
+impl UgenDef for PlayBufCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUgen, BuildError> {
+        Ok(ugen_spec(PlayBuf {
             phase: 0.0,
+            num_channels: ctx.num_outputs as u32,
             prev_trig: 0.0,
-            started: false,
-            done: false,
+            started: 0,
+            done: 0,
         }))
     }
 }

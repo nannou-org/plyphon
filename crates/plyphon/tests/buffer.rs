@@ -129,10 +129,9 @@ fn play_buf_done_action_frees_synth() {
         tail.iter().all(|s| s.abs() < 1e-6),
         "expected silence after the buffer finished and freed its synth"
     );
-    assert!(
-        nrt.process() >= 1,
-        "expected the freed synth to reach the trash ring"
-    );
+    // A freed synth's state returns to the rt-pool on the audio thread (no trash); its `NodeEnded`
+    // notification still flows to the NRT side.
+    nrt.process();
     assert!(
         std::iter::from_fn(|| nrt.poll()).any(|e| e == Event::NodeEnded { id: node }),
         "expected a NodeEnded for the self-freed PlayBuf synth"
