@@ -5,6 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 
 /// `a <op> b`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
@@ -79,14 +80,14 @@ fn binary_op(index: i16) -> Option<fn(f32, f32) -> f32> {
         1 => |a, b| a - b,
         2 => |a, b| a * b,
         4 => |a, b| a / b,
-        5 => |a, b| a - b * (a / b).floor(), // mod (floored, as in SC)
+        5 => |a, b| a - b * math::floor(a / b), // mod (floored, as in SC)
         8 => |a, b| if a < b { 1.0 } else { 0.0 },
         9 => |a, b| if a > b { 1.0 } else { 0.0 },
         10 => |a, b| if a <= b { 1.0 } else { 0.0 },
         11 => |a, b| if a >= b { 1.0 } else { 0.0 },
         12 => |a, b| a.min(b),
         13 => |a, b| a.max(b),
-        25 => |a, b| a.powf(b),
+        25 => |a, b| math::powf(a, b),
         30 => |a, b| a * b + a,                  // ring1
         31 => |a, b| a * b + a + b,              // ring2
         34 => |a, b| a * a - b * b,              // difsqr

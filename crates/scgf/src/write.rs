@@ -1,5 +1,7 @@
 //! Encoding a [`SynthDefFile`] back into SCgf bytes (always format version 2).
 
+use alloc::vec::Vec;
+
 use crate::{Error, Input, SynthDef, SynthDefFile, Ugen};
 
 /// Encode a file as SCgf (version 2).

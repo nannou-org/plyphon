@@ -7,6 +7,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 use plyphon_dsp::wavetable::lookup_cycle;
 
@@ -65,7 +66,7 @@ impl Unit for SinOsc {
 /// Wrap a phase in cycles into `[0, 1)`.
 #[inline]
 fn wrap_unit(x: f32) -> f32 {
-    x - x.floor()
+    x - math::floor(x)
 }
 
 /// Constructor for [`SinOsc`].

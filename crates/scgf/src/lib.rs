@@ -8,7 +8,13 @@
 //! Consumers (such as `plyphon`) interpret the parsed graph - e.g. folding `Control` UGens into
 //! their own parameter model.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+
+extern crate alloc;
+
+use alloc::string::String;
+use alloc::vec::Vec;
 
 mod read;
 mod write;

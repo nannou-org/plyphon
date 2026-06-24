@@ -4,7 +4,10 @@
 //! plyphon's `UnitDef`). A [`UnitRegistry`] is owned by the control-side `Controller`; the audio
 //! thread never touches it.
 
-use std::collections::HashMap;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+
+use hashbrown::HashMap;
 
 use crate::error::BuildError;
 use crate::unit::BuiltUnit;

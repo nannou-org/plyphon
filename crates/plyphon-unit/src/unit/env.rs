@@ -13,6 +13,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::math;
 
 /// Where the generator is in the envelope, stored as a `u32` so the state is [`Pod`].
 mod phase {
@@ -218,7 +219,7 @@ fn get(ins: &Inputs<'_>, i: usize) -> f32 {
 
 /// Interpolate `start`..`end` at fraction `t` per a scsynth envelope curve type.
 fn shape(curve: i32, curve_value: f64, start: f64, end: f64, t: f64) -> f64 {
-    use std::f64::consts::PI;
+    use core::f64::consts::PI;
     match curve {
         0 => {
             // Step: hold the start, jump to the target at the end.
@@ -236,18 +237,20 @@ fn shape(curve: i32, curve_value: f64, start: f64, end: f64, t: f64) -> f64 {
             } else {
                 end
             };
-            s * (e / s).powf(t)
+            s * math::powf(e / s, t)
         }
         3 => {
             // Sine: an ease-in-out S-curve.
-            start + (end - start) * (0.5 - 0.5 * (PI * t).cos())
+            start + (end - start) * (0.5 - 0.5 * math::cos(PI * t))
         }
         5 => {
             // Custom curvature: `curve_value` 0 is linear, >0 eases out, <0 eases in.
             if curve_value.abs() < 0.001 {
                 start + (end - start) * t
             } else {
-                start + (end - start) * (1.0 - (t * curve_value).exp()) / (1.0 - curve_value.exp())
+                start
+                    + (end - start) * (1.0 - math::exp(t * curve_value))
+                        / (1.0 - math::exp(curve_value))
             }
         }
         // Linear (1) and anything unsupported.

@@ -30,6 +30,8 @@ pub mod sin_osc;
 pub mod unary_op;
 pub mod util;
 
+use alloc::boxed::Box;
+
 use bytemuck::Pod;
 
 use plyphon_dsp::buffer::BufferTable;

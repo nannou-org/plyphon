@@ -24,6 +24,7 @@ pub trait Real: sealed::Sealed + Copy {
     fn floor(self) -> Self;
     fn ceil(self) -> Self;
     fn powf(self, n: Self) -> Self;
+    fn rem_euclid(self, rhs: Self) -> Self;
 }
 
 /// Sine of `x` (radians).
@@ -76,6 +77,11 @@ pub fn powf<F: Real>(x: F, n: F) -> F {
     x.powf(n)
 }
 
+/// Least nonnegative remainder of `x` modulo `rhs`.
+pub fn rem_euclid<F: Real>(x: F, rhs: F) -> F {
+    x.rem_euclid(rhs)
+}
+
 mod sealed {
     pub trait Sealed {}
     impl Sealed for f32 {}
@@ -119,6 +125,9 @@ mod imp {
         fn powf(self, n: Self) -> Self {
             self.powf(n)
         }
+        fn rem_euclid(self, rhs: Self) -> Self {
+            self.rem_euclid(rhs)
+        }
     }
 
     impl Real for f64 {
@@ -151,6 +160,9 @@ mod imp {
         }
         fn powf(self, n: Self) -> Self {
             self.powf(n)
+        }
+        fn rem_euclid(self, rhs: Self) -> Self {
+            self.rem_euclid(rhs)
         }
     }
 }
@@ -191,6 +203,10 @@ mod imp {
         fn powf(self, n: Self) -> Self {
             libm::powf(self, n)
         }
+        fn rem_euclid(self, rhs: Self) -> Self {
+            let r = self % rhs;
+            if r < 0.0 { r + rhs.abs() } else { r }
+        }
     }
 
     impl Real for f64 {
@@ -223,6 +239,10 @@ mod imp {
         }
         fn powf(self, n: Self) -> Self {
             libm::pow(self, n)
+        }
+        fn rem_euclid(self, rhs: Self) -> Self {
+            let r = self % rhs;
+            if r < 0.0 { r + rhs.abs() } else { r }
         }
     }
 }

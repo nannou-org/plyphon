@@ -14,7 +14,10 @@
 //! rates). The crate uses no `unsafe` and no global mutable state, and compiles for native and
 //! `wasm32-unknown-unknown` alike.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+
+extern crate alloc;
 
 pub mod error;
 pub mod graphdef;

@@ -1,5 +1,7 @@
 //! Control-side error types. These never surface on the audio thread.
 
+use alloc::string::String;
+
 use thiserror::Error;
 
 /// Errors from compiling a `SynthDef` into a [`GraphDef`](crate::graphdef::GraphDef).

@@ -5,13 +5,14 @@
 //! the (control-rate) cutoff changes. State is kept in `f64` and flushed (`zap`) to avoid denormals
 //! and non-finite build-up, as scsynth does.
 
-use std::f64::consts::{PI, SQRT_2};
+use core::f64::consts::{PI, SQRT_2};
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::math;
 
 /// Which Butterworth response to compute. The build-time domain; stored in [`Butter`] as a `u32` tag
 /// (via `Kind::to_tag`) so the state is [`Pod`] and lives in the rt-pool.
@@ -45,7 +46,7 @@ impl Kind {
     fn coeffs(self, pfreq: f64) -> (f64, f64, f64) {
         match self {
             Kind::LowPass => {
-                let c = 1.0 / pfreq.tan();
+                let c = 1.0 / math::tan(pfreq);
                 let c2 = c * c;
                 let sqrt2c = c * SQRT_2;
                 let a0 = 1.0 / (1.0 + sqrt2c + c2);
@@ -54,7 +55,7 @@ impl Kind {
                 (a0, b1, b2)
             }
             Kind::HighPass => {
-                let c = pfreq.tan();
+                let c = math::tan(pfreq);
                 let c2 = c * c;
                 let sqrt2c = c * SQRT_2;
                 let a0 = 1.0 / (1.0 + sqrt2c + c2);

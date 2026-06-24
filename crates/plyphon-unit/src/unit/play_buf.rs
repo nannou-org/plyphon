@@ -5,6 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, Inputs, Outputs, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::math;
 
 /// `PlayBuf.ar(numChannels, bufnum, rate, trigger, startPos, loop, doneAction)`: reads consecutive
 /// frames of buffer `bufnum`, one output per buffer channel, advancing the play head by `rate`
@@ -81,7 +82,7 @@ impl Unit for PlayBuf {
         let mut action = DoneAction::Nothing;
         let block = ctx.outs.audio(0).len();
         for i in 0..block {
-            let floor = self.phase.floor();
+            let floor = math::floor(self.phase);
             let frac = (self.phase - floor) as f32;
             let i0 = floor as usize;
             let i1 = if looping {
@@ -97,7 +98,7 @@ impl Unit for PlayBuf {
 
             self.phase += rate;
             if looping {
-                self.phase = self.phase.rem_euclid(frames as f64);
+                self.phase = math::rem_euclid(self.phase, frames as f64);
             } else if self.phase > last {
                 self.phase = last;
                 if self.done == 0 {

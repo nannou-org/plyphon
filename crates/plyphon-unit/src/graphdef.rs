@@ -7,6 +7,9 @@
 //! wiring, the layout of the per-graph pool block, and the images needed to construct an instance on
 //! the audio thread with a single allocation and a few `memcpy`s.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use crate::unit::{InitFn, InputSource, ProcessFn, ReseedFn};
 use plyphon_dsp::rate::Rate;
 

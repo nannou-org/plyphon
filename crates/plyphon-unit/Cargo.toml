@@ -8,7 +8,14 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["std"]
+std = ["plyphon-dsp/std", "thiserror/std"]
+
 [dependencies]
 bytemuck.workspace = true
+# `default-hasher` (foldhash, dependency-free) gives `HashMap::new()`; the other default
+# features (allocator-api2, equivalent, ...) are not needed and stay off.
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
 plyphon-dsp.workspace = true
 thiserror.workspace = true

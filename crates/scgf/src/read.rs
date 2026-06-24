@@ -1,5 +1,8 @@
 //! Parsing SCgf bytes into a [`SynthDefFile`].
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use crate::{Error, Input, ParamName, Rate, SynthDef, SynthDefFile, Ugen, Variant};
 
 /// Parse an SCgf buffer.

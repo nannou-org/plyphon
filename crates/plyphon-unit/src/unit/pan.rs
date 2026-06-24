@@ -1,12 +1,13 @@
 //! `Pan2` - equal-power stereo panner, plyphon's port of scsynth's `Pan2`.
 
-use std::f32::consts::FRAC_PI_4;
+use core::f32::consts::FRAC_PI_4;
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::math;
 
 /// `Pan2.ar(in, pos, level)`: pan a mono signal across two channels with an equal-power law - `pos`
 /// runs -1 (hard left) to +1 (hard right), `level` (default 1) scales. Has two outputs (left, right);
@@ -34,7 +35,7 @@ impl Unit for Pan2 {
         };
         // pos -1 -> angle 0 (all left); pos +1 -> angle pi/2 (all right).
         let angle = (pos + 1.0) * FRAC_PI_4;
-        let (left_gain, right_gain) = (angle.cos() * level, angle.sin() * level);
+        let (left_gain, right_gain) = (math::cos(angle) * level, math::sin(angle) * level);
         let input = ctx.ins.audio(Self::IN);
         for (o, &x) in ctx.outs.audio(0).iter_mut().zip(input) {
             *o = x * left_gain;
