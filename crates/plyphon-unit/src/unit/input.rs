@@ -3,9 +3,9 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::rate::Rate;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::rate::Rate;
 
 /// `In.ar(bus, numChannels)` / `In.kr(bus, numChannels)`: reads `numChannels` consecutive bus
 /// channels starting at `bus`, one per output. `In.ar` reads the audio bus bank, `In.kr` the

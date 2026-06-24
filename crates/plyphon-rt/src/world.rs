@@ -17,16 +17,16 @@ use std::sync::Arc;
 use bytemuck::cast_slice_mut;
 use rtrb::{Consumer, Producer, PushError};
 
-use crate::buffer::{BufferSlot, BufferTable};
-use crate::bus::Buses;
 use crate::command::{Command, Event, Trash};
-use crate::engine::Options;
 use crate::graph::{Block, Graph, Pool};
-use crate::graphdef::GraphDef;
-use crate::rate::RateInfo;
+use crate::options::Options;
 use crate::tree::{AddAction, FreedNode, NodeTree};
-use crate::unit::DoneAction;
-use crate::wavetable::Wavetables;
+use plyphon_dsp::buffer::{BufferSlot, BufferTable};
+use plyphon_dsp::bus::Buses;
+use plyphon_dsp::rate::RateInfo;
+use plyphon_dsp::wavetable::Wavetables;
+use plyphon_unit::graphdef::GraphDef;
+use plyphon_unit::unit::DoneAction;
 
 /// The seed the per-instance RNG counter starts from (any fixed non-zero value; keeps runs
 /// deterministic while decorrelating distinct synth instances).
@@ -71,7 +71,7 @@ pub struct World {
 }
 
 impl World {
-    pub(crate) fn new(
+    pub fn new(
         options: &Options,
         audio: RateInfo,
         control: RateInfo,
@@ -93,7 +93,7 @@ impl World {
                 bs,
             ),
             buffers: BufferTable::new(options.max_buffers),
-            tree: NodeTree::new(options.max_nodes, crate::engine::ROOT_GROUP_ID),
+            tree: NodeTree::new(options.max_nodes, crate::options::ROOT_GROUP_ID),
             pool: Pool::with_capacity_bytes(options.pool_bytes),
             def_table: vec![None; options.max_synthdefs],
             wire_scratch: vec![0.0f32; options.max_wire_bufs * bs].into_boxed_slice(),
@@ -339,7 +339,7 @@ impl World {
     /// the state-arena image, seed the control wires from the defaults, set the param maps unmapped,
     /// and re-seed each unit's randomness for this instance. Returns `None` if the pool is exhausted.
     fn build_graph(&mut self, def: &Arc<GraphDef>) -> Option<Graph> {
-        let layout = def.layout;
+        let layout = def.layout();
         let region = self.pool.alloc(layout.total)?;
         let seed = self.next_seed;
         self.next_seed = self.next_seed.wrapping_add(SEED_STEP);
@@ -354,12 +354,12 @@ impl World {
                 layout.pmaps.range(),
             ])
             .expect("graph block layout spans are disjoint by construction");
-        state_arena.copy_from_slice(&def.state_image);
-        cast_slice_mut::<u8, f32>(ctrl_bytes).copy_from_slice(&def.control_defaults);
+        state_arena.copy_from_slice(def.state_image());
+        cast_slice_mut::<u8, f32>(ctrl_bytes).copy_from_slice(def.control_defaults());
         for m in cast_slice_mut::<u8, u32>(pmap_bytes) {
             *m = u32::MAX;
         }
-        for (u, v) in def.units.iter().enumerate() {
+        for (u, v) in def.units().iter().enumerate() {
             let slot = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
             (v.reseed)(slot, seed.wrapping_add((u as u64).wrapping_mul(SEED_STEP)));
         }

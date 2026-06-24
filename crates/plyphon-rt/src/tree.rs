@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 
 use crate::graph::{Block, Graph};
-use crate::unit::DoneAction;
+use plyphon_unit::unit::DoneAction;
 
 /// Where to place a node relative to a target, mirroring scsynth's `addAction` codes.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

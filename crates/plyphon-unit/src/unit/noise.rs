@@ -3,10 +3,10 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::rate::Rate;
-use crate::rng::Rng;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::rate::Rate;
+use plyphon_dsp::rng::Rng;
 
 /// `WhiteNoise.ar/kr`: samples drawn uniformly from `[-1, 1)`.
 #[repr(C)]

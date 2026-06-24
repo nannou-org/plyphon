@@ -2,7 +2,7 @@
 //!
 //! SuperCollider keeps its sine table in process-global statics reached through the plugin
 //! `InterfaceTable`. plyphon instead owns the tables in a [`Wavetables`] value held by the engine
-//! and lends them to units by argument (see [`crate::unit::ProcessCtx`]), so there is no global
+//! and lends them to units by argument while they process, so there is no global
 //! mutable state and multiple engines can coexist.
 
 use core::f64::consts::TAU;

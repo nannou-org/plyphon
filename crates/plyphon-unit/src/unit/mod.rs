@@ -32,10 +32,10 @@ pub mod util;
 
 use bytemuck::Pod;
 
-use crate::buffer::BufferTable;
-use crate::bus::Buses;
-use crate::rate::{Rate, RateInfo};
-use crate::wavetable::Wavetables;
+use plyphon_dsp::buffer::BufferTable;
+use plyphon_dsp::bus::Buses;
+use plyphon_dsp::rate::{Rate, RateInfo};
+use plyphon_dsp::wavetable::Wavetables;
 
 /// What a unit asks the engine to do with its enclosing synth when it finishes - plyphon's subset
 /// of scsynth's done-action codes. Ordered so the strongest action wins when combined.
@@ -272,7 +272,7 @@ impl<'a> Outputs<'a> {
 pub trait Unit: Pod {
     /// Re-seed any per-instance randomness from `seed`, called once when the synth is constructed on
     /// the audio thread (before the first block). The default is a no-op; units with an
-    /// [`Rng`](crate::rng::Rng) override it so that two instances of the same def decorrelate -
+    /// [`Rng`](plyphon_dsp::rng::Rng) override it so that two instances of the same def decorrelate -
     /// plyphon's stand-in for scsynth seeding each `Graph`'s `RGen`. Must not allocate or block.
     fn reseed(&mut self, _seed: u64) {}
 

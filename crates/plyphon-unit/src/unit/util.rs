@@ -3,9 +3,9 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::rate::Rate;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::rate::Rate;
 
 /// `ln(0.001)` - the decay target scsynth uses for its `-60 dB time` smoothing coefficients.
 const LOG001: f32 = -6.907_755;

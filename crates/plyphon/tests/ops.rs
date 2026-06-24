@@ -1,8 +1,8 @@
 //! Exercise `BinaryOpUGen` and `UnaryOpUGen`: an amplitude-scaled sine (`SinOsc.ar(freq) * amp`)
 //! and a rectified sine (`SinOsc.ar(freq).abs()`), plus the unsupported-operator error path.
 
+use plyphon::BuildError;
 use plyphon::controller::SynthNewError;
-use plyphon::error::BuildError;
 use plyphon::{
     AddAction, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine,
 };

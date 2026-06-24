@@ -15,7 +15,11 @@ and plays both natively and in the browser.
 
 | Crate | Description |
 | --- | --- |
-| [`plyphon`](crates/plyphon) | The pure-Rust engine core. |
+| [`plyphon`](crates/plyphon) | The control-side facade: the `Controller`, authored `SynthDef`s and their compilation, and the `engine()` builder. Re-exports the three crates below. |
+| [`plyphon-rt`](crates/plyphon-rt) | The real-time audio driver: the `World` engine, node tree, command protocol, and NRT cleanup. |
+| [`plyphon-unit`](crates/plyphon-unit) | The unit-generator abstraction: the `Unit` trait, the built-in units, and the compiled `GraphDef`. |
+| [`plyphon-dsp`](crates/plyphon-dsp) | Shared DSP primitives: rates, RNG, wavetables, buses, buffers, and streams. |
+| [`rt-alloc`](crates/rt-alloc) | A safe, `no_std` real-time memory pool - a port of scsynth's `AllocPool`. |
 | [`scgf`](crates/scgf) | Parser and encoder for SuperCollider's binary SynthDef format (SCgf). |
 | [`plyphon-osc`](crates/plyphon-osc) | SuperCollider-compatible OSC command front-end. |
 | [`plyphon-buffers`](crates/plyphon-buffers) | Async `BufferSource` traits for loading sample data (the I/O seam; impls are the app's). |

@@ -852,8 +852,9 @@ dependencies = [
 name = "plyphon"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
- "rt-alloc",
+ "plyphon-dsp",
+ "plyphon-rt",
+ "plyphon-unit",
  "rtrb",
  "scgf",
  "thiserror 2.0.18",
@@ -865,6 +866,14 @@ version = "0.1.0"
 dependencies = [
  "plyphon",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "plyphon-dsp"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "rtrb",
 ]
 
 [[package]]
@@ -992,6 +1001,26 @@ dependencies = [
  "plyphon-buffers",
  "rosc",
  "scgf",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "plyphon-rt"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "plyphon-dsp",
+ "plyphon-unit",
+ "rt-alloc",
+ "rtrb",
+]
+
+[[package]]
+name = "plyphon-unit"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "plyphon-dsp",
  "thiserror 2.0.18",
 ]
 

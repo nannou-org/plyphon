@@ -3,13 +3,11 @@
 //! A [`Buffer`] is pure in-memory sample data: interleaved `f32` samples plus a frame count, channel
 //! count, and sample rate. The engine never reads or decodes sound files; a buffer is built off the
 //! audio thread (allocating, possibly loading from storage - a host concern) and then installed into
-//! the [`World`](crate::world::World)'s buffer table with [`Controller::buffer_set`] over the command
+//! the engine's buffer table with `Controller::buffer_set` over the command
 //! ring, exactly like a synth. The audio thread only ever reads a finished `Buffer`; units such as
-//! `PlayBuf` reach it (read-only) through the [`io`](crate::unit::io) free fns.
+//! `PlayBuf` reach it (read-only) through the unit `io` free fns.
 //!
 //! A table slot can instead hold a disk-streaming endpoint (see [`crate::stream`]), read by `DiskIn`.
-//!
-//! [`Controller::buffer_set`]: crate::controller::Controller::buffer_set
 
 use crate::stream::StreamPlayback;
 
@@ -94,7 +92,7 @@ impl Buffer {
 }
 
 /// One slot in the [`BufferTable`]: empty, a flat in-memory buffer, or a disk-streaming endpoint.
-pub(crate) enum BufferSlot {
+pub enum BufferSlot {
     /// No buffer installed.
     Empty,
     /// An in-memory buffer (read by `PlayBuf`).
@@ -103,7 +101,7 @@ pub(crate) enum BufferSlot {
     Stream(Box<StreamPlayback>),
 }
 
-/// The [`World`](crate::world::World)'s fixed-capacity table of buffers, indexed by buffer number.
+/// The engine's fixed-capacity table of buffers, indexed by buffer number.
 ///
 /// Allocated once at construction. Installing a buffer is an O(1) swap that hands any previous buffer
 /// back for off-audio-thread dropping; the audio thread only ever reads through [`BufferTable::get`].
@@ -141,18 +139,18 @@ impl BufferTable {
 
     /// Install flat `buffer` at `index`, returning the slot it replaced (or `buffer` itself if
     /// `index` is out of range) so the caller can drop it off the audio thread.
-    pub(crate) fn set(&mut self, index: usize, buffer: Box<Buffer>) -> Option<BufferSlot> {
+    pub fn set(&mut self, index: usize, buffer: Box<Buffer>) -> Option<BufferSlot> {
         self.replace(index, BufferSlot::Loaded(buffer))
     }
 
     /// Install a streaming endpoint at `index` (scsynth's `Buffer.cueSoundFile`), returning the
     /// replaced slot for off-audio-thread dropping.
-    pub(crate) fn cue(&mut self, index: usize, stream: Box<StreamPlayback>) -> Option<BufferSlot> {
+    pub fn cue(&mut self, index: usize, stream: Box<StreamPlayback>) -> Option<BufferSlot> {
         self.replace(index, BufferSlot::Stream(stream))
     }
 
     /// Empty `index`, returning the slot it held (if any) for off-audio-thread dropping.
-    pub(crate) fn free(&mut self, index: usize) -> Option<BufferSlot> {
+    pub fn free(&mut self, index: usize) -> Option<BufferSlot> {
         self.replace(index, BufferSlot::Empty)
     }
 

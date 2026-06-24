@@ -1,7 +1,7 @@
 [package]
-name = "plyphon"
+name = "plyphon-rt"
 version = "0.1.0"
-description = "A pure-Rust rewrite of SuperCollider's scsynth audio engine core."
+description = "The plyphon real-time audio driver: the World engine, node tree, command protocol, and NRT cleanup."
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -9,9 +9,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bytemuck.workspace = true
 plyphon-dsp.workspace = true
-plyphon-rt.workspace = true
 plyphon-unit.workspace = true
+rt-alloc.workspace = true
 rtrb.workspace = true
-scgf.workspace = true
-thiserror.workspace = true

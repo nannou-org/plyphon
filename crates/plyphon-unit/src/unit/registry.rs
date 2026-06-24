@@ -1,13 +1,12 @@
 //! The unit registry: maps unit names to their definitions for SynthDef compilation.
 //!
 //! This is plyphon's instance-based replacement for scsynth's global `gUnitDefLib` (a [`UnitDef`] is
-//! plyphon's `UnitDef`). A [`UnitRegistry`] is owned by the control-side
-//! [`crate::controller::Controller`]; the audio thread never touches it.
+//! plyphon's `UnitDef`). A [`UnitRegistry`] is owned by the control-side `Controller`; the audio
+//! thread never touches it.
 
 use std::collections::HashMap;
 
 use crate::error::BuildError;
-use crate::rate::{Rate, RateInfo};
 use crate::unit::BuiltUnit;
 use crate::unit::band_limited::{PulseCtor, SawCtor};
 use crate::unit::binary_op::BinaryOpCtor;
@@ -24,6 +23,7 @@ use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::sin_osc::SinOscCtor;
 use crate::unit::unary_op::UnaryOpCtor;
 use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor};
+use plyphon_dsp::rate::{Rate, RateInfo};
 
 /// Build-time context for constructing a unit. Runs off the audio thread, so allocation is fine.
 pub struct BuildContext<'a> {

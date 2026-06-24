@@ -1,0 +1,13 @@
+[package]
+name = "plyphon-dsp"
+version = "0.1.0"
+description = "Shared DSP primitives for the plyphon engine: rates, RNG, wavetables, buses, buffers, and streams."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+rtrb.workspace = true

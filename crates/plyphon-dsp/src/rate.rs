@@ -21,8 +21,8 @@ pub enum Rate {
 
 /// Derived per-block constants for a given sample rate and block size.
 ///
-/// This is the struct SC also calls `Rate`. It is owned by the engine and lent to units through
-/// [`crate::unit::ProcessCtx`] - plyphon keeps no global rate/wavetable state.
+/// This is the struct SC also calls `Rate`. It is owned by the engine and lent to units by argument
+/// while they process - plyphon keeps no global rate/wavetable state.
 #[derive(Copy, Clone, Debug)]
 pub struct RateInfo {
     /// Samples per second.

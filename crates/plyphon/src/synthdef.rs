@@ -4,18 +4,18 @@
 //! be built programmatically or parsed from the binary SCgf format (see [`read`]), so
 //! `sclang`-compiled definitions load directly. [`SynthDef::compile`] turns it (off the audio thread,
 //! once) into the immutable, shareable [`GraphDef`] - scsynth's server-side compiled form - from
-//! which the audio thread constructs live [`Graph`](crate::graph::Graph)s with a single pool
+//! which the audio thread constructs live [`Graph`](plyphon_rt::graph::Graph)s with a single pool
 //! allocation.
 
 pub mod read;
 
 use std::collections::HashMap;
 
-use crate::error::BuildError;
-use crate::graphdef::{GraphDef, OutputWire, UnitVtbl, build_layout};
-use crate::rate::{Rate, RateInfo};
-use crate::unit::registry::{BuildContext, UnitRegistry};
-use crate::unit::{BuiltUnit, InputSource};
+use plyphon_dsp::rate::{Rate, RateInfo};
+use plyphon_unit::error::BuildError;
+use plyphon_unit::graphdef::{GraphDef, OutputWire, UnitVtbl, build_layout};
+use plyphon_unit::unit::registry::{BuildContext, UnitRegistry};
+use plyphon_unit::unit::{BuiltUnit, InputSource};
 
 /// A named control parameter with a default value (settable later via `set_control`).
 #[derive(Clone, Debug)]
@@ -70,7 +70,7 @@ impl UnitSpec {
     }
 }
 
-/// A synth definition: a template instantiated into a [`crate::graph::Graph`].
+/// A synth definition: a template instantiated into a [`plyphon_rt::graph::Graph`].
 #[derive(Clone, Debug)]
 pub struct SynthDef {
     /// Definition name.
@@ -232,15 +232,15 @@ impl SynthDef {
             })
             .collect();
 
-        Ok(GraphDef {
-            units: units.into_boxed_slice(),
+        Ok(GraphDef::new(
+            units.into_boxed_slice(),
             layout,
-            state_image: state_image.into_boxed_slice(),
-            control_defaults: control_defaults.into_boxed_slice(),
-            param_wires: param_wires.into_boxed_slice(),
+            state_image.into_boxed_slice(),
+            control_defaults.into_boxed_slice(),
+            param_wires.into_boxed_slice(),
             num_params,
             block_size,
-        })
+        ))
     }
 }
 

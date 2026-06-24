@@ -19,12 +19,12 @@ use std::sync::Arc;
 use bytemuck::{cast_slice, cast_slice_mut};
 use rt_alloc::{Align64, Region, RtPool};
 
-use crate::buffer::BufferTable;
-use crate::bus::Buses;
-use crate::graphdef::GraphDef;
-use crate::rate::{Rate, RateInfo};
-use crate::unit::{self, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx};
-use crate::wavetable::Wavetables;
+use plyphon_dsp::buffer::BufferTable;
+use plyphon_dsp::bus::Buses;
+use plyphon_dsp::rate::{Rate, RateInfo};
+use plyphon_dsp::wavetable::Wavetables;
+use plyphon_unit::graphdef::GraphDef;
+use plyphon_unit::unit::{self, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx};
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
 pub(crate) type Pool = RtPool<Box<[Align64]>>;
@@ -60,7 +60,7 @@ pub struct Graph {
     block: Region,
     /// The shared, immutable compiled def.
     def: Arc<GraphDef>,
-    /// Whether the one-time [`Unit::init`](crate::unit::Unit::init) seeding pass has run (it runs on
+    /// Whether the one-time [`Unit::init`](plyphon_unit::unit::Unit::init) seeding pass has run (it runs on
     /// the first control block - plyphon's analogue of scsynth's `Graph_FirstCalc`).
     initialized: bool,
 }
@@ -84,8 +84,8 @@ impl Graph {
     #[must_use]
     pub(crate) fn process(&mut self, block: &mut Block<'_>) -> DoneAction {
         let def = &*self.def;
-        let bs = def.block_size;
-        let layout = def.layout;
+        let bs = def.block_size();
+        let layout = def.layout();
 
         // Carve the per-graph block into its three disjoint spans (proved disjoint once, here).
         let buf = block.pool.slice_mut(&self.block);
@@ -106,7 +106,7 @@ impl Graph {
         // Apply control-bus mappings (`/n_map`): a mapped parameter takes the bus's current value.
         for (p, &bus) in pmaps.iter().enumerate() {
             if bus != u32::MAX {
-                ctrl[def.param_wires[p] as usize] = unit::control_in(block.buses, bus as usize);
+                ctrl[def.param_wires()[p] as usize] = unit::control_in(block.buses, bus as usize);
             }
         }
 
@@ -115,7 +115,7 @@ impl Graph {
         let first = !self.initialized;
         self.initialized = true;
         let mut done = DoneAction::Nothing;
-        for v in def.units.iter() {
+        for v in def.units().iter() {
             let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
             let ins = Inputs::new(&v.inputs, &*audio, &*ctrl, bs);
             if first {
@@ -163,8 +163,8 @@ impl Graph {
 
     /// Set control parameter `param` to `value`. No-op if out of range. Allocation-free (RT-safe).
     pub(crate) fn set_control(&mut self, pool: &mut Pool, param: usize, value: f32) {
-        if let Some(&wire) = self.def.param_wires.get(param) {
-            let bytes = &mut pool.slice_mut(&self.block)[self.def.layout.control.range()];
+        if let Some(&wire) = self.def.param_wires().get(param) {
+            let bytes = &mut pool.slice_mut(&self.block)[self.def.layout().control.range()];
             cast_slice_mut::<u8, f32>(bytes)[wire as usize] = value;
         }
     }
@@ -172,8 +172,8 @@ impl Graph {
     /// Map control parameter `param` to control `bus` (or unmap it with `None`). While mapped, the
     /// parameter takes the bus's value at the start of every block. No-op if out of range.
     pub(crate) fn map_control(&mut self, pool: &mut Pool, param: usize, bus: Option<u32>) {
-        if param < self.def.num_params {
-            let bytes = &mut pool.slice_mut(&self.block)[self.def.layout.pmaps.range()];
+        if param < self.def.num_params() {
+            let bytes = &mut pool.slice_mut(&self.block)[self.def.layout().pmaps.range()];
             cast_slice_mut::<u8, u32>(bytes)[param] = bus.unwrap_or(u32::MAX);
         }
     }

@@ -1,19 +1,19 @@
 //! The compiled synth definition - plyphon's port of scsynth's `GraphDef`.
 //!
-//! A [`GraphDef`] is the immutable, shareable template a [`SynthDef`](crate::synthdef::SynthDef)
-//! compiles to (off the audio thread, once). Like scsynth's `GraphDef` it is system-allocated and
-//! long-lived - *not* in the rt-pool - and many live [`Graph`](crate::graph::Graph)s reference one
-//! via `Arc` (the `Arc` count is plyphon's `mRefCount`). It holds the per-unit calc/seed vtable, the
+//! A [`GraphDef`] is the immutable, shareable template a `SynthDef` compiles to (off the audio
+//! thread, once). Like scsynth's `GraphDef` it is system-allocated and long-lived - *not* in the
+//! rt-pool - and many live `Graph`s reference one via `Arc` (the `Arc` count is plyphon's
+//! `mRefCount`). It holds the per-unit calc/seed vtable, the
 //! wiring, the layout of the per-graph pool block, and the images needed to construct an instance on
 //! the audio thread with a single allocation and a few `memcpy`s.
 
-use crate::rate::Rate;
 use crate::unit::{InitFn, InputSource, ProcessFn, ReseedFn};
+use plyphon_dsp::rate::Rate;
 
 /// Where a unit output is published: an audio wire (a full block in the World's shared wire scratch)
 /// or a control wire (one value in the per-graph control wires).
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct OutputWire {
+pub struct OutputWire {
     /// The output's calculation rate.
     pub rate: Rate,
     /// Index into the synth's audio wires (audio rate) or control wires (control/scalar rate).
@@ -22,7 +22,7 @@ pub(crate) struct OutputWire {
 
 /// One unit's compiled record: its calc/seed vtable, resolved wiring, and state slot in the arena -
 /// plyphon's per-unit `UnitSpec` plus `mCalcFunc`.
-pub(crate) struct UnitVtbl {
+pub struct UnitVtbl {
     /// Per-block calc function over the state slot.
     pub process: ProcessFn,
     /// One-time first-block seeding function over the state slot.
@@ -41,7 +41,7 @@ pub(crate) struct UnitVtbl {
 
 /// A byte sub-range within the per-graph pool block.
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct Span {
+pub struct Span {
     /// Byte offset from the start of the block's payload.
     pub off: usize,
     /// Length in bytes.
@@ -64,7 +64,7 @@ impl Span {
 /// `u32` param maps. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over them never
 /// fails, and the `bytemuck` casts never hit an alignment error.
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct BlockLayout {
+pub struct BlockLayout {
     /// Heterogeneous unit state (each unit's `Pod` bytes at its `state_offset`).
     pub state: Span,
     /// Control wires (`f32`): the parameters first, then control-rate unit outputs.
@@ -75,24 +75,85 @@ pub(crate) struct BlockLayout {
     pub total: usize,
 }
 
-/// The compiled, immutable, shareable synth definition (scsynth's `GraphDef`). Public so it can ride
-/// in a [`Command`](crate::command::Command); its fields are crate-internal.
+/// The compiled, immutable, shareable synth definition (scsynth's `GraphDef`). Built once by
+/// `SynthDef` compilation off the audio thread and shared via `Arc` so it can ride in a command to
+/// the real-time engine; its parts are read back through the accessors below.
 pub struct GraphDef {
     /// Per-unit vtable + wiring, in topological calc order.
-    pub(crate) units: Box<[UnitVtbl]>,
+    units: Box<[UnitVtbl]>,
     /// How a per-graph pool block is carved.
-    pub(crate) layout: BlockLayout,
+    layout: BlockLayout,
     /// The initial state-arena image: each unit's initial state bytes packed at its offset. Copied
     /// into a fresh block when a synth is built on the audio thread.
-    pub(crate) state_image: Box<[u8]>,
+    state_image: Box<[u8]>,
     /// Initial control-wire values: parameter defaults in the first `num_params` slots, then zeros.
-    pub(crate) control_defaults: Box<[f32]>,
+    control_defaults: Box<[f32]>,
     /// Control-parameter index -> control wire index.
-    pub(crate) param_wires: Box<[u32]>,
+    param_wires: Box<[u32]>,
     /// Number of control parameters.
-    pub(crate) num_params: usize,
+    num_params: usize,
     /// Samples per control block.
-    pub(crate) block_size: usize,
+    block_size: usize,
+}
+
+impl GraphDef {
+    /// Assemble a compiled def from its parts - the output of `SynthDef` compilation. The parts must
+    /// be mutually consistent (`layout` describes how `state_image` and each per-instance block are
+    /// carved), so compilation is the only place that builds one.
+    pub fn new(
+        units: Box<[UnitVtbl]>,
+        layout: BlockLayout,
+        state_image: Box<[u8]>,
+        control_defaults: Box<[f32]>,
+        param_wires: Box<[u32]>,
+        num_params: usize,
+        block_size: usize,
+    ) -> Self {
+        GraphDef {
+            units,
+            layout,
+            state_image,
+            control_defaults,
+            param_wires,
+            num_params,
+            block_size,
+        }
+    }
+
+    /// The per-unit vtables and wiring, in topological calc order.
+    pub fn units(&self) -> &[UnitVtbl] {
+        &self.units
+    }
+
+    /// How a per-graph pool block is carved.
+    pub fn layout(&self) -> BlockLayout {
+        self.layout
+    }
+
+    /// The initial state-arena image, copied into a fresh block when a synth is instantiated.
+    pub fn state_image(&self) -> &[u8] {
+        &self.state_image
+    }
+
+    /// Initial control-wire values: parameter defaults first, then zeros.
+    pub fn control_defaults(&self) -> &[f32] {
+        &self.control_defaults
+    }
+
+    /// Control-parameter index -> control wire index.
+    pub fn param_wires(&self) -> &[u32] {
+        &self.param_wires
+    }
+
+    /// Number of control parameters.
+    pub fn num_params(&self) -> usize {
+        self.num_params
+    }
+
+    /// Samples per control block.
+    pub fn block_size(&self) -> usize {
+        self.block_size
+    }
 }
 
 /// Round `x` up to a multiple of `align` (a power of two).
@@ -106,7 +167,7 @@ const fn align_up(x: usize, align: usize) -> usize {
 /// The state arena packs the slots in order (each bumped to its own alignment), then the control
 /// wires and param maps follow on 4-byte boundaries. Because the block base is 64-byte aligned, every
 /// resulting span is aligned for its element type.
-pub(crate) fn build_layout(
+pub fn build_layout(
     state_slots: &[(usize, usize)],
     num_control_wires: usize,
     num_params: usize,

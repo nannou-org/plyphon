@@ -3,9 +3,9 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::rate::Rate;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::rate::Rate;
 
 /// `Out.ar(bus, signals)` / `Out.kr(bus, signals)`: writes each signal input to a consecutive bus
 /// channel starting at `bus`, summing with anything already written to that channel this block.

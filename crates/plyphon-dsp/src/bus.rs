@@ -165,7 +165,7 @@ impl ControlBus {
 }
 
 /// The engine's bus banks: an [`AudioBus`] (output, then input, then private channels) and a
-/// [`ControlBus`]. Owned by the [`World`](crate::world::World) and lent to units during processing.
+/// [`ControlBus`]. Owned by the engine and lent to units during processing.
 #[derive(Clone, Debug)]
 pub struct Buses {
     audio: AudioBus,

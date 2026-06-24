@@ -6,7 +6,7 @@
 //! here), installs it in the `World`'s resident def table once via [`Command::DefineGraphDef`], and
 //! thereafter `s_new` ships only a `def_id` - the synth itself is built on the audio thread. Reactive
 //! NRT work - dropping freed buffers/streams and surfacing notifications - lives in the
-//! [`Nrt`](crate::nrt::Nrt) instead.
+//! [`Nrt`](plyphon_rt::nrt::Nrt) instead.
 //!
 //! The controller retains a strong `Arc` to every `GraphDef` it has ever compiled (current ones in
 //! `compiled`, superseded ones in `graveyard`), for the engine's lifetime. That way an
@@ -19,16 +19,16 @@ use std::sync::Arc;
 use rtrb::Producer;
 use thiserror::Error;
 
-use crate::buffer::Buffer;
-use crate::command::Command;
-use crate::engine::Options;
-use crate::error::BuildError;
-use crate::graphdef::GraphDef;
-use crate::rate::RateInfo;
-use crate::stream::{StreamProducer, cue};
 use crate::synthdef::{SynthDef, SynthDefLibrary};
-use crate::tree::AddAction;
-use crate::unit::registry::UnitRegistry;
+use plyphon_dsp::buffer::Buffer;
+use plyphon_dsp::rate::RateInfo;
+use plyphon_dsp::stream::{StreamProducer, cue};
+use plyphon_rt::Options;
+use plyphon_rt::command::Command;
+use plyphon_rt::tree::AddAction;
+use plyphon_unit::error::BuildError;
+use plyphon_unit::graphdef::GraphDef;
+use plyphon_unit::unit::registry::UnitRegistry;
 
 /// The command ring was full; the command was dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]

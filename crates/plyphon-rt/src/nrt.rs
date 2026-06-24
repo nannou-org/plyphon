@@ -8,8 +8,8 @@
 //! the audio thread is forbidden from doing. Concretely it:
 //!
 //! - **Frees memory off the audio thread.** When a node is freed - explicitly via
-//!   [`Controller::free`](crate::controller::Controller::free) or by a unit's
-//!   [`DoneAction`](crate::unit::DoneAction) - or a buffer is replaced or freed, the
+//!   `Controller::free` or by a unit's
+//!   [`DoneAction`](plyphon_unit::unit::DoneAction) - or a buffer is replaced or freed, the
 //!   [`World`](crate::world::World) only unlinks/swaps it (O(1)) and ships its `Box` over the trash
 //!   ring; the actual `Drop`/`free` happens here, in [`Nrt::process`].
 //! - **Surfaces notifications.** Node started/ended/paused/resumed [`Event`]s flow over the events
@@ -18,13 +18,13 @@
 //! Buffers follow the same off-RT→RT→off-RT pattern as synths: a buffer is built off the audio
 //! thread, the `World` swaps it into its table on the audio thread (O(1)), and the replaced buffer
 //! is dropped here. *Loading* sample data from storage (sound files, key-value stores, the network)
-//! is deliberately left to the application - see [`Buffer`](crate::buffer::Buffer) and
-//! [`Controller::buffer_set`](crate::controller::Controller::buffer_set) - so it can use whatever
+//! is deliberately left to the application - see [`Buffer`](plyphon_dsp::buffer::Buffer) and
+//! `Controller::buffer_set` - so it can use whatever
 //! native or web I/O it likes; plyphon only ever installs a finished buffer.
 //!
 //! # Lifecycle
 //!
-//! [`engine`](crate::engine::engine) returns `(Controller, Nrt, World)`. Move the `World` to the
+//! The engine builder returns `(Controller, Nrt, World)`. Move the `World` to the
 //! audio thread, run the `Nrt` on a thread (or timer, or even the same thread as the `Controller`)
 //! of your choosing, and keep the `Controller` wherever commands originate:
 //!
@@ -58,7 +58,7 @@ pub struct Nrt {
 }
 
 impl Nrt {
-    pub(crate) fn new(trash_rx: Consumer<Trash>, events_rx: Consumer<Event>) -> Self {
+    pub fn new(trash_rx: Consumer<Trash>, events_rx: Consumer<Event>) -> Self {
         Nrt {
             trash_rx,
             events_rx,

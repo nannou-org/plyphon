@@ -5,10 +5,10 @@ use core::f32::consts::TAU;
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::rate::Rate;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
-use crate::wavetable::lookup_cycle;
+use plyphon_dsp::rate::Rate;
+use plyphon_dsp::wavetable::lookup_cycle;
 
 /// Calc-variant tags, chosen from the frequency input's rate at build time (scsynth picks one of
 /// `SinOsc_next_i{k,a}{k,a}`; we branch on the freq rate once per block, not per sample). Stored as a

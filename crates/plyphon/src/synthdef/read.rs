@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::rate::Rate;
 use crate::synthdef::{InputRef, Param, SynthDef, UnitSpec};
+use plyphon_dsp::rate::Rate;
 
 /// An error loading SynthDefs from SCgf bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]

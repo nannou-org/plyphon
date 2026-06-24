@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-/// Errors from instantiating a [`crate::synthdef::SynthDef`] into a [`crate::graph::Graph`].
+/// Errors from compiling a `SynthDef` into a [`GraphDef`](crate::graphdef::GraphDef).
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum BuildError {
     /// The SynthDef references a unit name not present in the registry.

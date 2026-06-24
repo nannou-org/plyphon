@@ -3,9 +3,9 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::rate::Rate;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::rate::Rate;
 
 /// `Line.ar/kr(start, end, dur, doneAction)`: ramps linearly from `start` to `end` over `dur`
 /// seconds, then holds at `end`. The arguments are latched on the first block (as in SuperCollider).

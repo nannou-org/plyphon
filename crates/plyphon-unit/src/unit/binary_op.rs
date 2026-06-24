@@ -3,9 +3,9 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::rate::Rate;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::rate::Rate;
 
 /// `a <op> b`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
 /// binary operator indices). Each input may be audio- or control-rate; the output is audio-rate.

@@ -73,7 +73,7 @@ impl StreamPlayback {
     /// Pull up to `frames` frames, calling `emit(frame, channel, sample)` for each sample of each
     /// produced frame, and return how many frames were produced (fewer than `frames` on underrun).
     /// Recycles each exhausted chunk back to the feeder. RT-safe (no allocation or blocking).
-    pub(crate) fn read(
+    pub fn read(
         &mut self,
         frames: usize,
         out_channels: usize,
@@ -159,7 +159,7 @@ impl StreamProducer {
 
 /// Create a cued stream: the RT [`StreamPlayback`] (to install in the buffer table) and the off-RT
 /// [`StreamProducer`] (handed to a feeder). Allocates `num_chunks` chunks of `chunk_frames` frames.
-pub(crate) fn cue(
+pub fn cue(
     channels: usize,
     sample_rate: f64,
     chunk_frames: usize,

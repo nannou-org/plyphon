@@ -9,12 +9,12 @@
 
 use std::sync::Arc;
 
-use crate::buffer::Buffer;
-use crate::graphdef::GraphDef;
-use crate::stream::StreamPlayback;
 use crate::tree::AddAction;
+use plyphon_dsp::buffer::Buffer;
+use plyphon_dsp::stream::StreamPlayback;
+use plyphon_unit::graphdef::GraphDef;
 
-/// A command from the [`Controller`](crate::controller::Controller) to the
+/// A command from the `Controller` to the
 /// [`World`](crate::world::World).
 pub enum Command {
     /// Install (or replace) the compiled def at `def_id`, resident in the World's def table so

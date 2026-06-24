@@ -10,9 +10,9 @@
 //! [`ProcessCtx`]: crate::unit::ProcessCtx
 //! [`InitCtx`]: crate::unit::InitCtx
 
-use crate::buffer::{Buffer, BufferTable};
-use crate::bus::Buses;
-use crate::stream::StreamPlayback;
+use plyphon_dsp::buffer::{Buffer, BufferTable};
+use plyphon_dsp::bus::Buses;
+use plyphon_dsp::stream::StreamPlayback;
 
 /// Audio bus channel `ch` for this block (an empty slice if `ch` is out of range), for `In.ar`.
 pub fn audio_in(buses: &Buses, ch: usize) -> &[f32] {
