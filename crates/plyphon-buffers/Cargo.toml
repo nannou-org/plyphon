@@ -8,6 +8,10 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["std"]
+std = ["plyphon/std", "thiserror/std"]
+
 [dependencies]
 plyphon.workspace = true
 thiserror.workspace = true

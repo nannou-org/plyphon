@@ -19,10 +19,16 @@
 //! This crate defines no loaders itself - see `plyphon-example-sampler` for a reference
 //! `BufferSource` (a small WAV decoder) implemented inline.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
-use std::future::Future;
-use std::pin::Pin;
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::future::Future;
+use core::pin::Pin;
 
 use plyphon::{Buffer, StreamProducer};
 use thiserror::Error;
