@@ -9,6 +9,9 @@
 //!
 //! A table slot can instead hold a disk-streaming endpoint (see [`crate::stream`]), read by `DiskIn`.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use crate::stream::StreamPlayback;
 
 /// A bank of interleaved audio samples (scsynth's `SndBuf`).

@@ -14,6 +14,9 @@ default = ["alloc"]
 # backing buffer. Without it the crate is fully `core`-only and the pool must be built
 # over caller-provided backing via `RtPool::from_backing`.
 alloc = []
+# rt-alloc never touches `std`; this feature exists only so the workspace-wide `std`
+# toggle composes uniformly across crates. Enabling it just pulls in `alloc`.
+std = ["alloc"]
 
 [dependencies]
 # Safe, no_std-friendly slice/byte reinterpretation - lets us read the inline boundary-tag

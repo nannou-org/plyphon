@@ -5,7 +5,10 @@
 //! and lends them to units by argument while they process, so there is no global
 //! mutable state and multiple engines can coexist.
 
+use alloc::vec::Vec;
 use core::f64::consts::TAU;
+
+use crate::math;
 
 /// Number of samples in one cycle of the sine table (matching scsynth's default).
 pub const SINE_SIZE: usize = 16384;
@@ -26,7 +29,7 @@ impl Wavetables {
         let mut sine = Vec::with_capacity(SINE_SIZE + 1);
         for i in 0..=SINE_SIZE {
             let phase = (i as f64) / (SINE_SIZE as f64) * TAU;
-            sine.push(phase.sin() as f32);
+            sine.push(math::sin(phase) as f32);
         }
         Wavetables { sine }
     }
@@ -48,7 +51,7 @@ impl Default for Wavetables {
 #[inline]
 pub fn lookup_cycle(table: &[f32], phase: f32) -> f32 {
     let n = table.len() - 1; // last entry is the guard sample
-    let frac_phase = phase - phase.floor(); // wrap into [0, 1)
+    let frac_phase = phase - math::floor(phase); // wrap into [0, 1)
     let pos = frac_phase * n as f32;
     let i = pos as usize; // 0..=n-1 (frac_phase < 1)
     let frac = pos - i as f32;

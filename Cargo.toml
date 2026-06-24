@@ -10,26 +10,31 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/mitchmindtree/plyphon"
 
 [workspace.dependencies]
-# Internal crates.
-plyphon = { version = "0.1.0", path = "crates/plyphon" }
-plyphon-buffers = { version = "0.1.0", path = "crates/plyphon-buffers" }
-plyphon-dsp = { version = "0.1.0", path = "crates/plyphon-dsp" }
-plyphon-osc = { version = "0.1.0", path = "crates/plyphon-osc" }
-plyphon-rt = { version = "0.1.0", path = "crates/plyphon-rt" }
-plyphon-unit = { version = "0.1.0", path = "crates/plyphon-unit" }
+# Internal crates. Default features (which include `std`) are disabled here so a dependent's
+# own `std` feature drives the whole graph: cargo forbids a member from disabling an inherited
+# dependency's default features, so the toggle has to live at the workspace level. Crates that
+# want `std` (the library crates by default, and every example) re-enable it via `<crate>/std`.
+plyphon = { version = "0.1.0", path = "crates/plyphon", default-features = false }
+plyphon-buffers = { version = "0.1.0", path = "crates/plyphon-buffers", default-features = false }
+plyphon-dsp = { version = "0.1.0", path = "crates/plyphon-dsp", default-features = false }
+plyphon-osc = { version = "0.1.0", path = "crates/plyphon-osc", default-features = false }
+plyphon-rt = { version = "0.1.0", path = "crates/plyphon-rt", default-features = false }
+plyphon-unit = { version = "0.1.0", path = "crates/plyphon-unit", default-features = false }
 rt-alloc = { version = "0.1.0", path = "crates/rt-alloc" }
-scgf = { version = "0.1.0", path = "crates/scgf" }
+scgf = { version = "0.1.0", path = "crates/scgf", default-features = false }
 
 # Shared dependencies.
 # Safe, no_std byte/slice reinterpretation - backs Pod ugen state in the rt-pool.
 bytemuck = { version = "1", features = ["derive"] }
 cpal = "0.16"
 # Lock-free SPSC ring for control -> RT command delivery (wait-free, no_std-friendly).
-rtrb = "0.3"
-# OSC encoding/decoding for the SuperCollider-compatible command front-end.
-rosc = "0.11"
-# Ergonomic error types.
-thiserror = "2"
+# `default-features = false` drops its `std` feature; re-enabled via each crate's `std`.
+rtrb = { version = "0.3", default-features = false }
+# OSC encoding/decoding for the SuperCollider-compatible command front-end. Its `std` feature
+# (which also pulls in the std-only `time` crate) is left off and re-enabled via `std`.
+rosc = { version = "0.11", default-features = false }
+# Ergonomic error types. Without `std` the derive targets `core::error::Error`.
+thiserror = { version = "2", default-features = false }
 
 # Web (wasm) example dependencies.
 console_error_panic_hook = "0.1"

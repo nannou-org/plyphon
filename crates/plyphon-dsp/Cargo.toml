@@ -8,6 +8,13 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["std"]
+std = ["rtrb/std"]
+
 [dependencies]
 bytemuck.workspace = true
+# Provides the transcendental float fns (sin, exp, sqrt, ...) for `no_std` builds, where the
+# inherent `f32`/`f64` methods are unavailable; see `math`. Dependency-free.
+libm = "0.2"
 rtrb.workspace = true

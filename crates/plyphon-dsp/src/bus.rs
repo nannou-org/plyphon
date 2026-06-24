@@ -15,6 +15,7 @@
 //! one channel within a block (scsynth's `Out` "touched" accumulate-vs-copy behaviour); control
 //! channels do the same for `Out.kr`.
 
+use alloc::vec::Vec;
 use core::ops::Range;
 
 /// A bank of audio-rate bus channels.

@@ -11,6 +11,9 @@
 //! lock-step: instead of sharing one buffer's memory across threads, plyphon passes ownership of
 //! whole chunks over SPSC rings, so no memory is shared mutably across threads.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 
 /// A fixed-capacity block of interleaved samples passed between the feeder and the audio thread.

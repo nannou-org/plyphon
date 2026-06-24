@@ -14,10 +14,15 @@
 //! every primitive is owned by the engine and passed by argument - so it compiles for native and
 //! `wasm32-unknown-unknown` alike.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+
+#[macro_use]
+extern crate alloc;
 
 pub mod buffer;
 pub mod bus;
+pub mod math;
 pub mod rate;
 pub mod rng;
 pub mod stream;
