@@ -12,7 +12,9 @@
 //! fixed slab here, so node create/free is O(1) and never touches an allocator. Only the variable-
 //! size, churning per-instance *state* is pooled (inside each [`Graph`]'s own `Region`).
 
-use std::collections::HashMap;
+use alloc::vec::Vec;
+
+use hashbrown::HashMap;
 
 use crate::graph::{Block, Graph};
 use plyphon_unit::unit::DoneAction;

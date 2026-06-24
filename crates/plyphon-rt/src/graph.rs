@@ -14,7 +14,8 @@
 //! and each unit writes into the shared scratch (disjoint from its inputs), which the loop then
 //! publishes into the wires.
 
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
 
 use bytemuck::{cast_slice, cast_slice_mut};
 use rt_alloc::{Align64, Region, RtPool};

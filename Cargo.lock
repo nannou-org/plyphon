@@ -1023,6 +1023,7 @@ name = "plyphon-rt"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "hashbrown",
  "plyphon-dsp",
  "plyphon-unit",
  "rt-alloc",

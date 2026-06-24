@@ -7,7 +7,8 @@
 //! (buffers/streams) to be dropped off the audio thread - freed synths return their pool block
 //! directly, with no trash - and [`Event`] carries notifications for the consumer.
 
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
 
 use crate::tree::AddAction;
 use plyphon_dsp::buffer::Buffer;

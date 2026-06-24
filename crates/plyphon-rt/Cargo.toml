@@ -8,8 +8,13 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["std"]
+std = ["plyphon-dsp/std", "plyphon-unit/std", "rt-alloc/std", "rtrb/std"]
+
 [dependencies]
 bytemuck.workspace = true
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
 plyphon-dsp.workspace = true
 plyphon-unit.workspace = true
 rt-alloc.workspace = true

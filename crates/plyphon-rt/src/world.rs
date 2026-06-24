@@ -12,7 +12,9 @@
 //! the trash ring (drained by the [`Nrt`](crate::nrt::Nrt)) to drop off the audio thread, and node
 //! notifications go to the events ring. Done actions are applied here after the tree runs.
 
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use bytemuck::cast_slice_mut;
 use rtrb::{Consumer, Producer, PushError};
