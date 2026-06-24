@@ -25,6 +25,7 @@ and plays both natively and in the browser.
 | [`plyphon-buffers`](crates/plyphon-buffers) | Async `BufferSource` traits for loading sample data (the I/O seam; impls are the app's). |
 | [`plyphon-example-motif`](crates/plyphon-example-motif) | A looping motif of self-freeing notes via `cpal` (the web demo). |
 | [`plyphon-example-sine`](crates/plyphon-example-sine) | The simplest example: a continuous sine. |
+| [`plyphon-example-custom-unit`](crates/plyphon-example-custom-unit) | Implement a custom unit generator (a `tanh` saturator) and register it alongside the base set. |
 | [`plyphon-example-routing`](crates/plyphon-example-routing) | Bus routing: an LFO-swept filter on noise, wired through audio and control buses. |
 | [`plyphon-example-control`](crates/plyphon-example-control) | Host-driven control buses: an arpeggio steered by `/n_map` + `/c_set`. |
 | [`plyphon-example-scgf`](crates/plyphon-example-scgf) | Loads a SuperCollider SCgf-compiled SynthDef and plays it. |
@@ -44,16 +45,17 @@ wasm tooling) are provided by the Nix flake:
 nix develop            # or `direnv allow` (uses ./.envrc)
 cargo build
 cargo test
-cargo run -p plyphon-example-sine      # the simplest demo: a continuous sine
-cargo run -p plyphon-example-routing   # bus routing: an LFO-swept filter on noise
-cargo run -p plyphon-example-control   # host-driven control buses: a bus-steered arpeggio
-cargo run -p plyphon-example-scgf      # load and play a SuperCollider SCgf SynthDef
-cargo run -p plyphon-example-sampler   # implement a BufferSource and play a loaded sample
-cargo run -p plyphon-example-stream    # stream a WAV in chunks and play it with DiskIn
-cargo run -p plyphon-example-waveforms # cycle through the oscillators through a filter
-cargo run -p plyphon-example-pan       # a tone auto-panned across the stereo field
-cargo run -p plyphon-example-envelope  # percussive plucks shaped by EnvGen envelopes
-cargo run -p plyphon-example-osc       # drive the engine over OSC packets and print the replies
+cargo run -p plyphon-example-sine        # the simplest demo: a continuous sine
+cargo run -p plyphon-example-custom-unit # implement and register a custom unit (a tanh saturator)
+cargo run -p plyphon-example-routing     # bus routing: an LFO-swept filter on noise
+cargo run -p plyphon-example-control     # host-driven control buses: a bus-steered arpeggio
+cargo run -p plyphon-example-scgf        # load and play a SuperCollider SCgf SynthDef
+cargo run -p plyphon-example-sampler     # implement a BufferSource and play a loaded sample
+cargo run -p plyphon-example-stream      # stream a WAV in chunks and play it with DiskIn
+cargo run -p plyphon-example-waveforms   # cycle through the oscillators through a filter
+cargo run -p plyphon-example-pan         # a tone auto-panned across the stereo field
+cargo run -p plyphon-example-envelope    # percussive plucks shaped by EnvGen envelopes
+cargo run -p plyphon-example-osc         # drive the engine over OSC packets and print the replies
 cargo build --target wasm32-unknown-unknown -p plyphon-example-motif
 ```
 

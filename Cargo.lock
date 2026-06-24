@@ -887,6 +887,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plyphon-example-custom-unit"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "console_error_panic_hook",
+ "cpal",
+ "plyphon",
+]
+
+[[package]]
 name = "plyphon-example-envelope"
 version = "0.1.0"
 dependencies = [
