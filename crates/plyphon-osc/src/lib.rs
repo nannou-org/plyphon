@@ -25,9 +25,17 @@
 //! [`OscDispatcher::run_pending`], which installs the buffer, runs the command's completion message,
 //! and queues `/done`. (Sources are decoded the host's way - see `plyphon-buffers`.)
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+#[macro_use]
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use hashbrown::HashMap;
 
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
@@ -40,8 +48,12 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum OscError {
     /// The bytes failed to decode as an OSC packet.
-    #[error("OSC decode error")]
-    Decode(#[from] rosc::OscError),
+    //
+    // Not `#[from]`: `rosc::OscError` only implements `Error` under rosc's `std` feature, so a
+    // `#[source]`/`#[from]` field would not compile without `std`. The detail is surfaced through
+    // `Display` instead (rosc implements that unconditionally), and decode sites map explicitly.
+    #[error("OSC decode error: {0}")]
+    Decode(rosc::OscError),
     /// The command address is not supported.
     #[error("unsupported OSC command: {0}")]
     UnsupportedCommand(String),
@@ -135,7 +147,7 @@ impl OscDispatcher {
     /// Take the OSC replies queued since the last call (`/done`, `/b_info`, `/fail`, and the
     /// `/n_*` node notifications) for the transport to send back to the client.
     pub fn take_replies(&mut self) -> Vec<OscPacket> {
-        std::mem::take(&mut self.replies)
+        core::mem::take(&mut self.replies)
     }
 
     /// Translate an engine [`Event`] into the matching SuperCollider node-notification reply and
@@ -178,7 +190,7 @@ impl OscDispatcher {
     /// errors. Drive this on whatever executor suits the host (a background thread natively,
     /// `spawn_local` on the web); it never touches the audio thread.
     pub async fn run_pending(&mut self) {
-        for load in std::mem::take(&mut self.pending) {
+        for load in core::mem::take(&mut self.pending) {
             let result = match &self.source {
                 Some(source) => Some(source.load(&load.key, load.region).await),
                 None => None,
