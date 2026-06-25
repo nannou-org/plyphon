@@ -80,7 +80,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './example-schedule.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-schedule_bg.wasm', 190450, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-schedule_bg.wasm', 200088, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,7 +89,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-schedule.js" crossorigin="anonymous" integrity="sha384-orVSy0lEShaYGgBAd6I1QIub5zOqFhg1Ha6ZKOWcZulvnOZS26KTE1bD8Bso2C9C"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-schedule_bg.wasm" crossorigin="anonymous" integrity="sha384-Nc9tUy5MoS+WzKMD+S25c97QXb5YPQNr3qPoUC4P0kny7vuQTZoh0aunLMK9cTH6" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-schedule.js" crossorigin="anonymous" integrity="sha384-orVSy0lEShaYGgBAd6I1QIub5zOqFhg1Ha6ZKOWcZulvnOZS26KTE1bD8Bso2C9C"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-schedule_bg.wasm" crossorigin="anonymous" integrity="sha384-JBMdZtg94ZGbx2Xp28rY705CLiM2w3Ojre8A7ufl5Hq89fmGOsg24lMi3mPvkcEZ" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>
