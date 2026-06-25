@@ -39,12 +39,16 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **FFT / spectral** - none yet: FFT/IFFT, the `PV_*` set, Pitch, Onsets, BeatTrack
 - [ ] **Chaos / rate conversion** - none yet: Lorenz, LinCong, Henon, ... and A2K/K2A/T2A/DC
 
-## OSC server commands (41 of ~65)
+## OSC server commands (53 of ~65)
 
-The unimplemented *getters* (`/status`, `/sync`, `/n_query`, `/c_get`/`/c_getn`, `/s_get`/`/s_getn`,
-`/b_get`/`/b_getn`, `/g_queryTree`, `/rtMemoryStatus`) and the tree-query/`/b_gen` commands all need a
-control-side path to read live RT state, which the engine does not have yet (the RT→NRT path carries
-only fixed `Event` notifications). They are deferred to a follow-up that adds a query/reply channel.
+The *getters* (`/status`, `/sync`, `/rtMemoryStatus`, `/n_query`, `/c_get`/`/c_getn`, `/s_get`/`/s_getn`,
+`/b_get`/`/b_getn`, `/g_queryTree`) read live engine state over a third RT→NRT ring - a fixed-size
+`Copy` `Reply` enum mirroring the events ring. They are *asynchronous*: the dispatcher issues one
+query per element, the engine answers a block later, and the dispatcher reassembles the answers (in
+the FIFO order the queries were issued) into one OSC reply message. The RT side returns only numeric
+indices and values; all names are resolved control-side. `/g_dumpTree` reuses the tree walk but
+formats to an optional host text sink. `/b_gen` fills buffers control-side (sine1/2/3, cheby, with
+normalize) or via an engine-side copy.
 
 A second group are **server/transport commands**: they concern the connection or the host process,
 not the synthesis engine, so they live in the host/transport layer rather than the engine OSC
@@ -52,7 +56,9 @@ front-end. As in scsynth - where the audio thread always writes node notificatio
 comm layer alone decides delivery (iterating the registered reply-addresses, `mUsers`) - plyphon's
 `OscDispatcher` always *emits* the node notifications, and who receives them is the host's call. The
 `plyphon-cli` server implements these: `/notify` (a client's per-connection notification subscription,
-its `notified` set mirroring `mUsers`), `/status`, `/quit`, `/dumpOSC`, and `/version`.
+its `notified` set mirroring `mUsers`), `/quit`, `/dumpOSC`, and `/version`. (The engine-state
+queries `/status`/`/sync`/`/rtMemoryStatus` are *not* server commands - the server forwards them to
+the dispatcher and routes each async answer back to the requester, alongside the other getters.)
 
 The genuinely-deferred host actions - `/cmd`/`/u_cmd`/`/n_cmd`, `/d_load`/`/d_loadDir`,
 `/b_write`/`/b_close`, the audio-rate mappers `/n_mapa`/`/n_mapan`, and `/n_trace` - need a plugin
@@ -60,18 +66,18 @@ registry, filesystem, or audio-rate control mapping the engine does not model; t
 surface them as typed higher-level actions for the embedding host, the way `/b_allocRead` already
 defers I/O to an app-provided `BufferSource`.
 
-**Server / top-level** (7/10)
+**Server / top-level** (9/10)
 
 - [x] /notify - server-owned (plyphon-cli): per-connection subscription to node notifications
-- [x] /status - server-owned (plyphon-cli); partial: best-effort fields (root group + sample rate)
+- [x] /status - engine query: real ugen/synth/group/synthdef counts (avg/peak CPU reported as `0.0`)
 - [x] /quit - server-owned (plyphon-cli)
 - [ ] /cmd
 - [x] /dumpOSC - server-owned (plyphon-cli)
 - [x] /clearSched - engine front-end (clears the World scheduler)
-- [ ] /sync
+- [x] /sync - engine query: a command-stream barrier answered with `/synced`
 - [x] /error - engine front-end: permanent (`0`/`1`) and bundle-local (`-1`/`-2`) modes gate `/fail`
 - [x] /version - server-owned (plyphon-cli)
-- [ ] /rtMemoryStatus
+- [x] /rtMemoryStatus - engine query: rt-pool free/largest-chunk bytes
 
 **SynthDef** (3/5)
 
@@ -81,15 +87,15 @@ defers I/O to an app-provided `BufferSource`.
 - [x] /d_free
 - [x] /d_freeAll
 
-**Synth** (2/4)
+**Synth** (4/4)
 
 - [x] /s_new
-- [ ] /s_get
-- [ ] /s_getn
+- [x] /s_get - getter; reply echoes the as-given control token (index or name)
+- [x] /s_getn
 - [x] /s_noid - partial: detaches control-name resolution; the node keeps running and stays reachable
   by control index (plyphon does not reassign a hidden negative id)
 
-**Node** (10/15)
+**Node** (11/15)
 
 - [x] /n_set
 - [x] /n_free
@@ -101,13 +107,13 @@ defers I/O to an app-provided `BufferSource`.
 - [x] /n_setn
 - [x] /n_fill
 - [x] /n_run
-- [ ] /n_query
+- [x] /n_query - getter; one `/n_info` per node (parent/prev/next/isGroup, head/tail for a group)
 - [ ] /n_trace
 - [ ] /n_mapa
 - [ ] /n_mapan
 - [ ] /n_cmd
 
-**Group** (6/8)
+**Group** (8/8)
 
 - [x] /g_new
 - [x] /g_head
@@ -115,22 +121,22 @@ defers I/O to an app-provided `BufferSource`.
 - [x] /g_freeAll
 - [x] /g_deepFree
 - [x] /p_new - emulated by an ordinary group, as scsynth does
-- [ ] /g_dumpTree
-- [ ] /g_queryTree
+- [x] /g_dumpTree - getter; formats an indented tree to an optional host text sink (no OSC reply)
+- [x] /g_queryTree - getter; pre-order tree stream with optional control values
 
 **Unit** (0/1)
 
 - [ ] /u_cmd
 
-**Control bus** (3/5)
+**Control bus** (5/5)
 
 - [x] /c_set
 - [x] /c_setn
 - [x] /c_fill
-- [ ] /c_get
-- [ ] /c_getn
+- [x] /c_get - getter
+- [x] /c_getn - getter
 
-**Buffer** (10/17)
+**Buffer** (13/17)
 
 - [x] /b_alloc
 - [x] /b_allocRead
@@ -143,9 +149,10 @@ defers I/O to an app-provided `BufferSource`.
 - [x] /b_set
 - [x] /b_setn
 - [x] /b_fill
-- [ ] /b_gen
-- [ ] /b_get
-- [ ] /b_getn
+- [x] /b_gen - partial: sine1/2/3, cheby (+ normalize), copy; mono only; wavetable mode unsupported
+  (no `Osc` UGen yet); always generates fresh (no accumulate-onto-existing)
+- [x] /b_get - getter
+- [x] /b_getn - getter
 - [ ] /b_allocReadChannel
 - [ ] /b_readChannel
 - [x] /b_setSampleRate
@@ -153,14 +160,17 @@ defers I/O to an app-provided `BufferSource`.
 ## Replies, notifications & done actions
 
 - [x] Replies: /done, /fail, /b_info, and node notifications /n_go /n_end /n_off /n_on
-- [ ] /status.reply, /synced (the `/sync` barrier), /tr (SendTrig), /n_info (`/n_query`), /g_queryTree.reply, and the `/c_get` / `/b_get` getters
+- [x] Getter replies: /status.reply, /synced (the `/sync` barrier), /rtMemoryStatus.reply, /n_info
+  (`/n_query`), /g_queryTree.reply, /c_set·/c_setn (`/c_get`·`/c_getn`), /n_set·/n_setn
+  (`/s_get`·`/s_getn`), /b_set·/b_setn (`/b_get`·`/b_getn`)
+- [ ] /tr (SendTrig) and /n_info from out-of-band node moves (`/n_move`)
 - [ ] Done actions beyond 0 (none), 1 (pause self), 2 (free self): codes 3-14, the free/pause variants that also touch neighbours or the enclosing group
 
 ## SynthDefs & buffers
 
 - [x] SCgf binary SynthDefs load via `/d_recv` (and the [`scgf`](crates/scgf) crate also encodes them); named parameters are folded from SC's `Control` UGens
 - [ ] Control family beyond plain `Control`: `TrigControl`/`LagControl` parse but behave as plain controls; SynthDef variants
-- [x] Buffers: allocate, free, zero, query, and asynchronous loading through an app-provided [`BufferSource`](crates/plyphon-buffers) (the I/O seam), plus chunk-streaming playback with `DiskIn`
-- [ ] Writing/recording buffers to disk, `b_gen` wavetable fills, and `b_get`/`b_set` element access
+- [x] Buffers: allocate, free, zero, query, `b_gen` (sine/cheby/copy) fills, `b_get`/`b_set` element access, and asynchronous loading through an app-provided [`BufferSource`](crates/plyphon-buffers) (the I/O seam), plus chunk-streaming playback with `DiskIn`
+- [ ] Writing/recording buffers to disk and `b_gen` wavetable fills (no `Osc` UGen to consume them yet)
 
 [scsynth]: https://github.com/supercollider/supercollider
