@@ -1,0 +1,19 @@
+[package]
+name = "example-sine"
+version = "0.1.0"
+publish = false
+description = "The simplest plyphon example: a continuous sine via cpal."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cpal.workspace = true
+plyphon.workspace = true
+
+# Web-only: cpal's WebAudio backend plus the wasm glue.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpal = { workspace = true, features = ["wasm-bindgen"] }
+console_error_panic_hook.workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "example-stream"
+version = "0.1.0"
+publish = false
+description = "A plyphon example: stream a WAV from storage in chunks and play it with DiskIn, via cpal."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cpal.workspace = true
+plyphon.workspace = true
+plyphon-buffers.workspace = true
+hound = "3"
+
+# Web-only: cpal's WebAudio backend, the wasm glue, async task spawning, HTTP fetch, and a timer.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpal = { workspace = true, features = ["wasm-bindgen"] }
+console_error_panic_hook.workspace = true
+wasm-bindgen-futures = "0.4"
+gloo-net = { version = "0.6", default-features = false, features = ["http"] }
+gloo-timers = "0.3"

@@ -16,7 +16,7 @@
 //! it also fits single-threaded `wasm32` executors; an application that wants multi-threaded loading
 //! on native simply drives the future on a dedicated thread (mirroring scsynth's NRT thread).
 //!
-//! This crate defines no loaders itself - see `plyphon-example-sampler` for a reference
+//! This crate defines no loaders itself - see `example-sampler` for a reference
 //! `BufferSource` (a small WAV decoder) implemented inline.
 
 #![cfg_attr(not(feature = "std"), no_std)]

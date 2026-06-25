@@ -1,4 +1,4 @@
-# The web demo: builds `plyphon-example` for `wasm32-unknown-unknown` via `trunk`. The whole
+# The web demo: builds `example-motif` for `wasm32-unknown-unknown` via `trunk`. The whole
 # engine is pure Rust, so this build needs no C++ toolchain and no submodules.
 {
   binaryen,

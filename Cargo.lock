@@ -358,6 +358,133 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-control"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-timers",
+ "plyphon",
+]
+
+[[package]]
+name = "example-custom-unit"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "console_error_panic_hook",
+ "cpal",
+ "plyphon",
+]
+
+[[package]]
+name = "example-envelope"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-timers",
+ "plyphon",
+]
+
+[[package]]
+name = "example-motif"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-timers",
+ "plyphon",
+]
+
+[[package]]
+name = "example-osc"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-timers",
+ "plyphon",
+ "plyphon-osc",
+ "rosc",
+ "scgf",
+]
+
+[[package]]
+name = "example-pan"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "plyphon",
+]
+
+[[package]]
+name = "example-routing"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "plyphon",
+]
+
+[[package]]
+name = "example-sampler"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-net",
+ "hound",
+ "plyphon",
+ "plyphon-buffers",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "example-scgf"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "plyphon",
+ "scgf",
+]
+
+[[package]]
+name = "example-sine"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "plyphon",
+]
+
+[[package]]
+name = "example-stream"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-net",
+ "gloo-timers",
+ "hound",
+ "plyphon",
+ "plyphon-buffers",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "example-waveforms"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-timers",
+ "plyphon",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -891,133 +1018,6 @@ dependencies = [
  "bytemuck",
  "libm",
  "rtrb",
-]
-
-[[package]]
-name = "plyphon-example-control"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "gloo-timers",
- "plyphon",
-]
-
-[[package]]
-name = "plyphon-example-custom-unit"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "console_error_panic_hook",
- "cpal",
- "plyphon",
-]
-
-[[package]]
-name = "plyphon-example-envelope"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "gloo-timers",
- "plyphon",
-]
-
-[[package]]
-name = "plyphon-example-motif"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "gloo-timers",
- "plyphon",
-]
-
-[[package]]
-name = "plyphon-example-osc"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "gloo-timers",
- "plyphon",
- "plyphon-osc",
- "rosc",
- "scgf",
-]
-
-[[package]]
-name = "plyphon-example-pan"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "plyphon",
-]
-
-[[package]]
-name = "plyphon-example-routing"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "plyphon",
-]
-
-[[package]]
-name = "plyphon-example-sampler"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "gloo-net",
- "hound",
- "plyphon",
- "plyphon-buffers",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "plyphon-example-scgf"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "plyphon",
- "scgf",
-]
-
-[[package]]
-name = "plyphon-example-sine"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "plyphon",
-]
-
-[[package]]
-name = "plyphon-example-stream"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "gloo-net",
- "gloo-timers",
- "hound",
- "plyphon",
- "plyphon-buffers",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "plyphon-example-waveforms"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "cpal",
- "gloo-timers",
- "plyphon",
 ]
 
 [[package]]

@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/plyphon",
+    "crates/plyphon-buffers",
+    "crates/plyphon-dsp",
+    "crates/plyphon-osc",
+    "crates/plyphon-rt",
+    "crates/plyphon-unit",
+    "crates/rt-alloc",
+    "crates/scgf",
+    "crates/examples/*",
+]
 resolver = "3"
 
 [workspace.package]
