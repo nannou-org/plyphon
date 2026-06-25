@@ -129,6 +129,34 @@ pub enum Command {
     },
 }
 
+/// When a [`Command`] should take effect on the audio thread - plyphon's port of scsynth's OSC
+/// bundle time tag.
+///
+/// An [`Immediate`](Self::Immediate) command is applied as the World drains it (scsynth's time-tag
+/// `0`/`1`, and any already-late tag); an [`At`](Self::At) command is held in the World's scheduler
+/// until its time is reached. The time is absolute OSC/NTP time: the 32.32 fixed-point
+/// `(seconds << 32) | fraction` since 1900 that OSC bundles carry, compared on the audio thread
+/// against the World's drift-corrected clock.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum CommandTime {
+    /// Apply as soon as the World drains the command.
+    Immediate,
+    /// Apply when the World's clock reaches this absolute OSC/NTP time.
+    At(u64),
+}
+
+/// A [`Command`] paired with [the time](CommandTime) it should take effect - the item the
+/// control -> RT ring carries.
+///
+/// Flat by value: the scheduler holds it directly, with no `Box`/`Vec`, so a scheduled command
+/// never forces a heap free on the audio thread.
+pub struct TimedCommand {
+    /// When to apply the command.
+    pub time: CommandTime,
+    /// The command to apply.
+    pub command: Command,
+}
+
 /// Heap-owning values handed back to the NRT side to be dropped off the audio thread. Freed synths
 /// no longer appear here: their state lives in the rt-pool and is reclaimed by `dealloc` on the audio
 /// thread (a cheap free-list return), and their `Arc<GraphDef>` is a non-final refcount decrement.

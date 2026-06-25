@@ -30,7 +30,7 @@ pub mod options;
 pub mod tree;
 pub mod world;
 
-pub use command::{Command, Event, Trash};
+pub use command::{Command, CommandTime, Event, TimedCommand, Trash};
 pub use graph::Graph;
 pub use nrt::Nrt;
 pub use options::{Options, ROOT_GROUP_ID};

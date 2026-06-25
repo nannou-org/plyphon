@@ -28,7 +28,7 @@ use plyphon_dsp::buffer::Buffer;
 use plyphon_dsp::rate::RateInfo;
 use plyphon_dsp::stream::{StreamProducer, cue};
 use plyphon_rt::Options;
-use plyphon_rt::command::Command;
+use plyphon_rt::command::{Command, CommandTime, TimedCommand};
 use plyphon_rt::tree::AddAction;
 use plyphon_unit::error::BuildError;
 use plyphon_unit::graphdef::GraphDef;
@@ -72,7 +72,10 @@ pub struct Controller {
     max_synthdefs: usize,
     max_wire_bufs: usize,
     max_unit_outputs: usize,
-    tx: Producer<Command>,
+    tx: Producer<TimedCommand>,
+    /// The time tag applied to commands while a scheduling window is open (see
+    /// [`Controller::begin_scheduled`]); [`CommandTime::Immediate`] otherwise.
+    schedule: CommandTime,
     next_id: i32,
 }
 
@@ -81,7 +84,7 @@ impl Controller {
         options: &Options,
         audio: RateInfo,
         control: RateInfo,
-        tx: Producer<Command>,
+        tx: Producer<TimedCommand>,
     ) -> Self {
         Controller {
             registry: UnitRegistry::with_builtins(),
@@ -96,9 +99,42 @@ impl Controller {
             max_wire_bufs: options.max_wire_bufs,
             max_unit_outputs: options.max_unit_outputs,
             tx,
+            schedule: CommandTime::Immediate,
             // Client node ids start above the root group (id 0).
             next_id: 1000,
         }
+    }
+
+    /// Open a scheduling window: commands issued until [`end_scheduled`](Self::end_scheduled) take
+    /// effect at `time` (an absolute OSC/NTP time) instead of immediately, letting the OSC
+    /// front-end honour a bundle's time tag. Def installs are always immediate regardless, so a
+    /// scheduled `synth_new`'s def is resident before it fires.
+    pub fn begin_scheduled(&mut self, time: CommandTime) {
+        self.schedule = time;
+    }
+
+    /// Close the scheduling window opened by [`begin_scheduled`](Self::begin_scheduled); subsequent
+    /// commands are immediate again.
+    pub fn end_scheduled(&mut self) {
+        self.schedule = CommandTime::Immediate;
+    }
+
+    /// Push `command` to the RT ring with the controller's current schedule time.
+    fn send(&mut self, command: Command) -> Result<(), QueueFull> {
+        self.push(self.schedule, command)
+    }
+
+    /// Push `command` to the RT ring to take effect immediately, ignoring any open scheduling
+    /// window (for control-side bookkeeping that must be resident before later commands fire).
+    fn send_now(&mut self, command: Command) -> Result<(), QueueFull> {
+        self.push(CommandTime::Immediate, command)
+    }
+
+    /// The single point at which a command crosses to the RT side, wrapped with its time tag.
+    fn push(&mut self, time: CommandTime, command: Command) -> Result<(), QueueFull> {
+        self.tx
+            .push(TimedCommand { time, command })
+            .map_err(|_| QueueFull)
     }
 
     /// Mutable access to the unit registry, for registering custom units.
@@ -151,14 +187,13 @@ impl Controller {
         action: AddAction,
     ) -> Result<(), SynthNewError> {
         let def_id = self.ensure_compiled(def_name)?;
-        self.tx
-            .push(Command::AddSynth {
-                id,
-                def_id,
-                target,
-                action,
-            })
-            .map_err(|_| SynthNewError::QueueFull)?;
+        self.send(Command::AddSynth {
+            id,
+            def_id,
+            target,
+            action,
+        })
+        .map_err(|_| SynthNewError::QueueFull)?;
         Ok(())
     }
 
@@ -196,12 +231,11 @@ impl Controller {
             }
         };
         let def = Arc::new(graphdef);
-        self.tx
-            .push(Command::DefineGraphDef {
-                def_id,
-                def: Arc::clone(&def),
-            })
-            .map_err(|_| SynthNewError::QueueFull)?;
+        self.send_now(Command::DefineGraphDef {
+            def_id,
+            def: Arc::clone(&def),
+        })
+        .map_err(|_| SynthNewError::QueueFull)?;
         self.compiled.insert(def_name.to_string(), def);
         Ok(def_id)
     }
@@ -221,23 +255,17 @@ impl Controller {
         target: i32,
         action: AddAction,
     ) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::AddGroup { id, target, action })
-            .map_err(|_| QueueFull)
+        self.send(Command::AddGroup { id, target, action })
     }
 
     /// Set control parameter `param` of node `node` to `value`.
     pub fn set_control(&mut self, node: i32, param: usize, value: f32) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::SetControl { node, param, value })
-            .map_err(|_| QueueFull)
+        self.send(Command::SetControl { node, param, value })
     }
 
     /// Set control bus channel `bus` to `value` (scsynth's `/c_set`).
     pub fn set_control_bus(&mut self, bus: u32, value: f32) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::SetControlBus { bus, value })
-            .map_err(|_| QueueFull)
+        self.send(Command::SetControlBus { bus, value })
     }
 
     /// Set consecutive control bus channels from `start` to `values` (scsynth's `/c_setn`).
@@ -256,9 +284,7 @@ impl Controller {
         param: usize,
         bus: Option<u32>,
     ) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::MapControl { node, param, bus })
-            .map_err(|_| QueueFull)
+        self.send(Command::MapControl { node, param, bus })
     }
 
     /// Map `count` consecutive control parameters of `node` (from `param`) to consecutive control
@@ -279,9 +305,7 @@ impl Controller {
 
     /// Free node `node` (deeply for a group: the group and its whole subtree).
     pub fn free(&mut self, node: i32) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::FreeNode { node })
-            .map_err(|_| QueueFull)
+        self.send(Command::FreeNode { node })
     }
 
     /// Move node `node` to `target`/`action` (scsynth's `/g_head`, `/g_tail`, `/n_before`,
@@ -292,34 +316,26 @@ impl Controller {
         target: i32,
         action: AddAction,
     ) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::MoveNode {
-                node,
-                target,
-                action,
-            })
-            .map_err(|_| QueueFull)
+        self.send(Command::MoveNode {
+            node,
+            target,
+            action,
+        })
     }
 
     /// Free every node in group `group`, leaving it empty (scsynth's `/g_freeAll`).
     pub fn free_all(&mut self, group: i32) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::FreeAll { group })
-            .map_err(|_| QueueFull)
+        self.send(Command::FreeAll { group })
     }
 
     /// Free every synth in group `group` and its subgroups, keeping the groups (`/g_deepFree`).
     pub fn deep_free(&mut self, group: i32) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::DeepFree { group })
-            .map_err(|_| QueueFull)
+        self.send(Command::DeepFree { group })
     }
 
     /// Pause or resume node `node` (scsynth's `/n_run`).
     pub fn node_run(&mut self, node: i32, run: bool) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::NodeRun { node, run })
-            .map_err(|_| QueueFull)
+        self.send(Command::NodeRun { node, run })
     }
 
     /// Install (or replace) the buffer at `index` with an already-built buffer.
@@ -327,9 +343,7 @@ impl Controller {
     /// The buffer is built off the audio thread (this is where any allocation or sample loading
     /// happens); the `World` only does an O(1) swap and routes any previous buffer to the trash ring.
     pub fn buffer_set(&mut self, index: usize, buffer: Box<Buffer>) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::SetBuffer { index, buffer })
-            .map_err(|_| QueueFull)
+        self.send(Command::SetBuffer { index, buffer })
     }
 
     /// Allocate a zeroed buffer of `num_frames` x `num_channels` at `index` (scsynth's `/b_alloc`).
@@ -346,9 +360,7 @@ impl Controller {
 
     /// Free the buffer at `index` (scsynth's `/b_free`).
     pub fn buffer_free(&mut self, index: usize) -> Result<(), QueueFull> {
-        self.tx
-            .push(Command::FreeBuffer { index })
-            .map_err(|_| QueueFull)
+        self.send(Command::FreeBuffer { index })
     }
 
     /// Cue a disk-streaming buffer at `index` (scsynth's `Buffer.cueSoundFile`).
@@ -365,9 +377,7 @@ impl Controller {
         num_chunks: usize,
     ) -> Result<StreamProducer, QueueFull> {
         let (playback, producer) = cue(channels, sample_rate, chunk_frames, num_chunks);
-        self.tx
-            .push(Command::CueStream { index, playback })
-            .map_err(|_| QueueFull)?;
+        self.send(Command::CueStream { index, playback })?;
         Ok(producer)
     }
 }

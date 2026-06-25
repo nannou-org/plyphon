@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 use bytemuck::cast_slice_mut;
 use rtrb::{Consumer, Producer, PushError};
 
-use crate::command::{Command, Event, Trash};
+use crate::command::{Command, Event, TimedCommand, Trash};
 use crate::graph::{Block, Graph, Pool};
 use crate::options::Options;
 use crate::tree::{AddAction, FreedNode, NodeTree};
@@ -55,7 +55,7 @@ pub struct World {
     unit_scratch: Box<[f32]>,
     /// Per-instance RNG seed counter, advanced for each synth built.
     next_seed: u64,
-    rx: Consumer<Command>,
+    rx: Consumer<TimedCommand>,
     trash_tx: Producer<Trash>,
     events_tx: Producer<Event>,
     /// Freed items awaiting space in the trash ring (pre-allocated; never reallocates at runtime).
@@ -77,7 +77,7 @@ impl World {
         options: &Options,
         audio: RateInfo,
         control: RateInfo,
-        rx: Consumer<Command>,
+        rx: Consumer<TimedCommand>,
         trash_tx: Producer<Trash>,
         events_tx: Producer<Event>,
     ) -> Self {
@@ -228,8 +228,8 @@ impl World {
     fn drain_commands(&mut self) {
         self.flush_pending_trash();
         self.flush_pending_events();
-        while let Ok(cmd) = self.rx.pop() {
-            self.apply(cmd);
+        while let Ok(timed) = self.rx.pop() {
+            self.apply(timed.command);
         }
     }
 

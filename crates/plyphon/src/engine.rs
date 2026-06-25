@@ -4,7 +4,7 @@
 use rtrb::RingBuffer;
 
 use plyphon_dsp::rate::RateInfo;
-use plyphon_rt::{Command, Event, Nrt, Options, Trash, World};
+use plyphon_rt::{Event, Nrt, Options, TimedCommand, Trash, World};
 
 use crate::controller::Controller;
 
@@ -14,7 +14,7 @@ use crate::controller::Controller;
 /// `Controller` wherever commands originate. They share only the lock-free rings created here. See
 /// the [`nrt`](plyphon_rt::nrt) module for the intended threading lifecycle.
 pub fn engine(options: Options) -> (Controller, Nrt, World) {
-    let (cmd_tx, cmd_rx) = RingBuffer::<Command>::new(options.command_capacity.max(1));
+    let (cmd_tx, cmd_rx) = RingBuffer::<TimedCommand>::new(options.command_capacity.max(1));
     // The trash ring carries freed/replaced buffers and streams (freed synths return to the pool
     // directly, on the audio thread, so they never trash).
     let (trash_tx, trash_rx) = RingBuffer::<Trash>::new(options.max_buffers.max(1));

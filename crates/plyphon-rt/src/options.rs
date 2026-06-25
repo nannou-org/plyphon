@@ -34,6 +34,10 @@ pub struct Options {
     pub max_unit_outputs: usize,
     /// Capacity of the control -> RT command ring.
     pub command_capacity: usize,
+    /// Capacity of the World's time-tag scheduler: the maximum number of scheduled (future)
+    /// commands held at once (scsynth's `mScheduler` holds 2048). A scheduled command that would
+    /// exceed it is dropped, like a full ring.
+    pub max_scheduled: usize,
 }
 
 impl Default for Options {
@@ -53,6 +57,7 @@ impl Default for Options {
             max_wire_bufs: 1024,
             max_unit_outputs: 128,
             command_capacity: 1024,
+            max_scheduled: 2048,
         }
     }
 }
