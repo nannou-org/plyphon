@@ -17,6 +17,16 @@
 //! [`Nrt`](plyphon::Nrt) to [`OscDispatcher::notify`], which queues the matching `/n_go`/`/n_end`/
 //! `/n_off`/`/n_on` reply - so a self-freeing synth's `/n_end` reaches the client over OSC too.
 //!
+//! # Time-tag scheduling
+//!
+//! A bundle's OSC time tag is honoured: a future tag schedules every message in the bundle (and
+//! nested bundles) for that absolute time instead of applying it at once. The engine resolves the
+//! tag sample-accurately on the audio thread against a drift-corrected clock, and `OffsetOut` places
+//! a scheduled synth's onset on the exact sample. The "immediately" tags `0`/`1`, and any already-
+//! past time, apply at once. For this to track wall-clock time the host drives the engine with
+//! [`World::fill_at`](plyphon::World::fill_at) (passing each buffer's OSC time); otherwise the
+//! engine's clock free-runs at the nominal rate.
+//!
 //! # Asynchronous buffer loading
 //!
 //! `/b_allocRead` and `/b_read` read sound files, which plyphon keeps off the OSC-handling path:

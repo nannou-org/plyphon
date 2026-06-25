@@ -42,6 +42,7 @@ An scsynth-compatible synthesis core that can be driven by any pure-Rust audio b
 | [`example-pan`](crates/examples/pan) | A tone auto-panned across the stereo field with `Pan2`. |
 | [`example-envelope`](crates/examples/envelope) | Percussive plucks shaped by multi-segment `EnvGen` envelopes that free their own synths. |
 | [`example-osc`](crates/examples/osc) | Drives the engine through encoded SuperCollider OSC packets (no sockets) and prints the control commands and the replies/notifications that flow back. |
+| [`example-schedule`](crates/examples/schedule) | Sample-accurate rhythm: schedules time-tagged OSC bundles up front, each note onsetting on its exact sample via the engine's drift-corrected scheduler and `OffsetOut`. |
 
 ## Building
 
