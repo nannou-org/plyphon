@@ -1,15 +1,17 @@
 # plyphon
 
-A **pure-Rust** rewrite of the core of SuperCollider's [`scsynth`][scsynth] audio synthesis
-engine. No C++, no FFI, no submodules - the entire engine is Rust, so it builds for native
-targets and `wasm32-unknown-unknown` alike, and runs in the browser. The goal is an
-scsynth-compatible synthesis core that can be driven by any pure-Rust audio backend (e.g.
-[`cpal`][cpal]), preserving scsynth's hard real-time guarantees (no locks, blocking, or
-allocation on the audio thread).
+An embeddable implementation of SuperCollider's scsynth audio synthesis engine.
 
-This is early-stage research. plyphon already runs a lock-free `World`/`Controller`/`Nrt`
-engine with a growing set of UGens, loads SuperCollider SynthDefs (SCgf), accepts OSC commands,
-and plays both natively and in the browser.
+An scsynth-compatible synthesis core that can be driven by any pure-Rust audio backend (e.g. `cpal`, `bevy_audio`, etc) preserving scsynth's hard realtime performance - no locks, blocking, heap allocation or I/O on the audio thread.
+
+## Goals
+
+- **Embedded targets and `wasm32-unknown-unknown`** - plyphon is a `#![no_std]` Rust crate, making it compatible with a lot of embedded device targets, including the web. C++ bindings are typically hard to wrangle for Rust's most common web target. An attempt has been made in [`scsynth-rs`](https://github.com/mitchmindtree/scsynth-rs), but the approach requires many small patches to supercollider itself, and teasing out the raw state machines for the RT and NRT threads while providing a reliably safe API is non-trivial. A pure-Rust implementation simplifies this a lot.
+- **Library-first, OSC optional** - plyphon is a library you embed and drive through a typed Controller API. The OSC layer is an optional front-end on top. In-process users can skip OSC entirely (no serialization, no socket) while still getting scsynth-compatible OSC when they want it.
+- **Custom storage** - plyphon makes no assumptions about the availability of a filesystem. Storage is abstracted away with traits, allowing implementations to fetch sounds however they like (filesystem, web storage, network fetch, etc).
+- **No global state, many engines per process** - scsynth keeps its UGen library, interface table, and audio arena in process-global statics, so a process is
+  effectively a single server. plyphon owns all of that in an engine value passed by argument, so multiple independent engines can coexist in one process - useful for
+  tests, multi-tenant/embedded hosts, plugin hosts, or per-voice sandboxing.
 
 ## Crates
 
@@ -23,6 +25,11 @@ and plays both natively and in the browser.
 | [`scgf`](crates/scgf) | Parser and encoder for SuperCollider's binary SynthDef format (SCgf). |
 | [`plyphon-osc`](crates/plyphon-osc) | SuperCollider-compatible OSC command front-end. |
 | [`plyphon-buffers`](crates/plyphon-buffers) | Async `BufferSource` traits for loading sample data (the I/O seam; impls are the app's). |
+
+## Examples
+
+| Example | Description |
+| --- | --- |
 | [`plyphon-example-motif`](crates/plyphon-example-motif) | A looping motif of self-freeing notes via `cpal` (the web demo). |
 | [`plyphon-example-sine`](crates/plyphon-example-sine) | The simplest example: a continuous sine. |
 | [`plyphon-example-custom-unit`](crates/plyphon-example-custom-unit) | Implement a custom unit generator (a `tanh` saturator) and register it alongside the base set. |
