@@ -7,7 +7,7 @@
 }:
 writeShellScriptBin "serve-plyphon-website" ''
   ${miniserve}/bin/miniserve \
-    --index ${plyphon-website}/index.html \
+    --index index.html \
     --disable-indexing \
     --hide-version-footer \
     --hide-theme-selector \
