@@ -452,6 +452,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-schedule"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-timers",
+ "plyphon",
+ "plyphon-osc",
+ "rosc",
+]
+
+[[package]]
 name = "example-sine"
 version = "0.1.0"
 dependencies = [

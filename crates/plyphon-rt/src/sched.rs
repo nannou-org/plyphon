@@ -15,6 +15,8 @@
 use alloc::collections::BinaryHeap;
 use core::cmp::{Ordering, Reverse};
 
+use plyphon_dsp::math;
+
 use crate::command::Command;
 
 /// 2^32, the number of OSC/NTP fixed-point units in one second (OSC time is 32.32 fixed point).
@@ -160,7 +162,7 @@ impl Clock {
     /// clamps to 0.
     pub fn sample_offset(&self, time: u64, block_size: usize) -> usize {
         let diff = (time.wrapping_sub(self.buftime) as i64) as f64 * self.to_samples + 0.5;
-        diff.floor().clamp(0.0, (block_size - 1) as f64) as usize
+        math::floor(diff).clamp(0.0, (block_size - 1) as f64) as usize
     }
 
     /// Advance to the next control block (scsynth's `oscTime = mOSCbuftime = nextTime`).
