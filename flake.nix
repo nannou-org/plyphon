@@ -39,14 +39,17 @@
         # Pin wasm-bindgen-cli to the exact version in Cargo.lock so trunk uses it instead of
         # trying to download a matching release.
         wasm-bindgen-cli = prev.callPackage ./pkgs/wasm-bindgen-cli.nix { };
+        # The `plyphon` CLI binary (the default package).
+        plyphon = final.callPackage ./pkgs/plyphon.nix { };
         plyphon-website = final.callPackage ./pkgs/plyphon-website.nix { };
         serve-plyphon-website = final.callPackage ./pkgs/serve-plyphon-website.nix { };
       };
 
       packages = perSystemPkgs (pkgs: {
+        plyphon = pkgs.plyphon;
         plyphon-website = pkgs.plyphon-website;
         serve-plyphon-website = pkgs.serve-plyphon-website;
-        default = pkgs.plyphon-website;
+        default = pkgs.plyphon;
       });
 
       devShells = perSystemPkgs (pkgs: {
