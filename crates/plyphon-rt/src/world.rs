@@ -404,6 +404,15 @@ impl World {
                     buffer.set_sample_rate(sample_rate);
                 }
             }
+            Command::CopyBufferRegion {
+                dst,
+                dst_start,
+                src,
+                src_start,
+                count,
+            } => self
+                .buffers
+                .copy_region(dst, dst_start, src, src_start, count),
             Command::FreeNode { node } => {
                 let mut sink = core::mem::take(&mut self.freed_nodes);
                 sink.clear();

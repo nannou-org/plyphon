@@ -10,12 +10,14 @@ repository.workspace = true
 
 [features]
 default = ["std"]
-std = ["plyphon/std", "plyphon-buffers/std", "rosc/std", "thiserror/std"]
+std = ["plyphon/std", "plyphon-buffers/std", "plyphon-dsp/std", "rosc/std", "thiserror/std"]
 
 [dependencies]
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
 plyphon.workspace = true
 plyphon-buffers.workspace = true
+# For `/b_gen`'s generators: `no_std`-safe trig (sin/cos) shared with the DSP core.
+plyphon-dsp.workspace = true
 rosc.workspace = true
 thiserror.workspace = true
 

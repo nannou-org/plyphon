@@ -445,6 +445,25 @@ impl Controller {
         self.send(Command::SetBufferSampleRate { index, sample_rate })
     }
 
+    /// Copy `count` interleaved samples from buffer `src` (flat `src_start`) into buffer `dst` (flat
+    /// `dst_start`), on the audio thread (`/b_gen "copy"`). Overlap-safe; clamped to both buffers.
+    pub fn buffer_copy_region(
+        &mut self,
+        dst: usize,
+        dst_start: usize,
+        src: usize,
+        src_start: usize,
+        count: usize,
+    ) -> Result<(), QueueFull> {
+        self.send(Command::CopyBufferRegion {
+            dst,
+            dst_start,
+            src,
+            src_start,
+            count,
+        })
+    }
+
     /// Cue a disk-streaming buffer at `index` (scsynth's `Buffer.cueSoundFile`).
     ///
     /// Allocates a queue of `num_chunks` chunks of `chunk_frames` frames each (off the audio thread)

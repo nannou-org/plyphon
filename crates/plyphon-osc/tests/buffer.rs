@@ -351,3 +351,74 @@ fn b_set_sample_rate_updates_the_query_mirror() {
         ]
     );
 }
+
+#[test]
+fn b_gen_sine1_plays_a_tone() {
+    let (mut osc, mut world) = player_engine();
+    // sine1 lays one cycle of its (single) partial across the whole table; 120 frames @ 48 kHz looped
+    // -> 400 Hz.
+    osc.apply_bytes(&msg(
+        "/b_alloc",
+        vec![OscType::Int(0), OscType::Int(120), OscType::Int(1)],
+    ))
+    .expect("/b_alloc");
+    osc.apply_bytes(&msg(
+        "/b_gen",
+        vec![
+            OscType::Int(0),
+            OscType::String("sine1".to_string()),
+            OscType::Int(0), // flags
+            OscType::Float(1.0),
+        ],
+    ))
+    .expect("/b_gen");
+    start_player(&mut osc);
+    let out = render(&mut world, SR as usize / 4);
+    assert!(
+        goertzel(&out, 400.0) > 5.0 * goertzel(&out, 800.0),
+        "a /b_gen sine1 buffer should loop back as a 400 Hz tone"
+    );
+}
+
+#[test]
+fn b_gen_copy_duplicates_a_buffer() {
+    let (mut osc, mut world) = player_engine();
+    // Generate a tone into buffer 1, copy it into buffer 0, then play buffer 0.
+    for buf in [0, 1] {
+        osc.apply_bytes(&msg(
+            "/b_alloc",
+            vec![OscType::Int(buf), OscType::Int(120), OscType::Int(1)],
+        ))
+        .expect("/b_alloc");
+    }
+    osc.apply_bytes(&msg(
+        "/b_gen",
+        vec![
+            OscType::Int(1),
+            OscType::String("sine1".to_string()),
+            OscType::Int(0),
+            OscType::Float(1.0),
+        ],
+    ))
+    .expect("/b_gen sine1");
+    // copy: dstStart 0, srcBuf 1, srcStart 0, count 120.
+    osc.apply_bytes(&msg(
+        "/b_gen",
+        vec![
+            OscType::Int(0),
+            OscType::String("copy".to_string()),
+            OscType::Int(0),
+            OscType::Int(0),
+            OscType::Int(1),
+            OscType::Int(0),
+            OscType::Int(120),
+        ],
+    ))
+    .expect("/b_gen copy");
+    start_player(&mut osc);
+    let out = render(&mut world, SR as usize / 4);
+    assert!(
+        goertzel(&out, 400.0) > 5.0 * goertzel(&out, 800.0),
+        "the copied buffer should play the same 400 Hz tone"
+    );
+}

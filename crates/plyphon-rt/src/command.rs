@@ -164,6 +164,20 @@ pub enum Command {
         /// New sample rate in Hz.
         sample_rate: f64,
     },
+    /// Copy `count` interleaved samples from buffer `src` (flat index `src_start`) into buffer `dst`
+    /// (flat index `dst_start`), overlap-safe (scsynth's `/b_gen "copy"`).
+    CopyBufferRegion {
+        /// Destination buffer table index.
+        dst: usize,
+        /// First flat sample index written in `dst`.
+        dst_start: usize,
+        /// Source buffer table index.
+        src: usize,
+        /// First flat sample index read from `src`.
+        src_start: usize,
+        /// Number of samples to copy.
+        count: usize,
+    },
     /// Clear every command still pending in the World's scheduler (scsynth's `/clearSched`). Any
     /// scheduled command that owns a `Box` is routed to the trash ring rather than dropped here.
     ClearSched,

@@ -65,6 +65,7 @@
 #[macro_use]
 extern crate alloc;
 
+mod bgen;
 pub mod score;
 
 pub use score::{ScoreEntry, ScoreError, ScoreReader, parse_score};
@@ -80,6 +81,7 @@ use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
 use plyphon::{AddAction, CommandTime, Controller, Event, Render, RenderUntil, Reply};
 use plyphon_buffers::{BufferSource, ReadRegion};
+use plyphon_dsp::buffer::Buffer;
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
 use thiserror::Error;
 
@@ -413,6 +415,7 @@ impl OscDispatcher {
             "/b_setn" => self.b_setn(&message.args),
             "/b_fill" => self.b_fill(&message.args),
             "/b_setSampleRate" => self.b_set_sample_rate(&message.args),
+            "/b_gen" => self.b_gen(&message.args),
             "/b_allocRead" => self.b_alloc_read(&message.args),
             "/b_read" => self.b_read(&message.args),
             "/g_head" => self.group_moves(&message.args, AddAction::Head),
@@ -1491,6 +1494,98 @@ impl OscDispatcher {
         Ok(())
     }
 
+    /// `/b_gen <bufID> <genName> <flags> <args…> [completionMsg]`: fill a buffer from a generator.
+    ///
+    /// `sine1`/`sine2`/`sine3`/`cheby` are computed control-side into a fresh buffer and installed via
+    /// the `/b_alloc` swap path (so no engine round-trip, and the old buffer trashes off-thread);
+    /// `copy` reads a live source buffer, so it routes to the engine. Flags: `normalize`(1) supported;
+    /// `wavetable`(2) rejected (the consuming `Osc` UGen is unimplemented); `clear`(4) is implicit -
+    /// the dispatcher has no copy of the current samples, so it always generates fresh (a documented
+    /// deviation from scsynth's accumulate-when-unset). Non-mono buffers are rejected.
+    fn b_gen(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let bufnum = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_gen expects a bufnum"))?,
+        )?;
+        let gen_name = str_arg(
+            args.get(1)
+                .ok_or(OscError::BadArguments("b_gen expects a gen name"))?,
+        )?
+        .to_string();
+        let flags = int_arg(
+            args.get(2)
+                .ok_or(OscError::BadArguments("b_gen expects flags"))?,
+        )?;
+        // Gen args are everything after the flags, minus a trailing completion blob.
+        let completion = last_blob(args);
+        let gen_end = if completion.is_some() {
+            args.len() - 1
+        } else {
+            args.len()
+        };
+        let gen_args = &args[3.min(gen_end)..gen_end];
+
+        if flags & 2 != 0 {
+            self.fail("/b_gen", "wavetable mode unsupported");
+            return Ok(());
+        }
+        let Some(info) = self.buffers.get(&bufnum).copied() else {
+            self.fail("/b_gen", "unknown buffer");
+            return Ok(());
+        };
+
+        if gen_name == "copy" {
+            return self.b_gen_copy(bufnum, gen_args, completion);
+        }
+        if info.num_channels != 1 {
+            self.fail("/b_gen", "b_gen requires a mono buffer");
+            return Ok(());
+        }
+        let floats: Vec<f32> = gen_args.iter().map(float_arg).collect::<Result<_, _>>()?;
+        let mut samples = vec![0.0f32; info.num_frames];
+        match gen_name.as_str() {
+            "sine1" => bgen::sine1(&mut samples, &floats),
+            "sine2" => bgen::sine2(&mut samples, &to_pairs(&floats)),
+            "sine3" => bgen::sine3(&mut samples, &to_triples(&floats)),
+            "cheby" => bgen::cheby(&mut samples, &floats),
+            _ => {
+                self.fail("/b_gen", "unsupported gen");
+                return Ok(());
+            }
+        }
+        if flags & 1 != 0 {
+            bgen::normalize(&mut samples);
+        }
+        let buffer = Box::new(Buffer::from_interleaved(samples, 1, info.sample_rate));
+        self.controller
+            .buffer_set(bufnum as usize, buffer)
+            .map_err(|_| OscError::QueueFull)?;
+        self.run_completion_bytes(completion);
+        self.done("/b_gen", bufnum);
+        Ok(())
+    }
+
+    /// `/b_gen <buf> "copy" <dstStart> <srcBufID> <srcStart> <numSamples>`: copy a region from a live
+    /// source buffer into the destination, on the audio thread.
+    fn b_gen_copy(
+        &mut self,
+        bufnum: i32,
+        gen_args: &[OscType],
+        completion: Option<&[u8]>,
+    ) -> Result<(), OscError> {
+        let bad = || OscError::BadArguments("b_gen copy expects dstStart, srcBuf, srcStart, count");
+        let dst_start = index_arg(gen_args.first().ok_or_else(bad)?)?;
+        let src = int_arg(gen_args.get(1).ok_or_else(bad)?)? as usize;
+        let src_start = index_arg(gen_args.get(2).ok_or_else(bad)?)?;
+        let count = index_arg(gen_args.get(3).ok_or_else(bad)?)?;
+        self.controller
+            .buffer_copy_region(bufnum as usize, dst_start, src, src_start, count)
+            .map_err(|_| OscError::QueueFull)?;
+        self.run_completion_bytes(completion);
+        self.done("/b_gen", bufnum);
+        Ok(())
+    }
+
     fn b_alloc_read(&mut self, args: &[OscType]) -> Result<(), OscError> {
         self.queue_load("/b_allocRead", args)
     }
@@ -1772,6 +1867,16 @@ fn last_blob(args: &[OscType]) -> Option<&[u8]> {
         Some(OscType::Blob(bytes)) => Some(bytes),
         _ => None,
     }
+}
+
+/// Group a flat float list into `(freq, amp)` pairs for `/b_gen sine2` (a trailing odd value drops).
+fn to_pairs(floats: &[f32]) -> Vec<(f32, f32)> {
+    floats.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+}
+
+/// Group a flat float list into `(freq, amp, phase)` triples for `/b_gen sine3`.
+fn to_triples(floats: &[f32]) -> Vec<(f32, f32, f32)> {
+    floats.chunks_exact(3).map(|c| (c[0], c[1], c[2])).collect()
 }
 
 /// Format a reassembled `/g_queryTree.reply` arg list into an indented text tree for `/g_dumpTree`.

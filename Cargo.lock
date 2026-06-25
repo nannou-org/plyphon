@@ -1166,6 +1166,7 @@ dependencies = [
  "hashbrown",
  "plyphon",
  "plyphon-buffers",
+ "plyphon-dsp",
  "rosc",
  "scgf",
  "thiserror 2.0.18",
