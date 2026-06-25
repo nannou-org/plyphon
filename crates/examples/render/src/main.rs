@@ -58,8 +58,10 @@ fn main() {
 fn usage() {
     eprintln!(
         "usage:\n  \
-         example-render render <score> <in.wav|_> <out.wav> <sample-rate> [out-channels] [tail-secs]\n  \
-         example-render gen <out-score> [out-channels]"
+         example-render render <score> <in.wav|_> <out.wav> <sample-rate> [out-channels] [tail-secs] [sample-format]\n  \
+         example-render gen <out-score>\n\
+         \n  \
+         sample-format: f32 (default) | i16 | i24"
     );
 }
 
@@ -81,6 +83,10 @@ fn render(args: &[String]) -> Result<(), String> {
     let tail_secs: f64 = match args.get(5) {
         Some(s) => s.parse().map_err(|_| "bad [tail-secs]")?,
         None => 0.5,
+    };
+    let format: SampleFmt = match args.get(6) {
+        Some(s) => s.parse()?,
+        None => SampleFmt::Float,
     };
 
     let score_bytes = std::fs::read(score_path).map_err(|e| format!("reading score: {e}"))?;
@@ -114,13 +120,8 @@ fn render(args: &[String]) -> Result<(), String> {
     let mut dispatcher = OscDispatcher::new(controller);
     let mut render = Render::new(world, nrt, &options);
 
-    let spec = WavSpec {
-        channels: out_channels as u16,
-        sample_rate: sample_rate as u32,
-        bits_per_sample: 32,
-        sample_format: SampleFormat::Float,
-    };
-    let mut writer = WavWriter::create(out_path, spec).map_err(|e| e.to_string())?;
+    let mut writer = WavWriter::create(out_path, format.spec(out_channels, sample_rate))
+        .map_err(|e| e.to_string())?;
 
     let mut feed = WavInput::new(input);
     render_osc_score(
@@ -130,7 +131,7 @@ fn render(args: &[String]) -> Result<(), String> {
         Some(&mut |block: &mut [f32]| feed.fill(block)),
         |block| {
             for &s in block {
-                writer.write_sample(s).expect("write sample");
+                format.write(&mut writer, s);
             }
         },
         RenderUntil::EndOfScore {
@@ -284,6 +285,55 @@ fn perc_env_inputs() -> Vec<InputRef> {
 }
 
 // -- WAV helpers --------------------------------------------------------------------------------
+
+/// The output WAV sample format (scsynth's `<sample-format>`).
+#[derive(Clone, Copy)]
+enum SampleFmt {
+    /// 32-bit float (scsynth's default; lossless, but some basic players reject it).
+    Float,
+    /// 16-bit signed PCM (the most widely compatible).
+    Int16,
+    /// 24-bit signed PCM.
+    Int24,
+}
+
+impl std::str::FromStr for SampleFmt {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "f32" | "float" => Ok(SampleFmt::Float),
+            "i16" | "int16" => Ok(SampleFmt::Int16),
+            "i24" | "int24" => Ok(SampleFmt::Int24),
+            other => Err(format!("bad [sample-format] '{other}' (f32 | i16 | i24)")),
+        }
+    }
+}
+
+impl SampleFmt {
+    fn spec(self, channels: usize, sample_rate: f64) -> WavSpec {
+        let (bits, sample_format) = match self {
+            SampleFmt::Float => (32, SampleFormat::Float),
+            SampleFmt::Int16 => (16, SampleFormat::Int),
+            SampleFmt::Int24 => (24, SampleFormat::Int),
+        };
+        WavSpec {
+            channels: channels as u16,
+            sample_rate: sample_rate as u32,
+            bits_per_sample: bits,
+            sample_format,
+        }
+    }
+
+    /// Write one sample, converting and clamping to the integer formats (the inverse of `decode_wav`).
+    fn write<W: std::io::Write + std::io::Seek>(self, writer: &mut WavWriter<W>, s: f32) {
+        let result = match self {
+            SampleFmt::Float => writer.write_sample(s),
+            SampleFmt::Int16 => writer.write_sample((s.clamp(-1.0, 1.0) * 32767.0) as i16),
+            SampleFmt::Int24 => writer.write_sample((s.clamp(-1.0, 1.0) * 8_388_607.0) as i32),
+        };
+        result.expect("write sample");
+    }
+}
 
 /// Interleaved-`f32` WAV contents.
 struct Wav {

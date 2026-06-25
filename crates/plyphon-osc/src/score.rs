@@ -17,6 +17,7 @@
 use alloc::vec::Vec;
 
 use rosc::OscPacket;
+use thiserror::Error;
 
 use crate::pack_ntp;
 
@@ -32,14 +33,20 @@ pub struct ScoreEntry {
 }
 
 /// A malformed binary OSC score.
-#[derive(Debug)]
+//
+// `err` is a plain interpolated field, not `#[source]`/`#[from]`: `rosc::OscError` only implements
+// `Error` under rosc's `std` feature, so a source field would not compile without `std` (the same
+// reason `OscError::Decode` carries it by `Display`).
+#[derive(Debug, Error)]
 pub enum ScoreError {
     /// A length prefix or record ran past the end of the input.
+    #[error("truncated OSC score record at byte {offset}")]
     Truncated {
         /// Byte offset of the record whose length prefix overran the input.
         offset: usize,
     },
     /// A length prefix was negative.
+    #[error("negative OSC score record length {len} at byte {offset}")]
     BadLength {
         /// Byte offset of the bad length prefix.
         offset: usize,
@@ -47,43 +54,21 @@ pub enum ScoreError {
         len: i32,
     },
     /// A record's bytes failed to decode as OSC.
+    #[error("failed to decode OSC score record at byte {offset}: {err}")]
     Decode {
         /// Byte offset of the record that failed to decode.
         offset: usize,
         /// The underlying rosc decode error.
-        source: rosc::OscError,
+        err: rosc::OscError,
     },
     /// A top-level record decoded to a message rather than a bundle (a score must be bundles, since
     /// only a bundle carries the time tag).
+    #[error("OSC score record at byte {offset} is not a bundle")]
     NotABundle {
         /// Byte offset of the offending record.
         offset: usize,
     },
 }
-
-impl core::fmt::Display for ScoreError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            ScoreError::Truncated { offset } => {
-                write!(f, "truncated OSC score record at byte {offset}")
-            }
-            ScoreError::BadLength { offset, len } => {
-                write!(f, "negative OSC score record length {len} at byte {offset}")
-            }
-            ScoreError::Decode { offset, source } => {
-                write!(
-                    f,
-                    "failed to decode OSC score record at byte {offset}: {source}"
-                )
-            }
-            ScoreError::NotABundle { offset } => {
-                write!(f, "OSC score record at byte {offset} is not a bundle")
-            }
-        }
-    }
-}
-
-impl core::error::Error for ScoreError {}
 
 /// A pull-at-a-time reader over a binary OSC score's `[i32 len][bundle]` records.
 ///
@@ -128,11 +113,8 @@ impl<'a> ScoreReader<'a> {
             .ok_or(ScoreError::Truncated { offset: start })?;
 
         let record = &self.bytes[len_end..record_end];
-        let (_, packet) =
-            rosc::decoder::decode_udp(record).map_err(|source| ScoreError::Decode {
-                offset: start,
-                source,
-            })?;
+        let (_, packet) = rosc::decoder::decode_udp(record)
+            .map_err(|err| ScoreError::Decode { offset: start, err })?;
         let osc_time = match &packet {
             OscPacket::Bundle(bundle) => pack_ntp(bundle.timetag),
             OscPacket::Message(_) => return Err(ScoreError::NotABundle { offset: start }),
