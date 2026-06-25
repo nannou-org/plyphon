@@ -1,0 +1,16 @@
+[package]
+name = "example-render"
+version = "0.1.0"
+publish = false
+description = "A plyphon example: offline (non-real-time) score rendering to a WAV file - plyphon's scsynth -N."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+plyphon.workspace = true
+plyphon-osc.workspace = true
+rosc.workspace = true
+hound = "3"

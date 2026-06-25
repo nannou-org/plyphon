@@ -15,7 +15,7 @@ partial items stay unchecked and spell out what is missing.
 - [x] Multi-channel output buses and audio input buses (duplex via `World::fill_duplex`)
 - [x] Calc rates: scalar, control, audio
 - [ ] Demand rate
-- [ ] Non-real-time (score render) mode - real-time only so far
+- [x] Non-real-time (score render) mode - `Render` drives the engine offline on a deterministic free-running clock (no DLL resync), feeding a time-tagged score lazily; the `plyphon-osc` `parse_score`/`render_osc_score` pair renders scsynth's binary OSC command file to audio (see `example-render`)
 - [x] OSC bundle time-tag scheduling - bundle time tags schedule sample-accurately on the audio thread, against a drift-corrected clock (a DLL tracking the device rate); `OffsetOut` places a scheduled synth's onset on the exact sample
 
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the

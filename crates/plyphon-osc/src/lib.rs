@@ -41,6 +41,10 @@
 #[macro_use]
 extern crate alloc;
 
+pub mod score;
+
+pub use score::{ScoreEntry, ScoreError, ScoreReader, parse_score};
+
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -49,7 +53,7 @@ use hashbrown::HashMap;
 
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
-use plyphon::{AddAction, CommandTime, Controller, Event};
+use plyphon::{AddAction, CommandTime, Controller, Event, Render, RenderUntil};
 use plyphon_buffers::{BufferSource, ReadRegion};
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
 use thiserror::Error;
@@ -744,12 +748,67 @@ impl OscDispatcher {
     }
 }
 
+/// Fills one interleaved input block per control block for [`render_osc_score`] (the input buses for
+/// `In.ar`). The block is zeroed before each call, so leaving the tail untouched zero-pads past
+/// end-of-input.
+pub type InputBlockFn<'a> = &'a mut dyn FnMut(&mut [f32]);
+
+/// Render a parsed OSC `score` offline through `dispatcher`, writing each interleaved output block
+/// to `sink` - the scsynth `-N` workflow over plyphon's [`Render`] driver.
+///
+/// `score` must be time-sorted (as [`parse_score`] returns it). Each control block, every entry due
+/// by [`Render::block_end`] is applied through the dispatcher - so each command schedules at its
+/// time tag and fires sample-accurately - then one block is rendered and handed to `sink`. Node
+/// lifecycle events are forwarded to [`OscDispatcher::notify`] so `/n_go`/`/n_end` etc. queue as
+/// replies. `input`, if given, fills one interleaved input block per call (see [`InputBlockFn`]).
+/// Rendering runs until `until` (the last command's time plus a tail, or an explicit duration). The
+/// render is deterministic - it drives [`Render::step`], never a resync.
+pub fn render_osc_score(
+    render: &mut Render,
+    dispatcher: &mut OscDispatcher,
+    score: &[ScoreEntry],
+    mut input: Option<InputBlockFn<'_>>,
+    mut sink: impl FnMut(&[f32]),
+    until: RenderUntil,
+) -> Result<(), OscError> {
+    let max_time = score.iter().map(|e| e.osc_time).max().unwrap_or(0);
+    let end_time = until.end_time(max_time);
+    let mut in_block = vec![0.0f32; render.input_block_len()];
+    let mut next = 0;
+    while render.block_start() <= end_time {
+        let cutoff = render.block_end();
+        while next < score.len() && score[next].osc_time <= cutoff {
+            dispatcher.apply(&score[next].packet)?;
+            next += 1;
+        }
+        let block = match input.as_deref_mut() {
+            Some(fill) => {
+                in_block.iter_mut().for_each(|s| *s = 0.0);
+                fill(&mut in_block);
+                render.step(&in_block)
+            }
+            None => render.step(&[]),
+        };
+        sink(block);
+        while let Some(event) = render.poll() {
+            dispatcher.notify(event);
+        }
+    }
+    render.finish();
+    Ok(())
+}
+
+/// Pack an [`OscTime`] into its 32.32 fixed-point OSC/NTP `u64` (`(seconds << 32) | fractional`).
+pub(crate) fn pack_ntp(timetag: OscTime) -> u64 {
+    ((timetag.seconds as u64) << 32) | timetag.fractional as u64
+}
+
 /// Map an OSC bundle time tag to a [`CommandTime`]. The special "immediately" tags `0` and `1`
 /// apply now (scsynth's `PerformOSCPacket`); anything else schedules for that absolute OSC/NTP time
 /// (the 32.32 fixed-point value since 1900), with the engine resolving a late tag to "as soon as
 /// possible" on the audio thread.
 fn bundle_command_time(timetag: OscTime) -> CommandTime {
-    let ntp = ((timetag.seconds as u64) << 32) | timetag.fractional as u64;
+    let ntp = pack_ntp(timetag);
     if ntp <= 1 {
         CommandTime::Immediate
     } else {
@@ -814,5 +873,187 @@ fn last_blob(args: &[OscType]) -> Option<&[u8]> {
     match args.last() {
         Some(OscType::Blob(bytes)) => Some(bytes),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use core::time::Duration;
+    use plyphon::render::nominal_increment;
+    use plyphon::{
+        InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine,
+        render::OSC_UNITS_PER_SEC,
+    };
+    use rosc::{OscBundle, OscTime};
+
+    const SR: f64 = 48_000.0;
+    const BLOCK: usize = 64;
+
+    /// A click voice: 0.5 held for 5 ms then self-freed, onset placed by `OffsetOut`.
+    fn click_def() -> SynthDef {
+        SynthDef {
+            name: "click".into(),
+            params: vec![],
+            units: vec![
+                UnitSpec::new(
+                    "Line",
+                    Rate::Audio,
+                    vec![
+                        InputRef::Constant(0.5),
+                        InputRef::Constant(0.5),
+                        InputRef::Constant(0.005),
+                        InputRef::Constant(2.0),
+                    ],
+                    1,
+                ),
+                UnitSpec::new(
+                    "OffsetOut",
+                    Rate::Audio,
+                    vec![
+                        InputRef::Constant(0.0),
+                        InputRef::Unit { unit: 0, output: 0 },
+                    ],
+                    0,
+                ),
+            ],
+        }
+    }
+
+    fn time_for_sample(s: usize) -> u64 {
+        let block = (s / BLOCK) as u64;
+        let off = (s % BLOCK) as f64;
+        block * nominal_increment(SR, BLOCK) + (off * (OSC_UNITS_PER_SEC / SR)).round() as u64
+    }
+
+    fn unpack(ntp: u64) -> OscTime {
+        OscTime {
+            seconds: (ntp >> 32) as u32,
+            fractional: ntp as u32,
+        }
+    }
+
+    fn click_bundle(time: u64, id: i32) -> OscPacket {
+        OscPacket::Bundle(OscBundle {
+            timetag: unpack(time),
+            content: vec![OscPacket::Message(OscMessage {
+                addr: "/s_new".into(),
+                args: vec![
+                    OscType::String("click".into()),
+                    OscType::Int(id),
+                    OscType::Int(1),             // addAction tail
+                    OscType::Int(ROOT_GROUP_ID), // target root
+                ],
+            })],
+        })
+    }
+
+    fn encode_score(packets: &[OscPacket]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for packet in packets {
+            let bytes = rosc::encoder::encode(packet).expect("encode");
+            out.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
+            out.extend_from_slice(&bytes);
+        }
+        out
+    }
+
+    fn assert_onsets(out: &[f32], targets: &[usize]) {
+        let mut from = 0;
+        for (k, &s) in targets.iter().enumerate() {
+            let onset = (from..out.len())
+                .find(|&i| out[i] != 0.0)
+                .unwrap_or_else(|| panic!("click {k} never sounded"));
+            assert_eq!(onset, s, "click {k} should onset at {s}, got {onset}");
+            from = onset;
+            while from < out.len() && out[from] != 0.0 {
+                from += 1;
+            }
+        }
+    }
+
+    /// Render the click `targets` (submitted in `order`) through the binary-score + OSC path.
+    fn render(targets: &[usize], order: &[usize]) -> Vec<f32> {
+        let opts = Options {
+            sample_rate: SR,
+            output_channels: 1,
+            ..Options::default()
+        };
+        let (mut controller, nrt, world) = engine(opts);
+        controller.add_synthdef(click_def());
+        let mut dispatcher = OscDispatcher::new(controller);
+        let mut render = Render::new(world, nrt, &opts);
+
+        let packets: Vec<OscPacket> = order
+            .iter()
+            .map(|&i| click_bundle(time_for_sample(targets[i]), 1000 + i as i32))
+            .collect();
+        let blob = encode_score(&packets);
+        let (score, _max) = parse_score(&blob).expect("parse");
+
+        let mut out = Vec::new();
+        render_osc_score(
+            &mut render,
+            &mut dispatcher,
+            &score,
+            None,
+            |block| out.extend_from_slice(block),
+            RenderUntil::EndOfScore {
+                tail: Duration::from_millis(20),
+            },
+        )
+        .expect("render score");
+        out
+    }
+
+    #[test]
+    fn osc_score_onsets_at_exact_samples() {
+        let targets = [600usize, 1503, 2305, 3100];
+        let order = [2usize, 0, 3, 1]; // out of order: time tags, not arrival, decide onset
+        assert_onsets(&render(&targets, &order), &targets);
+    }
+
+    #[test]
+    fn osc_score_render_is_deterministic() {
+        let targets = [600usize, 1503, 2305, 3100];
+        let order = [0usize, 1, 2, 3];
+        assert_eq!(render(&targets, &order), render(&targets, &order));
+    }
+
+    #[test]
+    fn osc_score_forwards_node_events() {
+        // The clicks free themselves; their /n_go and /n_end must reach the dispatcher's replies.
+        let opts = Options {
+            sample_rate: SR,
+            output_channels: 1,
+            ..Options::default()
+        };
+        let (mut controller, nrt, world) = engine(opts);
+        controller.add_synthdef(click_def());
+        let mut dispatcher = OscDispatcher::new(controller);
+        let mut render = Render::new(world, nrt, &opts);
+        let blob = encode_score(&[click_bundle(time_for_sample(600), 1000)]);
+        let (score, _) = parse_score(&blob).expect("parse");
+        render_osc_score(
+            &mut render,
+            &mut dispatcher,
+            &score,
+            None,
+            |_| {},
+            RenderUntil::EndOfScore {
+                tail: Duration::from_millis(20),
+            },
+        )
+        .expect("render");
+        let replies = dispatcher.take_replies();
+        let addrs: Vec<&str> = replies
+            .iter()
+            .filter_map(|p| match p {
+                OscPacket::Message(m) => Some(m.addr.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(addrs.contains(&"/n_go"), "expected /n_go in {addrs:?}");
+        assert!(addrs.contains(&"/n_end"), "expected /n_end in {addrs:?}");
     }
 }

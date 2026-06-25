@@ -420,6 +420,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-render"
+version = "0.1.0"
+dependencies = [
+ "hound",
+ "plyphon",
+ "plyphon-osc",
+ "rosc",
+]
+
+[[package]]
 name = "example-routing"
 version = "0.1.0"
 dependencies = [

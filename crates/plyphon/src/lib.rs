@@ -29,6 +29,7 @@ extern crate alloc;
 
 pub mod controller;
 pub mod engine;
+pub mod render;
 pub mod synthdef;
 
 pub use plyphon_dsp::{Buffer, Chunk, Rate, RateInfo, StreamProducer};
@@ -38,8 +39,9 @@ pub use plyphon_unit::{
     ProcessCtx, Unit, UnitDef, UnitRegistry, unit_spec,
 };
 
-pub use controller::{Controller, SynthNewError};
+pub use controller::{Controller, QueueFull, SynthNewError};
 pub use engine::engine;
+pub use render::{Render, RenderUntil};
 pub use synthdef::{InputRef, Param, SynthDef, UnitSpec};
 
 /// Anything that can fill an interleaved, `channels`-wide block of `f32` output samples.
