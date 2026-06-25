@@ -2,7 +2,7 @@
 
 An embeddable implementation of SuperCollider's scsynth audio synthesis engine.
 
-An scsynth-compatible synthesis core that can be driven by any pure-Rust audio backend (e.g. `cpal`, `bevy_audio`, etc) preserving scsynth's hard realtime performance - no locks, blocking, heap allocation or I/O on the audio thread.
+An scsynth-compatible synthesis core that can be driven by any pure-Rust audio backend (e.g. `cpal`, `bevy_audio`, etc) preserving scsynth's hard realtime performance - no locks, blocking, heap allocation or I/O on the audio thread. <sup>Named after [*this*](https://www.youtube.com/watch?v=vsNbUlyERV0).</sup>
 
 ## Goals
 
