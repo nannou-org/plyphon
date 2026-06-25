@@ -109,8 +109,11 @@ impl Controller {
     /// effect at `time` (an absolute OSC/NTP time) instead of immediately, letting the OSC
     /// front-end honour a bundle's time tag. Def installs are always immediate regardless, so a
     /// scheduled `synth_new`'s def is resident before it fires.
-    pub fn begin_scheduled(&mut self, time: CommandTime) {
-        self.schedule = time;
+    ///
+    /// Returns the previous schedule time, so a caller applying a nested time-tagged bundle can
+    /// restore the enclosing window with `begin_scheduled(prev)`.
+    pub fn begin_scheduled(&mut self, time: CommandTime) -> CommandTime {
+        core::mem::replace(&mut self.schedule, time)
     }
 
     /// Close the scheduling window opened by [`begin_scheduled`](Self::begin_scheduled); subsequent

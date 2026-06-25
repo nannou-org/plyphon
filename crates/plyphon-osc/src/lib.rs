@@ -39,9 +39,9 @@ use hashbrown::HashMap;
 
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
-use plyphon::{AddAction, Controller, Event};
+use plyphon::{AddAction, CommandTime, Controller, Event};
 use plyphon_buffers::{BufferSource, ReadRegion};
-use rosc::{OscMessage, OscPacket, OscType};
+use rosc::{OscMessage, OscPacket, OscTime, OscType};
 use thiserror::Error;
 
 /// An error applying an OSC command.
@@ -227,15 +227,29 @@ impl OscDispatcher {
         self.apply(&packet)
     }
 
-    /// Apply a decoded OSC packet (a message, or every message in a bundle).
+    /// Apply a decoded OSC packet: a message immediately, or every message in a bundle at the
+    /// bundle's time tag.
+    ///
+    /// A future time tag schedules the bundle's messages (and any nested bundles) for that absolute
+    /// OSC/NTP time; the engine maps the tag to a sample-exact block on the audio thread, against a
+    /// drift-corrected clock. The "immediately" tags `0`/`1` (and any already-past time) apply now.
     pub fn apply(&mut self, packet: &OscPacket) -> Result<(), OscError> {
         match packet {
             OscPacket::Message(message) => self.message(message),
             OscPacket::Bundle(bundle) => {
+                let prev = self
+                    .controller
+                    .begin_scheduled(bundle_command_time(bundle.timetag));
+                let mut result = Ok(());
                 for inner in &bundle.content {
-                    self.apply(inner)?;
+                    result = self.apply(inner);
+                    if result.is_err() {
+                        break;
+                    }
                 }
-                Ok(())
+                // Restore the enclosing window (Immediate at the top level), even on error.
+                self.controller.begin_scheduled(prev);
+                result
             }
         }
     }
@@ -717,6 +731,19 @@ impl OscDispatcher {
             .ok_or(OscError::UnknownNode(node))?;
         def.param_index(name)
             .ok_or_else(|| OscError::UnknownParam(name.to_string()))
+    }
+}
+
+/// Map an OSC bundle time tag to a [`CommandTime`]. The special "immediately" tags `0` and `1`
+/// apply now (scsynth's `PerformOSCPacket`); anything else schedules for that absolute OSC/NTP time
+/// (the 32.32 fixed-point value since 1900), with the engine resolving a late tag to "as soon as
+/// possible" on the audio thread.
+fn bundle_command_time(timetag: OscTime) -> CommandTime {
+    let ntp = ((timetag.seconds as u64) << 32) | timetag.fractional as u64;
+    if ntp <= 1 {
+        CommandTime::Immediate
+    } else {
+        CommandTime::At(ntp)
     }
 }
 
