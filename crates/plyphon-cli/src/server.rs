@@ -6,11 +6,15 @@
 //! sends each command's replies back to its sender, surfaces node-lifecycle [`plyphon::Event`]s as
 //! `/n_go`/`/n_end`/... to clients that registered via `/notify`, and services queued buffer loads.
 //!
-//! `scsynth` splits "server commands" from "engine commands"; so do we - `/notify`, `/status`,
-//! `/dumpOSC`, `/version`, and `/quit` (the ones that concern the connection/process, not the
-//! engine) are handled here, everything else is forwarded to the dispatcher.
+//! `scsynth` splits "server commands" from "engine commands"; so do we - `/notify`, `/dumpOSC`,
+//! `/version`, and `/quit` (the ones that concern the connection/process, not the engine) are handled
+//! here; everything else is forwarded to the dispatcher. The engine-state getters (`/status`,
+//! `/sync`, `/c_get`, `/n_query`, …) and the async buffer loads answer *later* over the reply ring,
+//! so the server records each requester (see `pending_getters`/`pending_loads`) and, in
+//! [`service`], routes each answer back to the one client that asked - while node notifications
+//! broadcast to every `/notify` subscriber.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::net::{TcpStream, UdpSocket};
 use std::sync::mpsc::{self, Receiver};
@@ -42,8 +46,12 @@ struct Server {
     notified: HashSet<Client>,
     /// Whether to log incoming OSC (`/dumpOSC`).
     dump_osc: bool,
-    /// The engine's nominal sample rate, reported by `/status`.
-    sample_rate: f64,
+    /// Clients awaiting an async getter reply, FIFO, one entry per expected reply message - so each
+    /// answer (which arrives later, in `service`, in query order) routes to its requester.
+    pending_getters: VecDeque<Client>,
+    /// Clients awaiting an async buffer-load reply (`/done`/`/fail`), FIFO. Kept separate from
+    /// `pending_getters` because the two reply kinds surface in different phases of `service`.
+    pending_loads: VecDeque<Client>,
 }
 
 pub fn run(args: ServerArgs) -> Result<(), String> {
@@ -88,7 +96,8 @@ pub fn run(args: ServerArgs) -> Result<(), String> {
         tcp_writers: HashMap::new(),
         notified: HashSet::new(),
         dump_osc: false,
-        sample_rate: audio.sample_rate,
+        pending_getters: VecDeque::new(),
+        pending_loads: VecDeque::new(),
     };
     control_loop(&mut server, &events);
     Ok(())
@@ -143,10 +152,6 @@ fn handle_packet(server: &mut Server, client: Client, bytes: &[u8]) -> bool {
                 handle_notify(server, client, &message.args);
                 return false;
             }
-            "/status" => {
-                handle_status(server, client);
-                return false;
-            }
             "/dumpOSC" => {
                 handle_dump(server, client, &message.args);
                 return false;
@@ -155,11 +160,42 @@ fn handle_packet(server: &mut Server, client: Client, bytes: &[u8]) -> bool {
                 handle_version(server, client);
                 return false;
             }
+            // `/status`, `/sync`, `/rtMemoryStatus` are engine-state queries: forwarded to the
+            // dispatcher and routed back asynchronously, below.
             _ => {}
         }
     }
 
-    // Engine command(s): apply, then route this command's own replies back to its sender.
+    // Async commands (getters, buffer loads) answer later in `service`; record the requester (one
+    // entry per expected reply message) and do not take replies synchronously.
+    if let Some(count) = getter_reply_count(&packet) {
+        if let Err(err) = server.dispatcher.apply(&packet) {
+            reply(
+                server,
+                client,
+                fail_packet(command_addr(&packet), &err.to_string()),
+            );
+            return false;
+        }
+        for _ in 0..count {
+            server.pending_getters.push_back(client);
+        }
+        return false;
+    }
+    if is_async_buffer_load(&packet) {
+        if let Err(err) = server.dispatcher.apply(&packet) {
+            reply(
+                server,
+                client,
+                fail_packet(command_addr(&packet), &err.to_string()),
+            );
+            return false;
+        }
+        server.pending_loads.push_back(client);
+        return false;
+    }
+
+    // A synchronous engine command: apply, then route its own replies back to the sender.
     if let Err(err) = server.dispatcher.apply(&packet) {
         reply(
             server,
@@ -174,25 +210,90 @@ fn handle_packet(server: &mut Server, client: Client, bytes: &[u8]) -> bool {
     false
 }
 
-/// Run NRT cleanup, surface node notifications, service queued buffer loads, and broadcast the
-/// resulting replies to clients that registered via `/notify`.
+/// Run NRT cleanup, surface node notifications and async query/load answers, then route each reply:
+/// node notifications broadcast to `/notify` subscribers; getter and buffer-load answers go to the
+/// one client that asked (matched FIFO, in request order).
 fn service(server: &mut Server) {
     server.nrt.process();
     while let Some(event) = server.nrt.poll() {
         server.dispatcher.notify(event);
     }
+    while let Some(reply) = server.nrt.poll_reply() {
+        server.dispatcher.reply(reply);
+    }
     // Buffer loads queued by `apply` (`/b_allocRead`/`/b_read`); the fs source is ready at once.
     block_on(server.dispatcher.run_pending());
 
     let replies = server.dispatcher.take_replies();
-    if replies.is_empty() || server.notified.is_empty() {
-        return;
-    }
-    let clients: Vec<Client> = server.notified.iter().copied().collect();
-    for client in clients {
-        for packet in &replies {
-            send(&server.udp, &server.tcp_writers, client, packet);
+    for packet in &replies {
+        match reply_route(packet) {
+            ReplyRoute::Broadcast => {
+                for client in server.notified.iter().copied().collect::<Vec<_>>() {
+                    send(&server.udp, &server.tcp_writers, client, packet);
+                }
+            }
+            ReplyRoute::Getter => match server.pending_getters.pop_front() {
+                Some(client) => send(&server.udp, &server.tcp_writers, client, packet),
+                None => eprintln!("warning: getter reply with no pending requester: {packet:?}"),
+            },
+            ReplyRoute::Load => match server.pending_loads.pop_front() {
+                Some(client) => send(&server.udp, &server.tcp_writers, client, packet),
+                None => {
+                    eprintln!("warning: buffer-load reply with no pending requester: {packet:?}")
+                }
+            },
         }
+    }
+}
+
+/// How many async reply messages a getter command produces, or `None` if it is not an async getter.
+/// Every getter answers with one message except `/n_query` (one `/n_info` per queried node).
+/// `/g_dumpTree` is excluded - it has no OSC reply (it routes to a text sink, unused by the server).
+fn getter_reply_count(packet: &OscPacket) -> Option<usize> {
+    let OscPacket::Message(message) = packet else {
+        return None;
+    };
+    match message.addr.as_str() {
+        "/sync" | "/status" | "/rtMemoryStatus" | "/c_get" | "/c_getn" | "/s_get" | "/s_getn"
+        | "/b_get" | "/b_getn" | "/g_queryTree" => Some(1),
+        "/n_query" => Some(message.args.len().max(1)),
+        _ => None,
+    }
+}
+
+/// Whether `packet` is an async buffer load, whose single terminal `/done`/`/fail` arrives later.
+fn is_async_buffer_load(packet: &OscPacket) -> bool {
+    matches!(packet, OscPacket::Message(m) if matches!(m.addr.as_str(), "/b_allocRead" | "/b_read"))
+}
+
+/// Where a drained reply should go.
+enum ReplyRoute {
+    /// A node notification - every `/notify` subscriber.
+    Broadcast,
+    /// A getter answer - the next pending getter's requester.
+    Getter,
+    /// A buffer-load `/done`/`/fail` - the next pending load's requester.
+    Load,
+}
+
+/// Classify a reply for routing. `/fail` is disambiguated by the command it names: a failed node
+/// start broadcasts, a failed buffer load routes to the loader, and any other failure (e.g. a bad
+/// `/s_get`) routes to the getter requester.
+fn reply_route(packet: &OscPacket) -> ReplyRoute {
+    let OscPacket::Message(message) = packet else {
+        return ReplyRoute::Broadcast;
+    };
+    match message.addr.as_str() {
+        "/n_go" | "/n_end" | "/n_off" | "/n_on" => ReplyRoute::Broadcast,
+        "/done" => ReplyRoute::Load,
+        "/fail" => match message.args.first() {
+            Some(OscType::String(cmd)) if cmd == "/s_new" => ReplyRoute::Broadcast,
+            Some(OscType::String(cmd)) if cmd == "/b_allocRead" || cmd == "/b_read" => {
+                ReplyRoute::Load
+            }
+            _ => ReplyRoute::Getter,
+        },
+        _ => ReplyRoute::Getter,
     }
 }
 
@@ -210,29 +311,6 @@ fn handle_notify(server: &mut Server, client: Client, args: &[OscType]) {
         message_packet(
             "/done",
             vec![OscType::String("/notify".to_string()), OscType::Int(0)],
-        ),
-    );
-}
-
-/// Reply with a best-effort `/status.reply` (live UGen/synth counts are audio-thread state, so v1
-/// reports the fields it can cheaply: the root group and the nominal sample rate).
-fn handle_status(server: &Server, client: Client) {
-    reply(
-        server,
-        client,
-        message_packet(
-            "/status.reply",
-            vec![
-                OscType::Int(1),
-                OscType::Int(0),                     // ugens
-                OscType::Int(0),                     // synths
-                OscType::Int(1),                     // groups (root)
-                OscType::Int(0),                     // synthdefs
-                OscType::Float(0.0),                 // average CPU
-                OscType::Float(0.0),                 // peak CPU
-                OscType::Double(server.sample_rate), // nominal sample rate
-                OscType::Double(server.sample_rate), // actual sample rate
-            ],
         ),
     );
 }
@@ -440,7 +518,8 @@ mod tests {
             tcp_writers: HashMap::new(),
             notified: HashSet::new(),
             dump_osc: false,
-            sample_rate: 48_000.0,
+            pending_getters: VecDeque::new(),
+            pending_loads: VecDeque::new(),
         };
 
         let client = thread::spawn(move || {
@@ -514,7 +593,8 @@ mod tests {
             tcp_writers: HashMap::new(),
             notified: HashSet::new(),
             dump_osc: false,
-            sample_rate: 48_000.0,
+            pending_getters: VecDeque::new(),
+            pending_loads: VecDeque::new(),
         };
 
         let client = thread::spawn(move || {
@@ -544,5 +624,171 @@ mod tests {
         let reply = client.join().unwrap().expect("expected a /version.reply");
         assert_eq!(reply.args.len(), 6, "version reply has six fields");
         assert_eq!(reply.args[0], OscType::String("plyphon".to_string()));
+    }
+
+    /// Build a server + a background `World` driver on an ephemeral UDP port.
+    fn server_with_driver() -> (
+        Server,
+        Receiver<FromNet>,
+        SocketAddr,
+        Arc<AtomicBool>,
+        thread::JoinHandle<()>,
+    ) {
+        let options = Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            input_channels: 0,
+            ..Options::default()
+        };
+        let (mut controller, nrt, mut world) = plyphon::engine(options);
+        controller.add_synthdef(note_def());
+        let dispatcher = OscDispatcher::with_buffer_source(controller, Box::new(FsSource));
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_driver = stop.clone();
+        let driver = thread::spawn(move || {
+            let mut buf = vec![0f32; 64];
+            while !stop_driver.load(Ordering::Relaxed) {
+                world.fill(&mut buf, 1);
+                thread::sleep(Duration::from_micros(500));
+            }
+        });
+
+        let Transport { events, udp } =
+            transport::start("127.0.0.1".parse().unwrap(), 0, None).unwrap();
+        let server_addr = udp.local_addr().unwrap();
+        let server = Server {
+            dispatcher,
+            nrt,
+            udp,
+            tcp_writers: HashMap::new(),
+            notified: HashSet::new(),
+            dump_osc: false,
+            pending_getters: VecDeque::new(),
+            pending_loads: VecDeque::new(),
+        };
+        (server, events, server_addr, stop, driver)
+    }
+
+    fn client_socket() -> UdpSocket {
+        let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        sock.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        sock
+    }
+
+    /// A getter (`/c_set` then `/c_get`) over UDP answers the *requesting* client.
+    #[test]
+    fn c_get_over_udp_routes_to_requester() {
+        let (mut server, events, server_addr, stop, driver) = server_with_driver();
+        let client = thread::spawn(move || {
+            let sock = client_socket();
+            send_msg(
+                &sock,
+                server_addr,
+                "/c_set",
+                vec![OscType::Int(5), OscType::Float(0.5)],
+            );
+            send_msg(&sock, server_addr, "/c_get", vec![OscType::Int(5)]);
+
+            let mut reply = None;
+            let mut buf = [0u8; 65_536];
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while reply.is_none() && Instant::now() < deadline {
+                if let Ok(n) = sock.recv(&mut buf)
+                    && let Ok((_, OscPacket::Message(m))) = rosc::decoder::decode_udp(&buf[..n])
+                    && m.addr == "/c_set"
+                {
+                    reply = Some(m);
+                }
+            }
+            send_msg(&sock, server_addr, "/quit", vec![]);
+            reply
+        });
+
+        control_loop(&mut server, &events);
+        let reply = client.join().unwrap().expect("/c_set reply");
+        stop.store(true, Ordering::Relaxed);
+        driver.join().unwrap();
+        assert_eq!(reply.args, vec![OscType::Int(5), OscType::Float(0.5)]);
+    }
+
+    /// A getter reply reaches only the requester, while node notifications reach only `/notify`
+    /// subscribers - the two never cross.
+    #[test]
+    fn getter_reply_and_notifications_route_separately() {
+        let (mut server, events, server_addr, stop, driver) = server_with_driver();
+
+        // Client A registers for notifications and collects what it receives.
+        let a = thread::spawn(move || {
+            let sock = client_socket();
+            send_msg(&sock, server_addr, "/notify", vec![OscType::Int(1)]);
+            let (mut saw_go, mut saw_cset) = (false, false);
+            let mut buf = [0u8; 65_536];
+            let deadline = Instant::now() + Duration::from_millis(800);
+            while Instant::now() < deadline {
+                if let Ok(n) = sock.recv(&mut buf)
+                    && let Ok((_, OscPacket::Message(m))) = rosc::decoder::decode_udp(&buf[..n])
+                {
+                    match m.addr.as_str() {
+                        "/n_go" => saw_go = true,
+                        "/c_set" => saw_cset = true,
+                        _ => {}
+                    }
+                }
+            }
+            send_msg(&sock, server_addr, "/quit", vec![]);
+            (saw_go, saw_cset)
+        });
+
+        // Client B (not registered) issues a getter and starts a self-freeing note.
+        let b = thread::spawn(move || {
+            let sock = client_socket();
+            thread::sleep(Duration::from_millis(100)); // let A register first
+            send_msg(&sock, server_addr, "/c_get", vec![OscType::Int(0)]);
+            send_msg(
+                &sock,
+                server_addr,
+                "/s_new",
+                vec![
+                    OscType::String("note".to_string()),
+                    OscType::Int(1000),
+                    OscType::Int(0),
+                    OscType::Int(0),
+                ],
+            );
+            let (mut saw_go, mut saw_cset) = (false, false);
+            let mut buf = [0u8; 65_536];
+            let deadline = Instant::now() + Duration::from_millis(600);
+            while Instant::now() < deadline {
+                if let Ok(n) = sock.recv(&mut buf)
+                    && let Ok((_, OscPacket::Message(m))) = rosc::decoder::decode_udp(&buf[..n])
+                {
+                    match m.addr.as_str() {
+                        "/n_go" => saw_go = true,
+                        "/c_set" => saw_cset = true,
+                        _ => {}
+                    }
+                }
+            }
+            (saw_go, saw_cset)
+        });
+
+        control_loop(&mut server, &events);
+        let (a_go, a_cset) = a.join().unwrap();
+        let (b_go, b_cset) = b.join().unwrap();
+        stop.store(true, Ordering::Relaxed);
+        driver.join().unwrap();
+
+        assert!(
+            a_go,
+            "registered client A should receive the /n_go broadcast"
+        );
+        assert!(!a_cset, "client A must NOT receive client B's getter reply");
+        assert!(b_cset, "requester client B should receive its /c_set reply");
+        assert!(
+            !b_go,
+            "unregistered client B must NOT receive node notifications"
+        );
     }
 }
