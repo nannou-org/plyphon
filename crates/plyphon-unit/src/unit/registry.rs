@@ -20,7 +20,7 @@ use crate::unit::input::InCtor;
 use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
 use crate::unit::line::LineCtor;
 use crate::unit::noise::WhiteNoiseCtor;
-use crate::unit::out::OutCtor;
+use crate::unit::out::{OffsetOutCtor, OutCtor};
 use crate::unit::pan::Pan2Ctor;
 use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::sin_osc::SinOscCtor;
@@ -71,6 +71,7 @@ impl UnitRegistry {
         let mut registry = Self::new();
         registry.register("SinOsc", Box::new(SinOscCtor));
         registry.register("Out", Box::new(OutCtor));
+        registry.register("OffsetOut", Box::new(OffsetOutCtor));
         registry.register("In", Box::new(InCtor));
         registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));
         registry.register("UnaryOpUGen", Box::new(UnaryOpCtor));

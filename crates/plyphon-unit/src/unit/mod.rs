@@ -87,7 +87,7 @@ pub use io::{audio_in, audio_out, buffer_at, control_in, control_out, stream_at_
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
 pub use noise::WhiteNoise;
-pub use out::Out;
+pub use out::{OffsetOut, Out};
 pub use pan::Pan2;
 pub use play_buf::PlayBuf;
 pub use registry::{BuildContext, UnitDef, UnitRegistry};
