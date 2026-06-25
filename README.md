@@ -15,8 +15,11 @@ An scsynth-compatible synthesis core that can be driven by any pure-Rust audio b
 
 ## Crates
 
+Listed in reverse-topological order - dependents first, their dependencies below.
+
 | Crate | Description |
 | --- | --- |
+| [`plyphon-cli`](crates/plyphon-cli) | The `plyphon` binary - an scsynth-compatible OSC synthesis server (UDP/TCP) and offline renderer, built on the crates below. |
 | [`plyphon-osc`](crates/plyphon-osc) | SuperCollider-compatible OSC command front-end. |
 | [`plyphon-buffers`](crates/plyphon-buffers) | Async `BufferSource` traits for loading sample data, the app-provided I/O seam. |
 | [`plyphon`](crates/plyphon) | Control-side facade - the `Controller`, `SynthDef` authoring and compilation, and the `engine()` builder. Re-exports the three crates below. |
