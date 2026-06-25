@@ -16,7 +16,8 @@ use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
-use crate::graph::{Block, Graph};
+use crate::command::Reply;
+use crate::graph::{Block, Graph, Pool};
 use plyphon_unit::unit::DoneAction;
 
 /// Where to place a node relative to a target, mirroring scsynth's `addAction` codes.
@@ -48,6 +49,19 @@ enum Placement {
 /// A node removed by a free, handed back to the caller: its id and (for synths) the graph, whose
 /// pool block the caller reclaims via `dealloc`.
 pub(crate) type FreedNode = (i32, Option<Graph>);
+
+/// A node's tree position, answering `/n_query` (`/n_info`). Client ids throughout; `-1` for an
+/// absent parent/sibling, and `head`/`tail` are `-1` for a synth.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NodeInfoData {
+    pub node: i32,
+    pub parent: i32,
+    pub prev: i32,
+    pub next: i32,
+    pub is_group: bool,
+    pub head: i32,
+    pub tail: i32,
+}
 
 /// A slot in the node arena.
 enum Slot {
@@ -260,6 +274,67 @@ impl NodeTree {
                 ..
             }) => Some(graph),
             _ => None,
+        }
+    }
+
+    /// Read-only access to the synth with client id `id` (for `/s_get`). `None` if no such synth.
+    pub(crate) fn synth(&self, id: i32) -> Option<&Graph> {
+        let idx = *self.id_map.get(&id)?;
+        self.synth_ref(idx)
+    }
+
+    /// Describe node `id`'s tree position (for `/n_query`). `None` if no such node.
+    pub(crate) fn node_info(&self, id: i32) -> Option<NodeInfoData> {
+        let idx = *self.id_map.get(&id)?;
+        let parent = self.opt_id(self.node_parent(idx));
+        let prev = self.opt_id(self.node_prev(idx));
+        let next = self.opt_id(self.node_next(idx));
+        let (is_group, head, tail) = if self.is_group(idx) {
+            let (h, t) = self.group_links(idx);
+            (true, self.opt_id(h), self.opt_id(t))
+        } else {
+            (false, -1, -1)
+        };
+        Some(NodeInfoData {
+            node: id,
+            parent,
+            prev,
+            next,
+            is_group,
+            head,
+            tail,
+        })
+    }
+
+    /// Live `(synths, groups, ugens)` counts for `/status` (groups includes the root). A bounded scan
+    /// over the slot arena; `/status` is infrequent, so this beats maintaining live counters.
+    pub(crate) fn counts(&self) -> (usize, usize, usize) {
+        let (mut synths, mut groups, mut ugens) = (0, 0, 0);
+        for slot in &self.slots {
+            if let Slot::Node(node) = slot {
+                match &node.kind {
+                    NodeKind::Synth(graph) => {
+                        synths += 1;
+                        ugens += graph.num_units();
+                    }
+                    NodeKind::Group { .. } => groups += 1,
+                }
+            }
+        }
+        (synths, groups, ugens)
+    }
+
+    /// Stream the subtree rooted at group `group` into `out` in pre-order (for `/g_queryTree`),
+    /// emitting one [`Reply::QueryTreeNode`] per node (a synth then adds [`Reply::QueryTreeSynth`] and,
+    /// when `flag`, one [`Reply::QueryTreeControl`] per control). No-op if `group` is unknown or not a
+    /// group. Capped at `out`'s capacity so an adversarial tree can never reallocate on the audio
+    /// thread (a capped dump is still well-formed - header + partial body + end).
+    pub(crate) fn query_tree(&self, group: i32, flag: bool, pool: &Pool, out: &mut Vec<Reply>) {
+        let Some(&idx) = self.id_map.get(&group) else {
+            return;
+        };
+        if self.is_group(idx) {
+            self.emit_subtree(idx, flag, pool, out);
         }
     }
 
@@ -538,6 +613,86 @@ impl NodeTree {
                 ..
             }) => (*head, *tail),
             _ => (None, None),
+        }
+    }
+
+    /// The client id of the node at slot `idx`, or `-1` if the slot is free.
+    fn node_id(&self, idx: u32) -> i32 {
+        match &self.slots[idx as usize] {
+            Slot::Node(node) => node.id,
+            Slot::Free => -1,
+        }
+    }
+
+    /// Translate an optional slot index to a client id, `-1` for `None`.
+    fn opt_id(&self, idx: Option<u32>) -> i32 {
+        idx.map(|i| self.node_id(i)).unwrap_or(-1)
+    }
+
+    /// Read-only access to the synth at slot `idx` (for the `/g_queryTree` walk).
+    fn synth_ref(&self, idx: u32) -> Option<&Graph> {
+        match &self.slots[idx as usize] {
+            Slot::Node(Node {
+                kind: NodeKind::Synth(graph),
+                ..
+            }) => Some(graph),
+            _ => None,
+        }
+    }
+
+    /// Direct child count of the group at slot `idx` (head -> next chain).
+    fn count_children(&self, idx: u32) -> i32 {
+        let mut cur = self.group_links(idx).0;
+        let mut n = 0;
+        while let Some(c) = cur {
+            n += 1;
+            cur = self.node_next(c);
+        }
+        n
+    }
+
+    /// Pre-order emit of the subtree at slot `idx` into `out` (see [`query_tree`](Self::query_tree)).
+    /// Stops pushing once `out` is at capacity, so it never reallocates on the audio thread.
+    fn emit_subtree(&self, idx: u32, flag: bool, pool: &Pool, out: &mut Vec<Reply>) {
+        if out.len() >= out.capacity() {
+            return;
+        }
+        if self.is_group(idx) {
+            out.push(Reply::QueryTreeNode {
+                node: self.node_id(idx),
+                num_children: self.count_children(idx),
+            });
+            let mut cur = self.group_links(idx).0;
+            while let Some(child) = cur {
+                let next = self.node_next(child);
+                self.emit_subtree(child, flag, pool, out);
+                cur = next;
+            }
+        } else {
+            out.push(Reply::QueryTreeNode {
+                node: self.node_id(idx),
+                num_children: -1,
+            });
+            if let Some(graph) = self.synth_ref(idx) {
+                let nparams = graph.num_params();
+                if out.len() >= out.capacity() {
+                    return;
+                }
+                out.push(Reply::QueryTreeSynth {
+                    num_controls: if flag { nparams as i32 } else { 0 },
+                });
+                if flag {
+                    for p in 0..nparams {
+                        if out.len() >= out.capacity() {
+                            return;
+                        }
+                        out.push(Reply::QueryTreeControl {
+                            index: p as i32,
+                            value: graph.control_value(pool, p).unwrap_or(0.0),
+                        });
+                    }
+                }
+            }
         }
     }
 

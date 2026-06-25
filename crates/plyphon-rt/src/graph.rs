@@ -194,6 +194,24 @@ impl Graph {
         }
     }
 
+    /// The current value of control parameter `param` (the symmetric read of
+    /// [`set_control`](Self::set_control), for `/s_get`/`/g_queryTree`). `None` if out of range.
+    pub(crate) fn control_value(&self, pool: &Pool, param: usize) -> Option<f32> {
+        let &wire = self.def.param_wires().get(param)?;
+        let bytes = &pool.slice(&self.block)[self.def.layout().control.range()];
+        cast_slice::<u8, f32>(bytes).get(wire as usize).copied()
+    }
+
+    /// Number of control parameters this synth exposes (scsynth's "controls").
+    pub(crate) fn num_params(&self) -> usize {
+        self.def.num_params()
+    }
+
+    /// Number of unit generators in this synth's def (for `/status`'s ugen count).
+    pub(crate) fn num_units(&self) -> usize {
+        self.def.units().len()
+    }
+
     /// Map control parameter `param` to control `bus` (or unmap it with `None`). While mapped, the
     /// parameter takes the bus's value at the start of every block. No-op if out of range.
     pub(crate) fn map_control(&mut self, pool: &mut Pool, param: usize, bus: Option<u32>) {

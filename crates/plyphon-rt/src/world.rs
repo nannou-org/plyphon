@@ -13,13 +13,14 @@
 //! notifications go to the events ring. Done actions are applied here after the tree runs.
 
 use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use bytemuck::cast_slice_mut;
 use rtrb::{Consumer, Producer, PushError};
 
-use crate::command::{Command, CommandTime, Event, TimedCommand, Trash};
+use crate::command::{Command, CommandTime, Event, Reply, TimedCommand, Trash};
 use crate::graph::{Block, Graph, Pool};
 use crate::options::Options;
 use crate::sched::{Clock, Scheduler};
@@ -37,6 +38,10 @@ const SEED_INIT: u64 = 0x853c_49e6_748f_ea9b;
 
 /// The golden-ratio odd constant used to spread per-instance and per-unit seeds.
 const SEED_STEP: u64 = 0x9e37_79b9_7f4a_7c15;
+
+/// The most values a single range getter (`/c_getn`/`/s_getn`/`/b_getn`) answers, so one oversized
+/// request cannot overflow the reply ring. scsynth similarly bounds its reply sizes.
+pub const MAX_QUERY_RANGE: usize = 256;
 
 /// The real-time engine half.
 pub struct World {
@@ -59,10 +64,16 @@ pub struct World {
     rx: Consumer<TimedCommand>,
     trash_tx: Producer<Trash>,
     events_tx: Producer<Event>,
+    replies_tx: Producer<Reply>,
     /// Freed items awaiting space in the trash ring (pre-allocated; never reallocates at runtime).
     pending_trash: Vec<Trash>,
     /// Events awaiting space in the events ring (pre-allocated; never reallocates at runtime).
     pending_events: Vec<Event>,
+    /// Query answers awaiting space in the reply ring (pre-allocated; never reallocates at runtime).
+    /// A `VecDeque` so the FIFO order getters rely on survives a ring-full backlog.
+    pending_replies: VecDeque<Reply>,
+    /// Scratch the `/g_queryTree` walk fills before draining into the reply ring (pre-allocated).
+    tree_scratch: Vec<Reply>,
     /// Scratch list of `(slot index, action)` for nodes whose units requested a done action.
     done_nodes: Vec<(u32, DoneAction)>,
     /// Scratch sink for nodes removed by a free, so freeing a whole group allocates nothing.
@@ -89,9 +100,14 @@ impl World {
         rx: Consumer<TimedCommand>,
         trash_tx: Producer<Trash>,
         events_tx: Producer<Event>,
+        replies_tx: Producer<Reply>,
     ) -> Self {
         let capacity = options.max_nodes.max(1);
         let bs = options.block_size;
+        // A `/g_queryTree` dump can emit several records per node (the node row, a synth row, and one
+        // per control); size the scratch and reply backlog generously so the audio thread never grows
+        // them (a truly huge dump is capped instead - see `query_tree`).
+        let tree_capacity = capacity.saturating_mul(4).max(MAX_QUERY_RANGE + 2);
         World {
             audio,
             control,
@@ -113,8 +129,11 @@ impl World {
             rx,
             trash_tx,
             events_tx,
+            replies_tx,
             pending_trash: Vec::with_capacity(capacity),
             pending_events: Vec::with_capacity(capacity),
+            pending_replies: VecDeque::with_capacity(tree_capacity),
+            tree_scratch: Vec::with_capacity(tree_capacity),
             done_nodes: Vec::with_capacity(capacity),
             freed_nodes: Vec::with_capacity(capacity),
             clock: Clock::new(options.sample_rate, bs),
@@ -288,6 +307,7 @@ impl World {
     fn drain_commands(&mut self) {
         self.flush_pending_trash();
         self.flush_pending_events();
+        self.flush_pending_replies();
         while let Ok(timed) = self.rx.pop() {
             match timed.time {
                 CommandTime::Immediate => self.apply(timed.command),
@@ -427,7 +447,167 @@ impl World {
                     self.trash_command(command);
                 }
             }
+
+            // --- Queries. Each reads live state and answers over the reply ring (FIFO). ---
+            Command::QuerySync { id } => self.reply(Reply::Synced { id }),
+            Command::QueryStatus => {
+                let (num_synths, num_groups, num_ugens) = self.tree.counts();
+                let num_synthdefs = self.def_table.iter().filter(|s| s.is_some()).count();
+                let sr = self.audio.sample_rate;
+                self.reply(Reply::Status {
+                    num_ugens: num_ugens as i32,
+                    num_synths: num_synths as i32,
+                    num_groups: num_groups as i32,
+                    num_synthdefs: num_synthdefs as i32,
+                    avg_cpu: 0.0,
+                    peak_cpu: 0.0,
+                    nominal_sr: sr,
+                    actual_sr: sr,
+                });
+            }
+            Command::QueryRtMemory => {
+                let total_free = self.pool.free_bytes() as i32;
+                let largest_free = self.pool.largest_free_block() as i32;
+                self.reply(Reply::RtMemoryStatus {
+                    total_free,
+                    largest_free,
+                });
+            }
+            Command::QueryNode { node } => match self.tree.node_info(node) {
+                Some(info) => self.reply(Reply::NodeInfo {
+                    node: info.node,
+                    parent: info.parent,
+                    prev: info.prev,
+                    next: info.next,
+                    is_group: info.is_group as i32,
+                    head: info.head,
+                    tail: info.tail,
+                }),
+                None => self.reply(Reply::NodeNotFound { node }),
+            },
+            Command::QueryControlBus { bus } => {
+                let value = self.buses.control().read(bus as usize);
+                self.reply(Reply::ControlValue {
+                    bus: bus as i32,
+                    value,
+                });
+            }
+            Command::QueryControlBusRange { start, count } => {
+                let count = count.min(MAX_QUERY_RANGE as u32);
+                self.reply(Reply::ControlRangeHeader {
+                    start: start as i32,
+                    count: count as i32,
+                });
+                for i in 0..count {
+                    let value = self.buses.control().read((start + i) as usize);
+                    self.reply(Reply::RangeValue { value });
+                }
+            }
+            Command::QuerySynthControl { node, control } => {
+                let value = {
+                    let World { tree, pool, .. } = self;
+                    tree.synth(node)
+                        .map(|g| g.control_value(pool, control).unwrap_or(0.0))
+                };
+                match value {
+                    Some(value) => self.reply(Reply::SGetValue {
+                        node,
+                        control: control as i32,
+                        value,
+                    }),
+                    None => self.reply(Reply::SGetMissing { node }),
+                }
+            }
+            Command::QuerySynthControlRange {
+                node,
+                control,
+                count,
+            } => {
+                let count = count.min(MAX_QUERY_RANGE);
+                let exists = {
+                    let World { tree, .. } = self;
+                    tree.synth(node).is_some()
+                };
+                if !exists {
+                    self.reply(Reply::SGetMissing { node });
+                } else {
+                    self.reply(Reply::SGetRangeHeader {
+                        node,
+                        control: control as i32,
+                        count: count as i32,
+                    });
+                    for i in 0..count {
+                        let value = {
+                            let World { tree, pool, .. } = self;
+                            tree.synth(node)
+                                .and_then(|g| g.control_value(pool, control + i))
+                                .unwrap_or(0.0)
+                        };
+                        self.reply(Reply::RangeValue { value });
+                    }
+                }
+            }
+            Command::QueryBuffer { buf, index } => {
+                let value = self
+                    .buffers
+                    .get(buf)
+                    .and_then(|b| b.data().get(index).copied())
+                    .unwrap_or(0.0);
+                self.reply(Reply::BufferValue {
+                    buf: buf as i32,
+                    index: index as i32,
+                    value,
+                });
+            }
+            Command::QueryBufferRange { buf, index, count } => {
+                let count = count.min(MAX_QUERY_RANGE);
+                self.reply(Reply::BufferRangeHeader {
+                    buf: buf as i32,
+                    index: index as i32,
+                    count: count as i32,
+                });
+                for i in 0..count {
+                    let value = self
+                        .buffers
+                        .get(buf)
+                        .and_then(|b| b.data().get(index + i).copied())
+                        .unwrap_or(0.0);
+                    self.reply(Reply::RangeValue { value });
+                }
+            }
+            Command::QueryTree { group, flag } => self.query_tree(group, flag, false),
+            Command::DumpTree { group, flag } => self.query_tree(group, flag, true),
         }
+    }
+
+    /// Stream the subtree under `group` over the reply ring (`/g_queryTree`/`/g_dumpTree`). Fills the
+    /// pre-allocated `tree_scratch` (so the walk borrows the tree + pool while the reply ring is
+    /// untouched), then drains it in order. A `dump` opens the stream with [`Reply::DumpTreeHeader`]
+    /// so the dispatcher routes it to a text sink.
+    fn query_tree(&mut self, group: i32, flag: bool, dump: bool) {
+        let mut scratch = core::mem::take(&mut self.tree_scratch);
+        scratch.clear();
+        let header = if dump {
+            Reply::DumpTreeHeader { flag: flag as i32 }
+        } else {
+            Reply::QueryTreeHeader { flag: flag as i32 }
+        };
+        scratch.push(header);
+        {
+            let World { tree, pool, .. } = self;
+            tree.query_tree(group, flag, pool, &mut scratch);
+        }
+        // Always terminate the stream, even if the walk filled the scratch to capacity (overwrite the
+        // last record rather than reallocate on the audio thread).
+        if scratch.len() < scratch.capacity() {
+            scratch.push(Reply::QueryTreeEnd);
+        } else if let Some(last) = scratch.last_mut() {
+            *last = Reply::QueryTreeEnd;
+        }
+        for &r in &scratch {
+            self.reply(r);
+        }
+        self.tree_scratch = scratch;
     }
 
     /// Construct a synth from the resident def at `def_id` and link it into the tree. On a missing def
@@ -544,6 +724,19 @@ impl World {
         }
     }
 
+    /// Send a query answer to the NRT side, preserving FIFO order (the dispatcher reassembles
+    /// strictly in query order). Once a backlog exists, later answers queue behind it rather than
+    /// jumping ahead into the ring; never dropped here on the audio thread.
+    fn reply(&mut self, r: Reply) {
+        if self.pending_replies.is_empty() {
+            if let Err(PushError::Full(r)) = self.replies_tx.push(r) {
+                self.pending_replies.push_back(r);
+            }
+        } else {
+            self.pending_replies.push_back(r);
+        }
+    }
+
     fn flush_pending_trash(&mut self) {
         while let Some(item) = self.pending_trash.pop() {
             if let Err(PushError::Full(item)) = self.trash_tx.push(item) {
@@ -559,6 +752,16 @@ impl World {
                 self.pending_events.push(event);
                 break;
             }
+        }
+    }
+
+    fn flush_pending_replies(&mut self) {
+        // Drain front-to-back so order is preserved; stop at the first that does not fit.
+        while let Some(&r) = self.pending_replies.front() {
+            if self.replies_tx.push(r).is_err() {
+                break;
+            }
+            self.pending_replies.pop_front();
         }
     }
 }

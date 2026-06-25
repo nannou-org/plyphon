@@ -180,6 +180,12 @@ impl Render {
         self.nrt.poll()
     }
 
+    /// Drain the next query answer ([`Reply`](plyphon_rt::Reply)), or `None`. Call in a loop after
+    /// each [`Render::step`], alongside [`poll`](Self::poll), to forward getter replies.
+    pub fn poll_reply(&mut self) -> Option<plyphon_rt::Reply> {
+        self.nrt.poll_reply()
+    }
+
     /// Tick the [`Nrt`] cleanup to completion, dropping every freed `Box` still in flight. Call after
     /// the final [`Render::step`] (the offline analog of the real-time shutdown drain) before the
     /// `World` is dropped.

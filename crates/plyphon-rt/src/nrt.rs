@@ -49,19 +49,26 @@
 
 use rtrb::Consumer;
 
-use crate::command::{Event, Trash};
+use crate::command::{Event, Reply, Trash};
 
-/// The NRT-side state machine: drops freed synths and surfaces node notifications.
+/// The NRT-side state machine: drops freed synths, surfaces node notifications, and surfaces query
+/// answers.
 pub struct Nrt {
     trash_rx: Consumer<Trash>,
     events_rx: Consumer<Event>,
+    replies_rx: Consumer<Reply>,
 }
 
 impl Nrt {
-    pub fn new(trash_rx: Consumer<Trash>, events_rx: Consumer<Event>) -> Self {
+    pub fn new(
+        trash_rx: Consumer<Trash>,
+        events_rx: Consumer<Event>,
+        replies_rx: Consumer<Reply>,
+    ) -> Self {
         Nrt {
             trash_rx,
             events_rx,
+            replies_rx,
         }
     }
 
@@ -79,5 +86,11 @@ impl Nrt {
     /// Pop the next node notification, if any. Drain in a loop: `while let Some(e) = nrt.poll() {}`.
     pub fn poll(&mut self) -> Option<Event> {
         self.events_rx.pop().ok()
+    }
+
+    /// Pop the next query answer, if any (the getters). Drain in a loop alongside [`poll`](Self::poll),
+    /// feeding each to the dispatcher's reply reassembler.
+    pub fn poll_reply(&mut self) -> Option<Reply> {
+        self.replies_rx.pop().ok()
     }
 }

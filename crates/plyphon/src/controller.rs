@@ -462,4 +462,83 @@ impl Controller {
         self.send(Command::CueStream { index, playback })?;
         Ok(producer)
     }
+
+    // --- Queries (getters). Each pushes a query the World answers over the reply ring, drained on the
+    // NRT side. They take effect immediately (`send_now`) except `/sync`, which honors a bundle time
+    // tag (`send`) so a scheduled barrier fires in its block. ---
+
+    /// `/sync`: a command-stream barrier answered with `/synced <id>` once every earlier command has
+    /// been applied.
+    pub fn query_sync(&mut self, id: i32) -> Result<(), QueueFull> {
+        self.send(Command::QuerySync { id })
+    }
+
+    /// `/status`: query engine counts and sample rate.
+    pub fn query_status(&mut self) -> Result<(), QueueFull> {
+        self.send_now(Command::QueryStatus)
+    }
+
+    /// `/rtMemoryStatus`: query rt-pool free/largest-chunk bytes.
+    pub fn query_rt_memory(&mut self) -> Result<(), QueueFull> {
+        self.send_now(Command::QueryRtMemory)
+    }
+
+    /// `/n_query`: query node `node`'s tree position.
+    pub fn query_node(&mut self, node: i32) -> Result<(), QueueFull> {
+        self.send_now(Command::QueryNode { node })
+    }
+
+    /// `/c_get`: query control bus channel `bus`.
+    pub fn query_control_bus(&mut self, bus: u32) -> Result<(), QueueFull> {
+        self.send_now(Command::QueryControlBus { bus })
+    }
+
+    /// `/c_getn`: query a run of `count` control buses from `start`.
+    pub fn query_control_bus_range(&mut self, start: u32, count: u32) -> Result<(), QueueFull> {
+        self.send_now(Command::QueryControlBusRange { start, count })
+    }
+
+    /// `/s_get`: query control `control` of synth `node`.
+    pub fn query_synth_control(&mut self, node: i32, control: usize) -> Result<(), QueueFull> {
+        self.send_now(Command::QuerySynthControl { node, control })
+    }
+
+    /// `/s_getn`: query a run of `count` controls of synth `node` from `control`.
+    pub fn query_synth_control_range(
+        &mut self,
+        node: i32,
+        control: usize,
+        count: usize,
+    ) -> Result<(), QueueFull> {
+        self.send_now(Command::QuerySynthControlRange {
+            node,
+            control,
+            count,
+        })
+    }
+
+    /// `/b_get`: query flat sample `index` of buffer `buf`.
+    pub fn query_buffer(&mut self, buf: usize, index: usize) -> Result<(), QueueFull> {
+        self.send_now(Command::QueryBuffer { buf, index })
+    }
+
+    /// `/b_getn`: query a run of `count` samples of buffer `buf` from `index`.
+    pub fn query_buffer_range(
+        &mut self,
+        buf: usize,
+        index: usize,
+        count: usize,
+    ) -> Result<(), QueueFull> {
+        self.send_now(Command::QueryBufferRange { buf, index, count })
+    }
+
+    /// `/g_queryTree`: stream the subtree under `group` (with control values if `flag`).
+    pub fn query_tree(&mut self, group: i32, flag: bool) -> Result<(), QueueFull> {
+        self.send_now(Command::QueryTree { group, flag })
+    }
+
+    /// `/g_dumpTree`: like [`query_tree`](Self::query_tree) but routed to a text sink, not an OSC reply.
+    pub fn dump_tree(&mut self, group: i32, flag: bool) -> Result<(), QueueFull> {
+        self.send_now(Command::DumpTree { group, flag })
+    }
 }
