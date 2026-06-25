@@ -137,6 +137,9 @@ struct PendingLoad {
     region: ReadRegion,
     /// The raw OSC completion message to run once the load finishes, if any.
     completion: Option<Vec<u8>>,
+    /// The client this load answers to; replayed in `run_pending` so `/done`/`/fail` and any reply the
+    /// completion message emits all route back to it.
+    target: ReplyTarget,
 }
 
 /// One outstanding getter, in the FIFO order queries were issued. As [`Reply`] items arrive (in that
@@ -192,6 +195,23 @@ enum PendingQuery {
 /// A host text sink for `/g_dumpTree` (scsynth prints to stdout; plyphon is headless).
 pub type DumpSink = Box<dyn FnMut(&str)>;
 
+/// Where an outbound reply should be delivered.
+///
+/// scsynth copies the requester's reply address into each command at receive time and carries it
+/// through every stage (including completion messages), so replies are self-addressed. plyphon mirrors
+/// that: the dispatcher tags every reply it produces - `Broadcast` for node notifications (scsynth's
+/// `mUsers` set), or `Requester` for an answer owed to the client that issued the command. The host
+/// sets [`OscDispatcher::set_reply_target`] before each [`apply`](OscDispatcher::apply) and routes by
+/// the tag (see [`take_replies_targeted`](OscDispatcher::take_replies_targeted)); the `u64` is an opaque
+/// routing handle the host assigns and interprets - the dispatcher only stores and echoes it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ReplyTarget {
+    /// Deliver to every client the host considers a notification subscriber.
+    Broadcast,
+    /// Deliver to the one client identified by this opaque host-assigned handle.
+    Requester(u64),
+}
+
 /// Applies SuperCollider OSC commands to a plyphon [`Controller`].
 pub struct OscDispatcher {
     controller: Controller,
@@ -203,14 +223,19 @@ pub struct OscDispatcher {
     source: Option<Box<dyn BufferSource>>,
     /// Loads queued by `apply`, awaiting [`OscDispatcher::run_pending`].
     pending: Vec<PendingLoad>,
-    /// Outbound replies, drained by [`OscDispatcher::take_replies`].
-    replies: Vec<OscPacket>,
+    /// Outbound replies, each tagged with its destination, drained by
+    /// [`take_replies`](OscDispatcher::take_replies)/[`take_replies_targeted`](OscDispatcher::take_replies_targeted).
+    replies: Vec<(ReplyTarget, OscPacket)>,
+    /// The destination stamped onto replies produced right now (set by the host before each `apply`,
+    /// and replayed by `reply`/`run_pending` so answers cross the async gap to the right client).
+    current_target: ReplyTarget,
     /// Permanent error-posting mode (scsynth's `/error 0|1`; default on).
     error_perm: bool,
     /// Bundle-local error-posting override (scsynth's `/error -1|-2`), saved/restored per bundle.
     error_bundle: Option<bool>,
     /// Outstanding getters, FIFO, reassembled as their [`Reply`]s arrive via [`OscDispatcher::reply`].
-    pending_queries: VecDeque<PendingQuery>,
+    /// Each carries the requester captured when the query was issued.
+    pending_queries: VecDeque<(ReplyTarget, PendingQuery)>,
     /// Optional host text sink for `/g_dumpTree` (no OSC reply); a no-op when unset.
     dump_sink: Option<DumpSink>,
 }
@@ -225,6 +250,7 @@ impl OscDispatcher {
             source: None,
             pending: Vec::new(),
             replies: Vec::new(),
+            current_target: ReplyTarget::Broadcast,
             error_perm: true,
             error_bundle: None,
             pending_queries: VecDeque::new(),
@@ -262,17 +288,38 @@ impl OscDispatcher {
     /// every reply in order, alongside [`notify`](Self::notify); replies arrive in the same FIFO order
     /// the getters were issued, so each is matched against the oldest outstanding query.
     pub fn reply(&mut self, reply: Reply) {
-        let Some(mut pending) = self.pending_queries.pop_front() else {
+        let Some((target, mut pending)) = self.pending_queries.pop_front() else {
             return; // a stray reply with nothing outstanding (e.g. after a reset); ignore.
         };
+        // Replay the requester captured when the query was issued, so the reassembled message routes
+        // back to it (the success `/n_info` overrides this to `Broadcast` itself).
+        self.current_target = target;
         if !self.apply_reply(&mut pending, reply) {
-            self.pending_queries.push_front(pending);
+            self.pending_queries.push_front((target, pending));
         }
     }
 
-    /// Take the OSC replies queued since the last call (`/done`, `/b_info`, `/fail`, and the
-    /// `/n_*` node notifications) for the transport to send back to the client.
+    /// Set the destination stamped onto replies the dispatcher produces next. The host calls this with
+    /// the issuing client before each [`apply`](Self::apply); getters and async loads capture it so
+    /// their later answers (and any reply a completion message emits) reach the same client. Defaults
+    /// to [`ReplyTarget::Broadcast`], which is all an in-process single-client host needs.
+    pub fn set_reply_target(&mut self, target: ReplyTarget) {
+        self.current_target = target;
+    }
+
+    /// Take the OSC replies queued since the last call (`/done`, `/b_info`, `/fail`, getter answers,
+    /// and the `/n_*` node notifications), dropping their destination tags - for single-client hosts.
+    /// Multi-client hosts want [`take_replies_targeted`](Self::take_replies_targeted) instead.
     pub fn take_replies(&mut self) -> Vec<OscPacket> {
+        core::mem::take(&mut self.replies)
+            .into_iter()
+            .map(|(_, packet)| packet)
+            .collect()
+    }
+
+    /// Take the queued replies paired with their [`ReplyTarget`], for a host that routes per client:
+    /// `Broadcast` to its notification subscribers, `Requester` to the one client the handle names.
+    pub fn take_replies_targeted(&mut self) -> Vec<(ReplyTarget, OscPacket)> {
         core::mem::take(&mut self.replies)
     }
 
@@ -282,10 +329,10 @@ impl OscDispatcher {
     ///
     /// Feed this the events drained from the [`Nrt`](plyphon::Nrt), so node lifecycle - including
     /// synths that free themselves via a done action - is reported back over OSC alongside the
-    /// command replies. This front-end always emits the notification; deciding which client(s)
-    /// receive it (scsynth's `/notify` subscription) is the host/transport's job. plyphon's events
-    /// carry only the node id, so, unlike scsynth, the parent/sibling/group fields are omitted and
-    /// the id is the lone argument.
+    /// command replies. Node notifications are tagged [`ReplyTarget::Broadcast`] (scsynth fans them out
+    /// to its `mUsers` set); which clients that set contains (scsynth's `/notify` subscription) is the
+    /// host/transport's job. plyphon's events carry only the node id, so, unlike scsynth, the
+    /// parent/sibling/group fields are omitted and the id is the lone argument.
     pub fn notify(&mut self, event: Event) {
         let (addr, id) = match event {
             Event::NodeStarted { id } => ("/n_go", id),
@@ -296,7 +343,8 @@ impl OscDispatcher {
             // mirroring scsynth's `/fail` reply, and drop any def tracking for the would-be id.
             Event::SynthFailed { id } => {
                 self.node_defs.remove(&id);
-                self.reply_msg(
+                self.push_reply(
+                    ReplyTarget::Broadcast,
                     "/fail",
                     vec![OscType::String("/s_new".to_string()), OscType::Int(id)],
                 );
@@ -308,7 +356,7 @@ impl OscDispatcher {
         if let Event::NodeEnded { id } = event {
             self.node_defs.remove(&id);
         }
-        self.reply_msg(addr, vec![OscType::Int(id)]);
+        self.push_reply(ReplyTarget::Broadcast, addr, vec![OscType::Int(id)]);
     }
 
     /// Run the buffer loads queued by `apply` (`/b_allocRead`, `/b_read`), in order.
@@ -319,6 +367,10 @@ impl OscDispatcher {
     /// `spawn_local` on the web); it never touches the audio thread.
     pub async fn run_pending(&mut self) {
         for load in core::mem::take(&mut self.pending) {
+            // Answer this load (its `/done`/`/fail`, and anything its completion message emits) back to
+            // the client that issued it - exactly as scsynth stamps completion packets with the
+            // command's stored reply address.
+            self.current_target = load.target;
             let result = match &self.source {
                 Some(source) => Some(source.load(&load.key, load.region).await),
                 None => None,
@@ -729,7 +781,7 @@ impl OscDispatcher {
         self.controller
             .query_sync(id)
             .map_err(|_| OscError::QueueFull)?;
-        self.pending_queries.push_back(PendingQuery::Sync);
+        self.push_query(PendingQuery::Sync);
         Ok(())
     }
 
@@ -738,7 +790,7 @@ impl OscDispatcher {
         self.controller
             .query_status()
             .map_err(|_| OscError::QueueFull)?;
-        self.pending_queries.push_back(PendingQuery::Status);
+        self.push_query(PendingQuery::Status);
         Ok(())
     }
 
@@ -747,7 +799,7 @@ impl OscDispatcher {
         self.controller
             .query_rt_memory()
             .map_err(|_| OscError::QueueFull)?;
-        self.pending_queries.push_back(PendingQuery::RtMemory);
+        self.push_query(PendingQuery::RtMemory);
         Ok(())
     }
 
@@ -758,7 +810,7 @@ impl OscDispatcher {
             self.controller
                 .query_node(node)
                 .map_err(|_| OscError::QueueFull)?;
-            self.pending_queries.push_back(PendingQuery::Node);
+            self.push_query(PendingQuery::Node);
         }
         Ok(())
     }
@@ -774,7 +826,7 @@ impl OscDispatcher {
         if args.is_empty() {
             self.reply_msg("/c_set", Vec::new());
         } else {
-            self.pending_queries.push_back(PendingQuery::Pairs {
+            self.push_query(PendingQuery::Pairs {
                 addr: "/c_set",
                 remaining: args.len(),
                 args: Vec::new(),
@@ -799,7 +851,7 @@ impl OscDispatcher {
         if ranges == 0 {
             self.reply_msg("/c_setn", Vec::new());
         } else {
-            self.pending_queries.push_back(PendingQuery::Ranges {
+            self.push_query(PendingQuery::Ranges {
                 addr: "/c_setn",
                 remaining: ranges,
                 in_range: 0,
@@ -827,7 +879,7 @@ impl OscDispatcher {
         if rest.is_empty() {
             self.reply_msg("/n_set", vec![OscType::Int(node)]);
         } else {
-            self.pending_queries.push_back(PendingQuery::SGet {
+            self.push_query(PendingQuery::SGet {
                 remaining: rest.len(),
                 controls,
                 args: vec![OscType::Int(node)],
@@ -859,7 +911,7 @@ impl OscDispatcher {
         if ranges == 0 {
             self.reply_msg("/n_setn", vec![OscType::Int(node)]);
         } else {
-            self.pending_queries.push_back(PendingQuery::SGetN {
+            self.push_query(PendingQuery::SGetN {
                 remaining: ranges,
                 in_range: 0,
                 controls,
@@ -885,7 +937,7 @@ impl OscDispatcher {
         if rest.is_empty() {
             self.reply_msg("/b_set", vec![OscType::Int(buf)]);
         } else {
-            self.pending_queries.push_back(PendingQuery::Pairs {
+            self.push_query(PendingQuery::Pairs {
                 addr: "/b_set",
                 remaining: rest.len(),
                 args: vec![OscType::Int(buf)],
@@ -915,7 +967,7 @@ impl OscDispatcher {
         if ranges == 0 {
             self.reply_msg("/b_setn", vec![OscType::Int(buf)]);
         } else {
-            self.pending_queries.push_back(PendingQuery::Ranges {
+            self.push_query(PendingQuery::Ranges {
                 addr: "/b_setn",
                 remaining: ranges,
                 in_range: 0,
@@ -941,7 +993,7 @@ impl OscDispatcher {
                 .query_tree(group, flag)
                 .map_err(|_| OscError::QueueFull)?;
         }
-        self.pending_queries.push_back(PendingQuery::Tree {
+        self.push_query(PendingQuery::Tree {
             dump,
             flag,
             last_node: -1,
@@ -1025,18 +1077,16 @@ impl OscDispatcher {
                             args.push(OscType::Int(head));
                             args.push(OscType::Int(tail));
                         }
-                        self.reply_msg("/n_info", args);
+                        // scsynth answers `/n_query` by broadcasting `/n_info` to all registered
+                        // clients (Server-Command-Reference: "sent to all registered clients"), not
+                        // just the asker - so an unregistered querier receives nothing.
+                        self.push_reply(ReplyTarget::Broadcast, "/n_info", args);
                     }
-                    Reply::NodeNotFound { node } => self.reply_msg(
-                        "/n_info",
-                        vec![
-                            OscType::Int(node),
-                            OscType::Int(-1),
-                            OscType::Int(-1),
-                            OscType::Int(-1),
-                            OscType::Int(-1),
-                        ],
-                    ),
+                    // scsynth returns kSCErr_NodeNotFound, which the dispatcher reports as a `/fail`
+                    // back to the requester (errors are not broadcast).
+                    Reply::NodeNotFound { node } => {
+                        self.fail("/n_query", &alloc::format!("Node {node} not found"))
+                    }
                     _ => {}
                 }
                 true
@@ -1624,6 +1674,7 @@ impl OscDispatcher {
                 num_frames,
             },
             completion: last_blob(args).map(|bytes| bytes.to_vec()),
+            target: self.current_target,
         });
         Ok(())
     }
@@ -1637,12 +1688,28 @@ impl OscDispatcher {
         }
     }
 
-    /// Queue an OSC reply for the transport to send back to the client.
+    /// Queue an OSC reply for the current requester (see [`current_target`](Self::current_target)).
     fn reply_msg(&mut self, addr: &str, args: Vec<OscType>) {
-        self.replies.push(OscPacket::Message(OscMessage {
-            addr: addr.to_string(),
-            args,
-        }));
+        let target = self.current_target;
+        self.push_reply(target, addr, args);
+    }
+
+    /// Queue an OSC reply for an explicit destination, regardless of the current requester (e.g. node
+    /// notifications and the success `/n_info`, which broadcast).
+    fn push_reply(&mut self, target: ReplyTarget, addr: &str, args: Vec<OscType>) {
+        self.replies.push((
+            target,
+            OscPacket::Message(OscMessage {
+                addr: addr.to_string(),
+                args,
+            }),
+        ));
+    }
+
+    /// Record an outstanding getter against the current requester, in issue order, so its later
+    /// [`Reply`]s reassemble into a message routed back to that client.
+    fn push_query(&mut self, query: PendingQuery) {
+        self.pending_queries.push_back((self.current_target, query));
     }
 
     /// Queue a `/done <command> <bufnum>` reply.

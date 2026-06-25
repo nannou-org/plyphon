@@ -238,23 +238,22 @@ fn n_query_describes_node_and_group() {
         ]
     );
 
-    // An unknown id: the not-found shape.
+    // An unknown id: scsynth returns kSCErr_NodeNotFound, reported as `/fail "/n_query"` to the
+    // requester (not a broadcast `/n_info`).
     let replies = query(
         &mut d,
         &mut nrt,
         &mut world,
         &osc("/n_query", vec![OscType::Int(7777)]),
     );
-    let info = find(&replies, "/n_info").expect("/n_info missing");
+    assert!(
+        find(&replies, "/n_info").is_none(),
+        "no /n_info for a missing node"
+    );
+    let fail = find(&replies, "/fail").expect("/fail for missing node");
     assert_eq!(
-        info.args,
-        vec![
-            OscType::Int(7777),
-            OscType::Int(-1),
-            OscType::Int(-1),
-            OscType::Int(-1),
-            OscType::Int(-1),
-        ]
+        fail.args.first(),
+        Some(&OscType::String("/n_query".to_string()))
     );
 }
 

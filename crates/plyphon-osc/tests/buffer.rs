@@ -7,7 +7,7 @@ use std::future::Future;
 
 use plyphon::{InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine};
 use plyphon_buffers::{BufFuture, BufferData, BufferSource, LoadError, ReadRegion};
-use plyphon_osc::OscDispatcher;
+use plyphon_osc::{OscDispatcher, ReplyTarget};
 use rosc::{OscMessage, OscPacket, OscType};
 
 const SR: f32 = 48_000.0;
@@ -182,6 +182,101 @@ fn loads_a_buffer_over_osc_and_plays_it() {
             OscType::Int(1),
             OscType::Float(SR),
         ]
+    );
+}
+
+/// A completion message that itself emits a point-to-point reply (`/b_query` -> `/b_info`) must route
+/// that reply - and the terminal `/done` - back to the client that issued the load, exactly as scsynth
+/// stamps completion packets with the command's stored reply address. (Before destination-tagging this
+/// `/b_info` was mis-attributed to an unrelated getter.)
+#[test]
+fn completion_b_query_routes_to_the_loader() {
+    let (controller, _nrt, _world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    let mut osc = OscDispatcher::with_buffer_source(controller, Box::new(ToneSource));
+
+    // Tag this load's requester, then queue a load whose completion queries the just-loaded buffer.
+    osc.set_reply_target(ReplyTarget::Requester(7));
+    let completion = msg("/b_query", vec![OscType::Int(0)]);
+    osc.apply_bytes(&msg(
+        "/b_allocRead",
+        vec![
+            OscType::Int(0),
+            OscType::String("tone".to_string()),
+            OscType::Blob(completion),
+        ],
+    ))
+    .expect("/b_allocRead");
+    block_on(osc.run_pending());
+
+    let replies = osc.take_replies_targeted();
+    assert!(
+        replies
+            .iter()
+            .all(|(target, _)| *target == ReplyTarget::Requester(7)),
+        "the completion's /b_info and the terminal /done both route to the loader, got {replies:?}"
+    );
+    let infos = replies
+        .iter()
+        .filter(|(_, p)| matches!(p, OscPacket::Message(m) if m.addr == "/b_info"))
+        .count();
+    assert_eq!(
+        infos, 1,
+        "the completion's /b_query produced exactly one /b_info"
+    );
+}
+
+/// The same, but the completion issues an *asynchronous* getter (`/c_get`) whose answer returns a
+/// render later over the reply ring. The requester captured at completion time must still tag that
+/// answer - the case the old FIFO routing could not handle at all (no slot was ever recorded).
+#[test]
+fn completion_getter_answers_the_loader() {
+    let (controller, mut nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    let mut osc = OscDispatcher::with_buffer_source(controller, Box::new(ToneSource));
+
+    osc.set_reply_target(ReplyTarget::Requester(9));
+    let completion = msg("/c_get", vec![OscType::Int(0)]);
+    osc.apply_bytes(&msg(
+        "/b_allocRead",
+        vec![
+            OscType::Int(0),
+            OscType::String("tone".to_string()),
+            OscType::Blob(completion),
+        ],
+    ))
+    .expect("/b_allocRead");
+    block_on(osc.run_pending());
+    // The immediate replies (the terminal /done) are the loader's; the /c_get answer is still in flight.
+    let immediate = osc.take_replies_targeted();
+    assert!(
+        immediate
+            .iter()
+            .all(|(target, _)| *target == ReplyTarget::Requester(9)),
+        "the load's /done routes to the loader, got {immediate:?}"
+    );
+
+    // Render so the World answers the control-bus query, then reassemble the reply-ring answer.
+    render(&mut world, 2);
+    nrt.process();
+    while let Some(reply) = nrt.poll_reply() {
+        osc.reply(reply);
+    }
+    let answers = osc.take_replies_targeted();
+    let (target, _) = answers
+        .iter()
+        .find(|(_, p)| matches!(p, OscPacket::Message(m) if m.addr == "/c_set"))
+        .expect("the completion's /c_get answered with /c_set");
+    assert_eq!(
+        *target,
+        ReplyTarget::Requester(9),
+        "the completion's getter answer carries the loader's tag"
     );
 }
 

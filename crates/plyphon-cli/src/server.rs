@@ -9,19 +9,20 @@
 //! `scsynth` splits "server commands" from "engine commands"; so do we - `/notify`, `/dumpOSC`,
 //! `/version`, and `/quit` (the ones that concern the connection/process, not the engine) are handled
 //! here; everything else is forwarded to the dispatcher. The engine-state getters (`/status`,
-//! `/sync`, `/c_get`, `/n_query`, …) and the async buffer loads answer *later* over the reply ring,
-//! so the server records each requester (see `pending_getters`/`pending_loads`) and, in
-//! [`service`], routes each answer back to the one client that asked - while node notifications
-//! broadcast to every `/notify` subscriber.
+//! `/sync`, `/c_get`, `/n_query`, …) and the async buffer loads answer *later*, so the server tags the
+//! dispatcher with the issuing client (a [`ReplyTarget::Requester`] handle) before each `apply`; the
+//! dispatcher stamps every reply it produces with that tag and replays it across the async gap. The
+//! server then routes purely by the tag (see [`flush_replies`]): `Requester` to the one client that
+//! asked, `Broadcast` to every `/notify` subscriber. No reply is classified by inspecting its address.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::net::{TcpStream, UdpSocket};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use plyphon::{Nrt, engine};
-use plyphon_osc::OscDispatcher;
+use plyphon_osc::{OscDispatcher, ReplyTarget};
 use rosc::{OscMessage, OscPacket, OscType};
 
 use crate::audio;
@@ -46,12 +47,13 @@ struct Server {
     notified: HashSet<Client>,
     /// Whether to log incoming OSC (`/dumpOSC`).
     dump_osc: bool,
-    /// Clients awaiting an async getter reply, FIFO, one entry per expected reply message - so each
-    /// answer (which arrives later, in `service`, in query order) routes to its requester.
-    pending_getters: VecDeque<Client>,
-    /// Clients awaiting an async buffer-load reply (`/done`/`/fail`), FIFO. Kept separate from
-    /// `pending_getters` because the two reply kinds surface in different phases of `service`.
-    pending_loads: VecDeque<Client>,
+    /// Maps each known client to its stable [`ReplyTarget::Requester`] handle (assigned by `token_for`)
+    /// so the dispatcher can tag replies with an opaque id; `token_clients` is the reverse map used to
+    /// route a tagged reply back. UDP entries persist for the run (clients are few); TCP entries drop on
+    /// disconnect.
+    client_tokens: HashMap<Client, u64>,
+    token_clients: HashMap<u64, Client>,
+    next_token: u64,
 }
 
 pub fn run(args: ServerArgs) -> Result<(), String> {
@@ -96,8 +98,9 @@ pub fn run(args: ServerArgs) -> Result<(), String> {
         tcp_writers: HashMap::new(),
         notified: HashSet::new(),
         dump_osc: false,
-        pending_getters: VecDeque::new(),
-        pending_loads: VecDeque::new(),
+        client_tokens: HashMap::new(),
+        token_clients: HashMap::new(),
+        next_token: 0,
     };
     control_loop(&mut server, &events);
     Ok(())
@@ -117,7 +120,11 @@ fn control_loop(server: &mut Server, events: &Receiver<FromNet>) {
             }
             Ok(FromNet::TcpDisconnected { id }) => {
                 server.tcp_writers.remove(&id);
-                server.notified.remove(&Client::Tcp(id));
+                let client = Client::Tcp(id);
+                server.notified.remove(&client);
+                if let Some(token) = server.client_tokens.remove(&client) {
+                    server.token_clients.remove(&token);
+                }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -166,53 +173,41 @@ fn handle_packet(server: &mut Server, client: Client, bytes: &[u8]) -> bool {
         }
     }
 
-    // Async commands (getters, buffer loads) answer later in `service`; record the requester (one
-    // entry per expected reply message) and do not take replies synchronously.
-    if let Some(count) = getter_reply_count(&packet) {
-        if let Err(err) = server.dispatcher.apply(&packet) {
-            reply(
-                server,
-                client,
-                fail_packet(command_addr(&packet), &err.to_string()),
-            );
-            return false;
-        }
-        for _ in 0..count {
-            server.pending_getters.push_back(client);
-        }
-        return false;
-    }
-    if is_async_buffer_load(&packet) {
-        if let Err(err) = server.dispatcher.apply(&packet) {
-            reply(
-                server,
-                client,
-                fail_packet(command_addr(&packet), &err.to_string()),
-            );
-            return false;
-        }
-        server.pending_loads.push_back(client);
-        return false;
-    }
-
-    // A synchronous engine command: apply, then route its own replies back to the sender.
+    // Everything else is an engine command. Tag the dispatcher with this client so every reply it
+    // produces - now (a synchronous command's replies) or later (a getter answer, a load's `/done`, or
+    // anything a load's completion message emits) - is stamped for this requester and routed back by
+    // `flush_replies`. Notifications the engine raises are tagged `Broadcast` by the dispatcher itself.
+    let token = token_for(server, client);
+    server
+        .dispatcher
+        .set_reply_target(ReplyTarget::Requester(token));
     if let Err(err) = server.dispatcher.apply(&packet) {
         reply(
             server,
             client,
             fail_packet(command_addr(&packet), &err.to_string()),
         );
+        return false;
     }
-    let replies = server.dispatcher.take_replies();
-    for packet in &replies {
-        send(&server.udp, &server.tcp_writers, client, packet);
-    }
+    flush_replies(server);
     false
 }
 
-/// Run NRT cleanup, surface node notifications and async query/load answers, then route each reply:
-/// node notifications broadcast to `/notify` subscribers; getter and buffer-load answers go to the
-/// one client that asked (matched FIFO, in request order).
+/// The stable routing handle for `client`, assigned on first contact and reused thereafter, so the
+/// dispatcher can tag replies with an opaque id the server maps back to a client in `flush_replies`.
+fn token_for(server: &mut Server, client: Client) -> u64 {
+    if let Some(&token) = server.client_tokens.get(&client) {
+        return token;
+    }
+    let token = server.next_token;
+    server.next_token += 1;
+    server.client_tokens.insert(client, token);
+    server.token_clients.insert(token, client);
+    token
+}
+
+/// Run NRT cleanup, surface node notifications and async query/load answers, then route every queued
+/// reply by its tag (see [`flush_replies`]).
 fn service(server: &mut Server) {
     server.nrt.process();
     while let Some(event) = server.nrt.poll() {
@@ -224,76 +219,25 @@ fn service(server: &mut Server) {
     // Buffer loads queued by `apply` (`/b_allocRead`/`/b_read`); the fs source is ready at once.
     block_on(server.dispatcher.run_pending());
 
-    let replies = server.dispatcher.take_replies();
-    for packet in &replies {
-        match reply_route(packet) {
-            ReplyRoute::Broadcast => {
+    flush_replies(server);
+}
+
+/// Send each queued dispatcher reply to its tagged destination: `Broadcast` to every `/notify`
+/// subscriber, `Requester` to the one client the handle names (scsynth's stored reply address). A
+/// handle with no live client (one that vanished mid-flight) is logged and dropped.
+fn flush_replies(server: &mut Server) {
+    for (target, packet) in server.dispatcher.take_replies_targeted() {
+        match target {
+            ReplyTarget::Broadcast => {
                 for client in server.notified.iter().copied().collect::<Vec<_>>() {
-                    send(&server.udp, &server.tcp_writers, client, packet);
+                    send(&server.udp, &server.tcp_writers, client, &packet);
                 }
             }
-            ReplyRoute::Getter => match server.pending_getters.pop_front() {
-                Some(client) => send(&server.udp, &server.tcp_writers, client, packet),
-                None => eprintln!("warning: getter reply with no pending requester: {packet:?}"),
-            },
-            ReplyRoute::Load => match server.pending_loads.pop_front() {
-                Some(client) => send(&server.udp, &server.tcp_writers, client, packet),
-                None => {
-                    eprintln!("warning: buffer-load reply with no pending requester: {packet:?}")
-                }
+            ReplyTarget::Requester(token) => match server.token_clients.get(&token).copied() {
+                Some(client) => send(&server.udp, &server.tcp_writers, client, &packet),
+                None => eprintln!("warning: reply for unknown client token {token}: {packet:?}"),
             },
         }
-    }
-}
-
-/// How many async reply messages a getter command produces, or `None` if it is not an async getter.
-/// Every getter answers with one message except `/n_query` (one `/n_info` per queried node).
-/// `/g_dumpTree` is excluded - it has no OSC reply (it routes to a text sink, unused by the server).
-fn getter_reply_count(packet: &OscPacket) -> Option<usize> {
-    let OscPacket::Message(message) = packet else {
-        return None;
-    };
-    match message.addr.as_str() {
-        "/sync" | "/status" | "/rtMemoryStatus" | "/c_get" | "/c_getn" | "/s_get" | "/s_getn"
-        | "/b_get" | "/b_getn" | "/g_queryTree" => Some(1),
-        "/n_query" => Some(message.args.len().max(1)),
-        _ => None,
-    }
-}
-
-/// Whether `packet` is an async buffer load, whose single terminal `/done`/`/fail` arrives later.
-fn is_async_buffer_load(packet: &OscPacket) -> bool {
-    matches!(packet, OscPacket::Message(m) if matches!(m.addr.as_str(), "/b_allocRead" | "/b_read"))
-}
-
-/// Where a drained reply should go.
-enum ReplyRoute {
-    /// A node notification - every `/notify` subscriber.
-    Broadcast,
-    /// A getter answer - the next pending getter's requester.
-    Getter,
-    /// A buffer-load `/done`/`/fail` - the next pending load's requester.
-    Load,
-}
-
-/// Classify a reply for routing. `/fail` is disambiguated by the command it names: a failed node
-/// start broadcasts, a failed buffer load routes to the loader, and any other failure (e.g. a bad
-/// `/s_get`) routes to the getter requester.
-fn reply_route(packet: &OscPacket) -> ReplyRoute {
-    let OscPacket::Message(message) = packet else {
-        return ReplyRoute::Broadcast;
-    };
-    match message.addr.as_str() {
-        "/n_go" | "/n_end" | "/n_off" | "/n_on" => ReplyRoute::Broadcast,
-        "/done" => ReplyRoute::Load,
-        "/fail" => match message.args.first() {
-            Some(OscType::String(cmd)) if cmd == "/s_new" => ReplyRoute::Broadcast,
-            Some(OscType::String(cmd)) if cmd == "/b_allocRead" || cmd == "/b_read" => {
-                ReplyRoute::Load
-            }
-            _ => ReplyRoute::Getter,
-        },
-        _ => ReplyRoute::Getter,
     }
 }
 
@@ -518,8 +462,9 @@ mod tests {
             tcp_writers: HashMap::new(),
             notified: HashSet::new(),
             dump_osc: false,
-            pending_getters: VecDeque::new(),
-            pending_loads: VecDeque::new(),
+            client_tokens: HashMap::new(),
+            token_clients: HashMap::new(),
+            next_token: 0,
         };
 
         let client = thread::spawn(move || {
@@ -593,8 +538,9 @@ mod tests {
             tcp_writers: HashMap::new(),
             notified: HashSet::new(),
             dump_osc: false,
-            pending_getters: VecDeque::new(),
-            pending_loads: VecDeque::new(),
+            client_tokens: HashMap::new(),
+            token_clients: HashMap::new(),
+            next_token: 0,
         };
 
         let client = thread::spawn(move || {
@@ -664,8 +610,9 @@ mod tests {
             tcp_writers: HashMap::new(),
             notified: HashSet::new(),
             dump_osc: false,
-            pending_getters: VecDeque::new(),
-            pending_loads: VecDeque::new(),
+            client_tokens: HashMap::new(),
+            token_clients: HashMap::new(),
+            next_token: 0,
         };
         (server, events, server_addr, stop, driver)
     }
@@ -711,6 +658,77 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         driver.join().unwrap();
         assert_eq!(reply.args, vec![OscType::Int(5), OscType::Float(0.5)]);
+    }
+
+    /// An async load whose completion message itself emits a reply (`/b_query` -> `/b_info`) routes
+    /// that reply back to the loader. Before destination-tagging the server dropped it ("getter reply
+    /// with no pending requester"); now the dispatcher tags it for the loader and `flush_replies`
+    /// delivers it.
+    #[test]
+    fn completion_b_query_routes_to_the_loader() {
+        // A tiny valid WAV the FsSource can read back.
+        let path =
+            std::env::temp_dir().join(format!("plyphon_completion_{}.wav", std::process::id()));
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        for i in 0..240 {
+            writer
+                .write_sample(((i as f32 * 0.1).sin() * 1000.0) as i16)
+                .unwrap();
+        }
+        writer.finalize().unwrap();
+        let wav_path = path.to_str().unwrap().to_string();
+
+        let (mut server, events, server_addr, stop, driver) = server_with_driver();
+        let client = thread::spawn(move || {
+            let sock = client_socket();
+            // The completion queries the just-loaded buffer; its /b_info must come back to us.
+            let completion =
+                rosc::encoder::encode(&message_packet("/b_query", vec![OscType::Int(0)])).unwrap();
+            send_msg(
+                &sock,
+                server_addr,
+                "/b_allocRead",
+                vec![
+                    OscType::Int(0),
+                    OscType::String(wav_path),
+                    OscType::Blob(completion),
+                ],
+            );
+
+            let mut info = None;
+            let mut buf = [0u8; 65_536];
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while info.is_none() && Instant::now() < deadline {
+                if let Ok(n) = sock.recv(&mut buf)
+                    && let Ok((_, OscPacket::Message(m))) = rosc::decoder::decode_udp(&buf[..n])
+                    && m.addr == "/b_info"
+                {
+                    info = Some(m);
+                }
+            }
+            send_msg(&sock, server_addr, "/quit", vec![]);
+            info
+        });
+
+        control_loop(&mut server, &events);
+        let info = client
+            .join()
+            .unwrap()
+            .expect("/b_info from the completion routed to the loader");
+        stop.store(true, Ordering::Relaxed);
+        driver.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            info.args.first(),
+            Some(&OscType::Int(0)),
+            "/b_info for buffer 0"
+        );
     }
 
     /// A getter reply reaches only the requester, while node notifications reach only `/notify`
