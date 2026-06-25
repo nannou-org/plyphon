@@ -80,7 +80,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './example-sine.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-sine_bg.wasm', 165600, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-sine_bg.wasm', 159923, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,7 +89,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-sine.js" crossorigin="anonymous" integrity="sha384-04zBw+wDUR4kIF9MCPVSqCyz+1KJVeTqhDfijjjBHJWEy4VYeGDoffseyPJxzcS7"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-sine_bg.wasm" crossorigin="anonymous" integrity="sha384-cHcbACVVceHt+D4bc/gfyV+ckNp0qRGsClFJtKlo6f+R5VE4a5C9IEYCNXGThZHn" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-sine.js" crossorigin="anonymous" integrity="sha384-sQ0WLG9n6O4zxT7XaFYJ0ccoJHovkdeWpJOUBLhnq1OCal1IGPcCTZI01R1f0Der"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-sine_bg.wasm" crossorigin="anonymous" integrity="sha384-u0xvjzqLw7MZgkeAYU3xoGcl0lYYq3i7c9YPqjrHxD8u7JLzuNvDoNVrprLiutwj" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>

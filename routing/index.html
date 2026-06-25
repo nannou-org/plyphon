@@ -80,7 +80,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './example-routing.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-routing_bg.wasm', 166846, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-routing_bg.wasm', 161202, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,7 +89,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-routing.js" crossorigin="anonymous" integrity="sha384-7vD8spUng/9dM+aB41k3Ul9gbHPeGGGMIyqubTI1SJJdLa0ekJTkEXJ7fbWjOQvH"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-routing_bg.wasm" crossorigin="anonymous" integrity="sha384-TylLmn6We6kaZXLqEhZmXlxbrJVnR0x6mGxF0TgMidaDZIJRHxT/Y0hmQYWeXqKn" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-routing.js" crossorigin="anonymous" integrity="sha384-7vD8spUng/9dM+aB41k3Ul9gbHPeGGGMIyqubTI1SJJdLa0ekJTkEXJ7fbWjOQvH"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-routing_bg.wasm" crossorigin="anonymous" integrity="sha384-8K5nvioL9h0mbZv6g6BHV3GEfbPKTvOMxDiaff2G7Nw4Ht4cgnCxgL2Sncfj7MQ1" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>
