@@ -80,7 +80,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './example-waveforms.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-waveforms_bg.wasm', 160472, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-waveforms_bg.wasm', 161065, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,7 +89,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-waveforms.js" crossorigin="anonymous" integrity="sha384-hw7pp1irpiUi4/XW+nTxqluDLi1TCeOrbOvIQQ5i4yxsQdp4n+YKpJOX8MP0ca1f"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-waveforms_bg.wasm" crossorigin="anonymous" integrity="sha384-bNIKyjxDpCzwIMX4mnb6FRGjN10YMquBk9RH4ehWJ2DuqbiVNCUa+8WfBtSQtfFA" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-waveforms.js" crossorigin="anonymous" integrity="sha384-hw7pp1irpiUi4/XW+nTxqluDLi1TCeOrbOvIQQ5i4yxsQdp4n+YKpJOX8MP0ca1f"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-waveforms_bg.wasm" crossorigin="anonymous" integrity="sha384-2EbZ1EJGrNTBzXNt1/ENbWP9CdKyVDzu+DD4JoEiZ0d2G6P5NmxHd3KNvCQF51+Q" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>
