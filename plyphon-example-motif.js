@@ -138,7 +138,7 @@ function __wbg_get_imports() {
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_49);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_46);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
@@ -161,8 +161,8 @@ function __wbg_get_imports() {
 }
 
 const lAudioContext = (typeof AudioContext !== 'undefined' ? AudioContext : (typeof webkitAudioContext !== 'undefined' ? webkitAudioContext : undefined));
-function __wasm_bindgen_func_elem_49(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_49(arg0, arg1);
+function __wasm_bindgen_func_elem_46(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_46(arg0, arg1);
 }
 
 function addHeapObject(obj) {
