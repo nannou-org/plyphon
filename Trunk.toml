@@ -1,5 +1,8 @@
+# The default `trunk build`/`trunk serve` target is the static landing page. To develop a single
+# example live, point trunk at its page instead: `trunk serve web/<name>.html`. The full multi-page
+# site (one wasm binary per example) is built by `nix build .#plyphon-website`.
 [build]
-target = "crates/examples/motif/web/index.html"
+target = "web/index.html"
 public_url = "./"
 filehash = false
 

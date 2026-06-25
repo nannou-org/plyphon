@@ -30,7 +30,7 @@ An scsynth-compatible synthesis core that can be driven by any pure-Rust audio b
 
 | Example | Description |
 | --- | --- |
-| [`example-motif`](crates/examples/motif) | A looping motif of self-freeing notes via `cpal` (the web demo). |
+| [`example-motif`](crates/examples/motif) | A looping motif of self-freeing notes via `cpal`. |
 | [`example-sine`](crates/examples/sine) | The simplest example: a continuous sine. |
 | [`example-custom-unit`](crates/examples/custom-unit) | Implement a custom unit generator (a `tanh` saturator) and register it alongside the base set. |
 | [`example-routing`](crates/examples/routing) | Bus routing: an LFO-swept filter on noise, wired through audio and control buses. |
@@ -60,17 +60,22 @@ Each example is a `cargo run -p <name>` away - see the [Examples](#examples) tab
 
 ## The web demo
 
+Every example also runs in the browser - the same engine, compiled to `wasm32-unknown-unknown`. The
+web build is one site: a landing page linking to a page per example, each running that example's
+wasm. It is built by `nix build .#plyphon-website` and auto-deployed to
+[GitHub Pages](https://mitchmindtree.github.io/plyphon/) on every push to `main`.
+
 ```console
-nix run .#serve-plyphon-website
-# or, for live reload during development:
-trunk serve
+nix run .#serve-plyphon-website     # build the whole site and serve it on localhost:8088
+# or, for live-reloading a single example during development:
+trunk serve web/<name>.html
 ```
 
 Open `localhost:8088` and click once to start audio (browsers hold audio until a user gesture).
 
-`cpal` is the audio backend on both targets: natively via ALSA/CoreAudio/WASAPI, on the web via
-its WebAudio backend (the `wasm-bindgen` cpal feature). The `plyphon` engine that feeds it is
-identical on both - the only platform-specific part of the demo is how its control plane is ticked.
+`cpal` is the audio backend on both targets: natively via ALSA/CoreAudio/WASAPI, on the web via its
+WebAudio backend (the `wasm-bindgen` cpal feature). The `plyphon` engine that feeds it is identical
+on both - only how the control plane is ticked differs by platform.
 
 ## Feature parity with scsynth
 
