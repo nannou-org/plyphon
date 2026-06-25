@@ -10,18 +10,21 @@
 //!   `/n_order`/`/g_freeAll`/`/g_deepFree`.
 //! - **Control buses:** `/c_set`/`/c_setn`/`/c_fill`.
 //! - **Buffers:** `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_free`, `/b_zero`, `/b_query`, `/b_set`,
-//!   `/b_setn`, `/b_fill`, `/b_setSampleRate`.
+//!   `/b_setn`, `/b_fill`, `/b_setSampleRate`, `/b_gen`.
 //! - **Server admin:** `/clearSched`, `/error`.
+//! - **Getters** (engine state reads; answered asynchronously - see below): `/sync`, `/status`,
+//!   `/rtMemoryStatus`, `/n_query`, `/c_get`/`/c_getn`, `/s_get`/`/s_getn`, `/b_get`/`/b_getn`,
+//!   `/g_queryTree`, `/g_dumpTree`.
 //!
 //! OSC handling is strictly control-side; the audio thread is never involved. `/s_new`, `/n_set`,
-//! `/n_setn`, `/n_fill`, and `/n_map` accept a string control name, resolved against the node's
-//! SynthDef, so the dispatcher tracks which definition each node was created from.
+//! `/n_setn`, `/n_fill`, `/n_map`, and `/s_get` accept a string control name, resolved against the
+//! node's SynthDef, so the dispatcher tracks which definition each node was created from.
 //!
-//! Server/transport commands that concern the *connection* rather than the engine - `/notify` (a
-//! client's per-connection subscription to node notifications), `/status`, `/quit`, `/dumpOSC`,
-//! `/version` - are deliberately *not* handled here; they belong to the host/transport layer that
-//! knows about clients (see the `plyphon-cli` server). This front-end always emits the node
-//! notifications; who receives them is the host's decision.
+//! Commands about the *connection* rather than the engine - `/notify` (a client's per-connection
+//! subscription to node notifications), `/quit`, `/dumpOSC`, `/version` - are deliberately *not*
+//! handled here; they belong to the host/transport layer that knows about clients (see the
+//! `plyphon-cli` server). This front-end always emits the node notifications; who receives them is
+//! the host's decision. The getters above *are* engine-state reads, so they live here.
 //!
 //! # Replies and notifications
 //!
@@ -30,6 +33,13 @@
 //! Node lifecycle is reported the same way: feed the engine [`Event`]s drained from the
 //! [`Nrt`](plyphon::Nrt) to [`OscDispatcher::notify`], which queues the matching `/n_go`/`/n_end`/
 //! `/n_off`/`/n_on` reply - so a self-freeing synth's `/n_end` reaches the client over OSC too.
+//!
+//! Getter replies are *asynchronous*: a getter `apply` pushes a query the engine answers a block
+//! later over a reply ring. Drain those answers with [`Render::poll_reply`](plyphon::Render::poll_reply)/
+//! `Nrt::poll_reply` and feed each to [`OscDispatcher::reply`], which reassembles them (strictly in
+//! the FIFO order the getters were issued) into the matching `/n_info`/`/c_set`/`/g_queryTree.reply`/…
+//! message, queued for [`take_replies`](OscDispatcher::take_replies). So a getter's reply arrives a
+//! render or two after the command, not synchronously.
 //!
 //! # Time-tag scheduling
 //!
@@ -60,6 +70,7 @@ pub mod score;
 pub use score::{ScoreEntry, ScoreError, ScoreReader, parse_score};
 
 use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -67,7 +78,7 @@ use hashbrown::HashMap;
 
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
-use plyphon::{AddAction, CommandTime, Controller, Event, Render, RenderUntil};
+use plyphon::{AddAction, CommandTime, Controller, Event, Render, RenderUntil, Reply};
 use plyphon_buffers::{BufferSource, ReadRegion};
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
 use thiserror::Error;
@@ -126,6 +137,59 @@ struct PendingLoad {
     completion: Option<Vec<u8>>,
 }
 
+/// One outstanding getter, in the FIFO order queries were issued. As [`Reply`] items arrive (in that
+/// same order), the matching entry accumulates them and, when complete, emits exactly one OSC reply
+/// message - so a getter that issued several per-element queries answers with one grouped message.
+enum PendingQuery {
+    /// `/sync` -> `/synced`.
+    Sync,
+    /// `/status` -> `/status.reply`.
+    Status,
+    /// `/rtMemoryStatus` -> `/rtMemoryStatus.reply`.
+    RtMemory,
+    /// One `/n_query` node -> one `/n_info`.
+    Node,
+    /// `/c_get`/`/b_get`: collect `remaining` `(id, value)` pairs into one `addr` message.
+    Pairs {
+        addr: &'static str,
+        remaining: usize,
+        args: Vec<OscType>,
+    },
+    /// `/c_getn`/`/b_getn`: collect `remaining` `(start, count, value…)` runs into one `addr` message.
+    Ranges {
+        addr: &'static str,
+        remaining: usize,
+        in_range: usize,
+        args: Vec<OscType>,
+    },
+    /// `/s_get` -> `/n_set`: like [`Pairs`](Self::Pairs) but echoing the as-given control tokens.
+    SGet {
+        controls: VecDeque<OscType>,
+        remaining: usize,
+        args: Vec<OscType>,
+    },
+    /// `/s_getn` -> `/n_setn`.
+    SGetN {
+        controls: VecDeque<OscType>,
+        remaining: usize,
+        in_range: usize,
+        args: Vec<OscType>,
+    },
+    /// `/g_queryTree` (`dump=false`) or `/g_dumpTree` (`dump=true`): accumulate the pre-order body
+    /// stream, resolving def/control names control-side, then emit `/g_queryTree.reply` or feed the
+    /// text sink.
+    Tree {
+        dump: bool,
+        flag: bool,
+        last_node: i32,
+        last_def: Option<String>,
+        args: Vec<OscType>,
+    },
+}
+
+/// A host text sink for `/g_dumpTree` (scsynth prints to stdout; plyphon is headless).
+pub type DumpSink = Box<dyn FnMut(&str)>;
+
 /// Applies SuperCollider OSC commands to a plyphon [`Controller`].
 pub struct OscDispatcher {
     controller: Controller,
@@ -143,6 +207,10 @@ pub struct OscDispatcher {
     error_perm: bool,
     /// Bundle-local error-posting override (scsynth's `/error -1|-2`), saved/restored per bundle.
     error_bundle: Option<bool>,
+    /// Outstanding getters, FIFO, reassembled as their [`Reply`]s arrive via [`OscDispatcher::reply`].
+    pending_queries: VecDeque<PendingQuery>,
+    /// Optional host text sink for `/g_dumpTree` (no OSC reply); a no-op when unset.
+    dump_sink: Option<DumpSink>,
 }
 
 impl OscDispatcher {
@@ -157,6 +225,8 @@ impl OscDispatcher {
             replies: Vec::new(),
             error_perm: true,
             error_bundle: None,
+            pending_queries: VecDeque::new(),
+            dump_sink: None,
         }
     }
 
@@ -176,6 +246,26 @@ impl OscDispatcher {
     /// Unwrap the controller.
     pub fn into_controller(self) -> Controller {
         self.controller
+    }
+
+    /// Install a text sink for `/g_dumpTree` (scsynth prints the tree to stdout; plyphon is headless,
+    /// so a host that wants the dump provides a sink). Unset by default - `/g_dumpTree` is then a
+    /// no-op. `/g_queryTree` is unaffected (it always answers over OSC).
+    pub fn set_dump_sink(&mut self, sink: DumpSink) {
+        self.dump_sink = Some(sink);
+    }
+
+    /// Reassemble a query [`Reply`] (drained from [`Render::poll_reply`](plyphon::Render::poll_reply)/
+    /// `Nrt::poll_reply`) into its OSC reply, queued for [`take_replies`](Self::take_replies). Feed
+    /// every reply in order, alongside [`notify`](Self::notify); replies arrive in the same FIFO order
+    /// the getters were issued, so each is matched against the oldest outstanding query.
+    pub fn reply(&mut self, reply: Reply) {
+        let Some(mut pending) = self.pending_queries.pop_front() else {
+            return; // a stray reply with nothing outstanding (e.g. after a reset); ignore.
+        };
+        if !self.apply_reply(&mut pending, reply) {
+            self.pending_queries.push_front(pending);
+        }
     }
 
     /// Take the OSC replies queued since the last call (`/done`, `/b_info`, `/fail`, and the
@@ -334,6 +424,18 @@ impl OscDispatcher {
             "/g_deepFree" => self.g_deep_free(&message.args),
             "/clearSched" => self.clear_sched(),
             "/error" => self.error_cmd(&message.args),
+            "/sync" => self.sync(&message.args),
+            "/status" => self.status(),
+            "/rtMemoryStatus" => self.rt_memory_status(),
+            "/n_query" => self.n_query(&message.args),
+            "/c_get" => self.c_get(&message.args),
+            "/c_getn" => self.c_getn(&message.args),
+            "/s_get" => self.s_get(&message.args),
+            "/s_getn" => self.s_getn(&message.args),
+            "/b_get" => self.b_get(&message.args),
+            "/b_getn" => self.b_getn(&message.args),
+            "/g_queryTree" => self.g_query_tree(&message.args, false),
+            "/g_dumpTree" => self.g_query_tree(&message.args, true),
             other => Err(OscError::UnsupportedCommand(other.to_string())),
         }
     }
@@ -609,6 +711,511 @@ impl OscDispatcher {
             _ => return Err(OscError::BadArguments("error mode must be -2..=1")),
         }
         Ok(())
+    }
+
+    // --- Getters. Each issues one query per element (so commands stay flat) and records a
+    // `PendingQuery`; `reply` reassembles the answers into one OSC message per command (one `/n_info`
+    // per node for `/n_query`). ---
+
+    /// `/sync <id>` -> `/synced <id>`.
+    fn sync(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let id = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("sync expects an id"))?,
+        )?;
+        self.controller
+            .query_sync(id)
+            .map_err(|_| OscError::QueueFull)?;
+        self.pending_queries.push_back(PendingQuery::Sync);
+        Ok(())
+    }
+
+    /// `/status` -> `/status.reply`.
+    fn status(&mut self) -> Result<(), OscError> {
+        self.controller
+            .query_status()
+            .map_err(|_| OscError::QueueFull)?;
+        self.pending_queries.push_back(PendingQuery::Status);
+        Ok(())
+    }
+
+    /// `/rtMemoryStatus` -> `/rtMemoryStatus.reply`.
+    fn rt_memory_status(&mut self) -> Result<(), OscError> {
+        self.controller
+            .query_rt_memory()
+            .map_err(|_| OscError::QueueFull)?;
+        self.pending_queries.push_back(PendingQuery::RtMemory);
+        Ok(())
+    }
+
+    /// `/n_query <node>...` -> one `/n_info` per node.
+    fn n_query(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        for arg in args {
+            let node = int_arg(arg)?;
+            self.controller
+                .query_node(node)
+                .map_err(|_| OscError::QueueFull)?;
+            self.pending_queries.push_back(PendingQuery::Node);
+        }
+        Ok(())
+    }
+
+    /// `/c_get <bus>...` -> one `/c_set`.
+    fn c_get(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        for arg in args {
+            let bus = bus_index(arg)?;
+            self.controller
+                .query_control_bus(bus)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        if args.is_empty() {
+            self.reply_msg("/c_set", Vec::new());
+        } else {
+            self.pending_queries.push_back(PendingQuery::Pairs {
+                addr: "/c_set",
+                remaining: args.len(),
+                args: Vec::new(),
+            });
+        }
+        Ok(())
+    }
+
+    /// `/c_getn (start, count)...` -> one `/c_setn`.
+    fn c_getn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        if !args.len().is_multiple_of(2) {
+            return Err(OscError::BadArguments("c_getn expects start/count pairs"));
+        }
+        for pair in args.chunks_exact(2) {
+            let start = bus_index(&pair[0])?;
+            let count = count_arg(Some(&pair[1]))? as u32;
+            self.controller
+                .query_control_bus_range(start, count)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        let ranges = args.len() / 2;
+        if ranges == 0 {
+            self.reply_msg("/c_setn", Vec::new());
+        } else {
+            self.pending_queries.push_back(PendingQuery::Ranges {
+                addr: "/c_setn",
+                remaining: ranges,
+                in_range: 0,
+                args: Vec::new(),
+            });
+        }
+        Ok(())
+    }
+
+    /// `/s_get <node> <control>...` -> one `/n_set` (echoing the as-given control tokens).
+    fn s_get(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let node = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("s_get expects a node"))?,
+        )?;
+        let rest = &args[1..];
+        let mut controls = VecDeque::with_capacity(rest.len());
+        for arg in rest {
+            let control = self.control_index(node, arg)?;
+            self.controller
+                .query_synth_control(node, control)
+                .map_err(|_| OscError::QueueFull)?;
+            controls.push_back(arg.clone());
+        }
+        if rest.is_empty() {
+            self.reply_msg("/n_set", vec![OscType::Int(node)]);
+        } else {
+            self.pending_queries.push_back(PendingQuery::SGet {
+                remaining: rest.len(),
+                controls,
+                args: vec![OscType::Int(node)],
+            });
+        }
+        Ok(())
+    }
+
+    /// `/s_getn <node> (control, count)...` -> one `/n_setn`.
+    fn s_getn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let node = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("s_getn expects a node"))?,
+        )?;
+        let rest = &args[1..];
+        if !rest.len().is_multiple_of(2) {
+            return Err(OscError::BadArguments("s_getn expects control/count pairs"));
+        }
+        let mut controls = VecDeque::with_capacity(rest.len() / 2);
+        for pair in rest.chunks_exact(2) {
+            let control = self.control_index(node, &pair[0])?;
+            let count = count_arg(Some(&pair[1]))?;
+            self.controller
+                .query_synth_control_range(node, control, count)
+                .map_err(|_| OscError::QueueFull)?;
+            controls.push_back(pair[0].clone());
+        }
+        let ranges = rest.len() / 2;
+        if ranges == 0 {
+            self.reply_msg("/n_setn", vec![OscType::Int(node)]);
+        } else {
+            self.pending_queries.push_back(PendingQuery::SGetN {
+                remaining: ranges,
+                in_range: 0,
+                controls,
+                args: vec![OscType::Int(node)],
+            });
+        }
+        Ok(())
+    }
+
+    /// `/b_get <buf> <index>...` -> one `/b_set`.
+    fn b_get(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let buf = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_get expects a bufnum"))?,
+        )?;
+        let rest = &args[1..];
+        for arg in rest {
+            let index = index_arg(arg)?;
+            self.controller
+                .query_buffer(buf as usize, index)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        if rest.is_empty() {
+            self.reply_msg("/b_set", vec![OscType::Int(buf)]);
+        } else {
+            self.pending_queries.push_back(PendingQuery::Pairs {
+                addr: "/b_set",
+                remaining: rest.len(),
+                args: vec![OscType::Int(buf)],
+            });
+        }
+        Ok(())
+    }
+
+    /// `/b_getn <buf> (index, count)...` -> one `/b_setn`.
+    fn b_getn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let buf = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_getn expects a bufnum"))?,
+        )?;
+        let rest = &args[1..];
+        if !rest.len().is_multiple_of(2) {
+            return Err(OscError::BadArguments("b_getn expects index/count pairs"));
+        }
+        for pair in rest.chunks_exact(2) {
+            let index = index_arg(&pair[0])?;
+            let count = count_arg(Some(&pair[1]))?;
+            self.controller
+                .query_buffer_range(buf as usize, index, count)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        let ranges = rest.len() / 2;
+        if ranges == 0 {
+            self.reply_msg("/b_setn", vec![OscType::Int(buf)]);
+        } else {
+            self.pending_queries.push_back(PendingQuery::Ranges {
+                addr: "/b_setn",
+                remaining: ranges,
+                in_range: 0,
+                args: vec![OscType::Int(buf)],
+            });
+        }
+        Ok(())
+    }
+
+    /// `/g_queryTree <group> [flag]` (`dump=false`) / `/g_dumpTree` (`dump=true`).
+    fn g_query_tree(&mut self, args: &[OscType], dump: bool) -> Result<(), OscError> {
+        let group = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("queryTree expects a group"))?,
+        )?;
+        let flag = matches!(args.get(1), Some(OscType::Int(f)) if *f != 0);
+        if dump {
+            self.controller
+                .dump_tree(group, flag)
+                .map_err(|_| OscError::QueueFull)?;
+        } else {
+            self.controller
+                .query_tree(group, flag)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        self.pending_queries.push_back(PendingQuery::Tree {
+            dump,
+            flag,
+            last_node: -1,
+            last_def: None,
+            args: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// Reassemble one query [`Reply`] into `pending`, returning whether `pending` is now complete
+    /// (its OSC message emitted / dump routed).
+    fn apply_reply(&mut self, pending: &mut PendingQuery, reply: Reply) -> bool {
+        match pending {
+            PendingQuery::Sync => {
+                if let Reply::Synced { id } = reply {
+                    self.reply_msg("/synced", vec![OscType::Int(id)]);
+                }
+                true
+            }
+            PendingQuery::Status => {
+                if let Reply::Status {
+                    num_ugens,
+                    num_synths,
+                    num_groups,
+                    num_synthdefs,
+                    avg_cpu,
+                    peak_cpu,
+                    nominal_sr,
+                    actual_sr,
+                } = reply
+                {
+                    self.reply_msg(
+                        "/status.reply",
+                        vec![
+                            OscType::Int(1),
+                            OscType::Int(num_ugens),
+                            OscType::Int(num_synths),
+                            OscType::Int(num_groups),
+                            OscType::Int(num_synthdefs),
+                            OscType::Float(avg_cpu),
+                            OscType::Float(peak_cpu),
+                            OscType::Double(nominal_sr),
+                            OscType::Double(actual_sr),
+                        ],
+                    );
+                }
+                true
+            }
+            PendingQuery::RtMemory => {
+                if let Reply::RtMemoryStatus {
+                    total_free,
+                    largest_free,
+                } = reply
+                {
+                    self.reply_msg(
+                        "/rtMemoryStatus.reply",
+                        vec![OscType::Int(total_free), OscType::Int(largest_free)],
+                    );
+                }
+                true
+            }
+            PendingQuery::Node => {
+                match reply {
+                    Reply::NodeInfo {
+                        node,
+                        parent,
+                        prev,
+                        next,
+                        is_group,
+                        head,
+                        tail,
+                    } => {
+                        let mut args = vec![
+                            OscType::Int(node),
+                            OscType::Int(parent),
+                            OscType::Int(prev),
+                            OscType::Int(next),
+                            OscType::Int(is_group),
+                        ];
+                        if is_group == 1 {
+                            args.push(OscType::Int(head));
+                            args.push(OscType::Int(tail));
+                        }
+                        self.reply_msg("/n_info", args);
+                    }
+                    Reply::NodeNotFound { node } => self.reply_msg(
+                        "/n_info",
+                        vec![
+                            OscType::Int(node),
+                            OscType::Int(-1),
+                            OscType::Int(-1),
+                            OscType::Int(-1),
+                            OscType::Int(-1),
+                        ],
+                    ),
+                    _ => {}
+                }
+                true
+            }
+            PendingQuery::Pairs {
+                addr,
+                remaining,
+                args,
+            } => {
+                match reply {
+                    Reply::ControlValue { bus, value } => {
+                        args.push(OscType::Int(bus));
+                        args.push(OscType::Float(value));
+                    }
+                    Reply::BufferValue { index, value, .. } => {
+                        args.push(OscType::Int(index));
+                        args.push(OscType::Float(value));
+                    }
+                    _ => {}
+                }
+                *remaining = remaining.saturating_sub(1);
+                if *remaining == 0 {
+                    self.reply_msg(addr, core::mem::take(args));
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingQuery::Ranges {
+                addr,
+                remaining,
+                in_range,
+                args,
+            } => {
+                match reply {
+                    Reply::ControlRangeHeader { start, count } => {
+                        args.push(OscType::Int(start));
+                        args.push(OscType::Int(count));
+                        *in_range = count.max(0) as usize;
+                    }
+                    Reply::BufferRangeHeader { index, count, .. } => {
+                        args.push(OscType::Int(index));
+                        args.push(OscType::Int(count));
+                        *in_range = count.max(0) as usize;
+                    }
+                    Reply::RangeValue { value } => {
+                        args.push(OscType::Float(value));
+                        *in_range = in_range.saturating_sub(1);
+                    }
+                    _ => {}
+                }
+                if *in_range == 0 {
+                    *remaining = remaining.saturating_sub(1);
+                }
+                if *remaining == 0 {
+                    self.reply_msg(addr, core::mem::take(args));
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingQuery::SGet {
+                controls,
+                remaining,
+                args,
+            } => match reply {
+                Reply::SGetValue { value, .. } => {
+                    if let Some(token) = controls.pop_front() {
+                        args.push(token);
+                    }
+                    args.push(OscType::Float(value));
+                    *remaining = remaining.saturating_sub(1);
+                    if *remaining == 0 {
+                        self.reply_msg("/n_set", core::mem::take(args));
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Reply::SGetMissing { .. } => {
+                    self.fail("/s_get", "node not found");
+                    true
+                }
+                _ => false,
+            },
+            PendingQuery::SGetN {
+                controls,
+                remaining,
+                in_range,
+                args,
+            } => match reply {
+                Reply::SGetRangeHeader { count, .. } => {
+                    if let Some(token) = controls.pop_front() {
+                        args.push(token);
+                    }
+                    args.push(OscType::Int(count));
+                    *in_range = count.max(0) as usize;
+                    if *in_range == 0 {
+                        *remaining = remaining.saturating_sub(1);
+                    }
+                    if *remaining == 0 {
+                        self.reply_msg("/n_setn", core::mem::take(args));
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Reply::RangeValue { value } => {
+                    args.push(OscType::Float(value));
+                    *in_range = in_range.saturating_sub(1);
+                    if *in_range == 0 {
+                        *remaining = remaining.saturating_sub(1);
+                    }
+                    if *remaining == 0 {
+                        self.reply_msg("/n_setn", core::mem::take(args));
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Reply::SGetMissing { .. } => {
+                    self.fail("/s_getn", "node not found");
+                    true
+                }
+                _ => false,
+            },
+            PendingQuery::Tree {
+                dump,
+                flag,
+                last_node,
+                last_def,
+                args,
+            } => match reply {
+                Reply::QueryTreeHeader { flag: f } | Reply::DumpTreeHeader { flag: f } => {
+                    args.clear();
+                    args.push(OscType::Int(f));
+                    false
+                }
+                Reply::QueryTreeNode { node, num_children } => {
+                    args.push(OscType::Int(node));
+                    args.push(OscType::Int(num_children));
+                    *last_node = node;
+                    false
+                }
+                Reply::QueryTreeSynth { num_controls } => {
+                    let name = self
+                        .node_defs
+                        .get(last_node)
+                        .cloned()
+                        .unwrap_or_else(|| "?".to_string());
+                    args.push(OscType::String(name.clone()));
+                    if *flag {
+                        args.push(OscType::Int(num_controls));
+                    }
+                    *last_def = Some(name);
+                    false
+                }
+                Reply::QueryTreeControl { index, value } => {
+                    let token = last_def
+                        .as_deref()
+                        .and_then(|d| self.controller.synthdef(d))
+                        .and_then(|def| def.params.get(index as usize))
+                        .map(|p| OscType::String(p.name.clone()))
+                        .unwrap_or(OscType::Int(index));
+                    args.push(token);
+                    args.push(OscType::Float(value));
+                    false
+                }
+                Reply::QueryTreeEnd => {
+                    if *dump {
+                        let text = format_tree(args);
+                        if let Some(sink) = self.dump_sink.as_mut() {
+                            sink(&text);
+                        }
+                    } else {
+                        self.reply_msg("/g_queryTree.reply", core::mem::take(args));
+                    }
+                    true
+                }
+                _ => false,
+            },
+        }
     }
 
     fn c_set(&mut self, args: &[OscType]) -> Result<(), OscError> {
@@ -1076,6 +1683,9 @@ pub fn render_osc_score(
         while let Some(event) = render.poll() {
             dispatcher.notify(event);
         }
+        while let Some(reply) = render.poll_reply() {
+            dispatcher.reply(reply);
+        }
     }
     render.finish();
     Ok(())
@@ -1161,6 +1771,77 @@ fn last_blob(args: &[OscType]) -> Option<&[u8]> {
     match args.last() {
         Some(OscType::Blob(bytes)) => Some(bytes),
         _ => None,
+    }
+}
+
+/// Format a reassembled `/g_queryTree.reply` arg list into an indented text tree for `/g_dumpTree`.
+/// The args are `[flag, then per node: id, numChildren, (defName, [numControls, (control, value)…])
+/// for a synth]`; the pre-order child counts reconstruct the nesting depth.
+fn format_tree(args: &[OscType]) -> String {
+    let int_at = |i: usize| match args.get(i) {
+        Some(OscType::Int(v)) => *v,
+        _ => 0,
+    };
+    let flag = int_at(0) != 0;
+    let mut out = String::new();
+    let mut stack: Vec<i32> = Vec::new(); // remaining children to read at each open group level
+    let mut i = 1;
+    while i + 1 < args.len() {
+        let id = int_at(i);
+        let num_children = int_at(i + 1);
+        i += 2;
+        for _ in 0..stack.len() {
+            out.push_str("   ");
+        }
+        if num_children < 0 {
+            // A synth: its def name, and (when `flag`) its controls.
+            let name = match args.get(i) {
+                Some(OscType::String(s)) => s.clone(),
+                _ => String::from("?"),
+            };
+            i += 1;
+            out.push_str(&alloc::format!("{id} synth {name}"));
+            if flag {
+                let n = int_at(i);
+                i += 1;
+                for _ in 0..n.max(0) {
+                    let label = match args.get(i) {
+                        Some(OscType::String(s)) => s.clone(),
+                        Some(OscType::Int(v)) => alloc::format!("{v}"),
+                        _ => String::new(),
+                    };
+                    let value = match args.get(i + 1) {
+                        Some(OscType::Float(f)) => *f,
+                        _ => 0.0,
+                    };
+                    out.push_str(&alloc::format!(" {label}: {value}"));
+                    i += 2;
+                }
+            }
+            out.push('\n');
+            complete_node(&mut stack);
+        } else {
+            out.push_str(&alloc::format!("{id} group ({num_children} children)\n"));
+            if num_children > 0 {
+                stack.push(num_children); // descend; its children follow in pre-order
+            } else {
+                complete_node(&mut stack);
+            }
+        }
+    }
+    out
+}
+
+/// Account a completed leaf/empty node against its ancestors: decrement the open group's remaining
+/// child count, and unwind every level that reaches zero (a completed group is itself one child).
+fn complete_node(stack: &mut Vec<i32>) {
+    while let Some(top) = stack.last_mut() {
+        *top -= 1;
+        if *top == 0 {
+            stack.pop();
+        } else {
+            break;
+        }
     }
 }
 
