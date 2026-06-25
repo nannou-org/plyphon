@@ -54,7 +54,7 @@ rustPlatformWasm.buildRustPackage {
     # to the page. The engine compiles once into the shared target dir, so only the per-example
     # link/bindgen/opt steps repeat.
     for name in \
-      sine motif waveforms envelope pan custom-unit \
+      sine motif waveforms envelope pan custom-unit duty-seq \
       routing control osc schedule scgf sampler stream; do
       trunk build --release --dist $out/$name web/$name.html
     done
