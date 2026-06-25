@@ -311,6 +311,11 @@ impl World {
                     *slot = Some(def);
                 }
             }
+            Command::FreeGraphDef { def_id } => {
+                if let Some(slot) = self.def_table.get_mut(def_id as usize) {
+                    *slot = None;
+                }
+            }
             Command::AddSynth {
                 id,
                 def_id,
@@ -349,6 +354,36 @@ impl World {
                 let old = self.buffers.free(index);
                 self.trash_slot(old);
             }
+            Command::SetBufferSample {
+                index,
+                sample,
+                value,
+            } => {
+                if let Some(buffer) = self.buffers.get_mut(index) {
+                    buffer.set_flat(sample, value);
+                }
+            }
+            Command::FillBuffer {
+                index,
+                start,
+                count,
+                value,
+            } => {
+                if let Some(buffer) = self.buffers.get_mut(index) {
+                    // Clamp to the buffer so a huge `count` cannot spin the audio thread; per-sample
+                    // `set_flat` already ignores any stray out-of-range index.
+                    let len = buffer.data().len();
+                    let end = start.saturating_add(count).min(len);
+                    for sample in start.min(len)..end {
+                        buffer.set_flat(sample, value);
+                    }
+                }
+            }
+            Command::SetBufferSampleRate { index, sample_rate } => {
+                if let Some(buffer) = self.buffers.get_mut(index) {
+                    buffer.set_sample_rate(sample_rate);
+                }
+            }
             Command::FreeNode { node } => {
                 let mut sink = core::mem::take(&mut self.freed_nodes);
                 sink.clear();
@@ -385,6 +420,11 @@ impl World {
                         Event::NodePaused { id }
                     };
                     self.emit(event);
+                }
+            }
+            Command::ClearSched => {
+                while let Some((_, command)) = self.scheduler.pop() {
+                    self.trash_command(command);
                 }
             }
         }
@@ -461,6 +501,19 @@ impl World {
     fn trash(&mut self, item: Trash) {
         if let Err(PushError::Full(item)) = self.trash_tx.push(item) {
             self.pending_trash.push(item);
+        }
+    }
+
+    /// Route any heap a discarded scheduled command owns to the trash ring before the command is
+    /// dropped, so clearing the scheduler (`/clearSched`) never frees a `Box` on the audio thread.
+    /// Only [`SetBuffer`](Command::SetBuffer) and [`CueStream`](Command::CueStream) own such a `Box`;
+    /// every other command is flat or holds a non-final `Arc` (the Controller retains its own), so
+    /// letting it drop here is RT-safe.
+    fn trash_command(&mut self, command: Command) {
+        match command {
+            Command::SetBuffer { buffer, .. } => self.trash(Trash::Buffer(buffer)),
+            Command::CueStream { playback, .. } => self.trash(Trash::Stream(playback)),
+            _ => {}
         }
     }
 

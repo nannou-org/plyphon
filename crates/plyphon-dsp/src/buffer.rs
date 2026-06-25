@@ -88,6 +88,21 @@ impl Buffer {
         }
     }
 
+    /// Overwrite the sample at flat (interleaved) index `index`. scsynth's `/b_set`/`/b_setn` address
+    /// the interleaved sample array directly, so `index` is `frame * num_channels + channel`. No-op if
+    /// out of range, RT-safe.
+    pub fn set_flat(&mut self, index: usize, value: f32) {
+        if let Some(slot) = self.data.get_mut(index) {
+            *slot = value;
+        }
+    }
+
+    /// Overwrite the buffer's sample rate (scsynth's `/b_setSampleRate`). Metadata only - playback
+    /// units rate-correct against it.
+    pub fn set_sample_rate(&mut self, sample_rate: f64) {
+        self.sample_rate = sample_rate;
+    }
+
     /// Zero every sample (scsynth's `/b_zero`).
     pub fn zero(&mut self) {
         self.data.fill(0.0);
@@ -131,6 +146,16 @@ impl BufferTable {
         }
     }
 
+    /// The flat buffer at `index`, mutably (for in-place sample writes - `/b_set`/`/b_setn`/
+    /// `/b_fill`/`/b_setSampleRate`), or `None` if the slot is empty, a stream, or out of range.
+    /// RT-safe (no panic).
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut Buffer> {
+        match self.slots.get_mut(index) {
+            Some(BufferSlot::Loaded(buffer)) => Some(buffer),
+            _ => None,
+        }
+    }
+
     /// The streaming endpoint at `index`, mutably (for `DiskIn` to pull chunks), or `None` if the
     /// slot is empty, a flat buffer, or out of range. RT-safe (no panic).
     pub fn stream_mut(&mut self, index: usize) -> Option<&mut StreamPlayback> {
@@ -167,5 +192,40 @@ impl BufferTable {
             },
             None => Some(slot),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_flat_writes_by_interleaved_index() {
+        let mut buf = Buffer::zeroed(3, 2, 48_000.0); // 3 frames x 2 channels = 6 samples
+        buf.set_flat(0, 1.0); // frame 0, channel 0
+        buf.set_flat(3, 2.0); // frame 1, channel 1
+        assert_eq!(buf.sample(0, 0), 1.0);
+        assert_eq!(buf.sample(1, 1), 2.0);
+        assert_eq!(buf.data(), &[1.0, 0.0, 0.0, 2.0, 0.0, 0.0]);
+        // Out of range is a silent no-op.
+        buf.set_flat(6, 9.0);
+        assert_eq!(buf.data().len(), 6);
+    }
+
+    #[test]
+    fn set_sample_rate_overwrites_metadata() {
+        let mut buf = Buffer::zeroed(4, 1, 48_000.0);
+        buf.set_sample_rate(22_050.0);
+        assert_eq!(buf.sample_rate(), 22_050.0);
+    }
+
+    #[test]
+    fn get_mut_only_for_loaded_slots() {
+        let mut table = BufferTable::new(2);
+        assert!(table.get_mut(0).is_none()); // empty
+        table.set(0, Box::new(Buffer::zeroed(2, 1, 48_000.0)));
+        table.get_mut(0).expect("loaded slot").set_flat(1, 0.5);
+        assert_eq!(table.get(0).expect("loaded").sample(1, 0), 0.5);
+        assert!(table.get_mut(5).is_none()); // out of range
     }
 }

@@ -1,13 +1,27 @@
 //! A SuperCollider-compatible OSC front-end for the plyphon engine.
 //!
 //! [`OscDispatcher`] wraps a plyphon [`Controller`] and applies the OSC server commands a typical
-//! SuperCollider client sends - `/d_recv`, `/s_new`, `/n_set`, `/n_free`, `/g_new`, the node-tree ops
-//! `/g_head`/`/g_tail`/`/n_before`/`/n_after`/`/n_order`/`/g_freeAll`/`/g_deepFree`, the control-bus
-//! setters `/c_set`/`/c_setn`, the control mappers `/n_map`/`/n_mapn`, and the buffer commands
-//! `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_free`, `/b_zero`, and `/b_query` - translating them
-//! into [`Controller`] calls. OSC handling is strictly control-side; the audio thread is never
-//! involved. `/s_new`, `/n_set`, and `/n_map` accept a string control name, resolved against the
-//! node's SynthDef, so the dispatcher tracks which definition each node was created from.
+//! SuperCollider client sends, translating them into [`Controller`] calls:
+//!
+//! - **SynthDefs:** `/d_recv`, `/d_free`, `/d_freeAll`.
+//! - **Synths & nodes:** `/s_new`, `/s_noid`, `/n_set`, `/n_setn`, `/n_fill`, `/n_free`, `/n_run`,
+//!   the control mappers `/n_map`/`/n_mapn`.
+//! - **Groups & node tree:** `/g_new`, `/p_new`, `/g_head`/`/g_tail`/`/n_before`/`/n_after`/
+//!   `/n_order`/`/g_freeAll`/`/g_deepFree`.
+//! - **Control buses:** `/c_set`/`/c_setn`/`/c_fill`.
+//! - **Buffers:** `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_free`, `/b_zero`, `/b_query`, `/b_set`,
+//!   `/b_setn`, `/b_fill`, `/b_setSampleRate`.
+//! - **Server admin:** `/clearSched`, `/error`.
+//!
+//! OSC handling is strictly control-side; the audio thread is never involved. `/s_new`, `/n_set`,
+//! `/n_setn`, `/n_fill`, and `/n_map` accept a string control name, resolved against the node's
+//! SynthDef, so the dispatcher tracks which definition each node was created from.
+//!
+//! Server/transport commands that concern the *connection* rather than the engine - `/notify` (a
+//! client's per-connection subscription to node notifications), `/status`, `/quit`, `/dumpOSC`,
+//! `/version` - are deliberately *not* handled here; they belong to the host/transport layer that
+//! knows about clients (see the `plyphon-cli` server). This front-end always emits the node
+//! notifications; who receives them is the host's decision.
 //!
 //! # Replies and notifications
 //!
@@ -125,6 +139,10 @@ pub struct OscDispatcher {
     pending: Vec<PendingLoad>,
     /// Outbound replies, drained by [`OscDispatcher::take_replies`].
     replies: Vec<OscPacket>,
+    /// Permanent error-posting mode (scsynth's `/error 0|1`; default on).
+    error_perm: bool,
+    /// Bundle-local error-posting override (scsynth's `/error -1|-2`), saved/restored per bundle.
+    error_bundle: Option<bool>,
 }
 
 impl OscDispatcher {
@@ -137,6 +155,8 @@ impl OscDispatcher {
             source: None,
             pending: Vec::new(),
             replies: Vec::new(),
+            error_perm: true,
+            error_bundle: None,
         }
     }
 
@@ -170,8 +190,10 @@ impl OscDispatcher {
     ///
     /// Feed this the events drained from the [`Nrt`](plyphon::Nrt), so node lifecycle - including
     /// synths that free themselves via a done action - is reported back over OSC alongside the
-    /// command replies. plyphon's events carry only the node id, so, unlike scsynth, the
-    /// parent/sibling/group fields are omitted and the id is the lone argument.
+    /// command replies. This front-end always emits the notification; deciding which client(s)
+    /// receive it (scsynth's `/notify` subscription) is the host/transport's job. plyphon's events
+    /// carry only the node id, so, unlike scsynth, the parent/sibling/group fields are omitted and
+    /// the id is the lone argument.
     pub fn notify(&mut self, event: Event) {
         let (addr, id) = match event {
             Event::NodeStarted { id } => ("/n_go", id),
@@ -254,6 +276,9 @@ impl OscDispatcher {
                 let prev = self
                     .controller
                     .begin_scheduled(bundle_command_time(bundle.timetag));
+                // A bundle-local `/error -1|-2` override is scoped to this bundle (and its nested
+                // bundles); save it here and restore on exit, exactly like the schedule window.
+                let prev_error = self.error_bundle;
                 let mut result = Ok(());
                 for inner in &bundle.content {
                     result = self.apply(inner);
@@ -261,7 +286,9 @@ impl OscDispatcher {
                         break;
                     }
                 }
-                // Restore the enclosing window (Immediate at the top level), even on error.
+                // Restore the enclosing window and error scope (Immediate / inherited at the top
+                // level), even on error.
+                self.error_bundle = prev_error;
                 self.controller.begin_scheduled(prev);
                 result
             }
@@ -271,18 +298,31 @@ impl OscDispatcher {
     fn message(&mut self, message: &OscMessage) -> Result<(), OscError> {
         match message.addr.as_str() {
             "/d_recv" => self.d_recv(&message.args),
+            "/d_free" => self.d_free(&message.args),
+            "/d_freeAll" => self.d_free_all(),
             "/s_new" => self.s_new(&message.args),
+            "/s_noid" => self.s_noid(&message.args),
             "/n_set" => self.n_set(&message.args),
+            "/n_setn" => self.n_setn(&message.args),
+            "/n_fill" => self.n_fill(&message.args),
             "/n_free" => self.n_free(&message.args),
+            "/n_run" => self.n_run(&message.args),
             "/g_new" => self.g_new(&message.args),
+            // scsynth emulates parallel groups with ordinary groups; same triple layout as `/g_new`.
+            "/p_new" => self.g_new(&message.args),
             "/c_set" => self.c_set(&message.args),
             "/c_setn" => self.c_setn(&message.args),
+            "/c_fill" => self.c_fill(&message.args),
             "/n_map" => self.n_map(&message.args),
             "/n_mapn" => self.n_mapn(&message.args),
             "/b_alloc" => self.b_alloc(&message.args),
             "/b_free" => self.b_free(&message.args),
             "/b_zero" => self.b_zero(&message.args),
             "/b_query" => self.b_query(&message.args),
+            "/b_set" => self.b_set(&message.args),
+            "/b_setn" => self.b_setn(&message.args),
+            "/b_fill" => self.b_fill(&message.args),
+            "/b_setSampleRate" => self.b_set_sample_rate(&message.args),
             "/b_allocRead" => self.b_alloc_read(&message.args),
             "/b_read" => self.b_read(&message.args),
             "/g_head" => self.group_moves(&message.args, AddAction::Head),
@@ -292,6 +332,8 @@ impl OscDispatcher {
             "/n_order" => self.n_order(&message.args),
             "/g_freeAll" => self.g_free_all(&message.args),
             "/g_deepFree" => self.g_deep_free(&message.args),
+            "/clearSched" => self.clear_sched(),
+            "/error" => self.error_cmd(&message.args),
             other => Err(OscError::UnsupportedCommand(other.to_string())),
         }
     }
@@ -306,6 +348,25 @@ impl OscDispatcher {
             self.controller.add_synthdef(def);
         }
         Ok(())
+    }
+
+    /// `/d_free <name>...`: free each named synth definition (a later `/s_new` of it then fails until
+    /// it is re-sent).
+    fn d_free(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        for arg in args {
+            let name = str_arg(arg)?;
+            self.controller
+                .free_def(name)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        Ok(())
+    }
+
+    /// `/d_freeAll`: free every registered synth definition.
+    fn d_free_all(&mut self) -> Result<(), OscError> {
+        self.controller
+            .free_all_defs()
+            .map_err(|_| OscError::QueueFull)
     }
 
     fn s_new(&mut self, args: &[OscType]) -> Result<(), OscError> {
@@ -333,12 +394,75 @@ impl OscDispatcher {
         self.apply_controls(id, Some(&name), &args[4..])
     }
 
+    /// `/s_noid <nodeID>...`: detach each node's def tracking so it is no longer addressed by control
+    /// *name* (partial vs scsynth: the node keeps running and stays reachable by control *index*,
+    /// since plyphon does not reassign a hidden id).
+    fn s_noid(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        for arg in args {
+            let node = int_arg(arg)?;
+            self.node_defs.remove(&node);
+        }
+        Ok(())
+    }
+
     fn n_set(&mut self, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("n_set expects a node"))?,
         )?;
         self.apply_controls(node, None, &args[1..])
+    }
+
+    /// `/n_setn nodeID (control, count, value...)...`: set contiguous ranges of a node's controls.
+    fn n_setn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let node = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("n_setn expects a node"))?,
+        )?;
+        let rest = &args[1..];
+        let mut i = 0;
+        while i < rest.len() {
+            let start = self.control_index(node, &rest[i])?;
+            let count = count_arg(rest.get(i + 1))?;
+            i += 2;
+            if i + count > rest.len() {
+                return Err(OscError::BadArguments(
+                    "n_setn value count exceeds arguments",
+                ));
+            }
+            for (j, arg) in rest[i..i + count].iter().enumerate() {
+                self.controller
+                    .set_control(node, start + j, float_arg(arg)?)
+                    .map_err(|_| OscError::QueueFull)?;
+            }
+            i += count;
+        }
+        Ok(())
+    }
+
+    /// `/n_fill nodeID (control, count, value)...`: fill contiguous ranges of a node's controls.
+    fn n_fill(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let node = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("n_fill expects a node"))?,
+        )?;
+        let rest = &args[1..];
+        if !rest.len().is_multiple_of(3) {
+            return Err(OscError::BadArguments(
+                "n_fill expects control/count/value triples",
+            ));
+        }
+        for triple in rest.chunks_exact(3) {
+            let start = self.control_index(node, &triple[0])?;
+            let count = count_arg(Some(&triple[1]))?;
+            let value = float_arg(&triple[2])?;
+            for j in 0..count {
+                self.controller
+                    .set_control(node, start + j, value)
+                    .map_err(|_| OscError::QueueFull)?;
+            }
+        }
+        Ok(())
     }
 
     fn n_free(&mut self, args: &[OscType]) -> Result<(), OscError> {
@@ -348,6 +472,21 @@ impl OscDispatcher {
                 .free(node)
                 .map_err(|_| OscError::QueueFull)?;
             self.node_defs.remove(&node);
+        }
+        Ok(())
+    }
+
+    /// `/n_run (nodeID, flag)...`: pause (flag 0) or resume (flag 1) each node.
+    fn n_run(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        if !args.len().is_multiple_of(2) {
+            return Err(OscError::BadArguments("n_run expects node/flag pairs"));
+        }
+        for pair in args.chunks_exact(2) {
+            let node = int_arg(&pair[0])?;
+            let run = int_arg(&pair[1])? != 0;
+            self.controller
+                .node_run(node, run)
+                .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }
@@ -448,6 +587,30 @@ impl OscDispatcher {
         Ok(())
     }
 
+    /// `/clearSched`: clear the engine scheduler's pending time-tagged commands.
+    fn clear_sched(&mut self) -> Result<(), OscError> {
+        self.controller
+            .clear_sched()
+            .map_err(|_| OscError::QueueFull)
+    }
+
+    /// `/error <mode>`: set the error-posting mode. `0`/`1` set the permanent mode; `-1`/`-2` set a
+    /// bundle-local override (scoped to the enclosing bundle).
+    fn error_cmd(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let mode = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("error expects a mode"))?,
+        )?;
+        match mode {
+            0 => self.error_perm = false,
+            1 => self.error_perm = true,
+            -2 => self.error_bundle = Some(false),
+            -1 => self.error_bundle = Some(true),
+            _ => return Err(OscError::BadArguments("error mode must be -2..=1")),
+        }
+        Ok(())
+    }
+
     fn c_set(&mut self, args: &[OscType]) -> Result<(), OscError> {
         if args.is_empty() || !args.len().is_multiple_of(2) {
             return Err(OscError::BadArguments("c_set expects bus/value pairs"));
@@ -479,6 +642,26 @@ impl OscDispatcher {
                     .map_err(|_| OscError::QueueFull)?;
             }
             i += count;
+        }
+        Ok(())
+    }
+
+    /// `/c_fill (bus, count, value)...`: set each contiguous range of control buses to `value`.
+    fn c_fill(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        if args.is_empty() || !args.len().is_multiple_of(3) {
+            return Err(OscError::BadArguments(
+                "c_fill expects bus/count/value triples",
+            ));
+        }
+        for triple in args.chunks_exact(3) {
+            let start = bus_index(&triple[0])?;
+            let count = count_arg(Some(&triple[1]))?;
+            let value = float_arg(&triple[2])?;
+            for j in 0..count {
+                self.controller
+                    .set_control_bus(start + j as u32, value)
+                    .map_err(|_| OscError::QueueFull)?;
+            }
         }
         Ok(())
     }
@@ -611,6 +794,96 @@ impl OscDispatcher {
         Ok(())
     }
 
+    /// `/b_set bufID (sampleIndex, value)...`: overwrite individual buffer samples (flat indices).
+    fn b_set(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let bufnum = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_set expects a bufnum"))?,
+        )?;
+        let rest = &args[1..];
+        if !rest.len().is_multiple_of(2) {
+            return Err(OscError::BadArguments("b_set expects sample/value pairs"));
+        }
+        for pair in rest.chunks_exact(2) {
+            let sample = index_arg(&pair[0])?;
+            let value = float_arg(&pair[1])?;
+            self.controller
+                .buffer_set_sample(bufnum as usize, sample, value)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        Ok(())
+    }
+
+    /// `/b_setn bufID (start, count, value...)...`: overwrite contiguous ranges of buffer samples.
+    fn b_setn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let bufnum = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_setn expects a bufnum"))?,
+        )?;
+        let rest = &args[1..];
+        let mut i = 0;
+        while i < rest.len() {
+            let start = index_arg(&rest[i])?;
+            let count = count_arg(rest.get(i + 1))?;
+            i += 2;
+            if i + count > rest.len() {
+                return Err(OscError::BadArguments(
+                    "b_setn value count exceeds arguments",
+                ));
+            }
+            for (j, arg) in rest[i..i + count].iter().enumerate() {
+                self.controller
+                    .buffer_set_sample(bufnum as usize, start + j, float_arg(arg)?)
+                    .map_err(|_| OscError::QueueFull)?;
+            }
+            i += count;
+        }
+        Ok(())
+    }
+
+    /// `/b_fill bufID (start, count, value)...`: fill contiguous ranges of buffer samples.
+    fn b_fill(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let bufnum = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_fill expects a bufnum"))?,
+        )?;
+        let rest = &args[1..];
+        if !rest.len().is_multiple_of(3) {
+            return Err(OscError::BadArguments(
+                "b_fill expects start/count/value triples",
+            ));
+        }
+        for triple in rest.chunks_exact(3) {
+            let start = index_arg(&triple[0])?;
+            let count = count_arg(Some(&triple[1]))?;
+            let value = float_arg(&triple[2])?;
+            self.controller
+                .buffer_fill(bufnum as usize, start, count, value)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        Ok(())
+    }
+
+    /// `/b_setSampleRate bufID rate`: overwrite a buffer's sample-rate metadata.
+    fn b_set_sample_rate(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let bufnum = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_setSampleRate expects a bufnum"))?,
+        )?;
+        let rate = float_arg(
+            args.get(1)
+                .ok_or(OscError::BadArguments("b_setSampleRate expects a rate"))?,
+        )? as f64;
+        self.controller
+            .buffer_set_sample_rate(bufnum as usize, rate)
+            .map_err(|_| OscError::QueueFull)?;
+        // Keep the control-side mirror in step, so `/b_query` reports the new rate.
+        if let Some(info) = self.buffers.get_mut(&bufnum) {
+            info.sample_rate = rate;
+        }
+        Ok(())
+    }
+
     fn b_alloc_read(&mut self, args: &[OscType]) -> Result<(), OscError> {
         self.queue_load("/b_allocRead", args)
     }
@@ -678,8 +951,12 @@ impl OscDispatcher {
         );
     }
 
-    /// Queue a `/fail <command> <error>` reply.
+    /// Queue a `/fail <command> <error>` reply, unless error posting is currently suppressed
+    /// (scsynth's `/error`).
     fn fail(&mut self, command: &str, error: &str) {
+        if !self.errors_enabled() {
+            return;
+        }
         self.reply_msg(
             "/fail",
             vec![
@@ -687,6 +964,12 @@ impl OscDispatcher {
                 OscType::String(error.to_string()),
             ],
         );
+    }
+
+    /// Whether `/fail` replies are currently queued: the bundle-local error override if set, else
+    /// the permanent error-posting mode (scsynth's `/error`).
+    fn errors_enabled(&self) -> bool {
+        self.error_bundle.unwrap_or(self.error_perm)
     }
 
     /// Resolve a control argument (an `int` index or a `string` name) to a parameter index.
@@ -850,6 +1133,11 @@ fn map_bus(arg: &OscType) -> Result<Option<u32>, OscError> {
 fn count_arg(arg: Option<&OscType>) -> Result<usize, OscError> {
     let arg = arg.ok_or(OscError::BadArguments("expected a count"))?;
     usize::try_from(int_arg(arg)?).map_err(|_| OscError::BadArguments("negative count"))
+}
+
+/// A non-negative `usize` index argument (`/b_set`, `/b_setn`, `/b_fill`).
+fn index_arg(arg: &OscType) -> Result<usize, OscError> {
+    usize::try_from(int_arg(arg)?).map_err(|_| OscError::BadArguments("negative index"))
 }
 
 fn float_arg(arg: &OscType) -> Result<f32, OscError> {
@@ -1055,5 +1343,57 @@ mod render_tests {
             .collect();
         assert!(addrs.contains(&"/n_go"), "expected /n_go in {addrs:?}");
         assert!(addrs.contains(&"/n_end"), "expected /n_end in {addrs:?}");
+    }
+
+    #[test]
+    fn clear_sched_cancels_scheduled_commands() {
+        let opts = Options {
+            sample_rate: SR,
+            output_channels: 1,
+            ..Options::default()
+        };
+        let (mut controller, nrt, world) = engine(opts);
+        controller.add_synthdef(click_def());
+        let mut dispatcher = OscDispatcher::new(controller);
+        let mut render = Render::new(world, nrt, &opts);
+
+        // Schedule a click for sample 2000, plus a buffer alloc whose `Box` exercises the
+        // trash-on-clear path...
+        let scheduled = OscPacket::Bundle(OscBundle {
+            timetag: unpack(time_for_sample(2000)),
+            content: vec![
+                OscPacket::Message(OscMessage {
+                    addr: "/s_new".into(),
+                    args: vec![
+                        OscType::String("click".into()),
+                        OscType::Int(1000),
+                        OscType::Int(1),
+                        OscType::Int(ROOT_GROUP_ID),
+                    ],
+                }),
+                OscPacket::Message(OscMessage {
+                    addr: "/b_alloc".into(),
+                    args: vec![OscType::Int(0), OscType::Int(64), OscType::Int(1)],
+                }),
+            ],
+        });
+        dispatcher.apply(&scheduled).expect("schedule");
+        // ...then clear the scheduler before any of it is due.
+        dispatcher
+            .apply(&OscPacket::Message(OscMessage {
+                addr: "/clearSched".into(),
+                args: vec![],
+            }))
+            .expect("/clearSched");
+
+        let mut out = Vec::new();
+        while render.block_start() <= time_for_sample(3000) {
+            out.extend_from_slice(render.step(&[]));
+        }
+        render.finish();
+        assert!(
+            out.iter().all(|s| *s == 0.0),
+            "a cleared scheduled command must never fire"
+        );
     }
 }

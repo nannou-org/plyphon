@@ -26,6 +26,13 @@ pub enum Command {
         /// The compiled def (built off the audio thread), shared via `Arc`.
         def: Arc<GraphDef>,
     },
+    /// Free the resident def at `def_id`, emptying its def-table slot (scsynth's `/d_free`). The
+    /// slot's `Arc<GraphDef>` is dropped here, but the Controller retains its own `Arc`, so this is a
+    /// non-final refcount decrement - the heavy drop never lands on the audio thread.
+    FreeGraphDef {
+        /// Def-table slot to empty.
+        def_id: u32,
+    },
     /// Construct a synth from the def at `def_id` (on the audio thread) and link it under `target`.
     AddSynth {
         /// Client id for the new synth.
@@ -127,6 +134,38 @@ pub enum Command {
         /// Buffer table index.
         index: usize,
     },
+    /// Overwrite one sample of the buffer at `index`, in place (scsynth's `/b_set`/`/b_setn`).
+    /// `sample` is a flat interleaved index (`frame * num_channels + channel`).
+    SetBufferSample {
+        /// Buffer table index.
+        index: usize,
+        /// Flat (interleaved) sample index within the buffer.
+        sample: usize,
+        /// New sample value.
+        value: f32,
+    },
+    /// Fill `count` consecutive samples of the buffer at `index` with `value`, starting at flat
+    /// (interleaved) index `start` (scsynth's `/b_fill`).
+    FillBuffer {
+        /// Buffer table index.
+        index: usize,
+        /// First flat (interleaved) sample index to write.
+        start: usize,
+        /// Number of consecutive samples to write.
+        count: usize,
+        /// Value written to every sample in the range.
+        value: f32,
+    },
+    /// Overwrite the sample-rate metadata of the buffer at `index` (scsynth's `/b_setSampleRate`).
+    SetBufferSampleRate {
+        /// Buffer table index.
+        index: usize,
+        /// New sample rate in Hz.
+        sample_rate: f64,
+    },
+    /// Clear every command still pending in the World's scheduler (scsynth's `/clearSched`). Any
+    /// scheduled command that owns a `Box` is routed to the trash ring rather than dropped here.
+    ClearSched,
 }
 
 /// When a [`Command`] should take effect on the audio thread - plyphon's port of scsynth's OSC

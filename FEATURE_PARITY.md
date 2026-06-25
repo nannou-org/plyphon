@@ -39,37 +39,57 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **FFT / spectral** - none yet: FFT/IFFT, the `PV_*` set, Pitch, Onsets, BeatTrack
 - [ ] **Chaos / rate conversion** - none yet: Lorenz, LinCong, Henon, ... and A2K/K2A/T2A/DC
 
-## OSC server commands (22 of ~65)
+## OSC server commands (41 of ~65)
 
-**Server / top-level** (0/10)
+The unimplemented *getters* (`/status`, `/sync`, `/n_query`, `/c_get`/`/c_getn`, `/s_get`/`/s_getn`,
+`/b_get`/`/b_getn`, `/g_queryTree`, `/rtMemoryStatus`) and the tree-query/`/b_gen` commands all need a
+control-side path to read live RT state, which the engine does not have yet (the RT→NRT path carries
+only fixed `Event` notifications). They are deferred to a follow-up that adds a query/reply channel.
 
-- [ ] /notify
-- [ ] /status
-- [ ] /quit
+A second group are **server/transport commands**: they concern the connection or the host process,
+not the synthesis engine, so they live in the host/transport layer rather than the engine OSC
+front-end. As in scsynth - where the audio thread always writes node notifications to FIFOs and the
+comm layer alone decides delivery (iterating the registered reply-addresses, `mUsers`) - plyphon's
+`OscDispatcher` always *emits* the node notifications, and who receives them is the host's call. The
+`plyphon-cli` server implements these: `/notify` (a client's per-connection notification subscription,
+its `notified` set mirroring `mUsers`), `/status`, `/quit`, `/dumpOSC`, and `/version`.
+
+The genuinely-deferred host actions - `/cmd`/`/u_cmd`/`/n_cmd`, `/d_load`/`/d_loadDir`,
+`/b_write`/`/b_close`, the audio-rate mappers `/n_mapa`/`/n_mapan`, and `/n_trace` - need a plugin
+registry, filesystem, or audio-rate control mapping the engine does not model; the intent is to
+surface them as typed higher-level actions for the embedding host, the way `/b_allocRead` already
+defers I/O to an app-provided `BufferSource`.
+
+**Server / top-level** (7/10)
+
+- [x] /notify - server-owned (plyphon-cli): per-connection subscription to node notifications
+- [x] /status - server-owned (plyphon-cli); partial: best-effort fields (root group + sample rate)
+- [x] /quit - server-owned (plyphon-cli)
 - [ ] /cmd
-- [ ] /dumpOSC
-- [ ] /clearSched
+- [x] /dumpOSC - server-owned (plyphon-cli)
+- [x] /clearSched - engine front-end (clears the World scheduler)
 - [ ] /sync
-- [ ] /error
-- [ ] /version
+- [x] /error - engine front-end: permanent (`0`/`1`) and bundle-local (`-1`/`-2`) modes gate `/fail`
+- [x] /version - server-owned (plyphon-cli)
 - [ ] /rtMemoryStatus
 
-**SynthDef** (1/5)
+**SynthDef** (3/5)
 
 - [x] /d_recv
 - [ ] /d_load
 - [ ] /d_loadDir
-- [ ] /d_free
-- [ ] /d_freeAll
+- [x] /d_free
+- [x] /d_freeAll
 
-**Synth** (1/4)
+**Synth** (2/4)
 
 - [x] /s_new
 - [ ] /s_get
 - [ ] /s_getn
-- [ ] /s_noid
+- [x] /s_noid - partial: detaches control-name resolution; the node keeps running and stays reachable
+  by control index (plyphon does not reassign a hidden negative id)
 
-**Node** (7/15)
+**Node** (10/15)
 
 - [x] /n_set
 - [x] /n_free
@@ -78,23 +98,23 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [x] /n_before
 - [x] /n_after
 - [x] /n_order
-- [ ] /n_setn
-- [ ] /n_fill
-- [ ] /n_run - the engine already pauses/resumes nodes (`Controller::node_run`); just not wired to OSC
+- [x] /n_setn
+- [x] /n_fill
+- [x] /n_run
 - [ ] /n_query
 - [ ] /n_trace
 - [ ] /n_mapa
 - [ ] /n_mapan
 - [ ] /n_cmd
 
-**Group** (5/8)
+**Group** (6/8)
 
 - [x] /g_new
 - [x] /g_head
 - [x] /g_tail
 - [x] /g_freeAll
 - [x] /g_deepFree
-- [ ] /p_new
+- [x] /p_new - emulated by an ordinary group, as scsynth does
 - [ ] /g_dumpTree
 - [ ] /g_queryTree
 
@@ -102,15 +122,15 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
 - [ ] /u_cmd
 
-**Control bus** (2/5)
+**Control bus** (3/5)
 
 - [x] /c_set
 - [x] /c_setn
-- [ ] /c_fill
+- [x] /c_fill
 - [ ] /c_get
 - [ ] /c_getn
 
-**Buffer** (6/17)
+**Buffer** (10/17)
 
 - [x] /b_alloc
 - [x] /b_allocRead
@@ -120,15 +140,15 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [x] /b_query
 - [ ] /b_write
 - [ ] /b_close
-- [ ] /b_set
-- [ ] /b_setn
-- [ ] /b_fill
+- [x] /b_set
+- [x] /b_setn
+- [x] /b_fill
 - [ ] /b_gen
 - [ ] /b_get
 - [ ] /b_getn
 - [ ] /b_allocReadChannel
 - [ ] /b_readChannel
-- [ ] /b_setSampleRate
+- [x] /b_setSampleRate
 
 ## Replies, notifications & done actions
 

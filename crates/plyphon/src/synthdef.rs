@@ -385,4 +385,14 @@ impl SynthDefLibrary {
     pub fn get(&self, name: &str) -> Option<&SynthDef> {
         self.map.get(name)
     }
+
+    /// Remove a definition by name, returning it if present (scsynth's `/d_free`).
+    pub fn remove(&mut self, name: &str) -> Option<SynthDef> {
+        self.map.remove(name)
+    }
+
+    /// The names of every definition currently in the library.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.map.keys().map(String::as_str)
+    }
 }

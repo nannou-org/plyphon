@@ -165,6 +165,38 @@ impl Controller {
         self.defs.get(name)
     }
 
+    /// Free the synth definition named `name` (scsynth's `/d_free`): empty its resident `World`
+    /// def-table slot and forget its authored and compiled forms, so a later [`synth_new`](Self::synth_new)
+    /// with this name fails until the def is added again. Returns whether a def by that name existed.
+    ///
+    /// The compiled `Arc` is retired to the graveyard (retained for the engine's lifetime), so the
+    /// def-table slot's drop on the audio thread is never the final reference; the `def_id` stays
+    /// reserved, so re-adding the same name reuses its slot.
+    pub fn free_def(&mut self, name: &str) -> Result<bool, QueueFull> {
+        let known = self.defs.get(name).is_some() || self.compiled.contains_key(name);
+        if !known {
+            return Ok(false);
+        }
+        if let Some(&def_id) = self.def_ids.get(name) {
+            self.send_now(Command::FreeGraphDef { def_id })?;
+        }
+        if let Some(old) = self.compiled.remove(name) {
+            self.graveyard.push(old);
+        }
+        self.defs.remove(name);
+        Ok(true)
+    }
+
+    /// Free every registered synth definition (scsynth's `/d_freeAll`).
+    pub fn free_all_defs(&mut self) -> Result<(), QueueFull> {
+        // Collect names first: `free_def` mutates the library, so it can't borrow it for iteration.
+        let names: Vec<String> = self.defs.names().map(ToString::to_string).collect();
+        for name in names {
+            self.free_def(&name)?;
+        }
+        Ok(())
+    }
+
     /// Create a synth from definition `def_name` and link it under group `target`.
     ///
     /// The def is compiled (and installed in the `World`'s def table) on first use; the synth itself
@@ -341,6 +373,12 @@ impl Controller {
         self.send(Command::NodeRun { node, run })
     }
 
+    /// Clear every command still pending in the `World`'s scheduler (scsynth's `/clearSched`). Sent
+    /// immediately, ignoring any open scheduling window.
+    pub fn clear_sched(&mut self) -> Result<(), QueueFull> {
+        self.send_now(Command::ClearSched)
+    }
+
     /// Install (or replace) the buffer at `index` with an already-built buffer.
     ///
     /// The buffer is built off the audio thread (this is where any allocation or sample loading
@@ -364,6 +402,47 @@ impl Controller {
     /// Free the buffer at `index` (scsynth's `/b_free`).
     pub fn buffer_free(&mut self, index: usize) -> Result<(), QueueFull> {
         self.send(Command::FreeBuffer { index })
+    }
+
+    /// Overwrite one sample of the buffer at `index`, in place (scsynth's `/b_set`/`/b_setn`).
+    /// `sample` is a flat interleaved index (`frame * num_channels + channel`).
+    pub fn buffer_set_sample(
+        &mut self,
+        index: usize,
+        sample: usize,
+        value: f32,
+    ) -> Result<(), QueueFull> {
+        self.send(Command::SetBufferSample {
+            index,
+            sample,
+            value,
+        })
+    }
+
+    /// Fill `count` consecutive samples of the buffer at `index` with `value`, from flat index
+    /// `start` (scsynth's `/b_fill`).
+    pub fn buffer_fill(
+        &mut self,
+        index: usize,
+        start: usize,
+        count: usize,
+        value: f32,
+    ) -> Result<(), QueueFull> {
+        self.send(Command::FillBuffer {
+            index,
+            start,
+            count,
+            value,
+        })
+    }
+
+    /// Overwrite the sample-rate metadata of the buffer at `index` (scsynth's `/b_setSampleRate`).
+    pub fn buffer_set_sample_rate(
+        &mut self,
+        index: usize,
+        sample_rate: f64,
+    ) -> Result<(), QueueFull> {
+        self.send(Command::SetBufferSampleRate { index, sample_rate })
     }
 
     /// Cue a disk-streaming buffer at `index` (scsynth's `Buffer.cueSoundFile`).

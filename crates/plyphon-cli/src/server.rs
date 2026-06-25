@@ -7,7 +7,8 @@
 //! `/n_go`/`/n_end`/... to clients that registered via `/notify`, and services queued buffer loads.
 //!
 //! `scsynth` splits "server commands" from "engine commands"; so do we - `/notify`, `/status`,
-//! `/dumpOSC`, and `/quit` are handled here, everything else is forwarded to the dispatcher.
+//! `/dumpOSC`, `/version`, and `/quit` (the ones that concern the connection/process, not the
+//! engine) are handled here, everything else is forwarded to the dispatcher.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -150,6 +151,10 @@ fn handle_packet(server: &mut Server, client: Client, bytes: &[u8]) -> bool {
                 handle_dump(server, client, &message.args);
                 return false;
             }
+            "/version" => {
+                handle_version(server, client);
+                return false;
+            }
             _ => {}
         }
     }
@@ -227,6 +232,29 @@ fn handle_status(server: &Server, client: Client) {
                 OscType::Float(0.0),                 // peak CPU
                 OscType::Double(server.sample_rate), // nominal sample rate
                 OscType::Double(server.sample_rate), // actual sample rate
+            ],
+        ),
+    );
+}
+
+/// Reply with `/version.reply`: program name, major, minor, patch, branch, commit. The server is the
+/// program scsynth's `/version` describes, so plyphon reports its own identity here (branch/commit
+/// are left empty - the build is not coupled to git).
+fn handle_version(server: &Server, client: Client) {
+    let major = env!("CARGO_PKG_VERSION_MAJOR").parse::<i32>().unwrap_or(0);
+    let minor = env!("CARGO_PKG_VERSION_MINOR").parse::<i32>().unwrap_or(0);
+    reply(
+        server,
+        client,
+        message_packet(
+            "/version.reply",
+            vec![
+                OscType::String("plyphon".to_string()),
+                OscType::Int(major),
+                OscType::Int(minor),
+                OscType::String(env!("CARGO_PKG_VERSION_PATCH").to_string()),
+                OscType::String(String::new()),
+                OscType::String(String::new()),
             ],
         ),
     );
@@ -462,5 +490,59 @@ mod tests {
 
         assert!(got_go, "expected an /n_go node-start notification");
         assert!(got_end, "expected an /n_end node-end notification");
+    }
+
+    /// `/version` over UDP returns a `/version.reply` identifying the plyphon server.
+    #[test]
+    fn version_over_udp_replies() {
+        let options = Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            input_channels: 0,
+            ..Options::default()
+        };
+        let (controller, nrt, _world) = plyphon::engine(options);
+        let dispatcher = OscDispatcher::with_buffer_source(controller, Box::new(FsSource));
+
+        let Transport { events, udp } =
+            transport::start("127.0.0.1".parse().unwrap(), 0, None).unwrap();
+        let server_addr = udp.local_addr().unwrap();
+        let mut server = Server {
+            dispatcher,
+            nrt,
+            udp,
+            tcp_writers: HashMap::new(),
+            notified: HashSet::new(),
+            dump_osc: false,
+            sample_rate: 48_000.0,
+        };
+
+        let client = thread::spawn(move || {
+            let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+            sock.set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            send_msg(&sock, server_addr, "/version", vec![]);
+
+            let mut reply = None;
+            let mut buf = [0u8; 65_536];
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while reply.is_none() && Instant::now() < deadline {
+                if let Ok(n) = sock.recv(&mut buf)
+                    && let Ok((_, OscPacket::Message(message))) =
+                        rosc::decoder::decode_udp(&buf[..n])
+                    && message.addr == "/version.reply"
+                {
+                    reply = Some(message);
+                }
+            }
+            // Stop the server's control loop, then report what came back.
+            send_msg(&sock, server_addr, "/quit", vec![]);
+            reply
+        });
+
+        control_loop(&mut server, &events);
+        let reply = client.join().unwrap().expect("expected a /version.reply");
+        assert_eq!(reply.args.len(), 6, "version reply has six fields");
+        assert_eq!(reply.args[0], OscType::String("plyphon".to_string()));
     }
 }

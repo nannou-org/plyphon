@@ -202,3 +202,152 @@ fn alloc_read_without_a_source_fails() {
         Some(&OscType::String("/b_allocRead".to_string()))
     );
 }
+
+/// A one-channel engine + dispatcher with the `player` def registered.
+fn player_engine() -> (OscDispatcher, World) {
+    let (controller, _nrt, world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    let mut osc = OscDispatcher::new(controller);
+    osc.controller().add_synthdef(player_def());
+    (osc, world)
+}
+
+/// Start the `player` (node 1000) on buffer 0.
+fn start_player(osc: &mut OscDispatcher) {
+    osc.apply_bytes(&msg(
+        "/s_new",
+        vec![
+            OscType::String("player".to_string()),
+            OscType::Int(1000),
+            OscType::Int(1),
+            OscType::Int(ROOT_GROUP_ID),
+        ],
+    ))
+    .expect("/s_new");
+}
+
+#[test]
+fn b_fill_writes_a_constant_buffer() {
+    let (mut osc, mut world) = player_engine();
+    osc.apply_bytes(&msg(
+        "/b_alloc",
+        vec![OscType::Int(0), OscType::Int(256), OscType::Int(1)],
+    ))
+    .expect("/b_alloc");
+    // Fill the whole buffer with 0.5 in a single command.
+    osc.apply_bytes(&msg(
+        "/b_fill",
+        vec![
+            OscType::Int(0),
+            OscType::Int(0),
+            OscType::Int(256),
+            OscType::Float(0.5),
+        ],
+    ))
+    .expect("/b_fill");
+    start_player(&mut osc);
+
+    let out = render(&mut world, SR as usize / 4);
+    assert!(
+        out[1024..].iter().all(|s| (s - 0.5).abs() < 0.01),
+        "a /b_fill'd buffer should play back as a 0.5 constant"
+    );
+}
+
+#[test]
+fn b_set_writes_individual_samples() {
+    let (mut osc, mut world) = player_engine();
+    osc.apply_bytes(&msg(
+        "/b_alloc",
+        vec![OscType::Int(0), OscType::Int(4), OscType::Int(1)],
+    ))
+    .expect("/b_alloc");
+    // Set each of the four samples individually to 0.3.
+    osc.apply_bytes(&msg(
+        "/b_set",
+        vec![
+            OscType::Int(0),
+            OscType::Int(0),
+            OscType::Float(0.3),
+            OscType::Int(1),
+            OscType::Float(0.3),
+            OscType::Int(2),
+            OscType::Float(0.3),
+            OscType::Int(3),
+            OscType::Float(0.3),
+        ],
+    ))
+    .expect("/b_set");
+    start_player(&mut osc);
+
+    let out = render(&mut world, SR as usize / 4);
+    assert!(
+        out[1024..].iter().all(|s| (s - 0.3).abs() < 0.01),
+        "/b_set samples should play back as a 0.3 constant"
+    );
+}
+
+#[test]
+fn b_setn_writes_a_waveform() {
+    let (mut osc, mut world) = player_engine();
+    let frames = 240usize; // 2 cycles over 240 frames at 48 kHz -> 400 Hz when looped
+    osc.apply_bytes(&msg(
+        "/b_alloc",
+        vec![
+            OscType::Int(0),
+            OscType::Int(frames as i32),
+            OscType::Int(1),
+        ],
+    ))
+    .expect("/b_alloc");
+    let mut args = vec![
+        OscType::Int(0),
+        OscType::Int(0),
+        OscType::Int(frames as i32),
+    ];
+    for i in 0..frames {
+        let v = (TAU * 2.0 * i as f32 / frames as f32).sin() * 0.5;
+        args.push(OscType::Float(v));
+    }
+    osc.apply_bytes(&msg("/b_setn", args)).expect("/b_setn");
+    start_player(&mut osc);
+
+    let out = render(&mut world, SR as usize / 4);
+    assert!(
+        goertzel(&out, 400.0) > 5.0 * goertzel(&out, 800.0),
+        "a /b_setn waveform should loop back as a 400 Hz tone"
+    );
+}
+
+#[test]
+fn b_set_sample_rate_updates_the_query_mirror() {
+    let (mut osc, _world) = player_engine();
+    osc.apply_bytes(&msg(
+        "/b_alloc",
+        vec![OscType::Int(0), OscType::Int(100), OscType::Int(1)],
+    ))
+    .expect("/b_alloc");
+    let _ = osc.take_replies(); // drop the /b_alloc /done
+
+    osc.apply_bytes(&msg(
+        "/b_setSampleRate",
+        vec![OscType::Int(0), OscType::Float(22_050.0)],
+    ))
+    .expect("/b_setSampleRate");
+    osc.apply_bytes(&msg("/b_query", vec![OscType::Int(0)]))
+        .expect("/b_query");
+    let replies = osc.take_replies();
+    let info = find(&replies, "/b_info").expect("/b_info");
+    assert_eq!(
+        info.args,
+        vec![
+            OscType::Int(0),
+            OscType::Int(100),
+            OscType::Int(1),
+            OscType::Float(22_050.0),
+        ]
+    );
+}
