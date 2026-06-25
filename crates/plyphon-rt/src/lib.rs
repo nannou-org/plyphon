@@ -27,6 +27,7 @@ pub mod command;
 pub mod graph;
 pub mod nrt;
 pub mod options;
+mod sched;
 pub mod tree;
 pub mod world;
 

@@ -19,9 +19,10 @@ use alloc::vec::Vec;
 use bytemuck::cast_slice_mut;
 use rtrb::{Consumer, Producer, PushError};
 
-use crate::command::{Command, Event, TimedCommand, Trash};
+use crate::command::{Command, CommandTime, Event, TimedCommand, Trash};
 use crate::graph::{Block, Graph, Pool};
 use crate::options::Options;
+use crate::sched::{Clock, Scheduler};
 use crate::tree::{AddAction, FreedNode, NodeTree};
 use plyphon_dsp::buffer::{BufferSlot, BufferTable};
 use plyphon_dsp::bus::Buses;
@@ -66,6 +67,14 @@ pub struct World {
     done_nodes: Vec<(u32, DoneAction)>,
     /// Scratch sink for nodes removed by a free, so freeing a whole group allocates nothing.
     freed_nodes: Vec<FreedNode>,
+    /// The drift-correcting OSC/NTP clock (scsynth's `mOSCbuftime` + DLL).
+    clock: Clock,
+    /// Pending time-tagged commands awaiting their block (scsynth's `mScheduler`).
+    scheduler: Scheduler,
+    /// The within-block sample offset of the scheduled command currently being applied (scsynth's
+    /// `mSampleOffset`); 0 for immediate commands. Recorded onto a synth created mid-block so its
+    /// `OffsetOut` onsets sample-exactly.
+    current_sample_offset: usize,
     buf_counter: u64,
     block_size: usize,
     /// How many frames of the current control block have already been emitted to the host.
@@ -108,6 +117,9 @@ impl World {
             pending_events: Vec::with_capacity(capacity),
             done_nodes: Vec::with_capacity(capacity),
             freed_nodes: Vec::with_capacity(capacity),
+            clock: Clock::new(options.sample_rate, bs),
+            scheduler: Scheduler::new(options.max_scheduled),
+            current_sample_offset: 0,
             buf_counter: 0,
             block_size: bs,
             // Force a fresh control block on the first fill.
@@ -120,6 +132,33 @@ impl World {
     /// Reblocks the fixed control-block size to `output`'s arbitrary length. RT-safe.
     pub fn fill(&mut self, output: &mut [f32], out_channels: usize) {
         self.fill_duplex(output, out_channels, &[], 0);
+    }
+
+    /// Like [`World::fill`], but drift-corrects the engine clock to `buffer_time` - the OSC/NTP time
+    /// (the 32.32 fixed-point value since 1900 that OSC bundles carry) at which `output`'s first
+    /// frame is heard - so time-tagged commands land sample-accurately even as the audio device
+    /// clock drifts against the host clock.
+    ///
+    /// Call this once per audio callback, on whole-block-multiple buffers, passing the buffer's host
+    /// time mapped to OSC/NTP (e.g. from a `cpal` output timestamp). Hosts that do not schedule
+    /// commands can keep using plain [`World::fill`], whose clock free-runs at the nominal rate.
+    /// RT-safe.
+    pub fn fill_at(&mut self, output: &mut [f32], out_channels: usize, buffer_time: u64) {
+        self.fill_duplex_at(output, out_channels, &[], 0, buffer_time);
+    }
+
+    /// [`World::fill_duplex`] with the clock resync of [`World::fill_at`].
+    pub fn fill_duplex_at(
+        &mut self,
+        output: &mut [f32],
+        out_channels: usize,
+        input: &[f32],
+        in_channels: usize,
+        buffer_time: u64,
+    ) {
+        let emitted = self.buf_counter.wrapping_mul(self.block_size as u64);
+        self.clock.resync(buffer_time, emitted);
+        self.fill_duplex(output, out_channels, input, in_channels);
     }
 
     /// Bytes of the real-time pool currently allocated to live synths' state (scsynth's `/status`
@@ -183,6 +222,7 @@ impl World {
     /// untouched output channels.
     fn run_one_block(&mut self) {
         self.drain_commands();
+        self.apply_due_scheduled();
         self.buf_counter += 1;
         self.done_nodes.clear();
         // Borrow the World's fields disjointly to assemble the per-block bundle: the pool, the shared
@@ -202,6 +242,26 @@ impl World {
         self.tree.process(&mut block, &mut self.done_nodes);
         self.buses.silence_untouched_outputs(self.buf_counter);
         self.apply_done_actions();
+        self.clock.advance();
+    }
+
+    /// Apply every scheduled command due by the end of this control block, in time order, stamping
+    /// each with its within-block sample offset (scsynth's per-event `mSampleOffset`). A late
+    /// command (its time already past) applies at offset 0.
+    fn apply_due_scheduled(&mut self) {
+        let deadline = self.clock.block_end();
+        while self
+            .scheduler
+            .next_time()
+            .is_some_and(|time| time <= deadline)
+        {
+            let Some((time, command)) = self.scheduler.pop() else {
+                break;
+            };
+            self.current_sample_offset = self.clock.sample_offset(time, self.block_size);
+            self.apply(command);
+        }
+        self.current_sample_offset = 0;
     }
 
     /// Apply the done actions collected during the tree walk (free or pause the node).
@@ -229,7 +289,18 @@ impl World {
         self.flush_pending_trash();
         self.flush_pending_events();
         while let Ok(timed) = self.rx.pop() {
-            self.apply(timed.command);
+            match timed.time {
+                CommandTime::Immediate => self.apply(timed.command),
+                // Hold a future command in the scheduler until its block. If the scheduler is full,
+                // apply it now rather than drop it on the audio thread - `apply` routes any owned
+                // `Box` to the trash ring, so this never frees here; degraded timing, no lost
+                // command, still RT-safe.
+                CommandTime::At(time) => {
+                    if let Err(command) = self.scheduler.push(time, timed.command) {
+                        self.apply(command);
+                    }
+                }
+            }
         }
     }
 
@@ -366,7 +437,11 @@ impl World {
             (v.reseed)(slot, seed.wrapping_add((u as u64).wrapping_mul(SEED_STEP)));
         }
 
-        Some(Graph::new(region, Arc::clone(def)))
+        Some(Graph::new(
+            region,
+            Arc::clone(def),
+            self.current_sample_offset,
+        ))
     }
 
     /// Route a freed `Box` back to the NRT side, retaining it for retry if the ring is full (never

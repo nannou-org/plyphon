@@ -64,15 +64,21 @@ pub struct Graph {
     /// Whether the one-time [`Unit::init`](plyphon_unit::unit::Unit::init) seeding pass has run (it runs on
     /// the first control block - plyphon's analogue of scsynth's `Graph_FirstCalc`).
     initialized: bool,
+    /// The within-block sample offset at which this synth was created (scsynth's node `mSampleOffset`).
+    /// Surfaced to its units on the first block only, so `OffsetOut` onsets sample-exactly; 0 for an
+    /// immediately-created synth.
+    sample_offset: usize,
 }
 
 impl Graph {
-    /// Wrap a freshly allocated, initialised block and its def into a live graph.
-    pub(crate) fn new(block: Region, def: Arc<GraphDef>) -> Self {
+    /// Wrap a freshly allocated, initialised block and its def into a live graph, created at
+    /// `sample_offset` samples into its first control block (0 unless scheduled mid-block).
+    pub(crate) fn new(block: Region, def: Arc<GraphDef>, sample_offset: usize) -> Self {
         Graph {
             block,
             def,
             initialized: false,
+            sample_offset,
         }
     }
 
@@ -115,6 +121,9 @@ impl Graph {
         // before its first `process`), so state is seeded from now-live inputs.
         let first = !self.initialized;
         self.initialized = true;
+        // The node's creation offset applies only to its first block (`OffsetOut` delays the onset
+        // by it, then runs flush); later blocks start at the block boundary.
+        let sample_offset = if first { self.sample_offset } else { 0 };
         let mut done = DoneAction::Nothing;
         for v in def.units().iter() {
             let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
@@ -142,6 +151,7 @@ impl Graph {
                     buses: &mut *block.buses,
                     buffers: &mut *block.buffers,
                     buf_counter: block.buf_counter,
+                    sample_offset,
                 };
                 (v.process)(state, &mut ctx)
             });

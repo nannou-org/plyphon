@@ -121,6 +121,10 @@ pub struct ProcessCtx<'a> {
     pub buffers: &'a mut BufferTable,
     /// The current block counter (stamps bus writes: the first writer clears, the rest sum).
     pub buf_counter: u64,
+    /// The sample offset within this block at which the enclosing synth was created (scsynth's
+    /// `mSampleOffset`). It is non-zero only on the first block of a synth scheduled mid-block, and
+    /// only `OffsetOut` acts on it - to delay the onset to that exact sample. Most units ignore it.
+    pub sample_offset: usize,
 }
 
 /// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].
