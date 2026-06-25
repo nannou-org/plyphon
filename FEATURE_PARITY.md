@@ -14,14 +14,14 @@ partial items stay unchecked and spell out what is missing.
 - [x] Per-UGen RNG (Taus88) and engine-owned wavetables
 - [x] Multi-channel output buses and audio input buses (duplex via `World::fill_duplex`)
 - [x] Calc rates: scalar, control, audio
-- [ ] Demand rate
+- [x] Demand rate - pull-based, like scsynth: a consumer (`Demand`/`Duty`) pulls a source's next value (or resets it) on the audio thread, recursing through nested sources; sources are single-output and emit `NaN` at exhaustion. Demand units are split out of the per-block calc list into a separate demand plan with their own block span, and the recursion is allocation-free (a bounded stack copy of `Pod` state); off-RT compilation rejects over-large state or over-deep nesting so the audio thread stays bounded
 - [x] Non-real-time (score render) mode - `Render` drives the engine offline on a deterministic free-running clock (no DLL resync), feeding a time-tagged score lazily; the `plyphon-osc` `parse_score`/`render_osc_score` pair renders scsynth's binary OSC command file to audio (see `example-render`)
 - [x] OSC bundle time-tag scheduling - bundle time tags schedule sample-accurately on the audio thread, against a drift-corrected clock (a DLL tracking the device rate); `OffsetOut` places a scheduled synth's onset on the exact sample
 
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
-## UGens (22 of scsynth's ~250, grouped by category)
+## UGens (27 of scsynth's ~250, grouped by category)
 
 - [ ] **I/O** - have Out, OffsetOut, In; missing ReplaceOut, XOut, LocalIn/LocalOut, InFeedback, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
@@ -35,7 +35,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **Triggers / timing** - none yet: Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, SendTrig, SendReply, Done, FreeSelf, Pause
 - [ ] **Info** - none yet: SampleRate, SampleDur, ControlRate, BufFrames, BufDur, NumChannels, RadiansPerSample
 - [ ] **Delays / reverb** - none yet: DelayN/L/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
-- [ ] **Demand-rate** - none yet: Demand, Duty/TDuty, Dseq, Dser, Drand, Dwhite, Dseries, Dgeom (needs demand rate)
+- [ ] **Demand-rate** - have Demand, Duty, Dseq, Dseries, Dwhite; missing TDuty, Dser, Drand, Dxrand, Dwrand, Dgeom, Dbrown/Dibrown, Diwhite, Dbufrd/Dbufwr, Dswitch/Dswitch1, Dstutter, Dconst, Dreset, Dpoll
 - [ ] **FFT / spectral** - none yet: FFT/IFFT, the `PV_*` set, Pitch, Onsets, BeatTrack
 - [ ] **Chaos / rate conversion** - none yet: Lorenz, LinCong, Henon, ... and A2K/K2A/T2A/DC
 

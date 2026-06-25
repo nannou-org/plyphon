@@ -7,8 +7,6 @@
 use core::f64::consts::TAU;
 
 /// The calculation rate of a unit output or input wire (SC's `calc_ScalarRate` etc.).
-///
-/// Demand rate is intentionally omitted until demand-rate units are ported.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Rate {
     /// Computed once at construction; constant for the synth's lifetime.
@@ -17,6 +15,10 @@ pub enum Rate {
     Control,
     /// One value per sample (`block_size` values per control block).
     Audio,
+    /// Computed only when *demanded* by a consumer (SC's `calc_DemandRate`). A demand-rate unit is
+    /// not in the per-block calc list: it has no wire and produces one value per pull, so it is
+    /// driven on the audio thread by a consuming unit (`Demand`/`Duty`) rather than once per block.
+    Demand,
 }
 
 /// Derived per-block constants for a given sample rate and block size.

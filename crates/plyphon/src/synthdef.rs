@@ -18,6 +18,7 @@ use hashbrown::HashMap;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_unit::error::BuildError;
 use plyphon_unit::graphdef::{GraphDef, OutputWire, UnitVtbl, build_layout};
+use plyphon_unit::unit::demand::{BuiltDemandUnit, DemandVtbl, MAX_DEMAND_DEPTH, MAX_DEMAND_STATE};
 use plyphon_unit::unit::registry::{BuildContext, UnitRegistry};
 use plyphon_unit::unit::{BuiltUnit, InputSource};
 
@@ -111,12 +112,35 @@ impl SynthDef {
         let num_params = self.params.len();
         let param_wires: Vec<u32> = (0..num_params as u32).collect();
 
-        // Pass 1: assign a wire to each (unit, output) by rate. Audio outputs go to audio wires;
-        // control/scalar outputs go to control wires following the parameter wires.
+        // Pre-scan: tag each unit as demand-rate (with its index in the demand plan) or calc-rate.
+        // Demand units are pulled on demand, so they get no wire and stay out of the per-block calc
+        // list; the SynthDef is already topologically sorted, so the filtered lists stay in order.
+        let mut demand_index: Vec<Option<u32>> = Vec::with_capacity(self.units.len());
+        let mut next_demand = 0u32;
+        for spec in &self.units {
+            if spec.rate == Rate::Demand {
+                // A demand source produces one value per pull, so it is single-output.
+                if spec.num_outputs != 1 {
+                    return Err(BuildError::DemandMultiOutput(spec.num_outputs));
+                }
+                demand_index.push(Some(next_demand));
+                next_demand += 1;
+            } else {
+                demand_index.push(None);
+            }
+        }
+
+        // Pass 1: assign a wire to each (unit, output) of the *calc* units by rate. Audio outputs go
+        // to audio wires; control/scalar outputs go to control wires after the parameter wires.
+        // Demand units get an empty slot so `outputs_plan` stays indexable by original unit index.
         let mut num_audio_wires = 0u32;
         let mut num_control_wires = num_params as u32;
         let mut outputs_plan: Vec<Box<[OutputWire]>> = Vec::with_capacity(self.units.len());
         for spec in &self.units {
+            if spec.rate == Rate::Demand {
+                outputs_plan.push(Vec::new().into_boxed_slice());
+                continue;
+            }
             let mut wires = Vec::with_capacity(spec.num_outputs);
             for _ in 0..spec.num_outputs {
                 let wire = match spec.rate {
@@ -136,6 +160,7 @@ impl SynthDef {
                             wire: w,
                         }
                     }
+                    Rate::Demand => unreachable!("demand units are handled above"),
                 };
                 wires.push(wire);
             }
@@ -149,9 +174,14 @@ impl SynthDef {
             control_defaults[i] = param.default;
         }
 
-        // Pass 2: build each unit and resolve its inputs against the assigned wires.
-        let mut built: Vec<BuiltUnit> = Vec::with_capacity(self.units.len());
-        let mut inputs_plan: Vec<Box<[InputSource]>> = Vec::with_capacity(self.units.len());
+        // Pass 2: build each unit, resolve its inputs, and partition into the calc list and the demand
+        // plan. A unit input that references a demand unit resolves to `InputSource::Demand` (whether
+        // the consumer is a calc unit or a nested demand unit); everything else resolves to a wire.
+        let mut calc_built: Vec<BuiltUnit> = Vec::new();
+        let mut calc_inputs: Vec<Box<[InputSource]>> = Vec::new();
+        let mut calc_outputs: Vec<Box<[OutputWire]>> = Vec::new();
+        let mut demand_built: Vec<BuiltDemandUnit> = Vec::new();
+        let mut demand_inputs: Vec<Box<[InputSource]>> = Vec::new();
         let mut max_outputs = 0usize;
         for (u, spec) in self.units.iter().enumerate() {
             let mut sources = Vec::with_capacity(spec.inputs.len());
@@ -163,13 +193,30 @@ impl SynthDef {
                         InputSource::Control(wire)
                     }
                     InputRef::Unit { unit, output } => {
-                        let from = outputs_plan
+                        let kind = *demand_index
                             .get(unit as usize)
-                            .and_then(|outs| outs.get(output as usize))
                             .ok_or(BuildError::BadInputRef)?;
-                        match from.rate {
-                            Rate::Audio => InputSource::Audio(from.wire),
-                            Rate::Control | Rate::Scalar => InputSource::Control(from.wire),
+                        match kind {
+                            Some(di) => {
+                                // A demand source is single-output, so only output 0 is valid.
+                                if output != 0 {
+                                    return Err(BuildError::BadInputRef);
+                                }
+                                InputSource::Demand(di)
+                            }
+                            None => {
+                                let from = outputs_plan
+                                    .get(unit as usize)
+                                    .and_then(|outs| outs.get(output as usize))
+                                    .ok_or(BuildError::BadInputRef)?;
+                                match from.rate {
+                                    Rate::Audio => InputSource::Audio(from.wire),
+                                    Rate::Control | Rate::Scalar => InputSource::Control(from.wire),
+                                    Rate::Demand => {
+                                        unreachable!("demand outputs are never wired")
+                                    }
+                                }
+                            }
                         }
                     }
                 };
@@ -178,7 +225,7 @@ impl SynthDef {
 
             let input_rates: Vec<Rate> = sources.iter().map(|s| s.rate()).collect();
             // A deterministic build-time seed; the real per-instance seed is applied on the RT thread
-            // via `Unit::reseed`, so this is only a placeholder for the baked state image.
+            // via `reseed`, so this is only a placeholder for the baked state image.
             let build_ctx = BuildContext {
                 input_rates: &input_rates,
                 audio,
@@ -188,15 +235,34 @@ impl SynthDef {
                 special_index: spec.special_index,
                 seed: (u as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
             };
-            let def = registry
-                .get(&spec.name)
-                .ok_or_else(|| BuildError::UnknownUnit(spec.name.clone()))?;
-            built.push(def.build(&build_ctx)?);
-            inputs_plan.push(sources.into_boxed_slice());
-            max_outputs = max_outputs.max(spec.num_outputs);
+
+            if spec.rate == Rate::Demand {
+                let def = registry
+                    .get_demand(&spec.name)
+                    .ok_or_else(|| BuildError::UnknownUnit(spec.name.clone()))?;
+                let built = def.build(&build_ctx)?;
+                // The audio thread pulls a demand unit into a fixed stack buffer; reject oversize state.
+                if built.size > MAX_DEMAND_STATE {
+                    return Err(BuildError::DemandStateTooLarge {
+                        needed: built.size,
+                        limit: MAX_DEMAND_STATE,
+                    });
+                }
+                demand_built.push(built);
+                demand_inputs.push(sources.into_boxed_slice());
+            } else {
+                let def = registry
+                    .get(&spec.name)
+                    .ok_or_else(|| BuildError::UnknownUnit(spec.name.clone()))?;
+                calc_built.push(def.build(&build_ctx)?);
+                calc_inputs.push(sources.into_boxed_slice());
+                calc_outputs.push(outputs_plan[u].clone());
+                max_outputs = max_outputs.max(spec.num_outputs);
+            }
         }
 
         // The shared-scratch capacities are fixed at boot; reject a def that would overflow them.
+        // Demand units have no wires or output scratch, so only the calc units count here.
         if num_audio_wires as usize > max_wire_bufs {
             return Err(BuildError::TooManyWires {
                 needed: num_audio_wires as usize,
@@ -210,20 +276,52 @@ impl SynthDef {
             });
         }
 
-        // Lay out the per-graph block (state arena | control wires | param maps) and pack the initial
-        // state-arena image from each unit's initial state bytes.
-        let state_slots: Vec<(usize, usize)> = built.iter().map(|b| (b.size, b.align)).collect();
-        let (layout, state_offsets) =
-            build_layout(&state_slots, num_control_wires as usize, num_params);
-        let mut state_image = vec![0u8; layout.state.len];
-        for (b, &off) in built.iter().zip(&state_offsets) {
-            state_image[off..off + b.size].copy_from_slice(&b.init_bytes);
+        // Reject demand graphs that nest deeper than the audio thread's recursion bound. `depth[di]`
+        // is the longest chain of nested demand units rooted at `di`; demand inputs reference earlier
+        // demand units (topological order), so a single forward pass suffices.
+        let mut depth = vec![0usize; demand_built.len()];
+        for (di, inputs) in demand_inputs.iter().enumerate() {
+            let mut d = 1usize;
+            for src in inputs.iter() {
+                if let InputSource::Demand(child) = *src {
+                    d = d.max(1 + depth[child as usize]);
+                }
+            }
+            depth[di] = d;
+        }
+        let max_depth = depth.iter().copied().max().unwrap_or(0);
+        if max_depth > MAX_DEMAND_DEPTH {
+            return Err(BuildError::DemandNestingTooDeep {
+                depth: max_depth,
+                limit: MAX_DEMAND_DEPTH,
+            });
         }
 
-        let units: Vec<UnitVtbl> = built
+        // Lay out the per-graph block (calc state | demand state | control wires | param maps) and
+        // pack each arena's initial image from the units' initial state bytes.
+        let state_slots: Vec<(usize, usize)> =
+            calc_built.iter().map(|b| (b.size, b.align)).collect();
+        let demand_state_slots: Vec<(usize, usize)> =
+            demand_built.iter().map(|b| (b.size, b.align)).collect();
+        let (layout, state_offsets, demand_offsets) = build_layout(
+            &state_slots,
+            &demand_state_slots,
+            num_control_wires as usize,
+            num_params,
+        );
+        let mut state_image = vec![0u8; layout.state.len];
+        for (b, &off) in calc_built.iter().zip(&state_offsets) {
+            state_image[off..off + b.size].copy_from_slice(&b.init_bytes);
+        }
+        let mut demand_state_image = vec![0u8; layout.demand_state.len];
+        for (b, &off) in demand_built.iter().zip(&demand_offsets) {
+            demand_state_image[off..off + b.size].copy_from_slice(&b.init_bytes);
+        }
+
+        let units: Vec<UnitVtbl> = calc_built
             .into_iter()
-            .zip(inputs_plan)
-            .zip(outputs_plan)
+            .zip(calc_inputs)
+            .zip(calc_outputs)
             .zip(state_offsets)
             .map(|(((b, inputs), outputs), state_offset)| UnitVtbl {
                 process: b.process,
@@ -236,10 +334,26 @@ impl SynthDef {
             })
             .collect();
 
+        let demand_units: Vec<DemandVtbl> = demand_built
+            .into_iter()
+            .zip(demand_inputs)
+            .zip(demand_offsets)
+            .map(|((b, inputs), state_offset)| DemandVtbl {
+                produce: b.produce,
+                reset: b.reset,
+                reseed: b.reseed,
+                inputs,
+                state_offset,
+                state_size: b.size,
+            })
+            .collect();
+
         Ok(GraphDef::new(
             units.into_boxed_slice(),
+            demand_units.into_boxed_slice(),
             layout,
             state_image.into_boxed_slice(),
+            demand_state_image.into_boxed_slice(),
             control_defaults.into_boxed_slice(),
             param_wires.into_boxed_slice(),
             num_params,

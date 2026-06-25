@@ -13,6 +13,12 @@ use crate::error::BuildError;
 use crate::unit::BuiltUnit;
 use crate::unit::band_limited::{PulseCtor, SawCtor};
 use crate::unit::binary_op::BinaryOpCtor;
+use crate::unit::demand::BuiltDemandUnit;
+use crate::unit::demand::demand_ugen::DemandCtor;
+use crate::unit::demand::dseq::DseqCtor;
+use crate::unit::demand::dseries::DseriesCtor;
+use crate::unit::demand::duty::DutyCtor;
+use crate::unit::demand::dwhite::DwhiteCtor;
 use crate::unit::disk_in::DiskInCtor;
 use crate::unit::env::EnvGenCtor;
 use crate::unit::filter::{ButterCtor, Kind};
@@ -53,9 +59,18 @@ pub trait UnitDef: Send + Sync {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError>;
 }
 
-/// Maps unit names to their definitions.
+/// A demand-rate unit definition - the demand-plan analogue of [`UnitDef`]. Builds a
+/// [`BuiltDemandUnit`] (pull/reset/seed vtable + initial state image) when a SynthDef is compiled.
+pub trait DemandUnitDef: Send + Sync {
+    /// Build a demand unit, or fail.
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError>;
+}
+
+/// Maps unit names to their definitions. Demand-rate units live in a separate map: a SynthDef unit at
+/// [`Rate::Demand`] is looked up there, every other rate in `map`.
 pub struct UnitRegistry {
     map: HashMap<String, Box<dyn UnitDef>>,
+    demand_map: HashMap<String, Box<dyn DemandUnitDef>>,
 }
 
 impl UnitRegistry {
@@ -63,6 +78,7 @@ impl UnitRegistry {
     pub fn new() -> Self {
         UnitRegistry {
             map: HashMap::new(),
+            demand_map: HashMap::new(),
         }
     }
 
@@ -91,6 +107,13 @@ impl UnitRegistry {
         registry.register("Lag", Box::new(LagCtor));
         registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry.register("EnvGen", Box::new(EnvGenCtor));
+        // Demand-rate consumers (normal calc-rate units that pull from the demand plan).
+        registry.register("Duty", Box::new(DutyCtor));
+        registry.register("Demand", Box::new(DemandCtor));
+        // Demand-rate sources (the demand plan).
+        registry.register_demand("Dseq", Box::new(DseqCtor));
+        registry.register_demand("Dseries", Box::new(DseriesCtor));
+        registry.register_demand("Dwhite", Box::new(DwhiteCtor));
         registry
     }
 
@@ -99,9 +122,19 @@ impl UnitRegistry {
         self.map.insert(name.to_string(), def);
     }
 
+    /// Register a demand-rate `def` under `name`, replacing any existing entry.
+    pub fn register_demand(&mut self, name: &str, def: Box<dyn DemandUnitDef>) {
+        self.demand_map.insert(name.to_string(), def);
+    }
+
     /// Look up a definition by name.
     pub fn get(&self, name: &str) -> Option<&dyn UnitDef> {
         self.map.get(name).map(|boxed| boxed.as_ref())
+    }
+
+    /// Look up a demand-rate definition by name.
+    pub fn get_demand(&self, name: &str) -> Option<&dyn DemandUnitDef> {
+        self.demand_map.get(name).map(|boxed| boxed.as_ref())
     }
 }
 

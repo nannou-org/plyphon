@@ -10,6 +10,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use crate::unit::demand::DemandVtbl;
 use crate::unit::{InitFn, InputSource, ProcessFn, ReseedFn};
 use plyphon_dsp::rate::Rate;
 
@@ -62,14 +63,19 @@ impl Span {
 /// wire buffers and per-unit output scratch are World-shared and live outside the block (matching
 /// scsynth, which keeps those in `mWireBufSpace`, not the per-graph allocation).
 ///
-/// Laid out so every span is correctly aligned given a 64-byte-aligned block base: the state arena
-/// (alignment up to 8, for `f64` state) comes first, then the 4-byte-aligned `f32` control wires and
-/// `u32` param maps. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over them never
-/// fails, and the `bytemuck` casts never hit an alignment error.
+/// Laid out so every span is correctly aligned given a 64-byte-aligned block base: the two state
+/// arenas (alignment up to 8, for `f64` state) come first, then the 4-byte-aligned `f32` control
+/// wires and `u32` param maps. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
+/// them never fails, and the `bytemuck` casts never hit an alignment error. The calc-unit and
+/// demand-unit state are *separate* spans so the audio thread can hold a calc unit's `&mut` state
+/// slot and the `&mut` demand arena at once (the latter is pulled re-entrantly while the former runs).
 #[derive(Copy, Clone, Debug)]
 pub struct BlockLayout {
-    /// Heterogeneous unit state (each unit's `Pod` bytes at its `state_offset`).
+    /// Heterogeneous calc-unit state (each calc unit's `Pod` bytes at its `state_offset`).
     pub state: Span,
+    /// Heterogeneous demand-unit state (each demand unit's `Pod` bytes at its `state_offset`). Empty
+    /// when the def has no demand units.
+    pub demand_state: Span,
     /// Control wires (`f32`): the parameters first, then control-rate unit outputs.
     pub control: Span,
     /// Per-parameter control-bus map (`u32`; `u32::MAX` = unmapped).
@@ -84,11 +90,17 @@ pub struct BlockLayout {
 pub struct GraphDef {
     /// Per-unit vtable + wiring, in topological calc order.
     units: Box<[UnitVtbl]>,
+    /// The demand plan: per-demand-unit pull/reset/seed vtable + wiring. Not in the per-block calc
+    /// list - each is driven on demand by a consuming unit. Empty when the def has no demand units.
+    demand_units: Box<[DemandVtbl]>,
     /// How a per-graph pool block is carved.
     layout: BlockLayout,
     /// The initial state-arena image: each unit's initial state bytes packed at its offset. Copied
     /// into a fresh block when a synth is built on the audio thread.
     state_image: Box<[u8]>,
+    /// The initial demand-state image: each demand unit's initial state bytes packed at its offset.
+    /// Copied into the block's `demand_state` span when a synth is built. Empty without demand units.
+    demand_state_image: Box<[u8]>,
     /// Initial control-wire values: parameter defaults in the first `num_params` slots, then zeros.
     control_defaults: Box<[f32]>,
     /// Control-parameter index -> control wire index.
@@ -103,10 +115,13 @@ impl GraphDef {
     /// Assemble a compiled def from its parts - the output of `SynthDef` compilation. The parts must
     /// be mutually consistent (`layout` describes how `state_image` and each per-instance block are
     /// carved), so compilation is the only place that builds one.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         units: Box<[UnitVtbl]>,
+        demand_units: Box<[DemandVtbl]>,
         layout: BlockLayout,
         state_image: Box<[u8]>,
+        demand_state_image: Box<[u8]>,
         control_defaults: Box<[f32]>,
         param_wires: Box<[u32]>,
         num_params: usize,
@@ -114,8 +129,10 @@ impl GraphDef {
     ) -> Self {
         GraphDef {
             units,
+            demand_units,
             layout,
             state_image,
+            demand_state_image,
             control_defaults,
             param_wires,
             num_params,
@@ -128,6 +145,11 @@ impl GraphDef {
         &self.units
     }
 
+    /// The demand plan: per-demand-unit vtables and wiring, indexed by demand-plan index.
+    pub fn demand_units(&self) -> &[DemandVtbl] {
+        &self.demand_units
+    }
+
     /// How a per-graph pool block is carved.
     pub fn layout(&self) -> BlockLayout {
         self.layout
@@ -136,6 +158,11 @@ impl GraphDef {
     /// The initial state-arena image, copied into a fresh block when a synth is instantiated.
     pub fn state_image(&self) -> &[u8] {
         &self.state_image
+    }
+
+    /// The initial demand-state image, copied into the block's `demand_state` span on instantiation.
+    pub fn demand_state_image(&self) -> &[u8] {
+        &self.demand_state_image
     }
 
     /// Initial control-wire values: parameter defaults first, then zeros.
@@ -164,31 +191,44 @@ const fn align_up(x: usize, align: usize) -> usize {
     (x + align - 1) & !(align - 1)
 }
 
-/// Compute the per-graph [`BlockLayout`] and each unit's state offset from the units' `(size, align)`
-/// slots, the control-wire count, and the parameter count.
+/// Compute the per-graph [`BlockLayout`], each calc unit's state offset, and each demand unit's state
+/// offset (relative to the `demand_state` span) from the units' `(size, align)` slots, the
+/// control-wire count, and the parameter count.
 ///
-/// The state arena packs the slots in order (each bumped to its own alignment), then the control
-/// wires and param maps follow on 4-byte boundaries. Because the block base is 64-byte aligned, every
-/// resulting span is aligned for its element type.
+/// The two state arenas pack their slots in order (each bumped to its own alignment), then the
+/// control wires and param maps follow on 4-byte boundaries. The calc-state arena is padded to 8 so
+/// the demand-state arena that follows starts 8-aligned (it may hold `f64` state). Because the block
+/// base is 64-byte aligned, every resulting span is aligned for its element type.
 pub fn build_layout(
     state_slots: &[(usize, usize)],
+    demand_state_slots: &[(usize, usize)],
     num_control_wires: usize,
     num_params: usize,
-) -> (BlockLayout, Vec<usize>) {
-    let mut offsets = Vec::with_capacity(state_slots.len());
-    let mut cursor = 0usize;
-    for &(size, align) in state_slots {
-        let align = align.max(1);
-        cursor = align_up(cursor, align);
-        offsets.push(cursor);
-        cursor += size;
-    }
+) -> (BlockLayout, Vec<usize>, Vec<usize>) {
+    let pack = |slots: &[(usize, usize)]| -> (Vec<usize>, usize) {
+        let mut offsets = Vec::with_capacity(slots.len());
+        let mut cursor = 0usize;
+        for &(size, align) in slots {
+            let align = align.max(1);
+            cursor = align_up(cursor, align);
+            offsets.push(cursor);
+            cursor += size;
+        }
+        (offsets, cursor)
+    };
+    let (offsets, state_end) = pack(state_slots);
+    let (demand_offsets, demand_end) = pack(demand_state_slots);
+    // Pad the calc-state arena to 8 so the demand-state arena starts aligned for `f64` state.
     let state = Span {
         off: 0,
-        len: align_up(cursor, 4),
+        len: align_up(state_end, 8),
+    };
+    let demand_state = Span {
+        off: state.off + state.len,
+        len: align_up(demand_end, 4),
     };
     let control = Span {
-        off: state.off + state.len,
+        off: demand_state.off + demand_state.len,
         len: num_control_wires * 4,
     };
     let pmaps = Span {
@@ -199,10 +239,12 @@ pub fn build_layout(
     (
         BlockLayout {
             state,
+            demand_state,
             control,
             pmaps,
             total,
         },
         offsets,
+        demand_offsets,
     )
 }

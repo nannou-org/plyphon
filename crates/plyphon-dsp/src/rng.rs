@@ -48,6 +48,13 @@ impl Rng {
     pub fn next_bipolar(&mut self) -> f32 {
         (self.next_u32() as i32) as f32 * (1.0 / 2_147_483_648.0)
     }
+
+    /// A unipolar sample uniformly distributed in `[0, 1)` (scsynth's `RGen::frand`). Uses the top 23
+    /// bits so the result lands exactly in `[0, 1)` at `f32` precision.
+    #[inline]
+    pub fn next_unipolar(&mut self) -> f32 {
+        (self.next_u32() >> 9) as f32 * (1.0 / 8_388_608.0)
+    }
 }
 
 #[cfg(test)]

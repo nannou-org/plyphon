@@ -22,9 +22,6 @@ pub enum ReadError {
     /// The bytes failed to parse as SCgf.
     #[error("invalid SCgf")]
     Scgf(#[from] scgf::Error),
-    /// A rate plyphon does not yet support (e.g. demand rate) was used.
-    #[error("unsupported calculation rate")]
-    UnsupportedRate,
     /// An input references a UGen or constant index that does not exist.
     #[error("input reference out of range")]
     BadInputRef,
@@ -41,12 +38,12 @@ fn is_control(name: &str) -> bool {
     matches!(name, "Control" | "TrigControl" | "LagControl")
 }
 
-fn rate(rate: scgf::Rate) -> Result<Rate, ReadError> {
+fn rate(rate: scgf::Rate) -> Rate {
     match rate {
-        scgf::Rate::Scalar => Ok(Rate::Scalar),
-        scgf::Rate::Control => Ok(Rate::Control),
-        scgf::Rate::Audio => Ok(Rate::Audio),
-        scgf::Rate::Demand => Err(ReadError::UnsupportedRate),
+        scgf::Rate::Scalar => Rate::Scalar,
+        scgf::Rate::Control => Rate::Control,
+        scgf::Rate::Audio => Rate::Audio,
+        scgf::Rate::Demand => Rate::Demand,
     }
 }
 
@@ -121,7 +118,7 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
         }
         units.push(UnitSpec {
             name: ugen.name.clone(),
-            rate: rate(ugen.rate)?,
+            rate: rate(ugen.rate),
             inputs,
             num_outputs: ugen.outputs.len(),
             special_index: ugen.special_index,

@@ -420,21 +420,33 @@ impl World {
         let buf = self.pool.slice_mut(&region);
         // Carve the block into its disjoint spans. The layout guarantees they are in-bounds and
         // non-overlapping, so this never fails.
-        let [state_arena, ctrl_bytes, pmap_bytes] = buf
+        let [state_arena, demand_state, ctrl_bytes, pmap_bytes] = buf
             .get_disjoint_mut([
                 layout.state.range(),
+                layout.demand_state.range(),
                 layout.control.range(),
                 layout.pmaps.range(),
             ])
             .expect("graph block layout spans are disjoint by construction");
         state_arena.copy_from_slice(def.state_image());
+        demand_state.copy_from_slice(def.demand_state_image());
         cast_slice_mut::<u8, f32>(ctrl_bytes).copy_from_slice(def.control_defaults());
         for m in cast_slice_mut::<u8, u32>(pmap_bytes) {
             *m = u32::MAX;
         }
+        // Re-seed each unit's randomness for this instance (calc units, then demand units, on one
+        // continuing index so two instances of a def decorrelate reproducibly).
         for (u, v) in def.units().iter().enumerate() {
             let slot = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
             (v.reseed)(slot, seed.wrapping_add((u as u64).wrapping_mul(SEED_STEP)));
+        }
+        let calc_count = def.units().len() as u64;
+        for (d, v) in def.demand_units().iter().enumerate() {
+            let slot = &mut demand_state[v.state_offset..v.state_offset + v.state_size];
+            (v.reseed)(
+                slot,
+                seed.wrapping_add((calc_count + d as u64).wrapping_mul(SEED_STEP)),
+            );
         }
 
         Some(Graph::new(

@@ -14,6 +14,7 @@
 
 pub mod band_limited;
 pub mod binary_op;
+pub mod demand;
 pub mod disk_in;
 pub mod env;
 pub mod filter;
@@ -79,6 +80,10 @@ impl DoneAction {
 
 pub use band_limited::{Pulse, Saw};
 pub use binary_op::BinaryOp;
+pub use demand::{
+    Demand, DemandAccess, DemandCtx, DemandUnit, DemandVtbl, Dseq, Dseries, Duty, Dwhite,
+    demand_next, demand_reset,
+};
 pub use disk_in::DiskIn;
 pub use env::EnvGen;
 pub use filter::Butter;
@@ -90,7 +95,7 @@ pub use noise::WhiteNoise;
 pub use out::{OffsetOut, Out};
 pub use pan::Pan2;
 pub use play_buf::PlayBuf;
-pub use registry::{BuildContext, UnitDef, UnitRegistry};
+pub use registry::{BuildContext, DemandUnitDef, UnitDef, UnitRegistry};
 pub use sin_osc::SinOsc;
 pub use unary_op::UnaryOp;
 pub use util::{Amplitude, Lag, MulAdd};
@@ -125,6 +130,10 @@ pub struct ProcessCtx<'a> {
     /// `mSampleOffset`). It is non-zero only on the first block of a synth scheduled mid-block, and
     /// only `OffsetOut` acts on it - to delay the onset to that exact sample. Most units ignore it.
     pub sample_offset: usize,
+    /// Handle to the synth's demand plan. A demand-rate consumer (`Demand`/`Duty`) pulls demand
+    /// sources through this with the [`demand_next`] / [`demand_reset`] free fns; other units ignore
+    /// it. Empty for synths with no demand units.
+    pub demand: DemandAccess<'a>,
 }
 
 /// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].
@@ -157,6 +166,10 @@ pub enum InputSource {
     Control(u32),
     /// An audio-rate wire (index into the synth's audio wires).
     Audio(u32),
+    /// A demand-rate unit (index into the synth's demand plan). Such an input has no wire: a consumer
+    /// reads it with the [`demand_next`]/[`demand_reset`] free fns, which pull the source on the audio
+    /// thread.
+    Demand(u32),
 }
 
 impl InputSource {
@@ -166,6 +179,7 @@ impl InputSource {
             InputSource::Constant(_) => Rate::Scalar,
             InputSource::Control(_) => Rate::Control,
             InputSource::Audio(_) => Rate::Audio,
+            InputSource::Demand(_) => Rate::Demand,
         }
     }
 }
@@ -213,6 +227,12 @@ impl<'a> Inputs<'a> {
         self.sources[i].rate()
     }
 
+    /// How input `i` is sourced (constant, wire, or demand unit). A consumer uses this to route a
+    /// demand input through the [`demand_next`] free fn rather than reading a wire.
+    pub fn source(&self, i: usize) -> InputSource {
+        self.sources[i]
+    }
+
     /// Audio-rate input `i` as a `block_size` slice.
     ///
     /// Only meaningful when input `i` is audio-rate; units select by [`Inputs::rate`] (they chose
@@ -230,12 +250,14 @@ impl<'a> Inputs<'a> {
 
     /// The single value of a constant or control-rate input `i`.
     ///
-    /// An audio-rate input collapses to its first sample (scsynth's `IN0`).
+    /// An audio-rate input collapses to its first sample (scsynth's `IN0`). A demand-rate input has
+    /// no wire to read - it yields 0; a consumer must pull it via the [`demand_next`] free fn instead.
     pub fn control(&self, i: usize) -> f32 {
         match self.sources[i] {
             InputSource::Constant(v) => v,
             InputSource::Control(w) => self.control_wires[w as usize],
             InputSource::Audio(w) => self.audio_wires[w as usize * self.block_size],
+            InputSource::Demand(_) => 0.0,
         }
     }
 }

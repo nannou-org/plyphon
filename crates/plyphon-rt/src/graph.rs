@@ -25,7 +25,7 @@ use plyphon_dsp::bus::Buses;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
-use plyphon_unit::unit::{self, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx};
+use plyphon_unit::unit::{self, DemandAccess, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx};
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
 pub(crate) type Pool = RtPool<Box<[Align64]>>;
@@ -94,10 +94,13 @@ impl Graph {
         let bs = def.block_size();
         let layout = def.layout();
 
-        // Carve the per-graph block into its three disjoint spans (proved disjoint once, here).
+        // Carve the per-graph block into its four disjoint spans (proved disjoint once, here). The
+        // calc-unit state and the demand-state arena are separate spans so a calc unit's `&mut` state
+        // slot and the `&mut` demand arena (pulled re-entrantly during its `process`) never alias.
         let buf = block.pool.slice_mut(&self.block);
-        let Ok([state_arena, ctrl_bytes, pmap_bytes]) = buf.get_disjoint_mut([
+        let Ok([state_arena, demand_state, ctrl_bytes, pmap_bytes]) = buf.get_disjoint_mut([
             layout.state.range(),
+            layout.demand_state.range(),
             layout.control.range(),
             layout.pmaps.range(),
         ]) else {
@@ -140,7 +143,7 @@ impl Graph {
                 };
                 (v.init)(state, &init_ctx);
             }
-            // Scoped so the context's borrows of the scratch/buses end before we publish.
+            // Scoped so the context's borrows of the scratch/buses/demand arena end before we publish.
             done = done.max({
                 let mut ctx = ProcessCtx {
                     audio: block.audio,
@@ -152,6 +155,15 @@ impl Graph {
                     buffers: &mut *block.buffers,
                     buf_counter: block.buf_counter,
                     sample_offset,
+                    // A consumer pulls demand sources through this; non-demand units ignore it. The
+                    // demand arena is disjoint from this unit's `state` slot above.
+                    demand: DemandAccess::new(
+                        def.demand_units(),
+                        &mut *demand_state,
+                        &*audio,
+                        &*ctrl,
+                        bs,
+                    ),
                 };
                 (v.process)(state, &mut ctx)
             });
@@ -166,6 +178,8 @@ impl Graph {
                     Rate::Control | Rate::Scalar => {
                         ctrl[ow.wire as usize] = scratch[src];
                     }
+                    // Calc units never publish a demand-rate output (demand units are not in this loop).
+                    Rate::Demand => {}
                 }
             }
         }
