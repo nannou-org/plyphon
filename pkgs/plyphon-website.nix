@@ -55,7 +55,7 @@ rustPlatformWasm.buildRustPackage {
     # link/bindgen/opt steps repeat.
     for name in \
       sine motif waveforms envelope pan custom-unit duty-seq \
-      routing control osc schedule triggers scgf sampler stream; do
+      routing control node-control osc schedule triggers scgf sampler stream; do
       trunk build --release --dist $out/$name web/$name.html
     done
 

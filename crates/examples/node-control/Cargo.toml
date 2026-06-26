@@ -1,0 +1,25 @@
+[package]
+name = "example-node-control"
+version = "0.1.0"
+publish = false
+default-run = "example-node-control"
+description = "A plyphon demo: in-graph node-to-node control - one node pauses, resumes, and frees another by id, natively and on the web."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "example-node-control"
+path = "src/main.rs"
+
+[dependencies]
+cpal.workspace = true
+plyphon.workspace = true
+
+# Web-only: cpal's WebAudio backend, the wasm glue, and a timer to tick the NRT side.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpal = { workspace = true, features = ["wasm-bindgen"] }
+console_error_panic_hook.workspace = true
+gloo-timers = "0.3"
