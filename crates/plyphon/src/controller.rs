@@ -8,10 +8,13 @@
 //! NRT work - dropping freed buffers/streams and surfacing notifications - lives in the
 //! [`Nrt`](plyphon_rt::nrt::Nrt) instead.
 //!
-//! The controller retains a strong `Arc` to every `GraphDef` it has ever compiled (current ones in
-//! `compiled`, superseded ones in `graveyard`), for the engine's lifetime. That way an
-//! `Arc<GraphDef>` dropped on the audio thread (a freed graph's, or a def-table slot replaced by a
-//! redefinition) is never the final reference, so the heavy drop never lands on the audio thread.
+//! The controller is the sole owner of every compiled `GraphDef` (current ones in `compiled`,
+//! retired ones in `retiring`). An `Arc<GraphDef>` dropped on the audio thread (a freed graph's
+//! clone, or a def-table slot cleared or replaced) is therefore never the final reference, so the
+//! heavy drop never lands on the audio thread.
+//! [`reap_retired_defs`](Controller::reap_retired_defs) drops each retired def on the control thread
+//! once `Arc::strong_count` shows the audio thread is done with it, keeping `retiring` bounded by
+//! live def state rather than leaking for the engine's lifetime.
 
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
@@ -64,8 +67,9 @@ pub struct Controller {
     compiled: HashMap<String, Arc<GraphDef>>,
     /// Stable name -> `def_id`, assigned on first compile and reused across recompiles.
     def_ids: HashMap<String, u32>,
-    /// Superseded compiled defs, retained for the engine's lifetime (see the module docs).
-    graveyard: Vec<Arc<GraphDef>>,
+    /// Retired compiled defs (superseded by a redefinition, or freed) awaiting their last
+    /// audio-thread reference to drop; drained by [`reap_retired_defs`](Self::reap_retired_defs).
+    retiring: Vec<Arc<GraphDef>>,
     next_def_id: u32,
     audio: RateInfo,
     control: RateInfo,
@@ -91,7 +95,7 @@ impl Controller {
             defs: SynthDefLibrary::new(),
             compiled: HashMap::new(),
             def_ids: HashMap::new(),
-            graveyard: Vec::new(),
+            retiring: Vec::new(),
             next_def_id: 0,
             audio,
             control,
@@ -152,12 +156,13 @@ impl Controller {
 
     /// Add (or replace) a synth definition. Compilation is deferred to the first `synth_new` that
     /// uses it (so it can surface a [`BuildError`]); redefining a name retires any current compiled
-    /// form to the graveyard and forces a recompile on next use.
+    /// form (see [`reap_retired_defs`](Self::reap_retired_defs)) and forces a recompile on next use.
     pub fn add_synthdef(&mut self, def: SynthDef) {
         if let Some(old) = self.compiled.remove(&def.name) {
-            self.graveyard.push(old);
+            self.retiring.push(old);
         }
         self.defs.insert(def);
+        self.reap_retired_defs();
     }
 
     /// Look up a registered synth definition (e.g. to resolve a parameter index by name).
@@ -169,7 +174,7 @@ impl Controller {
     /// def-table slot and forget its authored and compiled forms, so a later [`synth_new`](Self::synth_new)
     /// with this name fails until the def is added again. Returns whether a def by that name existed.
     ///
-    /// The compiled `Arc` is retired to the graveyard (retained for the engine's lifetime), so the
+    /// The compiled `Arc` is retired (see [`reap_retired_defs`](Self::reap_retired_defs)), so the
     /// def-table slot's drop on the audio thread is never the final reference; the `def_id` stays
     /// reserved, so re-adding the same name reuses its slot.
     pub fn free_def(&mut self, name: &str) -> Result<bool, QueueFull> {
@@ -177,13 +182,16 @@ impl Controller {
         if !known {
             return Ok(false);
         }
+        // Clear the resident slot first: the slot is itself a strong ref, so reaping relies on it
+        // dropping for a retired def's count to fall to 1 (see `reap_retired_defs`).
         if let Some(&def_id) = self.def_ids.get(name) {
             self.send_now(Command::FreeGraphDef { def_id })?;
         }
         if let Some(old) = self.compiled.remove(name) {
-            self.graveyard.push(old);
+            self.retiring.push(old);
         }
         self.defs.remove(name);
+        self.reap_retired_defs();
         Ok(true)
     }
 
@@ -195,6 +203,31 @@ impl Controller {
             self.free_def(&name)?;
         }
         Ok(())
+    }
+
+    /// Drop every retired `GraphDef` the audio thread has finished with, reclaiming its memory on
+    /// the control thread. Cheap and allocation-free; [`add_synthdef`](Self::add_synthdef) and
+    /// [`free_def`](Self::free_def) call it opportunistically, but a long-running host should also
+    /// call it periodically (e.g. once per control tick) so a def pinned only by a since-freed synth
+    /// is reclaimed promptly rather than waiting for the next def change.
+    ///
+    /// A retired def's `Arc::strong_count` reaching 1 means this `Vec` holds the only remaining
+    /// strong reference: the `World` has cleared or replaced its def-table slot *and* every synth
+    /// that used it has been freed. Acting on that is sound because the audio thread can only mint a
+    /// new `Arc<GraphDef>` clone via a def-table slot that still points at the def, and that slot is
+    /// itself a strong reference - so while any new clone is possible the count is already >= 2.
+    /// `strong_count == 1` is therefore a stable terminal state (no later clone can occur), and the
+    /// relaxed snapshot can only ever read stale-high (reaping one cycle late), never stale-low.
+    pub fn reap_retired_defs(&mut self) {
+        self.retiring.retain(|def| Arc::strong_count(def) > 1);
+    }
+
+    /// The number of retired `GraphDef`s still awaiting reclamation (not yet dropped by
+    /// [`reap_retired_defs`](Self::reap_retired_defs) because the audio thread still references
+    /// them). A diagnostic counterpart to [`World::rt_memory_used`](plyphon_rt::world::World::rt_memory_used);
+    /// it should stay bounded by live def state, never growing without bound.
+    pub fn retired_defs_len(&self) -> usize {
+        self.retiring.len()
     }
 
     /// Create a synth from definition `def_name` and link it under group `target`.
