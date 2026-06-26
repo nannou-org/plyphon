@@ -30,6 +30,7 @@ use crate::unit::noise::WhiteNoiseCtor;
 use crate::unit::out::{OffsetOutCtor, OutCtor};
 use crate::unit::pan::Pan2Ctor;
 use crate::unit::play_buf::PlayBufCtor;
+use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor};
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::sin_osc::SinOscCtor;
 use crate::unit::unary_op::UnaryOpCtor;
@@ -141,6 +142,11 @@ impl UnitRegistry {
             Box::new(BufInfoCtor(BufInfoKind::RateScale)),
         );
         registry.register("BufDur", Box::new(BufInfoCtor(BufInfoKind::Dur)));
+        // Rate conversion.
+        registry.register("DC", Box::new(DcCtor));
+        registry.register("K2A", Box::new(K2ACtor));
+        registry.register("A2K", Box::new(A2KCtor));
+        registry.register("T2A", Box::new(T2ACtor));
         // Demand-rate consumers (normal calc-rate units that pull from the demand plan).
         registry.register("Duty", Box::new(DutyCtor));
         registry.register("Demand", Box::new(DemandCtor));

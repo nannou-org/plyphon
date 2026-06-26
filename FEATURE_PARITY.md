@@ -21,7 +21,7 @@ partial items stay unchecked and spell out what is missing.
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
-## UGens (43 of scsynth's ~250, grouped by category)
+## UGens (47 of scsynth's ~250, grouped by category)
 
 - [ ] **I/O** - have Out, OffsetOut, In; missing ReplaceOut, XOut, LocalIn/LocalOut, InFeedback, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
@@ -37,7 +37,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **Delays / reverb** - none yet: DelayN/L/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
 - [ ] **Demand-rate** - have Demand, Duty, Dseq, Dseries, Dwhite; missing TDuty, Dser, Drand, Dxrand, Dwrand, Dgeom, Dbrown/Dibrown, Diwhite, Dbufrd/Dbufwr, Dswitch/Dswitch1, Dstutter, Dconst, Dreset, Dpoll
 - [ ] **FFT / spectral** - none yet: FFT/IFFT, the `PV_*` set, Pitch, Onsets, BeatTrack
-- [ ] **Chaos / rate conversion** - none yet: Lorenz, LinCong, Henon, ... and A2K/K2A/T2A/DC
+- [ ] **Chaos / rate conversion** - have A2K, K2A, T2A, DC; missing the chaos set: Lorenz, LinCong, Henon, ...
 
 ## OSC server commands (53 of ~65)
 
