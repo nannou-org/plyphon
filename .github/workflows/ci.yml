@@ -27,6 +27,11 @@ jobs:
           - command: develop -c cargo clippy --locked --all-targets
           - command: develop -c cargo test --locked --all
           - command: develop -c cargo doc --locked --no-deps
+          # The library crates are `no_std` when built without their `std` feature - how the examples
+          # and the wasm site consume them (the workspace dep sets `default-features = false`). A plain
+          # workspace build masks `no_std` breaks because feature unification turns `std` on, so build
+          # the engine for wasm32 with default features off to catch missing `alloc` imports directly.
+          - command: develop -c cargo build --locked --no-default-features --target wasm32-unknown-unknown -p plyphon -p plyphon-osc
           - command: fmt -- --ci
           - command: build --print-build-logs --no-update-lock-file .#plyphon-website
     steps:
