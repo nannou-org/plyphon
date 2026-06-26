@@ -1,10 +1,11 @@
-//! In-graph node-control units - plyphon's ports of scsynth's `FreeSelf`/`PauseSelf`, `Done`, and
-//! `FreeSelfWhenDone`/`PauseSelfWhenDone` (the by-id `Free`/`Pause` variants come later).
+//! In-graph node-control units - plyphon's ports of scsynth's `FreeSelf`/`PauseSelf`, `Done`,
+//! `FreeSelfWhenDone`/`PauseSelfWhenDone`, and the by-id `Free`/`Pause`.
 //!
-//! Most act on the *enclosing synth* from inside the graph by returning a [`DoneAction`] the engine
-//! applies after the block: `FreeSelf`/`PauseSelf` fire on a rising trigger; `FreeSelfWhenDone`/
-//! `PauseSelfWhenDone` fire once a watched source unit finishes (reading its done flag - scsynth's
-//! `mDone`). `Done` is a pure observer that outputs `1` once its source is done. The trigger/source
+//! Most act on the *enclosing synth* by returning a [`DoneAction`] the engine applies after the
+//! block: `FreeSelf`/`PauseSelf` fire on a rising trigger; `FreeSelfWhenDone`/`PauseSelfWhenDone`
+//! fire once a watched source unit finishes (reading its done flag - scsynth's `mDone`). `Done` is a
+//! pure observer that outputs `1` once its source is done. `Free`/`Pause` instead act on *another*
+//! node by id, emitting a deferred node op the engine applies after the tree walk. The trigger/source
 //! signal is passed through to the output (sclang's `^in`), so it can still feed the rest of the
 //! graph.
 
@@ -12,7 +13,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, NodeOp, NodeOpKind, ProcessCtx, Unit, unit_spec};
 
 /// `FreeSelf.kr(in)` / `PauseSelf.kr(in)`: on a rising edge of `in` (crossing above zero), return a
 /// [`DoneAction`] - free or pause the enclosing synth - applied by the engine after the block. The
@@ -182,5 +183,100 @@ pub struct PauseSelfWhenDoneCtor;
 impl UnitDef for PauseSelfWhenDoneCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         build_when_done(ctx, DoneAction::PauseSelf)
+    }
+}
+
+/// `Free.kr(trig, id)`: on a rising edge of `trig`, free the node with client id `id` (any node, not
+/// just the enclosing synth). The engine applies the free after the block. The trigger is passed
+/// through to the output.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct Free {
+    /// Previous-block trigger value, for rising-edge detection.
+    prev: f32,
+    /// `0`/`1`: whether the unit has an output wire to pass the trigger through to.
+    has_output: u32,
+}
+
+impl Free {
+    const TRIG: usize = 0;
+    const ID: usize = 1;
+}
+
+impl Unit for Free {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let trig = ctx.ins.control(Self::TRIG);
+        let id = ctx.ins.control(Self::ID) as i32;
+        if self.prev <= 0.0 && trig > 0.0 {
+            ctx.node_ops.push(NodeOp {
+                node: id,
+                kind: NodeOpKind::Free,
+            });
+        }
+        self.prev = trig;
+        if self.has_output != 0 {
+            ctx.outs.audio(0).fill(trig);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for `Free`.
+pub struct FreeCtor;
+
+impl UnitDef for FreeCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Free {
+            prev: 0.0,
+            has_output: (ctx.num_outputs > 0) as u32,
+        }))
+    }
+}
+
+/// `Pause.kr(gate, id)`: pause (gate `0`) or resume (gate non-zero) the node with client id `id`
+/// whenever the gate's state *changes*, applied after the block. Starts assuming the target runs
+/// (scsynth's `m_state = 1`), so a gate that begins low pauses it. The gate is passed through.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct Pause {
+    /// Last gate state (`0` = pause requested, `1` = run requested). Starts at `1`, as scsynth does.
+    state: u32,
+    /// `0`/`1`: whether the unit has an output wire to pass the gate through to.
+    has_output: u32,
+}
+
+impl Pause {
+    const GATE: usize = 0;
+    const ID: usize = 1;
+}
+
+impl Unit for Pause {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let gate = ctx.ins.control(Self::GATE);
+        let id = ctx.ins.control(Self::ID) as i32;
+        let new_state = (gate != 0.0) as u32;
+        if new_state != self.state {
+            self.state = new_state;
+            ctx.node_ops.push(NodeOp {
+                node: id,
+                kind: NodeOpKind::Run(new_state != 0),
+            });
+        }
+        if self.has_output != 0 {
+            ctx.outs.audio(0).fill(gate);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for `Pause`.
+pub struct PauseCtor;
+
+impl UnitDef for PauseCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Pause {
+            state: 1,
+            has_output: (ctx.num_outputs > 0) as u32,
+        }))
     }
 }

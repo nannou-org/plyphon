@@ -27,7 +27,8 @@ use crate::unit::input::InCtor;
 use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
 use crate::unit::line::LineCtor;
 use crate::unit::node_ctl::{
-    DoneCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseSelfCtor, PauseSelfWhenDoneCtor,
+    DoneCtor, FreeCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseCtor, PauseSelfCtor,
+    PauseSelfWhenDoneCtor,
 };
 use crate::unit::noise::WhiteNoiseCtor;
 use crate::unit::out::{OffsetOutCtor, OutCtor};
@@ -156,6 +157,8 @@ impl UnitRegistry {
         registry.register("Done", Box::new(DoneCtor));
         registry.register("FreeSelfWhenDone", Box::new(FreeSelfWhenDoneCtor));
         registry.register("PauseSelfWhenDone", Box::new(PauseSelfWhenDoneCtor));
+        registry.register("Free", Box::new(FreeCtor));
+        registry.register("Pause", Box::new(PauseCtor));
         // Rate conversion.
         registry.register("DC", Box::new(DcCtor));
         registry.register("K2A", Box::new(K2ACtor));

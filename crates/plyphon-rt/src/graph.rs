@@ -27,8 +27,8 @@ use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
 use plyphon_unit::unit::{
-    self, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, Outputs, ProcessCtx, Trigger,
-    TriggerSink,
+    self, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, NodeOp, NodeOpSink, Outputs,
+    ProcessCtx, Trigger, TriggerSink,
 };
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
@@ -61,6 +61,10 @@ pub(crate) struct Block<'a> {
     pub triggers: &'a mut Vec<Trigger>,
     /// Cap on triggers per block; pushes past it are dropped so the audio thread never reallocates.
     pub trigger_cap: usize,
+    /// World-shared sink for node ops (`Free`/`Pause` by id) emitted this block, applied after walk.
+    pub node_ops: &'a mut Vec<NodeOp>,
+    /// Cap on node ops per block; pushes past it are dropped so the audio thread never reallocates.
+    pub node_op_cap: usize,
 }
 
 /// A live synth instance.
@@ -192,6 +196,7 @@ impl Graph {
                     node_id,
                     triggers: TriggerSink::new(&mut *block.triggers, block.trigger_cap),
                     done: DoneState::new(&*done_flags, &mut done_flag),
+                    node_ops: NodeOpSink::new(&mut *block.node_ops, block.node_op_cap),
                 };
                 (v.process)(state, &mut ctx)
             });

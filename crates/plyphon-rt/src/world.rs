@@ -30,7 +30,7 @@ use plyphon_dsp::bus::Buses;
 use plyphon_dsp::rate::RateInfo;
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
-use plyphon_unit::unit::{DoneAction, Trigger};
+use plyphon_unit::unit::{DoneAction, NodeOp, NodeOpKind, Trigger};
 
 /// The seed the per-instance RNG counter starts from (any fixed non-zero value; keeps runs
 /// deterministic while decorrelating distinct synth instances).
@@ -86,6 +86,11 @@ pub struct World {
     trigger_buf: Vec<Trigger>,
     /// Cap on triggers per block; the sink and the trigger ring share it. Excess is dropped.
     trigger_cap: usize,
+    /// Per-block sink for `Free`/`Pause`-by-id node ops (pre-allocated; never reallocates), applied
+    /// to the tree after the walk.
+    node_op_buf: Vec<NodeOp>,
+    /// Cap on node ops per block. Excess is dropped.
+    node_op_cap: usize,
     /// The drift-correcting OSC/NTP clock (scsynth's `mOSCbuftime` + DLL).
     clock: Clock,
     /// Pending time-tagged commands awaiting their block (scsynth's `mScheduler`).
@@ -116,6 +121,8 @@ impl World {
     ) -> Self {
         let capacity = options.max_nodes.max(1);
         let trigger_cap = options.max_triggers;
+        // A node op targets a node, so at most one per live node could be emitted in a block.
+        let node_op_cap = capacity;
         let bs = options.block_size;
         // A `/g_queryTree` dump can emit several records per node (the node row, a synth row, and one
         // per control); size the scratch and reply backlog generously so the audio thread never grows
@@ -153,6 +160,8 @@ impl World {
             paused_nodes: Vec::with_capacity(capacity),
             trigger_buf: Vec::with_capacity(trigger_cap),
             trigger_cap,
+            node_op_buf: Vec::with_capacity(node_op_cap),
+            node_op_cap,
             clock: Clock::new(options.sample_rate, bs),
             scheduler: Scheduler::new(options.max_scheduled),
             current_sample_offset: 0,
@@ -262,6 +271,7 @@ impl World {
         self.buf_counter += 1;
         self.done_nodes.clear();
         self.trigger_buf.clear();
+        self.node_op_buf.clear();
         // Borrow the World's fields disjointly to assemble the per-block bundle: the pool, the shared
         // wire/output scratch, the buses/buffers, and the constants - all distinct fields, threaded
         // through the tree to each graph.
@@ -277,12 +287,47 @@ impl World {
             unit_scratch: &mut self.unit_scratch[..],
             triggers: &mut self.trigger_buf,
             trigger_cap: self.trigger_cap,
+            node_ops: &mut self.node_op_buf,
+            node_op_cap: self.node_op_cap,
         };
         self.tree.process(&mut block, &mut self.done_nodes);
         self.buses.silence_untouched_outputs(self.buf_counter);
         self.apply_done_actions();
+        self.drain_node_ops();
         self.drain_triggers();
         self.clock.advance();
+    }
+
+    /// Apply this block's `Free`/`Pause`-by-id node ops to the tree (after the walk, since they
+    /// relink it): free the target node, or set its run state - emitting `/n_end` or `/n_off`/`/n_on`
+    /// exactly as the equivalent `/n_free` and `/n_run` commands do. An unknown id is a no-op.
+    fn drain_node_ops(&mut self) {
+        if self.node_op_buf.is_empty() {
+            return;
+        }
+        let mut ops = core::mem::take(&mut self.node_op_buf);
+        let mut sink = core::mem::take(&mut self.freed_nodes);
+        for op in ops.drain(..) {
+            match op.kind {
+                NodeOpKind::Free => {
+                    sink.clear();
+                    self.tree.free_node(op.node, &mut sink);
+                    self.drain_freed(&mut sink);
+                }
+                NodeOpKind::Run(run) => {
+                    if let Some(id) = self.tree.set_run(op.node, run) {
+                        let event = if run {
+                            Event::NodeResumed { id }
+                        } else {
+                            Event::NodePaused { id }
+                        };
+                        self.emit(event);
+                    }
+                }
+            }
+        }
+        self.freed_nodes = sink;
+        self.node_op_buf = ops;
     }
 
     /// Push this block's `SendTrig` triggers onto the trigger ring; drop any that do not fit (a `/tr`

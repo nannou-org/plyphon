@@ -143,7 +143,7 @@ pub use io::{
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
-pub use node_ctl::{Done, SelfTrig, WhenDone};
+pub use node_ctl::{Done, Free, Pause, SelfTrig, WhenDone};
 pub use noise::WhiteNoise;
 pub use out::{OffsetOut, Out};
 pub use pan::Pan2;
@@ -221,6 +221,48 @@ impl<'a> DoneState<'a> {
     }
 }
 
+/// What a `Free`/`Pause` unit asks the engine to do to *another* node (by id), applied after the
+/// block - the analogue of scsynth's `NodeEnd`/`NodeRun` calls from within `Free`/`Pause`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum NodeOpKind {
+    /// Free the node (scsynth's `Free`).
+    Free,
+    /// Set the node's run state: `false` pauses, `true` resumes (scsynth's `Pause`).
+    Run(bool),
+}
+
+/// A deferred node operation a `Free`/`Pause` unit emits this block: the target node id and what to
+/// do to it. The engine applies these after the tree walk (it cannot relink the tree mid-walk).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct NodeOp {
+    /// The target node id.
+    pub node: i32,
+    /// The operation to apply.
+    pub kind: NodeOpKind,
+}
+
+/// A bounded, allocation-free sink for [`NodeOp`]s emitted during one control block - the by-id
+/// analogue of [`TriggerSink`]. The engine drains it after the tree walk; pushes past `capacity` are
+/// dropped so the audio thread never reallocates.
+pub struct NodeOpSink<'a> {
+    buf: &'a mut Vec<NodeOp>,
+    capacity: usize,
+}
+
+impl<'a> NodeOpSink<'a> {
+    /// Wrap `buf`, capping the block at `capacity` node ops.
+    pub fn new(buf: &'a mut Vec<NodeOp>, capacity: usize) -> Self {
+        NodeOpSink { buf, capacity }
+    }
+
+    /// Record `op`, unless the block's capacity is already reached (then drop it).
+    pub fn push(&mut self, op: NodeOp) {
+        if self.buf.len() < self.capacity {
+            self.buf.push(op);
+        }
+    }
+}
+
 /// Everything a unit touches while processing one control block - plyphon's safe decomposition of
 /// scsynth's `unit` (which reaches inputs, outputs, and the world through one pointer).
 ///
@@ -263,6 +305,9 @@ pub struct ProcessCtx<'a> {
     /// This block's per-unit done flags (scsynth's `mDone`): a producer marks itself done, a watcher
     /// reads a source unit's flag. Most units ignore it.
     pub done: DoneState<'a>,
+    /// Sink for node operations (`Free`/`Pause` by id) a unit emits this block, applied after the
+    /// tree walk. Most units ignore it.
+    pub node_ops: NodeOpSink<'a>,
 }
 
 /// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].
