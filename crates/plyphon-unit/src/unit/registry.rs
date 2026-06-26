@@ -22,6 +22,7 @@ use crate::unit::demand::dwhite::DwhiteCtor;
 use crate::unit::disk_in::DiskInCtor;
 use crate::unit::env::EnvGenCtor;
 use crate::unit::filter::{ButterCtor, Kind};
+use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
 use crate::unit::line::LineCtor;
@@ -109,6 +110,37 @@ impl UnitRegistry {
         registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry.register("EnvGen", Box::new(EnvGenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
+        // Info: engine constants and per-buffer info.
+        registry.register("SampleRate", Box::new(InfoCtor(InfoKind::SampleRate)));
+        registry.register("SampleDur", Box::new(InfoCtor(InfoKind::SampleDur)));
+        registry.register(
+            "RadiansPerSample",
+            Box::new(InfoCtor(InfoKind::RadiansPerSample)),
+        );
+        registry.register("ControlRate", Box::new(InfoCtor(InfoKind::ControlRate)));
+        registry.register("ControlDur", Box::new(InfoCtor(InfoKind::ControlDur)));
+        registry.register(
+            "NumOutputBuses",
+            Box::new(InfoCtor(InfoKind::NumOutputBuses)),
+        );
+        registry.register("NumInputBuses", Box::new(InfoCtor(InfoKind::NumInputBuses)));
+        registry.register("NumAudioBuses", Box::new(InfoCtor(InfoKind::NumAudioBuses)));
+        registry.register(
+            "NumControlBuses",
+            Box::new(InfoCtor(InfoKind::NumControlBuses)),
+        );
+        registry.register("BufFrames", Box::new(BufInfoCtor(BufInfoKind::Frames)));
+        registry.register("BufChannels", Box::new(BufInfoCtor(BufInfoKind::Channels)));
+        registry.register("BufSamples", Box::new(BufInfoCtor(BufInfoKind::Samples)));
+        registry.register(
+            "BufSampleRate",
+            Box::new(BufInfoCtor(BufInfoKind::SampleRate)),
+        );
+        registry.register(
+            "BufRateScale",
+            Box::new(BufInfoCtor(BufInfoKind::RateScale)),
+        );
+        registry.register("BufDur", Box::new(BufInfoCtor(BufInfoKind::Dur)));
         // Demand-rate consumers (normal calc-rate units that pull from the demand plan).
         registry.register("Duty", Box::new(DutyCtor));
         registry.register("Demand", Box::new(DemandCtor));

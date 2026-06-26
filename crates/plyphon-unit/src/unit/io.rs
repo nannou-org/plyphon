@@ -40,6 +40,26 @@ pub fn control_out(buses: &mut Buses, buf_counter: u64, ch: usize, value: f32) {
     buses.control_mut().write_accumulate(ch, buf_counter, value);
 }
 
+/// Number of hardware output bus channels (the first audio bus channels), for `NumOutputBuses`.
+pub fn num_output_buses(buses: &Buses) -> usize {
+    buses.output_channels()
+}
+
+/// Number of hardware input bus channels (those following the outputs), for `NumInputBuses`.
+pub fn num_input_buses(buses: &Buses) -> usize {
+    buses.input_channels()
+}
+
+/// Total audio bus channels - output, input, and private - for `NumAudioBuses`.
+pub fn num_audio_buses(buses: &Buses) -> usize {
+    buses.audio().num_channels()
+}
+
+/// Total control bus channels, for `NumControlBuses`.
+pub fn num_control_buses(buses: &Buses) -> usize {
+    buses.control().num_channels()
+}
+
 /// The (flat, in-memory) buffer at `index`, if one is installed, for `PlayBuf`.
 pub fn buffer_at(buffers: &BufferTable, index: usize) -> Option<&Buffer> {
     buffers.get(index)
