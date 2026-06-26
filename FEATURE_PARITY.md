@@ -21,7 +21,7 @@ partial items stay unchecked and spell out what is missing.
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
-## UGens (27 of scsynth's ~250, grouped by category)
+## UGens (28 of scsynth's ~250, grouped by category)
 
 - [ ] **I/O** - have Out, OffsetOut, In; missing ReplaceOut, XOut, LocalIn/LocalOut, InFeedback, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
@@ -32,7 +32,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **Dynamics** - have Amplitude; missing Compander, Limiter, Normalizer, DetectSilence
 - [ ] **Math / multichannel** - have BinaryOpUGen, UnaryOpUGen, MulAdd; missing Sum3/Sum4, Select, Index, Clip/Wrap/Fold, LinLin/LinExp
 - [ ] **Buffer playback** - have PlayBuf, DiskIn; missing BufRd, BufWr, RecordBuf, DiskOut, VDiskIn, TGrains, GrainBuf
-- [ ] **Triggers / timing** - none yet: Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, SendTrig, SendReply, Done, FreeSelf, Pause
+- [ ] **Triggers / timing** - have SendTrig (fires `/tr` on a rising edge, at control or audio rate); missing Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, SendReply, Done, FreeSelf, Pause
 - [ ] **Info** - none yet: SampleRate, SampleDur, ControlRate, BufFrames, BufDur, NumChannels, RadiansPerSample
 - [ ] **Delays / reverb** - none yet: DelayN/L/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
 - [ ] **Demand-rate** - have Demand, Duty, Dseq, Dseries, Dwhite; missing TDuty, Dser, Drand, Dxrand, Dwrand, Dgeom, Dbrown/Dibrown, Diwhite, Dbufrd/Dbufwr, Dswitch/Dswitch1, Dstutter, Dconst, Dreset, Dpoll
@@ -163,8 +163,9 @@ defers I/O to an app-provided `BufferSource`.
 - [x] Getter replies: /status.reply, /synced (the `/sync` barrier), /rtMemoryStatus.reply, /n_info
   (`/n_query`), /g_queryTree.reply, /c_set·/c_setn (`/c_get`·`/c_getn`), /n_set·/n_setn
   (`/s_get`·`/s_getn`), /b_set·/b_setn (`/b_get`·`/b_getn`)
-- [ ] /tr (SendTrig) and /n_info from out-of-band node moves (`/n_move`)
-- [ ] Done actions beyond 0 (none), 1 (pause self), 2 (free self): codes 3-14, the free/pause variants that also touch neighbours or the enclosing group
+- [x] /tr (SendTrig, over a dedicated best-effort trigger ring) and /n_move from out-of-band node
+  moves (broadcast in `/n_info`'s format when a move command relinks the tree)
+- [x] Done actions beyond 0 (none), 1 (pause self), 2 (free self): codes 3-14, the free/pause variants that also touch neighbours or the enclosing group
 
 ## SynthDefs & buffers
 
