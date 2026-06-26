@@ -16,6 +16,7 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use bytemuck::{cast_slice, cast_slice_mut};
 use rt_alloc::{Align64, Region, RtPool};
