@@ -4,7 +4,7 @@
 use rtrb::RingBuffer;
 
 use plyphon_dsp::rate::RateInfo;
-use plyphon_rt::{Event, Nrt, Options, Reply, TimedCommand, Trash, World};
+use plyphon_rt::{Event, Nrt, Options, Reply, TimedCommand, Trash, Trigger, World};
 
 use crate::controller::Controller;
 
@@ -24,15 +24,26 @@ pub fn engine(options: Options) -> (Controller, Nrt, World) {
     // ~4 per node); a backlog beyond that queues in the World's `pending_replies`.
     let (replies_tx, replies_rx) =
         RingBuffer::<Reply>::new(options.max_nodes.saturating_mul(4).max(1));
+    // The trigger ring carries `SendTrig` `/tr`s back for the dispatcher to broadcast. It is separate
+    // from the events ring so a burst of audio-rate triggers can never starve or delay node
+    // lifecycle notifications; triggers beyond its capacity are dropped (best-effort, like scsynth).
+    let (triggers_tx, triggers_rx) = RingBuffer::<Trigger>::new(options.max_triggers.max(1));
 
     let audio = RateInfo::new(options.sample_rate, options.block_size);
     // Control rate: one value per control block.
     let control = RateInfo::new(options.sample_rate / options.block_size as f64, 1);
 
     let world = World::new(
-        &options, audio, control, cmd_rx, trash_tx, events_tx, replies_tx,
+        &options,
+        audio,
+        control,
+        cmd_rx,
+        trash_tx,
+        events_tx,
+        replies_tx,
+        triggers_tx,
     );
-    let nrt = Nrt::new(trash_rx, events_rx, replies_rx);
+    let nrt = Nrt::new(trash_rx, events_rx, replies_rx, triggers_rx);
     let controller = Controller::new(&options, audio, control, cmd_tx);
     (controller, nrt, world)
 }

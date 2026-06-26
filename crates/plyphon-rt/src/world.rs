@@ -30,7 +30,7 @@ use plyphon_dsp::bus::Buses;
 use plyphon_dsp::rate::RateInfo;
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
-use plyphon_unit::unit::DoneAction;
+use plyphon_unit::unit::{DoneAction, Trigger};
 
 /// The seed the per-instance RNG counter starts from (any fixed non-zero value; keeps runs
 /// deterministic while decorrelating distinct synth instances).
@@ -65,6 +65,7 @@ pub struct World {
     trash_tx: Producer<Trash>,
     events_tx: Producer<Event>,
     replies_tx: Producer<Reply>,
+    triggers_tx: Producer<Trigger>,
     /// Freed items awaiting space in the trash ring (pre-allocated; never reallocates at runtime).
     pending_trash: Vec<Trash>,
     /// Events awaiting space in the events ring (pre-allocated; never reallocates at runtime).
@@ -80,6 +81,11 @@ pub struct World {
     freed_nodes: Vec<FreedNode>,
     /// Scratch sink for node ids paused by a done action, drained into `/n_off` notifications.
     paused_nodes: Vec<i32>,
+    /// Per-block sink for `SendTrig` triggers (pre-allocated to `trigger_cap`; never reallocates),
+    /// drained into the trigger ring after the tree walk.
+    trigger_buf: Vec<Trigger>,
+    /// Cap on triggers per block; the sink and the trigger ring share it. Excess is dropped.
+    trigger_cap: usize,
     /// The drift-correcting OSC/NTP clock (scsynth's `mOSCbuftime` + DLL).
     clock: Clock,
     /// Pending time-tagged commands awaiting their block (scsynth's `mScheduler`).
@@ -95,6 +101,9 @@ pub struct World {
 }
 
 impl World {
+    // The command consumer plus the four RT->NRT producer rings the World writes to, wired once by
+    // the engine builder.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         options: &Options,
         audio: RateInfo,
@@ -103,8 +112,10 @@ impl World {
         trash_tx: Producer<Trash>,
         events_tx: Producer<Event>,
         replies_tx: Producer<Reply>,
+        triggers_tx: Producer<Trigger>,
     ) -> Self {
         let capacity = options.max_nodes.max(1);
+        let trigger_cap = options.max_triggers;
         let bs = options.block_size;
         // A `/g_queryTree` dump can emit several records per node (the node row, a synth row, and one
         // per control); size the scratch and reply backlog generously so the audio thread never grows
@@ -132,6 +143,7 @@ impl World {
             trash_tx,
             events_tx,
             replies_tx,
+            triggers_tx,
             pending_trash: Vec::with_capacity(capacity),
             pending_events: Vec::with_capacity(capacity),
             pending_replies: VecDeque::with_capacity(tree_capacity),
@@ -139,6 +151,8 @@ impl World {
             done_nodes: Vec::with_capacity(capacity),
             freed_nodes: Vec::with_capacity(capacity),
             paused_nodes: Vec::with_capacity(capacity),
+            trigger_buf: Vec::with_capacity(trigger_cap),
+            trigger_cap,
             clock: Clock::new(options.sample_rate, bs),
             scheduler: Scheduler::new(options.max_scheduled),
             current_sample_offset: 0,
@@ -247,6 +261,7 @@ impl World {
         self.apply_due_scheduled();
         self.buf_counter += 1;
         self.done_nodes.clear();
+        self.trigger_buf.clear();
         // Borrow the World's fields disjointly to assemble the per-block bundle: the pool, the shared
         // wire/output scratch, the buses/buffers, and the constants - all distinct fields, threaded
         // through the tree to each graph.
@@ -260,11 +275,24 @@ impl World {
             pool: &mut self.pool,
             wire_scratch: &mut self.wire_scratch[..],
             unit_scratch: &mut self.unit_scratch[..],
+            triggers: &mut self.trigger_buf,
+            trigger_cap: self.trigger_cap,
         };
         self.tree.process(&mut block, &mut self.done_nodes);
         self.buses.silence_untouched_outputs(self.buf_counter);
         self.apply_done_actions();
+        self.drain_triggers();
         self.clock.advance();
+    }
+
+    /// Push this block's `SendTrig` triggers onto the trigger ring; drop any that do not fit (a `/tr`
+    /// is best-effort, so there is no backlog - this keeps the lifecycle event ring untouched).
+    fn drain_triggers(&mut self) {
+        for trigger in self.trigger_buf.drain(..) {
+            if self.triggers_tx.push(trigger).is_err() {
+                break;
+            }
+        }
     }
 
     /// Apply every scheduled command due by the end of this control block, in time order, stamping

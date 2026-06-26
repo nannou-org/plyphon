@@ -29,6 +29,7 @@ use crate::unit::noise::WhiteNoiseCtor;
 use crate::unit::out::{OffsetOutCtor, OutCtor};
 use crate::unit::pan::Pan2Ctor;
 use crate::unit::play_buf::PlayBufCtor;
+use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::sin_osc::SinOscCtor;
 use crate::unit::unary_op::UnaryOpCtor;
 use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor};
@@ -107,6 +108,7 @@ impl UnitRegistry {
         registry.register("Lag", Box::new(LagCtor));
         registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry.register("EnvGen", Box::new(EnvGenCtor));
+        registry.register("SendTrig", Box::new(SendTrigCtor));
         // Demand-rate consumers (normal calc-rate units that pull from the demand plan).
         registry.register("Duty", Box::new(DutyCtor));
         registry.register("Demand", Box::new(DemandCtor));

@@ -50,13 +50,15 @@
 use rtrb::Consumer;
 
 use crate::command::{Event, Reply, Trash};
+use plyphon_unit::unit::Trigger;
 
-/// The NRT-side state machine: drops freed synths, surfaces node notifications, and surfaces query
-/// answers.
+/// The NRT-side state machine: drops freed synths, surfaces node notifications, surfaces query
+/// answers, and surfaces `SendTrig` triggers.
 pub struct Nrt {
     trash_rx: Consumer<Trash>,
     events_rx: Consumer<Event>,
     replies_rx: Consumer<Reply>,
+    triggers_rx: Consumer<Trigger>,
 }
 
 impl Nrt {
@@ -64,11 +66,13 @@ impl Nrt {
         trash_rx: Consumer<Trash>,
         events_rx: Consumer<Event>,
         replies_rx: Consumer<Reply>,
+        triggers_rx: Consumer<Trigger>,
     ) -> Self {
         Nrt {
             trash_rx,
             events_rx,
             replies_rx,
+            triggers_rx,
         }
     }
 
@@ -92,5 +96,11 @@ impl Nrt {
     /// feeding each to the dispatcher's reply reassembler.
     pub fn poll_reply(&mut self) -> Option<Reply> {
         self.replies_rx.pop().ok()
+    }
+
+    /// Pop the next `SendTrig` trigger, if any. Drain in a loop alongside [`poll`](Self::poll),
+    /// feeding each to the dispatcher's `notify_trigger` to emit a `/tr`.
+    pub fn poll_trigger(&mut self) -> Option<Trigger> {
+        self.triggers_rx.pop().ok()
     }
 }

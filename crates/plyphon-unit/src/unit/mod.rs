@@ -27,11 +27,13 @@ pub mod out;
 pub mod pan;
 pub mod play_buf;
 pub mod registry;
+pub mod send_trig;
 pub mod sin_osc;
 pub mod unary_op;
 pub mod util;
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 use bytemuck::Pod;
 
@@ -139,9 +141,45 @@ pub use out::{OffsetOut, Out};
 pub use pan::Pan2;
 pub use play_buf::PlayBuf;
 pub use registry::{BuildContext, DemandUnitDef, UnitDef, UnitRegistry};
+pub use send_trig::SendTrig;
 pub use sin_osc::SinOsc;
 pub use unary_op::UnaryOp;
 pub use util::{Amplitude, Lag, MulAdd};
+
+/// A trigger a `SendTrig` unit fires on a rising edge: the enclosing node's id, the user-supplied
+/// trigger id, and the value sampled at the edge. The engine surfaces each as a `/tr` message.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Trigger {
+    /// The enclosing synth's node id.
+    pub node: i32,
+    /// The user-supplied trigger id (`SendTrig`'s second argument).
+    pub id: i32,
+    /// The value sampled at the trigger (`SendTrig`'s third argument).
+    pub value: f32,
+}
+
+/// A bounded, allocation-free sink a unit pushes [`Trigger`]s into during one control block. It wraps
+/// a caller-owned `Vec` that the engine drains after the tree walk. Pushes past `capacity` are
+/// dropped - a `/tr` is best-effort, like scsynth's trigger FIFO under load - so the audio thread
+/// never reallocates.
+pub struct TriggerSink<'a> {
+    buf: &'a mut Vec<Trigger>,
+    capacity: usize,
+}
+
+impl<'a> TriggerSink<'a> {
+    /// Wrap `buf`, capping the block at `capacity` triggers.
+    pub fn new(buf: &'a mut Vec<Trigger>, capacity: usize) -> Self {
+        TriggerSink { buf, capacity }
+    }
+
+    /// Record `trigger`, unless the block's capacity is already reached (then drop it).
+    pub fn push(&mut self, trigger: Trigger) {
+        if self.buf.len() < self.capacity {
+            self.buf.push(trigger);
+        }
+    }
+}
 
 /// Everything a unit touches while processing one control block - plyphon's safe decomposition of
 /// scsynth's `unit` (which reaches inputs, outputs, and the world through one pointer).
@@ -177,6 +215,11 @@ pub struct ProcessCtx<'a> {
     /// sources through this with the [`demand_next`] / [`demand_reset`] free fns; other units ignore
     /// it. Empty for synths with no demand units.
     pub demand: DemandAccess<'a>,
+    /// The enclosing synth's node id (`-1` if unknown), so a side-effecting unit (`SendTrig`) can tag
+    /// its `/tr` with the node that fired it. Most units ignore it.
+    pub node_id: i32,
+    /// Sink for triggers a unit fires this block (`SendTrig`). Most units ignore it.
+    pub triggers: TriggerSink<'a>,
 }
 
 /// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].

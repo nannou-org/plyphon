@@ -38,6 +38,10 @@ pub struct Options {
     /// commands held at once (scsynth's `mScheduler` holds 2048). A scheduled command that would
     /// exceed it is dropped, like a full ring.
     pub max_scheduled: usize,
+    /// Most `/tr` triggers (`SendTrig`) carried per block; sizes the per-block sink and the trigger
+    /// ring. Triggers beyond this in a block, or beyond the ring when the host lags, are dropped -
+    /// `/tr` is best-effort, like scsynth's trigger FIFO under load.
+    pub max_triggers: usize,
 }
 
 impl Default for Options {
@@ -58,6 +62,7 @@ impl Default for Options {
             max_unit_outputs: 128,
             command_capacity: 1024,
             max_scheduled: 2048,
+            max_triggers: 1024,
         }
     }
 }

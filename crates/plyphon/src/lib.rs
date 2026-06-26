@@ -34,7 +34,7 @@ pub mod synthdef;
 
 pub use plyphon_dsp::{Buffer, Chunk, Rate, RateInfo, StreamProducer};
 pub use plyphon_rt::{
-    AddAction, CommandTime, Event, Graph, Nrt, Options, ROOT_GROUP_ID, Reply, World,
+    AddAction, CommandTime, Event, Graph, Nrt, Options, ROOT_GROUP_ID, Reply, Trigger, World,
 };
 pub use plyphon_unit::{
     BuildContext, BuildError, BuiltUnit, DoneAction, GraphDef, InitCtx, Inputs, Outputs,

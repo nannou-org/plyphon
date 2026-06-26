@@ -364,11 +364,12 @@ impl NodeTree {
                 let active = matches!(&self.slots[idx as usize], Slot::Node(node) if !node.paused);
                 if active
                     && let Slot::Node(Node {
+                        id,
                         kind: NodeKind::Synth(synth),
                         ..
                     }) = &mut self.slots[idx as usize]
                 {
-                    let action = synth.process(block);
+                    let action = synth.process(block, *id);
                     if action != DoneAction::Nothing {
                         done.push((idx, action));
                     }

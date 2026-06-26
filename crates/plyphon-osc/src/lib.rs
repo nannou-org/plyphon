@@ -79,7 +79,7 @@ use hashbrown::HashMap;
 
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
-use plyphon::{AddAction, CommandTime, Controller, Event, Render, RenderUntil, Reply};
+use plyphon::{AddAction, CommandTime, Controller, Event, Render, RenderUntil, Reply, Trigger};
 use plyphon_buffers::{BufferSource, ReadRegion};
 use plyphon_dsp::buffer::Buffer;
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
@@ -371,6 +371,21 @@ impl OscDispatcher {
             self.node_defs.remove(&id);
         }
         self.push_reply(ReplyTarget::Broadcast, addr, vec![OscType::Int(id)]);
+    }
+
+    /// Translate a `SendTrig` [`Trigger`] into a `/tr [nodeID, id, value]` message and queue it for
+    /// [`take_replies`](Self::take_replies). Feed this the triggers drained from
+    /// [`Nrt::poll_trigger`](plyphon::Nrt::poll_trigger). Broadcast, like the node notifications.
+    pub fn notify_trigger(&mut self, trigger: Trigger) {
+        self.push_reply(
+            ReplyTarget::Broadcast,
+            "/tr",
+            vec![
+                OscType::Int(trigger.node),
+                OscType::Int(trigger.id),
+                OscType::Float(trigger.value),
+            ],
+        );
     }
 
     /// Run the buffer loads queued by `apply` (`/b_allocRead`, `/b_read`), in order.

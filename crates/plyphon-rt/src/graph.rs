@@ -25,7 +25,9 @@ use plyphon_dsp::bus::Buses;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
-use plyphon_unit::unit::{self, DemandAccess, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx};
+use plyphon_unit::unit::{
+    self, DemandAccess, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx, Trigger, TriggerSink,
+};
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
 pub(crate) type Pool = RtPool<Box<[Align64]>>;
@@ -53,6 +55,10 @@ pub(crate) struct Block<'a> {
     pub wire_scratch: &'a mut [f32],
     /// World-shared per-unit output scratch, reused per unit (`max_unit_outputs * block_size` f32).
     pub unit_scratch: &'a mut [f32],
+    /// World-shared sink for triggers fired this block (`SendTrig`), drained after the tree walk.
+    pub triggers: &'a mut Vec<Trigger>,
+    /// Cap on triggers per block; pushes past it are dropped so the audio thread never reallocates.
+    pub trigger_cap: usize,
 }
 
 /// A live synth instance.
@@ -87,9 +93,10 @@ impl Graph {
         self.block
     }
 
-    /// Compute one control block. Returns the strongest [`DoneAction`] any of its units requested.
+    /// Compute one control block for the synth with client id `node_id` (surfaced to side-effecting
+    /// units like `SendTrig`). Returns the strongest [`DoneAction`] any of its units requested.
     #[must_use]
-    pub(crate) fn process(&mut self, block: &mut Block<'_>) -> DoneAction {
+    pub(crate) fn process(&mut self, block: &mut Block<'_>, node_id: i32) -> DoneAction {
         let def = &*self.def;
         let bs = def.block_size();
         let layout = def.layout();
@@ -164,6 +171,8 @@ impl Graph {
                         &*ctrl,
                         bs,
                     ),
+                    node_id,
+                    triggers: TriggerSink::new(&mut *block.triggers, block.trigger_cap),
                 };
                 (v.process)(state, &mut ctx)
             });
