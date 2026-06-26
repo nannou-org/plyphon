@@ -581,6 +581,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-triggers"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cpal",
+ "gloo-timers",
+ "plyphon",
+]
+
+[[package]]
 name = "example-waveforms"
 version = "0.1.0"
 dependencies = [
