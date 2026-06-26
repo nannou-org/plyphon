@@ -116,7 +116,11 @@ impl SynthDef {
         // Demand units are pulled on demand, so they get no wire and stay out of the per-block calc
         // list; the SynthDef is already topologically sorted, so the filtered lists stay in order.
         let mut demand_index: Vec<Option<u32>> = Vec::with_capacity(self.units.len());
+        // Each non-demand unit's index into the runtime calc-unit list (and the `done_flags` span),
+        // so a done-watching unit can resolve its source's calc index (scsynth's `mFromUnit`).
+        let mut calc_index: Vec<Option<u32>> = Vec::with_capacity(self.units.len());
         let mut next_demand = 0u32;
+        let mut next_calc = 0u32;
         for spec in &self.units {
             if spec.rate == Rate::Demand {
                 // A demand source produces one value per pull, so it is single-output.
@@ -124,9 +128,12 @@ impl SynthDef {
                     return Err(BuildError::DemandMultiOutput(spec.num_outputs));
                 }
                 demand_index.push(Some(next_demand));
+                calc_index.push(None);
                 next_demand += 1;
             } else {
                 demand_index.push(None);
+                calc_index.push(Some(next_calc));
+                next_calc += 1;
             }
         }
 
@@ -224,10 +231,21 @@ impl SynthDef {
             }
 
             let input_rates: Vec<Rate> = sources.iter().map(|s| s.rate()).collect();
+            // Each input's source calc-unit index (scsynth's `mFromUnit`): the producing calc unit for
+            // a unit input, else `None` (constants, params, and demand sources have no `mDone`).
+            let input_units: Vec<Option<u32>> = spec
+                .inputs
+                .iter()
+                .map(|input| match *input {
+                    InputRef::Unit { unit, .. } => calc_index.get(unit as usize).copied().flatten(),
+                    _ => None,
+                })
+                .collect();
             // A deterministic build-time seed; the real per-instance seed is applied on the RT thread
             // via `reseed`, so this is only a placeholder for the baked state image.
             let build_ctx = BuildContext {
                 input_rates: &input_rates,
+                input_units: &input_units,
                 audio,
                 control,
                 rate: spec.rate,

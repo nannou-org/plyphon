@@ -41,6 +41,11 @@ use plyphon_dsp::rate::{Rate, RateInfo};
 pub struct BuildContext<'a> {
     /// The resolved calc rate of each input, in order - drives input rate specialization.
     pub input_rates: &'a [Rate],
+    /// For each input, the calc-unit index of the unit that produces it (if it comes from a calc
+    /// unit), else `None` - plyphon's analogue of scsynth's `mInput[i]->mFromUnit`. A done-watching
+    /// unit (`Done`/`FreeSelfWhenDone`/`PauseSelfWhenDone`) reads input 0's entry to find the unit
+    /// whose done flag it observes.
+    pub input_units: &'a [Option<u32>],
     /// The unit's own calculation rate (so it can specialize its output: a block vs one value).
     pub rate: Rate,
     /// Number of outputs the SynthDef assigns this unit (e.g. how many channels `In` reads).
