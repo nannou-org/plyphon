@@ -26,7 +26,9 @@ use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
 use crate::unit::line::LineCtor;
-use crate::unit::node_ctl::{FreeSelfCtor, PauseSelfCtor};
+use crate::unit::node_ctl::{
+    DoneCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseSelfCtor, PauseSelfWhenDoneCtor,
+};
 use crate::unit::noise::WhiteNoiseCtor;
 use crate::unit::out::{OffsetOutCtor, OutCtor};
 use crate::unit::pan::Pan2Ctor;
@@ -151,6 +153,9 @@ impl UnitRegistry {
         // In-graph node control.
         registry.register("FreeSelf", Box::new(FreeSelfCtor));
         registry.register("PauseSelf", Box::new(PauseSelfCtor));
+        registry.register("Done", Box::new(DoneCtor));
+        registry.register("FreeSelfWhenDone", Box::new(FreeSelfWhenDoneCtor));
+        registry.register("PauseSelfWhenDone", Box::new(PauseSelfWhenDoneCtor));
         // Rate conversion.
         registry.register("DC", Box::new(DcCtor));
         registry.register("K2A", Box::new(K2ACtor));

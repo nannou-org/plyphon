@@ -143,7 +143,7 @@ pub use io::{
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
-pub use node_ctl::SelfTrig;
+pub use node_ctl::{Done, SelfTrig, WhenDone};
 pub use noise::WhiteNoise;
 pub use out::{OffsetOut, Out};
 pub use pan::Pan2;

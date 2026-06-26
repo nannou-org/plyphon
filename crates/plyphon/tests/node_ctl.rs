@@ -87,3 +87,113 @@ fn pause_self_pauses_and_resumes() {
     controller.node_run(node, true).unwrap();
     assert_eq!(one(&mut world), 1.0, "resumed synth produces output again");
 }
+
+/// Render `n` control blocks, returning each block's first sample.
+fn many(world: &mut World, n: usize) -> Vec<f32> {
+    (0..n).map(|_| one(world)).collect()
+}
+
+/// `Line.kr(0, 1, 0.01, doneAction: 0)`: ramps over ~0.01 s (~7.5 control blocks at 48k/64) then
+/// marks itself done *without* freeing the synth - the source a `Done`/`*WhenDone` watcher observes.
+fn line_unit() -> UnitSpec {
+    UnitSpec::new(
+        "Line",
+        Rate::Control,
+        vec![
+            InputRef::Constant(0.0),
+            InputRef::Constant(1.0),
+            InputRef::Constant(0.01),
+            InputRef::Constant(0.0),
+        ],
+        1,
+    )
+}
+
+#[test]
+fn done_reports_source_completion() {
+    // Done.kr(line) outputs 0 then 1; MulAdd.ar broadcasts the control flag to the audio output.
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller.add_synthdef(SynthDef {
+        name: "done".to_string(),
+        params: vec![],
+        units: vec![
+            line_unit(),
+            UnitSpec::new(
+                "Done",
+                Rate::Control,
+                vec![InputRef::Unit { unit: 0, output: 0 }],
+                1,
+            ),
+            UnitSpec::new(
+                "MulAdd",
+                Rate::Audio,
+                vec![
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Constant(1.0),
+                    InputRef::Constant(0.0),
+                ],
+                1,
+            ),
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 2, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    });
+    controller
+        .synth_new("done", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+
+    assert_eq!(one(&mut world), 0.0, "Done is 0 while the source runs");
+    let later = many(&mut world, 20);
+    assert_eq!(
+        *later.last().unwrap(),
+        1.0,
+        "Done latches to 1 once the source has finished"
+    );
+}
+
+#[test]
+fn free_self_when_done_frees_at_source_completion() {
+    // DC.ar(1) -> Out keeps the synth audible; FreeSelfWhenDone.kr(line) frees it when the line ends.
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller.add_synthdef(SynthDef {
+        name: "fswd".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(1.0)], 1),
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 0, output: 0 },
+                ],
+                0,
+            ),
+            line_unit(),
+            UnitSpec::new(
+                "FreeSelfWhenDone",
+                Rate::Control,
+                vec![InputRef::Unit { unit: 2, output: 0 }],
+                0,
+            ),
+        ],
+    });
+    controller
+        .synth_new("fswd", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+
+    let blocks = many(&mut world, 20);
+    assert_eq!(blocks[0], 1.0, "audible while the line runs");
+    assert_eq!(
+        *blocks.last().unwrap(),
+        0.0,
+        "freed once the line completes"
+    );
+}

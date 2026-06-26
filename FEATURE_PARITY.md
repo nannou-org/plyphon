@@ -21,7 +21,7 @@ partial items stay unchecked and spell out what is missing.
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
-## UGens (49 of scsynth's ~250, grouped by category)
+## UGens (52 of scsynth's ~250, grouped by category)
 
 - [ ] **I/O** - have Out, OffsetOut, In; missing ReplaceOut, XOut, LocalIn/LocalOut, InFeedback, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
@@ -32,7 +32,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **Dynamics** - have Amplitude; missing Compander, Limiter, Normalizer, DetectSilence
 - [ ] **Math / multichannel** - have BinaryOpUGen, UnaryOpUGen, MulAdd; missing Sum3/Sum4, Select, Index, Clip/Wrap/Fold, LinLin/LinExp
 - [ ] **Buffer playback** - have PlayBuf, DiskIn; missing BufRd, BufWr, RecordBuf, DiskOut, VDiskIn, TGrains, GrainBuf
-- [ ] **Triggers / timing** - have SendTrig (fires `/tr` on a rising edge, at control or audio rate), FreeSelf, PauseSelf; missing Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, SendReply, Done, FreeSelfWhenDone, PauseSelfWhenDone, Free, Pause
+- [ ] **Triggers / timing** - have SendTrig (fires `/tr` on a rising edge, at control or audio rate), FreeSelf, PauseSelf, Done, FreeSelfWhenDone, PauseSelfWhenDone; missing Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, SendReply, Free, Pause
 - [ ] **Info** - have SampleRate, SampleDur, RadiansPerSample, ControlRate, ControlDur, NumOutputBuses, NumInputBuses, NumAudioBuses, NumControlBuses, BufFrames, BufChannels, BufSamples, BufSampleRate, BufRateScale, BufDur; missing NumRunningSynths, NumBuffers, SubsampleOffset
 - [ ] **Delays / reverb** - none yet: DelayN/L/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
 - [ ] **Demand-rate** - have Demand, Duty, Dseq, Dseries, Dwhite; missing TDuty, Dser, Drand, Dxrand, Dwrand, Dgeom, Dbrown/Dibrown, Diwhite, Dbufrd/Dbufwr, Dswitch/Dswitch1, Dstutter, Dconst, Dreset, Dpoll
@@ -166,6 +166,7 @@ defers I/O to an app-provided `BufferSource`.
 - [x] /tr (SendTrig, over a dedicated best-effort trigger ring) and /n_move from out-of-band node
   moves (broadcast in `/n_info`'s format when a move command relinks the tree)
 - [x] Done actions beyond 0 (none), 1 (pause self), 2 (free self): codes 3-14, the free/pause variants that also touch neighbours or the enclosing group
+- [x] Per-unit done flag (scsynth's `mDone`, kept in the RT-pool block): producers (`EnvGen`/`Line`/`PlayBuf`) mark completion independently of the done action, so the done-watching units (`Done`/`FreeSelfWhenDone`/`PauseSelfWhenDone`) can observe a source unit finishing
 
 ## SynthDefs & buffers
 
