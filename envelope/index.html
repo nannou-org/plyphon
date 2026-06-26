@@ -80,7 +80,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './example-envelope.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-envelope_bg.wasm', 171290, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-envelope_bg.wasm', 177502, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,7 +89,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-envelope.js" crossorigin="anonymous" integrity="sha384-qeF5euPwgeku3adsaSwu40xYjmxUjFiFn5X/IuLBTfoMAih5gKmU+x0ggMrfLfY0"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-envelope_bg.wasm" crossorigin="anonymous" integrity="sha384-seRpxnF9AkPf9MHx333eSW8ZH+0AJoBltr9GNFs56wcTA/EiMXfrzHj9Mpr1+EGq" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-envelope.js" crossorigin="anonymous" integrity="sha384-qeF5euPwgeku3adsaSwu40xYjmxUjFiFn5X/IuLBTfoMAih5gKmU+x0ggMrfLfY0"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-envelope_bg.wasm" crossorigin="anonymous" integrity="sha384-uYxWbrxHHd2Cf/KOEkRixYirhhBxKW8cCoOEtXS2GC6fxvaEe2c6KthoIx4yoKbp" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>

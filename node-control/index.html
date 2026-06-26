@@ -4,13 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" href="data:," />
-    <title>plyphon: sampler</title>
+    <title>plyphon: node-control</title>
     <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
     <script src="audio.js"></script>
     
     
     <link rel="stylesheet" href="style.css" />
-    
     
 <script type="module">
 async function __trunkInitializer(init, source, sourceSize, initializer, initWithObject) {
@@ -78,10 +77,10 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 }
 
 
-import init, * as bindings from './example-sampler.js';
+import init, * as bindings from './example-node-control.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-sampler_bg.wasm', 202667, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-node-control_bg.wasm', 183749, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -90,15 +89,22 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-sampler.js" crossorigin="anonymous" integrity="sha384-CU1ON2YIavEIFtHDuQDeWnKa3X60C6h5NTIggIcCvY2EJJB6QJz5jyInVyJcCwu4"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-sampler_bg.wasm" crossorigin="anonymous" integrity="sha384-VCGvQUnUBijgWYsbuPC2NgKQLR7z8RGEUfxNvBd4c3aFmesjoBtTr430BlEXA6cd" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-node-control.js" crossorigin="anonymous" integrity="sha384-wxADx+MWLZRM01SD9P8dKZl6ZSplZz0/LTggVBqHwMn0oB3CkO/QM7ycDlD8dXQx"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-node-control_bg.wasm" crossorigin="anonymous" integrity="sha384-Mdm5F74sqSh+J/j/+g/QQBbsENfpeRT1yttu7xh0K91VZztaRuObzOEZzoAn9FI3" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>
       <div id="loading-track"><div id="loading-bar"></div></div>
     </div>
     <main class="demo">
-      <p class="title">sampler</p>
-      <p>Loads a WAV through a BufferSource (fetched on the web) and loops it with PlayBuf.</p>
+      <p class="title">node-control</p>
+      <p>
+        In-graph node-to-node control. A chord of sustained drones is driven by separate
+        <code>gater</code> nodes that address each drone <em>by id</em>:
+        <code>Pause.kr(LFPulse.kr(rate), id)</code> pauses and resumes it on every gate edge, so the
+        voices pulse against each other at their own rates, and <code>Free.kr</code> ends it. The node
+        notifications (<code>/n_off</code>, <code>/n_on</code>, <code>/n_end</code>) print to the
+        console.
+      </p>
       <p class="hint">Click anywhere to start audio.</p>
       <a class="back" href="../">&larr; all examples</a>
     </main>
