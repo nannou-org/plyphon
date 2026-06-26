@@ -23,6 +23,7 @@ pub mod input;
 pub mod io;
 pub mod lf;
 pub mod line;
+pub mod node_ctl;
 pub mod noise;
 pub mod out;
 pub mod pan;
@@ -142,6 +143,7 @@ pub use io::{
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
+pub use node_ctl::SelfTrig;
 pub use noise::WhiteNoise;
 pub use out::{OffsetOut, Out};
 pub use pan::Pan2;
