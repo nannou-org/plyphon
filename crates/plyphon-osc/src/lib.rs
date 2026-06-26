@@ -325,20 +325,34 @@ impl OscDispatcher {
 
     /// Translate an engine [`Event`] into the matching SuperCollider node-notification reply and
     /// queue it for [`take_replies`](Self::take_replies): `/n_go` (started), `/n_end` (freed),
-    /// `/n_off` (paused), `/n_on` (resumed).
+    /// `/n_off` (paused), `/n_on` (resumed), `/n_move` (moved).
     ///
     /// Feed this the events drained from the [`Nrt`](plyphon::Nrt), so node lifecycle - including
     /// synths that free themselves via a done action - is reported back over OSC alongside the
     /// command replies. Node notifications are tagged [`ReplyTarget::Broadcast`] (scsynth fans them out
     /// to its `mUsers` set); which clients that set contains (scsynth's `/notify` subscription) is the
-    /// host/transport's job. plyphon's events carry only the node id, so, unlike scsynth, the
-    /// parent/sibling/group fields are omitted and the id is the lone argument.
+    /// host/transport's job. The lifecycle events carry only the node id; `/n_move` carries the full
+    /// `/n_info`-shaped position (parent/prev/next/isGroup, plus head/tail for a group).
     pub fn notify(&mut self, event: Event) {
         let (addr, id) = match event {
             Event::NodeStarted { id } => ("/n_go", id),
             Event::NodeEnded { id } => ("/n_end", id),
             Event::NodePaused { id } => ("/n_off", id),
             Event::NodeResumed { id } => ("/n_on", id),
+            // A move carries the moved node's new tree position, like `/n_info`, not just the id.
+            Event::NodeMoved {
+                node,
+                parent,
+                prev,
+                next,
+                is_group,
+                head,
+                tail,
+            } => {
+                let args = node_info_args(node, parent, prev, next, is_group, head, tail);
+                self.push_reply(ReplyTarget::Broadcast, "/n_move", args);
+                return;
+            }
             // No node was created (empty def slot or pool exhaustion); report a `/s_new` failure,
             // mirroring scsynth's `/fail` reply, and drop any def tracking for the would-be id.
             Event::SynthFailed { id } => {
@@ -1066,17 +1080,7 @@ impl OscDispatcher {
                         head,
                         tail,
                     } => {
-                        let mut args = vec![
-                            OscType::Int(node),
-                            OscType::Int(parent),
-                            OscType::Int(prev),
-                            OscType::Int(next),
-                            OscType::Int(is_group),
-                        ];
-                        if is_group == 1 {
-                            args.push(OscType::Int(head));
-                            args.push(OscType::Int(tail));
-                        }
+                        let args = node_info_args(node, parent, prev, next, is_group, head, tail);
                         // scsynth answers `/n_query` by broadcasting `/n_info` to all registered
                         // clients (Server-Command-Reference: "sent to all registered clients"), not
                         // just the asker - so an unregistered querier receives nothing.
@@ -1881,6 +1885,31 @@ fn add_action(code: i32) -> Result<AddAction, OscError> {
         // 4 is addReplace, not yet supported.
         other => Err(OscError::UnsupportedAddAction(other)),
     }
+}
+
+/// Build the arguments shared by `/n_info` (the `/n_query` answer) and `/n_move` (the node-move
+/// notification): node, parent, prev, next, isGroup, plus head/tail when the node is a group.
+fn node_info_args(
+    node: i32,
+    parent: i32,
+    prev: i32,
+    next: i32,
+    is_group: i32,
+    head: i32,
+    tail: i32,
+) -> Vec<OscType> {
+    let mut args = vec![
+        OscType::Int(node),
+        OscType::Int(parent),
+        OscType::Int(prev),
+        OscType::Int(next),
+        OscType::Int(is_group),
+    ];
+    if is_group == 1 {
+        args.push(OscType::Int(head));
+        args.push(OscType::Int(tail));
+    }
+    args
 }
 
 fn int_arg(arg: &OscType) -> Result<i32, OscError> {

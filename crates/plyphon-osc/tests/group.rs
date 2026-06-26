@@ -175,3 +175,102 @@ fn g_tail_moves_a_synth_between_groups_over_osc() {
         "the moved synth should not have been freed"
     );
 }
+
+/// Forward the engine's node notifications into the dispatcher, then take the resulting OSC messages
+/// (the way a host loop would after `poll`).
+fn drain_notifications(osc: &mut OscDispatcher, nrt: &mut plyphon::Nrt) -> Vec<OscMessage> {
+    nrt.process();
+    while let Some(event) = nrt.poll() {
+        osc.notify(event);
+    }
+    osc.take_replies()
+        .into_iter()
+        .filter_map(|p| match p {
+            OscPacket::Message(m) => Some(m),
+            OscPacket::Bundle(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn n_after_emits_n_move_over_osc() {
+    let (mut osc, mut nrt, mut world) = dispatcher();
+    // root -> [1000, 1001].
+    for id in [1000, 1001] {
+        osc.apply_bytes(&msg(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(id),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ))
+        .unwrap();
+    }
+    // /n_after node=1000 target=1001: move 1000 to just after 1001 -> root -> [1001, 1000].
+    osc.apply_bytes(&msg(
+        "/n_after",
+        vec![OscType::Int(1000), OscType::Int(1001)],
+    ))
+    .unwrap();
+    let _ = render(&mut world, 256);
+
+    let msgs = drain_notifications(&mut osc, &mut nrt);
+    let mv = msgs
+        .iter()
+        .find(|m| m.addr == "/n_move")
+        .expect("/n_move emitted");
+    // node, parent, prev, next, isGroup: 1000 is now the tail, after 1001.
+    assert_eq!(
+        mv.args,
+        vec![
+            OscType::Int(1000),
+            OscType::Int(ROOT_GROUP_ID),
+            OscType::Int(1001),
+            OscType::Int(-1),
+            OscType::Int(0),
+        ]
+    );
+}
+
+#[test]
+fn moving_a_group_emits_n_move_with_head_tail() {
+    let (mut osc, mut nrt, mut world) = dispatcher();
+    // Two empty groups under the root -> [1, 2].
+    osc.apply_bytes(&msg(
+        "/g_new",
+        vec![
+            OscType::Int(1),
+            OscType::Int(1),
+            OscType::Int(ROOT_GROUP_ID),
+            OscType::Int(2),
+            OscType::Int(1),
+            OscType::Int(ROOT_GROUP_ID),
+        ],
+    ))
+    .unwrap();
+    // /n_after node=1 target=2: move group 1 to just after group 2 -> root -> [2, 1].
+    osc.apply_bytes(&msg("/n_after", vec![OscType::Int(1), OscType::Int(2)]))
+        .unwrap();
+    let _ = render(&mut world, 256);
+
+    let msgs = drain_notifications(&mut osc, &mut nrt);
+    let mv = msgs
+        .iter()
+        .find(|m| m.addr == "/n_move")
+        .expect("/n_move emitted");
+    // A group also reports head/tail (both -1 - the group is empty).
+    assert_eq!(
+        mv.args,
+        vec![
+            OscType::Int(1),
+            OscType::Int(ROOT_GROUP_ID),
+            OscType::Int(2),
+            OscType::Int(-1),
+            OscType::Int(1),
+            OscType::Int(-1),
+            OscType::Int(-1),
+        ]
+    );
+}

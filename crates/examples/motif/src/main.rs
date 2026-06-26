@@ -49,6 +49,7 @@ impl Controls {
                 Event::NodeStarted { .. } => self.playing += 1,
                 Event::NodeEnded { .. } => self.playing = self.playing.saturating_sub(1),
                 Event::NodePaused { .. } | Event::NodeResumed { .. } => {}
+                Event::NodeMoved { .. } => {}
                 Event::SynthFailed { .. } => {}
             }
         }

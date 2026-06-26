@@ -431,7 +431,21 @@ impl World {
                 target,
                 action,
             } => {
-                self.tree.move_node(node, target, action);
+                // scsynth broadcasts `/n_move` for a node it actually relinks; `move_node` returns
+                // false for an invalid move (unknown/self/ancestor target), which emits nothing.
+                if self.tree.move_node(node, target, action)
+                    && let Some(info) = self.tree.node_info(node)
+                {
+                    self.emit(Event::NodeMoved {
+                        node: info.node,
+                        parent: info.parent,
+                        prev: info.prev,
+                        next: info.next,
+                        is_group: info.is_group as i32,
+                        head: info.head,
+                        tail: info.tail,
+                    });
+                }
             }
             Command::FreeAll { group } => {
                 let mut sink = core::mem::take(&mut self.freed_nodes);

@@ -326,6 +326,24 @@ pub enum Event {
         /// The node's client id.
         id: i32,
     },
+    /// A node was moved to a new tree position (`/n_move`), carrying the same fields as `/n_info`.
+    /// Neighbour/parent ids are `-1` when absent; `head`/`tail` are `-1` for a synth.
+    NodeMoved {
+        /// The moved node's client id.
+        node: i32,
+        /// Parent group's client id, or `-1`.
+        parent: i32,
+        /// Previous sibling's client id, or `-1`.
+        prev: i32,
+        /// Next sibling's client id, or `-1`.
+        next: i32,
+        /// `1` if a group, else `0`.
+        is_group: i32,
+        /// First child's client id (groups only), or `-1`.
+        head: i32,
+        /// Last child's client id (groups only), or `-1`.
+        tail: i32,
+    },
     /// An `s_new` could not be realised - the def-table slot was empty or the rt-pool was exhausted -
     /// so no node with this id was created.
     SynthFailed {
