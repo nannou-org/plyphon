@@ -186,6 +186,11 @@ impl Unit for EnvGen {
                 }
             }
         }
+        // Mark the unit done (scsynth's `mDone`) once the envelope reaches its end, regardless of the
+        // done *action* - so a `Done`/`FreeSelfWhenDone` watcher observes completion even at code 0.
+        if self.phase == phase::DONE {
+            ctx.done.mark_done();
+        }
         action
     }
 }

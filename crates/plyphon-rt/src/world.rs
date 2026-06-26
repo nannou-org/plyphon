@@ -697,12 +697,19 @@ impl World {
         let buf = self.pool.slice_mut(&region);
         // Carve the block into its disjoint spans. The layout guarantees they are in-bounds and
         // non-overlapping, so this never fails.
-        let [state_arena, demand_state, ctrl_bytes, pmap_bytes] = buf
+        let [
+            state_arena,
+            demand_state,
+            ctrl_bytes,
+            pmap_bytes,
+            done_bytes,
+        ] = buf
             .get_disjoint_mut([
                 layout.state.range(),
                 layout.demand_state.range(),
                 layout.control.range(),
                 layout.pmaps.range(),
+                layout.done_flags.range(),
             ])
             .expect("graph block layout spans are disjoint by construction");
         state_arena.copy_from_slice(def.state_image());
@@ -711,6 +718,8 @@ impl World {
         for m in cast_slice_mut::<u8, u32>(pmap_bytes) {
             *m = u32::MAX;
         }
+        // Every unit starts not-done (scsynth's `mDone = false`).
+        done_bytes.fill(0);
         // Re-seed each unit's randomness for this instance (calc units, then demand units, on one
         // continuing index so two instances of a def decorrelate reproducibly).
         for (u, v) in def.units().iter().enumerate() {

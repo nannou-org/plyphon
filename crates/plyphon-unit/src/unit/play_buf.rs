@@ -113,6 +113,11 @@ impl Unit for PlayBuf {
                 }
             }
         }
+        // Reaching the end marks the unit done (scsynth's `mDone`), so a watcher can observe it even
+        // when the done action is 0. Re-armed by a rising trigger clearing `self.done`.
+        if self.done != 0 {
+            ctx.done.mark_done();
+        }
         action
     }
 }

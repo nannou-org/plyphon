@@ -82,13 +82,16 @@ impl Unit for Line {
             *ctx.outs.control(0) = self.value as f32;
             self.advance();
         }
-        // Signal the done action exactly once, on the block the ramp completes.
-        if self.remaining <= 0.0 && self.done == 0 {
-            self.done = 1;
-            DoneAction::from_tag(self.done_action)
-        } else {
-            DoneAction::Nothing
+        // Once the ramp completes, the unit is done (scsynth's `mDone`); a watcher can observe it.
+        // The done *action* fires exactly once, on the block the ramp completes.
+        if self.remaining <= 0.0 {
+            ctx.done.mark_done();
+            if self.done == 0 {
+                self.done = 1;
+                return DoneAction::from_tag(self.done_action);
+            }
         }
+        DoneAction::Nothing
     }
 }
 

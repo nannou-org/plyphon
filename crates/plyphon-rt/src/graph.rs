@@ -27,7 +27,8 @@ use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
 use plyphon_unit::unit::{
-    self, DemandAccess, DoneAction, InitCtx, Inputs, Outputs, ProcessCtx, Trigger, TriggerSink,
+    self, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, Outputs, ProcessCtx, Trigger,
+    TriggerSink,
 };
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
@@ -102,21 +103,34 @@ impl Graph {
         let bs = def.block_size();
         let layout = def.layout();
 
-        // Carve the per-graph block into its four disjoint spans (proved disjoint once, here). The
+        // Carve the per-graph block into its five disjoint spans (proved disjoint once, here). The
         // calc-unit state and the demand-state arena are separate spans so a calc unit's `&mut` state
         // slot and the `&mut` demand arena (pulled re-entrantly during its `process`) never alias.
         let buf = block.pool.slice_mut(&self.block);
-        let Ok([state_arena, demand_state, ctrl_bytes, pmap_bytes]) = buf.get_disjoint_mut([
+        let Ok(
+            [
+                state_arena,
+                demand_state,
+                ctrl_bytes,
+                pmap_bytes,
+                done_bytes,
+            ],
+        ) = buf.get_disjoint_mut([
             layout.state.range(),
             layout.demand_state.range(),
             layout.control.range(),
             layout.pmaps.range(),
-        ]) else {
+            layout.done_flags.range(),
+        ])
+        else {
             // Unreachable: the layout's spans are contiguous and disjoint by construction.
             return DoneAction::Nothing;
         };
         let ctrl = cast_slice_mut::<u8, f32>(ctrl_bytes);
         let pmaps = cast_slice::<u8, u32>(pmap_bytes);
+        // Per-unit done flags (scsynth's `mDone`), indexed by calc-unit position. Each unit's flag is
+        // carried forward each block (persisted after its `process`), so done-ness sticks.
+        let done_flags = cast_slice_mut::<u8, u32>(done_bytes);
         // Audio wires and output scratch are World-shared (separate allocations), reused per graph.
         let audio = &mut *block.wire_scratch;
         let scratch = &mut *block.unit_scratch;
@@ -136,8 +150,11 @@ impl Graph {
         // by it, then runs flush); later blocks start at the block boundary.
         let sample_offset = if first { self.sample_offset } else { 0 };
         let mut done = DoneAction::Nothing;
-        for v in def.units().iter() {
+        for (i, v) in def.units().iter().enumerate() {
             let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
+            // This unit's done flag, carried in from last block; written back after `process` so
+            // done-ness persists. A watcher reads earlier units' flags (already written this block).
+            let mut done_flag = done_flags[i];
             let ins = Inputs::new(&v.inputs, &*audio, &*ctrl, bs);
             if first {
                 let init_ctx = InitCtx {
@@ -174,9 +191,12 @@ impl Graph {
                     ),
                     node_id,
                     triggers: TriggerSink::new(&mut *block.triggers, block.trigger_cap),
+                    done: DoneState::new(&*done_flags, &mut done_flag),
                 };
                 (v.process)(state, &mut ctx)
             });
+            // Persist this unit's done flag for next block / for later units to read this block.
+            done_flags[i] = done_flag;
             // Publish this unit's scratch outputs into the wires.
             for (k, ow) in v.outputs.iter().enumerate() {
                 let src = k * bs;

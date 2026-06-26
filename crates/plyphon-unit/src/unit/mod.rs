@@ -188,6 +188,37 @@ impl<'a> TriggerSink<'a> {
     }
 }
 
+/// A unit's window onto every unit's "done" flag for the block - plyphon's port of scsynth's
+/// per-`Unit` `mDone`. A producer marks *its own* completion with [`mark_done`](Self::mark_done); a
+/// watcher (`Done`/`FreeSelfWhenDone`/`PauseSelfWhenDone`) reads a source unit's flag with
+/// [`is_done`](Self::is_done), using the source unit index the compiler captured. Flags live in the
+/// rt-pool block and persist across blocks (the process loop carries each unit's flag forward), so a
+/// unit that finishes stays done. A source is calc-ordered before its watcher, so the watcher reads
+/// the current block's value.
+pub struct DoneState<'a> {
+    /// Every calc unit's done flag, indexed by calc-unit position (read-only).
+    flags: &'a [u32],
+    /// This unit's own flag; the process loop persists it back into `flags` after the unit runs.
+    own: &'a mut u32,
+}
+
+impl<'a> DoneState<'a> {
+    /// Wrap the block's done flags and this unit's own slot. Used by the synth process loop.
+    pub fn new(flags: &'a [u32], own: &'a mut u32) -> Self {
+        DoneState { flags, own }
+    }
+
+    /// Mark this unit done (scsynth's `unit->mDone = true`). Idempotent.
+    pub fn mark_done(&mut self) {
+        *self.own = 1;
+    }
+
+    /// Whether calc unit `index` has finished (scsynth's `src->mDone`). Out of range reads `false`.
+    pub fn is_done(&self, index: usize) -> bool {
+        self.flags.get(index).is_some_and(|&flag| flag != 0)
+    }
+}
+
 /// Everything a unit touches while processing one control block - plyphon's safe decomposition of
 /// scsynth's `unit` (which reaches inputs, outputs, and the world through one pointer).
 ///
@@ -227,6 +258,9 @@ pub struct ProcessCtx<'a> {
     pub node_id: i32,
     /// Sink for triggers a unit fires this block (`SendTrig`). Most units ignore it.
     pub triggers: TriggerSink<'a>,
+    /// This block's per-unit done flags (scsynth's `mDone`): a producer marks itself done, a watcher
+    /// reads a source unit's flag. Most units ignore it.
+    pub done: DoneState<'a>,
 }
 
 /// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].

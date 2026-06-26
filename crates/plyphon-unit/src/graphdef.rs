@@ -65,7 +65,7 @@ impl Span {
 ///
 /// Laid out so every span is correctly aligned given a 64-byte-aligned block base: the two state
 /// arenas (alignment up to 8, for `f64` state) come first, then the 4-byte-aligned `f32` control
-/// wires and `u32` param maps. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
+/// wires, `u32` param maps, and `u32` done flags. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
 /// them never fails, and the `bytemuck` casts never hit an alignment error. The calc-unit and
 /// demand-unit state are *separate* spans so the audio thread can hold a calc unit's `&mut` state
 /// slot and the `&mut` demand arena at once (the latter is pulled re-entrantly while the former runs).
@@ -80,6 +80,11 @@ pub struct BlockLayout {
     pub control: Span,
     /// Per-parameter control-bus map (`u32`; `u32::MAX` = unmapped).
     pub pmaps: Span,
+    /// Per-calc-unit "done" flag (`u32`; non-zero = the unit has finished) - plyphon's port of
+    /// scsynth's per-`Unit` `mDone`, written by producers (`EnvGen`/`Line`/`PlayBuf`) and read by the
+    /// done-watching units (`Done`/`FreeSelfWhenDone`/`PauseSelfWhenDone`). One slot per calc unit,
+    /// indexed by calc-unit position in [`GraphDef::units`].
+    pub done_flags: Span,
     /// Total block size in bytes.
     pub total: usize,
 }
@@ -235,13 +240,19 @@ pub fn build_layout(
         off: control.off + control.len,
         len: num_params * 4,
     };
-    let total = pmaps.off + pmaps.len;
+    // One `u32` done flag per calc unit (`state_slots.len()`), `u32`-aligned after the param maps.
+    let done_flags = Span {
+        off: pmaps.off + pmaps.len,
+        len: state_slots.len() * 4,
+    };
+    let total = done_flags.off + done_flags.len;
     (
         BlockLayout {
             state,
             demand_state,
             control,
             pmaps,
+            done_flags,
             total,
         },
         offsets,
