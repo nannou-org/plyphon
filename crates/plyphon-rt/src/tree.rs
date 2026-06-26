@@ -244,13 +244,7 @@ impl NodeTree {
             Some(&i) if self.is_group(i) => i,
             _ => return false,
         };
-        let mut cur = self.group_links(group_idx).0;
-        while let Some(child) = cur {
-            let next = self.node_next(child);
-            self.destroy(child, sink);
-            cur = next;
-        }
-        self.set_group_links(group_idx, None, None);
+        self.free_all_at(group_idx, sink);
         true
     }
 
@@ -384,9 +378,9 @@ impl NodeTree {
         }
     }
 
-    /// Free the synth at slot `idx` (done actions locate nodes by index during the walk), returning
-    /// its client id and graph for the caller to `dealloc`. No-op for groups or empty slots.
-    pub(crate) fn free_by_index(&mut self, idx: u32) -> Option<(i32, Graph)> {
+    /// Free the synth at slot `idx`, returning its client id and graph for the caller to `dealloc`
+    /// (the leaf step of [`deep_free_group`](Self::deep_free_group)). No-op for groups or empty slots.
+    fn free_by_index(&mut self, idx: u32) -> Option<(i32, Graph)> {
         let id = match &self.slots[idx as usize] {
             Slot::Node(Node {
                 id,
@@ -416,6 +410,153 @@ impl NodeTree {
                 Some(node.id)
             }
             Slot::Free => None,
+        }
+    }
+
+    /// Unlink the node at slot `idx` from its parent and free it (a synth, or a group with its whole
+    /// subtree), pushing each removed node to `sink`.
+    fn free_at(&mut self, idx: u32, sink: &mut Vec<FreedNode>) {
+        self.unlink(idx);
+        self.destroy(idx, sink);
+    }
+
+    /// Free every node in the group at slot `group_idx` (deeply), leaving the group itself empty.
+    fn free_all_at(&mut self, group_idx: u32, sink: &mut Vec<FreedNode>) {
+        let mut cur = self.group_links(group_idx).0;
+        while let Some(child) = cur {
+            let next = self.node_next(child);
+            self.destroy(child, sink);
+            cur = next;
+        }
+        self.set_group_links(group_idx, None, None);
+    }
+
+    /// Apply the done action a unit requested for the synth at slot `idx` (collected during the tree
+    /// walk). Freed nodes stream into `freed` for the caller to `dealloc` and notify off the audio
+    /// thread; paused node ids collect in `paused` for the caller to notify. No-op if `idx` is no
+    /// longer a live synth - an earlier done action this block may already have freed it as a
+    /// neighbour. The neighbour/parent links are resolved before any free, since freeing relinks the
+    /// tree; `unlink` keeps the relinking allocation-free, so the chain variants need no scratch.
+    pub(crate) fn apply_done_action(
+        &mut self,
+        idx: u32,
+        action: DoneAction,
+        freed: &mut Vec<FreedNode>,
+        paused: &mut Vec<i32>,
+    ) {
+        if !matches!(
+            &self.slots[idx as usize],
+            Slot::Node(Node {
+                kind: NodeKind::Synth(_),
+                ..
+            })
+        ) {
+            return;
+        }
+        match action {
+            DoneAction::Nothing => {}
+            DoneAction::PauseSelf => {
+                if let Some(id) = self.pause_by_index(idx) {
+                    paused.push(id);
+                }
+            }
+            DoneAction::FreeSelf => self.free_at(idx, freed),
+            DoneAction::FreeSelfAndPrev => {
+                if let Some(p) = self.node_prev(idx) {
+                    self.free_at(p, freed);
+                }
+                self.free_at(idx, freed);
+            }
+            DoneAction::FreeSelfAndNext => {
+                if let Some(n) = self.node_next(idx) {
+                    self.free_at(n, freed);
+                }
+                self.free_at(idx, freed);
+            }
+            DoneAction::FreeSelfAndFreeAllPrev => {
+                if let Some(p) = self.node_prev(idx) {
+                    if self.is_group(p) {
+                        self.free_all_at(p, freed);
+                    } else {
+                        self.free_at(p, freed);
+                    }
+                }
+                self.free_at(idx, freed);
+            }
+            DoneAction::FreeSelfAndFreeAllNext => {
+                if let Some(n) = self.node_next(idx) {
+                    if self.is_group(n) {
+                        self.free_all_at(n, freed);
+                    } else {
+                        self.free_at(n, freed);
+                    }
+                }
+                self.free_at(idx, freed);
+            }
+            // Repeatedly free the immediate predecessor: each `free_at` relinks `idx` to the
+            // next-earlier sibling, so the loop walks to the group head, then frees self.
+            DoneAction::FreeSelfToHead => {
+                while let Some(p) = self.node_prev(idx) {
+                    self.free_at(p, freed);
+                }
+                self.free_at(idx, freed);
+            }
+            DoneAction::FreeSelfToTail => {
+                while let Some(n) = self.node_next(idx) {
+                    self.free_at(n, freed);
+                }
+                self.free_at(idx, freed);
+            }
+            DoneAction::FreeSelfPausePrev => {
+                if let Some(p) = self.node_prev(idx)
+                    && let Some(id) = self.pause_by_index(p)
+                {
+                    paused.push(id);
+                }
+                self.free_at(idx, freed);
+            }
+            DoneAction::FreeSelfPauseNext => {
+                if let Some(n) = self.node_next(idx)
+                    && let Some(id) = self.pause_by_index(n)
+                {
+                    paused.push(id);
+                }
+                self.free_at(idx, freed);
+            }
+            DoneAction::FreeSelfAndDeepFreePrev => {
+                if let Some(p) = self.node_prev(idx) {
+                    if self.is_group(p) {
+                        self.deep_free_group(p, freed);
+                    } else {
+                        self.free_at(p, freed);
+                    }
+                }
+                self.free_at(idx, freed);
+            }
+            DoneAction::FreeSelfAndDeepFreeNext => {
+                if let Some(n) = self.node_next(idx) {
+                    if self.is_group(n) {
+                        self.deep_free_group(n, freed);
+                    } else {
+                        self.free_at(n, freed);
+                    }
+                }
+                self.free_at(idx, freed);
+            }
+            // Empty the enclosing group, which frees self along with every sibling.
+            DoneAction::FreeAllInGroup => {
+                if let Some(parent) = self.node_parent(idx) {
+                    self.free_all_at(parent, freed);
+                }
+            }
+            // Free the enclosing group and its whole subtree (self included). The root is unfreeable.
+            DoneAction::FreeGroup => {
+                if let Some(parent) = self.node_parent(idx)
+                    && parent != self.root_index
+                {
+                    self.free_at(parent, freed);
+                }
+            }
         }
     }
 

@@ -78,6 +78,8 @@ pub struct World {
     done_nodes: Vec<(u32, DoneAction)>,
     /// Scratch sink for nodes removed by a free, so freeing a whole group allocates nothing.
     freed_nodes: Vec<FreedNode>,
+    /// Scratch sink for node ids paused by a done action, drained into `/n_off` notifications.
+    paused_nodes: Vec<i32>,
     /// The drift-correcting OSC/NTP clock (scsynth's `mOSCbuftime` + DLL).
     clock: Clock,
     /// Pending time-tagged commands awaiting their block (scsynth's `mScheduler`).
@@ -136,6 +138,7 @@ impl World {
             tree_scratch: Vec::with_capacity(tree_capacity),
             done_nodes: Vec::with_capacity(capacity),
             freed_nodes: Vec::with_capacity(capacity),
+            paused_nodes: Vec::with_capacity(capacity),
             clock: Clock::new(options.sample_rate, bs),
             scheduler: Scheduler::new(options.max_scheduled),
             current_sample_offset: 0,
@@ -283,25 +286,28 @@ impl World {
         self.current_sample_offset = 0;
     }
 
-    /// Apply the done actions collected during the tree walk (free or pause the node).
+    /// Apply the done actions collected during the tree walk. Each may free its synth (possibly with
+    /// neighbours or the enclosing group) and/or pause a node; the tree restructures into the
+    /// pre-allocated `freed_nodes`/`paused_nodes` sinks, which then drain into `/n_end`/`/n_off`
+    /// notifications off the audio thread.
     fn apply_done_actions(&mut self) {
+        if self.done_nodes.is_empty() {
+            return;
+        }
+        // Borrow the sinks out so the tree can take them by `&mut` alongside its own `&mut self`.
+        let mut freed = core::mem::take(&mut self.freed_nodes);
+        let mut paused = core::mem::take(&mut self.paused_nodes);
         for i in 0..self.done_nodes.len() {
             let (idx, action) = self.done_nodes[i];
-            match action {
-                DoneAction::FreeSelf => {
-                    if let Some((id, graph)) = self.tree.free_by_index(idx) {
-                        self.pool.dealloc(graph.into_block());
-                        self.emit(Event::NodeEnded { id });
-                    }
-                }
-                DoneAction::Pause => {
-                    if let Some(id) = self.tree.pause_by_index(idx) {
-                        self.emit(Event::NodePaused { id });
-                    }
-                }
-                DoneAction::Nothing => {}
-            }
+            self.tree
+                .apply_done_action(idx, action, &mut freed, &mut paused);
         }
+        self.drain_freed(&mut freed);
+        for id in paused.drain(..) {
+            self.emit(Event::NodePaused { id });
+        }
+        self.freed_nodes = freed;
+        self.paused_nodes = paused;
     }
 
     fn drain_commands(&mut self) {

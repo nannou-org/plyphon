@@ -40,41 +40,84 @@ use plyphon_dsp::bus::Buses;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 
-/// What a unit asks the engine to do with its enclosing synth when it finishes - plyphon's subset
-/// of scsynth's done-action codes. Ordered so the strongest action wins when combined.
+/// What a unit asks the engine to do with its enclosing synth when it finishes - scsynth's full set
+/// of done-action codes (0-14). The discriminant is the scsynth code, and the variants are declared
+/// in code order so the derived `Ord` lets the strongest action win when several units in one synth
+/// finish together (every code `>= 2` frees self, so the neighbour/group variants outrank a plain
+/// free, and a free outranks a pause).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub enum DoneAction {
-    /// Keep running (no action). scsynth code 0.
+    /// Keep running (no action). Code 0.
     #[default]
     Nothing,
-    /// Pause the enclosing synth. scsynth code 1.
-    Pause,
-    /// Free the enclosing synth. scsynth code 2 (and, for now, the higher free-variant codes).
+    /// Pause the enclosing synth. Code 1.
+    PauseSelf,
+    /// Free the enclosing synth. Code 2.
     FreeSelf,
+    /// Free this synth and the preceding node. Code 3.
+    FreeSelfAndPrev,
+    /// Free this synth and the following node. Code 4.
+    FreeSelfAndNext,
+    /// Free this synth; `g_freeAll` the preceding node if it is a group, else free it. Code 5.
+    FreeSelfAndFreeAllPrev,
+    /// Free this synth; `g_freeAll` the following node if it is a group, else free it. Code 6.
+    FreeSelfAndFreeAllNext,
+    /// Free this synth and every preceding node in its group. Code 7.
+    FreeSelfToHead,
+    /// Free this synth and every following node in its group. Code 8.
+    FreeSelfToTail,
+    /// Free this synth and pause the preceding node. Code 9.
+    FreeSelfPausePrev,
+    /// Free this synth and pause the following node. Code 10.
+    FreeSelfPauseNext,
+    /// Free this synth; `g_deepFree` the preceding node if it is a group, else free it. Code 11.
+    FreeSelfAndDeepFreePrev,
+    /// Free this synth; `g_deepFree` the following node if it is a group, else free it. Code 12.
+    FreeSelfAndDeepFreeNext,
+    /// Free this synth and every other node in its group. Code 13.
+    FreeAllInGroup,
+    /// Free the enclosing group and every node within it (this synth included). Code 14.
+    FreeGroup,
 }
 
 impl DoneAction {
-    /// Map a scsynth done-action code (carried as a float unit input) to a [`DoneAction`].
-    pub fn from_code(code: f32) -> DoneAction {
-        match code as i32 {
-            1 => DoneAction::Pause,
-            n if n >= 2 => DoneAction::FreeSelf,
-            _ => DoneAction::Nothing,
+    /// Map a scsynth done-action code to a [`DoneAction`]. Out-of-range codes (`< 0` or `> 14`) fall
+    /// back to [`FreeSelf`](DoneAction::FreeSelf), matching scsynth's "free on anything unexpected".
+    fn from_index(code: i32) -> DoneAction {
+        match code {
+            0 => DoneAction::Nothing,
+            1 => DoneAction::PauseSelf,
+            2 => DoneAction::FreeSelf,
+            3 => DoneAction::FreeSelfAndPrev,
+            4 => DoneAction::FreeSelfAndNext,
+            5 => DoneAction::FreeSelfAndFreeAllPrev,
+            6 => DoneAction::FreeSelfAndFreeAllNext,
+            7 => DoneAction::FreeSelfToHead,
+            8 => DoneAction::FreeSelfToTail,
+            9 => DoneAction::FreeSelfPausePrev,
+            10 => DoneAction::FreeSelfPauseNext,
+            11 => DoneAction::FreeSelfAndDeepFreePrev,
+            12 => DoneAction::FreeSelfAndDeepFreeNext,
+            13 => DoneAction::FreeAllInGroup,
+            14 => DoneAction::FreeGroup,
+            _ => DoneAction::FreeSelf,
         }
     }
 
-    /// Encode as a small integer tag, so a unit can hold a `DoneAction` in its `Pod` state.
+    /// Map a scsynth done-action code (carried as a float unit input) to a [`DoneAction`].
+    pub fn from_code(code: f32) -> DoneAction {
+        DoneAction::from_index(code as i32)
+    }
+
+    /// Encode as a small integer tag (the scsynth code), so a unit can hold a `DoneAction` in its
+    /// `Pod` state.
     pub fn to_tag(self) -> u32 {
         self as u32
     }
 
     /// Decode a tag produced by [`DoneAction::to_tag`] (any out-of-range tag maps to `FreeSelf`).
     pub fn from_tag(tag: u32) -> DoneAction {
-        match tag {
-            0 => DoneAction::Nothing,
-            1 => DoneAction::Pause,
-            _ => DoneAction::FreeSelf,
-        }
+        DoneAction::from_index(tag as i32)
     }
 }
 
