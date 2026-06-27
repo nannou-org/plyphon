@@ -23,6 +23,7 @@ pub mod input;
 pub mod io;
 pub mod lf;
 pub mod line;
+pub mod local_io;
 pub mod node_ctl;
 pub mod noise;
 pub mod out;
@@ -138,11 +139,12 @@ pub use filter::Butter;
 pub use info::{BufInfo, BufInfoKind, Info, InfoKind};
 pub use input::In;
 pub use io::{
-    audio_in, audio_out, buffer_at, control_in, control_out, num_audio_buses, num_control_buses,
-    num_input_buses, num_output_buses, stream_at_mut,
+    audio_in, audio_out, buffer_at, control_in, control_out, local_in, local_out, num_audio_buses,
+    num_control_buses, num_input_buses, num_output_buses, stream_at_mut,
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
+pub use local_io::{LocalIn, LocalOut};
 pub use node_ctl::{Done, Free, Pause, SelfTrig, WhenDone};
 pub use noise::WhiteNoise;
 pub use out::{OffsetOut, Out};
@@ -263,6 +265,48 @@ impl<'a> NodeOpSink<'a> {
     }
 }
 
+/// A synth's private feedback bus for `LocalIn`/`LocalOut` - scsynth's local buffers. It lives in the
+/// per-instance pool block and **persists across blocks**, so a `LocalIn` reads the value the
+/// `LocalOut` wrote *last* block (a one-block feedback delay). Channel-major: channel `ch` occupies
+/// `data[ch*block_size .. (ch+1)*block_size]`. Units touch it only through the crate-private
+/// [`io::local_in`](crate::unit::io::local_in)/[`io::local_out`](crate::unit::io::local_out) free fns.
+pub struct LocalBus<'a> {
+    data: &'a mut [f32],
+    block_size: usize,
+}
+
+impl<'a> LocalBus<'a> {
+    /// Wrap the block's local-bus span. Used by the synth process loop.
+    pub fn new(data: &'a mut [f32], block_size: usize) -> Self {
+        LocalBus { data, block_size }
+    }
+
+    /// Number of local channels (0 when the synth has no `LocalIn`/`LocalOut`).
+    pub fn num_channels(&self) -> usize {
+        self.data.len().checked_div(self.block_size).unwrap_or(0)
+    }
+
+    /// Local channel `ch` for this block (read), or an empty slice if out of range.
+    pub(crate) fn channel(&self, ch: usize) -> &[f32] {
+        if ch < self.num_channels() {
+            let start = ch * self.block_size;
+            &self.data[start..start + self.block_size]
+        } else {
+            &[]
+        }
+    }
+
+    /// Local channel `ch` for this block (write), or `None` if out of range.
+    pub(crate) fn channel_mut(&mut self, ch: usize) -> Option<&mut [f32]> {
+        if ch < self.num_channels() {
+            let start = ch * self.block_size;
+            Some(&mut self.data[start..start + self.block_size])
+        } else {
+            None
+        }
+    }
+}
+
 /// Everything a unit touches while processing one control block - plyphon's safe decomposition of
 /// scsynth's `unit` (which reaches inputs, outputs, and the world through one pointer).
 ///
@@ -308,6 +352,9 @@ pub struct ProcessCtx<'a> {
     /// Sink for node operations (`Free`/`Pause` by id) a unit emits this block, applied after the
     /// tree walk. Most units ignore it.
     pub node_ops: NodeOpSink<'a>,
+    /// The synth's private feedback bus (`LocalIn`/`LocalOut`). Empty for synths with no local bus;
+    /// most units ignore it.
+    pub local: LocalBus<'a>,
 }
 
 /// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].

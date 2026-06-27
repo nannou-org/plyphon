@@ -26,6 +26,7 @@ use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
 use crate::unit::line::LineCtor;
+use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
 use crate::unit::node_ctl::{
     DoneCtor, FreeCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseCtor, PauseSelfCtor,
     PauseSelfWhenDoneCtor,
@@ -101,6 +102,11 @@ impl UnitRegistry {
         registry.register("Out", Box::new(OutCtor));
         registry.register("OffsetOut", Box::new(OffsetOutCtor));
         registry.register("In", Box::new(InCtor));
+        // `InFeedback` reads a global audio bus tolerating a later writer; plyphon's `In` already
+        // reads current bus contents with no "written-this-block" check, so it is the same unit.
+        registry.register("InFeedback", Box::new(InCtor));
+        registry.register("LocalIn", Box::new(LocalInCtor));
+        registry.register("LocalOut", Box::new(LocalOutCtor));
         registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));
         registry.register("UnaryOpUGen", Box::new(UnaryOpCtor));
         registry.register("Line", Box::new(LineCtor));

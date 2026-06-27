@@ -57,4 +57,17 @@ pub enum BuildError {
     /// produce one value per pull); a multi-output demand input cannot be resolved.
     #[error("a demand source has {0} outputs but must have exactly one")]
     DemandMultiOutput(usize),
+    /// A def has more than one `LocalIn` or `LocalOut`. The v1 feedback bus supports exactly one of
+    /// each (its channel count is taken from the single `LocalIn`).
+    #[error("a def may have at most one LocalIn and one LocalOut")]
+    MultipleLocalBuses,
+    /// `LocalOut` writes a different channel count than the `LocalIn` declares (or there is a
+    /// `LocalOut` with no `LocalIn` to size the bus). The two must agree.
+    #[error("LocalOut writes {local_out} channels but LocalIn declares {local_in}")]
+    LocalBusMismatch {
+        /// Channels the `LocalIn` declares (its output count; `0` if there is no `LocalIn`).
+        local_in: usize,
+        /// Channels the `LocalOut` writes (its input count).
+        local_out: usize,
+    },
 }

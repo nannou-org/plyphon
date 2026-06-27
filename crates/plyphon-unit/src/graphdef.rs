@@ -65,7 +65,7 @@ impl Span {
 ///
 /// Laid out so every span is correctly aligned given a 64-byte-aligned block base: the two state
 /// arenas (alignment up to 8, for `f64` state) come first, then the 4-byte-aligned `f32` control
-/// wires, `u32` param maps, and `u32` done flags. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
+/// wires, `u32` param maps, `u32` done flags, and the `f32` local feedback bus. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
 /// them never fails, and the `bytemuck` casts never hit an alignment error. The calc-unit and
 /// demand-unit state are *separate* spans so the audio thread can hold a calc unit's `&mut` state
 /// slot and the `&mut` demand arena at once (the latter is pulled re-entrantly while the former runs).
@@ -85,6 +85,11 @@ pub struct BlockLayout {
     /// done-watching units (`Done`/`FreeSelfWhenDone`/`PauseSelfWhenDone`). One slot per calc unit,
     /// indexed by calc-unit position in [`GraphDef::units`].
     pub done_flags: Span,
+    /// Per-synth local feedback bus (`f32`, channel-major: `num_local_channels * block_size`) -
+    /// scsynth's `LocalIn`/`LocalOut` private buffer. Persists across blocks (never cleared), so a
+    /// `LocalIn` reads the value the `LocalOut` wrote last block (a one-block feedback delay). Empty
+    /// when the def has no `LocalIn`/`LocalOut`.
+    pub local: Span,
     /// Total block size in bytes.
     pub total: usize,
 }
@@ -209,6 +214,8 @@ pub fn build_layout(
     demand_state_slots: &[(usize, usize)],
     num_control_wires: usize,
     num_params: usize,
+    num_local_channels: usize,
+    block_size: usize,
 ) -> (BlockLayout, Vec<usize>, Vec<usize>) {
     let pack = |slots: &[(usize, usize)]| -> (Vec<usize>, usize) {
         let mut offsets = Vec::with_capacity(slots.len());
@@ -245,7 +252,13 @@ pub fn build_layout(
         off: pmaps.off + pmaps.len,
         len: state_slots.len() * 4,
     };
-    let total = done_flags.off + done_flags.len;
+    // The per-synth local feedback bus: `num_local_channels * block_size` `f32`s, channel-major,
+    // 4-byte-aligned after the done flags.
+    let local = Span {
+        off: done_flags.off + done_flags.len,
+        len: num_local_channels * block_size * 4,
+    };
+    let total = local.off + local.len;
     (
         BlockLayout {
             state,
@@ -253,6 +266,7 @@ pub fn build_layout(
             control,
             pmaps,
             done_flags,
+            local,
             total,
         },
         offsets,

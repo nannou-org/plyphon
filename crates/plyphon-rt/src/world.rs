@@ -748,6 +748,7 @@ impl World {
             ctrl_bytes,
             pmap_bytes,
             done_bytes,
+            local_bytes,
         ] = buf
             .get_disjoint_mut([
                 layout.state.range(),
@@ -755,6 +756,7 @@ impl World {
                 layout.control.range(),
                 layout.pmaps.range(),
                 layout.done_flags.range(),
+                layout.local.range(),
             ])
             .expect("graph block layout spans are disjoint by construction");
         state_arena.copy_from_slice(def.state_image());
@@ -765,6 +767,9 @@ impl World {
         }
         // Every unit starts not-done (scsynth's `mDone = false`).
         done_bytes.fill(0);
+        // The feedback bus starts silent. Zeroed *once* here, never per block - it persists so a
+        // `LocalIn` reads what a `LocalOut` wrote last block (the one-block feedback delay).
+        local_bytes.fill(0);
         // Re-seed each unit's randomness for this instance (calc units, then demand units, on one
         // continuing index so two instances of a def decorrelate reproducibly).
         for (u, v) in def.units().iter().enumerate() {

@@ -14,6 +14,8 @@ use plyphon_dsp::buffer::{Buffer, BufferTable};
 use plyphon_dsp::bus::Buses;
 use plyphon_dsp::stream::StreamPlayback;
 
+use crate::unit::LocalBus;
+
 /// Audio bus channel `ch` for this block (an empty slice if `ch` is out of range), for `In.ar`.
 pub fn audio_in(buses: &Buses, ch: usize) -> &[f32] {
     let audio = buses.audio();
@@ -32,6 +34,21 @@ pub fn audio_out(buses: &mut Buses, buf_counter: u64, ch: usize, src: &[f32]) {
 /// Control bus channel `ch`'s current value (0.0 if out of range), for `In.kr`.
 pub fn control_in(buses: &Buses, ch: usize) -> f32 {
     buses.control().read(ch)
+}
+
+/// Local feedback-bus channel `ch` for this block (read), for `LocalIn` - the value `LocalOut` wrote
+/// last block. An empty slice if `ch` is out of range.
+pub fn local_in<'a>(local: &'a LocalBus<'_>, ch: usize) -> &'a [f32] {
+    local.channel(ch)
+}
+
+/// Overwrite local feedback-bus channel `ch` with `src` for this block, for `LocalOut`. Out of range
+/// is a no-op; a shorter `src` leaves the channel's tail untouched.
+pub fn local_out(local: &mut LocalBus<'_>, ch: usize, src: &[f32]) {
+    if let Some(dst) = local.channel_mut(ch) {
+        let n = dst.len().min(src.len());
+        dst[..n].copy_from_slice(&src[..n]);
+    }
 }
 
 /// Accumulate `value` into control bus channel `ch` for this block (`Out.kr`). Out of range is a

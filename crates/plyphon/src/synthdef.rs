@@ -137,6 +137,37 @@ impl SynthDef {
             }
         }
 
+        // Pre-scan the feedback bus (`LocalIn`/`LocalOut`): at most one of each in v1. The bus width
+        // is the `LocalIn`'s output count; a `LocalOut`, if present, must write that many channels.
+        let mut local_in_channels: Option<usize> = None;
+        let mut local_out_channels: Option<usize> = None;
+        for spec in &self.units {
+            match spec.name.as_str() {
+                "LocalIn" => {
+                    if local_in_channels.is_some() {
+                        return Err(BuildError::MultipleLocalBuses);
+                    }
+                    local_in_channels = Some(spec.num_outputs);
+                }
+                "LocalOut" => {
+                    if local_out_channels.is_some() {
+                        return Err(BuildError::MultipleLocalBuses);
+                    }
+                    local_out_channels = Some(spec.inputs.len());
+                }
+                _ => {}
+            }
+        }
+        let num_local_channels = local_in_channels.unwrap_or(0);
+        if let Some(local_out) = local_out_channels
+            && local_out != num_local_channels
+        {
+            return Err(BuildError::LocalBusMismatch {
+                local_in: num_local_channels,
+                local_out,
+            });
+        }
+
         // Pass 1: assign a wire to each (unit, output) of the *calc* units by rate. Audio outputs go
         // to audio wires; control/scalar outputs go to control wires after the parameter wires.
         // Demand units get an empty slot so `outputs_plan` stays indexable by original unit index.
@@ -326,6 +357,8 @@ impl SynthDef {
             &demand_state_slots,
             num_control_wires as usize,
             num_params,
+            num_local_channels,
+            block_size,
         );
         let mut state_image = vec![0u8; layout.state.len];
         for (b, &off) in calc_built.iter().zip(&state_offsets) {
