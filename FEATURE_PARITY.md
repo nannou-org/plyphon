@@ -39,7 +39,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **FFT / spectral** - none yet: FFT/IFFT, the `PV_*` set, Pitch, Onsets, BeatTrack
 - [ ] **Chaos / rate conversion** - have A2K, K2A, T2A, DC; missing the chaos set: Lorenz, LinCong, Henon, ...
 
-## OSC server commands (53 of ~65)
+## OSC server commands (55 of ~65)
 
 The *getters* (`/status`, `/sync`, `/rtMemoryStatus`, `/n_query`, `/c_get`/`/c_getn`, `/s_get`/`/s_getn`,
 `/b_get`/`/b_getn`, `/g_queryTree`) read live engine state over a third RT→NRT ring - a fixed-size
@@ -61,10 +61,9 @@ queries `/status`/`/sync`/`/rtMemoryStatus` are *not* server commands - the serv
 the dispatcher and routes each async answer back to the requester, alongside the other getters.)
 
 The genuinely-deferred host actions - `/cmd`/`/u_cmd`/`/n_cmd`, `/d_load`/`/d_loadDir`,
-`/b_write`/`/b_close`, the audio-rate mappers `/n_mapa`/`/n_mapan`, and `/n_trace` - need a plugin
-registry, filesystem, or audio-rate control mapping the engine does not model; the intent is to
-surface them as typed higher-level actions for the embedding host, the way `/b_allocRead` already
-defers I/O to an app-provided `BufferSource`.
+`/b_write`/`/b_close`, and `/n_trace` - need a plugin registry or filesystem the engine does not
+model; the intent is to surface them as typed higher-level actions for the embedding host, the way
+`/b_allocRead` already defers I/O to an app-provided `BufferSource`.
 
 **Server / top-level** (9/10)
 
@@ -95,7 +94,7 @@ defers I/O to an app-provided `BufferSource`.
 - [x] /s_noid - partial: detaches control-name resolution; the node keeps running and stays reachable
   by control index (plyphon does not reassign a hidden negative id)
 
-**Node** (11/15)
+**Node** (13/15)
 
 - [x] /n_set
 - [x] /n_free
@@ -109,8 +108,8 @@ defers I/O to an app-provided `BufferSource`.
 - [x] /n_run
 - [x] /n_query - getter; one `/n_info` per node (parent/prev/next/isGroup, head/tail for a group)
 - [ ] /n_trace
-- [ ] /n_mapa
-- [ ] /n_mapan
+- [x] /n_mapa - maps an `AudioControl` parameter to an audio bus (its audio wire takes the bus each block); a no-op on a control-rate param
+- [x] /n_mapan - the range form of `/n_mapa`
 - [ ] /n_cmd
 
 **Group** (8/8)

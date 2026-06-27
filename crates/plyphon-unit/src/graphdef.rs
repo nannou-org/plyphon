@@ -29,6 +29,8 @@ pub struct OutputWire {
 /// so it can feed audio-rate inputs; `/n_mapa` instead fills the wire from an audio bus.
 #[derive(Copy, Clone, Debug)]
 pub struct AudioParam {
+    /// The parameter index (indexes the `amaps` audio-bus map for `/n_mapa`).
+    pub param: u32,
     /// Control-wire index holding the parameter's value.
     pub value_slot: u32,
     /// Audio-wire index the value is lifted to each block (what consumers of the param read).
@@ -76,7 +78,7 @@ impl Span {
 ///
 /// Laid out so every span is correctly aligned given a 64-byte-aligned block base: the two state
 /// arenas (alignment up to 8, for `f64` state) come first, then the 4-byte-aligned `f32` control
-/// wires, `u32` param maps, `u32` done flags, and the `f32` local feedback bus. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
+/// wires, `u32` param maps, `u32` done flags, the `f32` local feedback bus, and the `u32` audio-bus maps. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
 /// them never fails, and the `bytemuck` casts never hit an alignment error. The calc-unit and
 /// demand-unit state are *separate* spans so the audio thread can hold a calc unit's `&mut` state
 /// slot and the `&mut` demand arena at once (the latter is pulled re-entrantly while the former runs).
@@ -101,6 +103,9 @@ pub struct BlockLayout {
     /// `LocalIn` reads the value the `LocalOut` wrote last block (a one-block feedback delay). Empty
     /// when the def has no `LocalIn`/`LocalOut`.
     pub local: Span,
+    /// Per-parameter audio-bus map (`u32`; `u32::MAX` = unmapped) for `/n_mapa`. Only audio-rate
+    /// parameters read their slot; control params' slots are unused.
+    pub amaps: Span,
     /// Total block size in bytes.
     pub total: usize,
 }
@@ -280,7 +285,12 @@ pub fn build_layout(
         off: done_flags.off + done_flags.len,
         len: num_local_channels * block_size * 4,
     };
-    let total = local.off + local.len;
+    // One `u32` audio-bus map per parameter (`/n_mapa`), `u32`-aligned after the local bus.
+    let amaps = Span {
+        off: local.off + local.len,
+        len: num_params * 4,
+    };
+    let total = amaps.off + amaps.len;
     (
         BlockLayout {
             state,
@@ -289,6 +299,7 @@ pub fn build_layout(
             pmaps,
             done_flags,
             local,
+            amaps,
             total,
         },
         offsets,

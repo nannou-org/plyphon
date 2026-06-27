@@ -441,6 +441,12 @@ impl World {
                     graph.map_control(pool, param, bus);
                 }
             }
+            Command::MapControlAudio { node, param, bus } => {
+                let World { tree, pool, .. } = self;
+                if let Some(graph) = tree.synth_mut(node) {
+                    graph.map_control_audio(pool, param, bus);
+                }
+            }
             Command::SetBuffer { index, buffer } => {
                 let old = self.buffers.set(index, buffer);
                 self.trash_slot(old);
@@ -749,6 +755,7 @@ impl World {
             pmap_bytes,
             done_bytes,
             local_bytes,
+            amap_bytes,
         ] = buf
             .get_disjoint_mut([
                 layout.state.range(),
@@ -757,6 +764,7 @@ impl World {
                 layout.pmaps.range(),
                 layout.done_flags.range(),
                 layout.local.range(),
+                layout.amaps.range(),
             ])
             .expect("graph block layout spans are disjoint by construction");
         state_arena.copy_from_slice(def.state_image());
@@ -770,6 +778,10 @@ impl World {
         // The feedback bus starts silent. Zeroed *once* here, never per block - it persists so a
         // `LocalIn` reads what a `LocalOut` wrote last block (the one-block feedback delay).
         local_bytes.fill(0);
+        // Every audio param starts unmapped (`/n_mapa`).
+        for m in cast_slice_mut::<u8, u32>(amap_bytes) {
+            *m = u32::MAX;
+        }
         // Re-seed each unit's randomness for this instance (calc units, then demand units, on one
         // continuing index so two instances of a def decorrelate reproducibly).
         for (u, v) in def.units().iter().enumerate() {

@@ -107,7 +107,7 @@ impl Graph {
         let bs = def.block_size();
         let layout = def.layout();
 
-        // Carve the per-graph block into its six disjoint spans (proved disjoint once, here). The
+        // Carve the per-graph block into its seven disjoint spans (proved disjoint once, here). The
         // calc-unit state and the demand-state arena are separate spans so a calc unit's `&mut` state
         // slot and the `&mut` demand arena (pulled re-entrantly during its `process`) never alias.
         let buf = block.pool.slice_mut(&self.block);
@@ -119,6 +119,7 @@ impl Graph {
                 pmap_bytes,
                 done_bytes,
                 local_bytes,
+                amap_bytes,
             ],
         ) = buf.get_disjoint_mut([
             layout.state.range(),
@@ -127,6 +128,7 @@ impl Graph {
             layout.pmaps.range(),
             layout.done_flags.range(),
             layout.local.range(),
+            layout.amaps.range(),
         ])
         else {
             // Unreachable: the layout's spans are contiguous and disjoint by construction.
@@ -140,6 +142,8 @@ impl Graph {
         // The synth's private feedback bus (`LocalIn`/`LocalOut`); persists across blocks (never
         // cleared here), which is what gives the one-block feedback delay.
         let local = cast_slice_mut::<u8, f32>(local_bytes);
+        // Per-parameter audio-bus maps (`/n_mapa`); read for audio params in the lift below.
+        let amaps = cast_slice::<u8, u32>(amap_bytes);
         // Audio wires and output scratch are World-shared (separate allocations), reused per graph.
         let audio = &mut *block.wire_scratch;
         let scratch = &mut *block.unit_scratch;
@@ -150,12 +154,22 @@ impl Graph {
                 ctrl[def.param_wires()[p] as usize] = unit::control_in(block.buses, bus as usize);
             }
         }
-        // Lift each audio-rate param (`AudioControl`) from its value slot (a control wire, possibly
-        // just updated by `/n_map`) to its audio wire, so audio-rate consumers read it as a block.
+        // Fill each audio-rate param's (`AudioControl`) audio wire: from a mapped audio bus
+        // (`/n_mapa`) if set, otherwise from its value slot (a control wire, possibly just updated by
+        // `/n_map`). Either way audio-rate consumers read the param as a block.
         for ap in def.audio_params() {
-            let value = ctrl[ap.value_slot as usize];
             let dst = ap.wire as usize * bs;
-            audio[dst..dst + bs].fill(value);
+            let bus = amaps[ap.param as usize];
+            if bus != u32::MAX {
+                let chan = unit::audio_in(block.buses, bus as usize);
+                if chan.len() == bs {
+                    audio[dst..dst + bs].copy_from_slice(chan);
+                } else {
+                    audio[dst..dst + bs].fill(0.0);
+                }
+            } else {
+                audio[dst..dst + bs].fill(ctrl[ap.value_slot as usize]);
+            }
         }
 
         // On the first block only, run each unit's one-time `init` seeding pass (in topo order, just
@@ -265,6 +279,16 @@ impl Graph {
     pub(crate) fn map_control(&mut self, pool: &mut Pool, param: usize, bus: Option<u32>) {
         if param < self.def.num_params() {
             let bytes = &mut pool.slice_mut(&self.block)[self.def.layout().pmaps.range()];
+            cast_slice_mut::<u8, u32>(bytes)[param] = bus.unwrap_or(u32::MAX);
+        }
+    }
+
+    /// Map audio-rate parameter `param` to audio `bus` (or unmap it with `None`) for `/n_mapa`. While
+    /// mapped, the parameter's audio wire takes the bus's block each block. No-op if out of range; a
+    /// non-audio param's slot is never read, so this is effectively a no-op there too.
+    pub(crate) fn map_control_audio(&mut self, pool: &mut Pool, param: usize, bus: Option<u32>) {
+        if param < self.def.num_params() {
+            let bytes = &mut pool.slice_mut(&self.block)[self.def.layout().amaps.range()];
             cast_slice_mut::<u8, u32>(bytes)[param] = bus.unwrap_or(u32::MAX);
         }
     }

@@ -82,6 +82,18 @@ pub enum Command {
         /// Control bus channel to read from, or `None` to unmap.
         bus: Option<u32>,
     },
+    /// Map audio-rate parameter `param` of node `node` to an audio bus, or unmap it (`bus = None`).
+    ///
+    /// While mapped, the parameter's audio wire takes the bus's block each control block (scsynth's
+    /// `/n_mapa`). Only meaningful for an `AudioControl` parameter.
+    MapControlAudio {
+        /// Target node's client id.
+        node: i32,
+        /// Parameter index.
+        param: usize,
+        /// Audio bus channel to read from, or `None` to unmap.
+        bus: Option<u32>,
+    },
     /// Free node `node` (deeply for a group), trashing any owned synths.
     FreeNode {
         /// Target node's client id.

@@ -207,7 +207,11 @@ impl SynthDef {
                 let wire = num_audio_wires;
                 num_audio_wires += 1;
                 param_source.push(InputSource::Audio(wire));
-                audio_params.push(AudioParam { value_slot, wire });
+                audio_params.push(AudioParam {
+                    param: p as u32,
+                    value_slot,
+                    wire,
+                });
             } else {
                 param_source.push(InputSource::Control(value_slot));
             }

@@ -371,6 +371,34 @@ impl Controller {
         Ok(())
     }
 
+    /// Map audio-rate parameter `param` of node `node` to audio `bus`, or unmap it with `None`
+    /// (scsynth's `/n_mapa`). While mapped, the parameter's audio wire takes the bus each block. Only
+    /// meaningful for an `AudioControl` parameter.
+    pub fn map_control_audio(
+        &mut self,
+        node: i32,
+        param: usize,
+        bus: Option<u32>,
+    ) -> Result<(), QueueFull> {
+        self.send(Command::MapControlAudio { node, param, bus })
+    }
+
+    /// Map `count` consecutive audio-rate parameters of `node` (from `param`) to consecutive audio
+    /// buses (from `bus`), or unmap them all with `None` (scsynth's `/n_mapan`).
+    pub fn map_control_audio_n(
+        &mut self,
+        node: i32,
+        param: usize,
+        bus: Option<u32>,
+        count: usize,
+    ) -> Result<(), QueueFull> {
+        for i in 0..count {
+            let mapped = bus.map(|b| b + i as u32);
+            self.map_control_audio(node, param + i, mapped)?;
+        }
+        Ok(())
+    }
+
     /// Free node `node` (deeply for a group: the group and its whole subtree).
     pub fn free(&mut self, node: i32) -> Result<(), QueueFull> {
         self.send(Command::FreeNode { node })

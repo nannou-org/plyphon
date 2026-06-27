@@ -488,6 +488,8 @@ impl OscDispatcher {
             "/c_fill" => self.c_fill(&message.args),
             "/n_map" => self.n_map(&message.args),
             "/n_mapn" => self.n_mapn(&message.args),
+            "/n_mapa" => self.n_mapa(&message.args),
+            "/n_mapan" => self.n_mapan(&message.args),
             "/b_alloc" => self.b_alloc(&message.args),
             "/b_free" => self.b_free(&message.args),
             "/b_zero" => self.b_zero(&message.args),
@@ -1381,6 +1383,47 @@ impl OscDispatcher {
             let count = count_arg(Some(&triple[2]))?;
             self.controller
                 .map_control_n(node, control, bus, count)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        Ok(())
+    }
+
+    fn n_mapa(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let node = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("n_mapa expects a node"))?,
+        )?;
+        let rest = &args[1..];
+        if !rest.len().is_multiple_of(2) {
+            return Err(OscError::BadArguments("n_mapa expects control/bus pairs"));
+        }
+        for pair in rest.chunks_exact(2) {
+            let control = self.control_index(node, &pair[0])?;
+            let bus = map_bus(&pair[1])?;
+            self.controller
+                .map_control_audio(node, control, bus)
+                .map_err(|_| OscError::QueueFull)?;
+        }
+        Ok(())
+    }
+
+    fn n_mapan(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let node = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("n_mapan expects a node"))?,
+        )?;
+        let rest = &args[1..];
+        if rest.is_empty() || !rest.len().is_multiple_of(3) {
+            return Err(OscError::BadArguments(
+                "n_mapan expects control/bus/count triples",
+            ));
+        }
+        for triple in rest.chunks_exact(3) {
+            let control = self.control_index(node, &triple[0])?;
+            let bus = map_bus(&triple[1])?;
+            let count = count_arg(Some(&triple[2]))?;
+            self.controller
+                .map_control_audio_n(node, control, bus, count)
                 .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())

@@ -355,6 +355,55 @@ fn maps_and_sets_control_buses_over_osc() {
     );
 }
 
+#[test]
+fn n_mapa_dispatches_over_osc() {
+    // `/n_mapa`/`/n_mapan` on a control parameter are no-ops, but must parse and dispatch cleanly -
+    // this guards the dispatch entries and handlers. (The audio-bus behaviour is covered by the
+    // `audio_control` integration test.)
+    let (controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    let mut dispatcher = OscDispatcher::new(controller);
+    dispatcher
+        .apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
+        .expect("/d_recv");
+    dispatcher
+        .apply_bytes(&osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ))
+        .expect("/s_new");
+    dispatcher
+        .apply_bytes(&osc(
+            "/n_mapa",
+            vec![
+                OscType::Int(1000),
+                OscType::String("freq".to_string()),
+                OscType::Int(0),
+            ],
+        ))
+        .expect("/n_mapa");
+    dispatcher
+        .apply_bytes(&osc(
+            "/n_mapan",
+            vec![
+                OscType::Int(1000),
+                OscType::String("freq".to_string()),
+                OscType::Int(0),
+                OscType::Int(1),
+            ],
+        ))
+        .expect("/n_mapan");
+    let _ = render(&mut world, 64);
+}
+
 /// Build a one-channel engine wrapped in a dispatcher.
 fn engine_1ch() -> (OscDispatcher, plyphon::Nrt, plyphon::World) {
     let (controller, nrt, world) = engine(Options {
