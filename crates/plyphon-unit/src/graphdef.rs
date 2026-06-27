@@ -135,6 +135,9 @@ pub struct GraphDef {
     /// Audio-rate parameters (`AudioControl`): each one's `(value_slot, audio_wire)`. Empty when the
     /// def has none. The process loop lifts each value slot to its audio wire every block.
     audio_params: Box<[AudioParam]>,
+    /// Value-slot (control wire) indices of `TrigControl` parameters. The process loop zeros each one
+    /// after the unit walk, so a `/n_set` is seen for exactly one block (scsynth's output-then-zero).
+    trig_params: Box<[u32]>,
     /// Number of control parameters.
     num_params: usize,
     /// Samples per control block.
@@ -155,6 +158,7 @@ impl GraphDef {
         control_defaults: Box<[f32]>,
         param_wires: Box<[u32]>,
         audio_params: Box<[AudioParam]>,
+        trig_params: Box<[u32]>,
         num_params: usize,
         block_size: usize,
     ) -> Self {
@@ -167,6 +171,7 @@ impl GraphDef {
             control_defaults,
             param_wires,
             audio_params,
+            trig_params,
             num_params,
             block_size,
         }
@@ -210,6 +215,11 @@ impl GraphDef {
     /// The audio-rate parameters (`AudioControl`), each as `(value_slot, audio_wire)`.
     pub fn audio_params(&self) -> &[AudioParam] {
         &self.audio_params
+    }
+
+    /// Value-slot control-wire indices of `TrigControl` parameters (zeroed after each block).
+    pub fn trig_params(&self) -> &[u32] {
+        &self.trig_params
     }
 
     /// Number of control parameters.

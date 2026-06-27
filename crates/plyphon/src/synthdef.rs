@@ -34,6 +34,9 @@ pub struct Param {
     /// audio-rate inputs and be mapped to an audio bus with `/n_mapa`. `Scalar`/`Demand` behave as
     /// `Control`. The `/n_set`/`/n_map`/`/c_get` target (the parameter's stored value) is unaffected.
     pub rate: Rate,
+    /// Whether this is a `TrigControl`: its value is seen for exactly the block it is set, then resets
+    /// to `0` (scsynth's "output then zero the control").
+    pub is_trig: bool,
 }
 
 impl Param {
@@ -43,6 +46,7 @@ impl Param {
             name: name.into(),
             default,
             rate: Rate::Control,
+            is_trig: false,
         }
     }
 
@@ -53,6 +57,17 @@ impl Param {
             name: name.into(),
             default,
             rate: Rate::Audio,
+            is_trig: false,
+        }
+    }
+
+    /// A trigger parameter (`TrigControl`): a `/n_set` is seen for one control block, then resets to 0.
+    pub fn trig(name: impl Into<String>, default: f32) -> Self {
+        Param {
+            name: name.into(),
+            default,
+            rate: Rate::Control,
+            is_trig: true,
         }
     }
 }
@@ -201,6 +216,7 @@ impl SynthDef {
         let mut num_audio_wires = 0u32;
         let mut param_source: Vec<InputSource> = Vec::with_capacity(num_params);
         let mut audio_params: Vec<AudioParam> = Vec::new();
+        let mut trig_params: Vec<u32> = Vec::new();
         for (p, param) in self.params.iter().enumerate() {
             let value_slot = param_wires[p];
             if param.rate == Rate::Audio {
@@ -213,7 +229,12 @@ impl SynthDef {
                     wire,
                 });
             } else {
+                // A control or trig param outputs its value slot directly; a trig param is
+                // additionally zeroed after the block (its value is seen for one block only).
                 param_source.push(InputSource::Control(value_slot));
+                if param.is_trig {
+                    trig_params.push(value_slot);
+                }
             }
         }
 
@@ -455,6 +476,7 @@ impl SynthDef {
             control_defaults.into_boxed_slice(),
             param_wires.into_boxed_slice(),
             audio_params.into_boxed_slice(),
+            trig_params.into_boxed_slice(),
             num_params,
             block_size,
         ))

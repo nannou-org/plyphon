@@ -245,6 +245,12 @@ impl Graph {
                 }
             }
         }
+        // `TrigControl`: now that the units have read them, zero each trigger param's value slot, so a
+        // `/n_set` is seen for exactly the block it lands in and reads `0` after (scsynth's
+        // "output then zero the control").
+        for &slot in def.trig_params() {
+            ctrl[slot as usize] = 0.0;
+        }
         done
     }
 

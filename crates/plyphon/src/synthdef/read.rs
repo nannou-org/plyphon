@@ -9,7 +9,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 use thiserror::Error;
 
@@ -56,6 +56,7 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
     // `AudioControl`'s audio-rate outputs become audio-rate params), and renumber the surviving UGens.
     let mut param_of: HashMap<(u32, u32), u32> = HashMap::new();
     let mut param_rate: HashMap<u32, Rate> = HashMap::new();
+    let mut param_trig: HashSet<u32> = HashSet::new();
     let mut remap: Vec<Option<u32>> = vec![None; def.ugens.len()];
     let mut next = 0u32;
     for (i, ugen) in def.ugens.iter().enumerate() {
@@ -65,6 +66,9 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
                 if param >= 0 {
                     param_of.insert((i as u32, output as u32), param as u32);
                     param_rate.insert(param as u32, rate(out_rate));
+                    if ugen.name == "TrigControl" {
+                        param_trig.insert(param as u32);
+                    }
                 }
             }
         } else {
@@ -85,6 +89,7 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
                 .get(&(i as u32))
                 .copied()
                 .unwrap_or(Rate::Control),
+            is_trig: param_trig.contains(&(i as u32)),
         })
         .collect();
     for named in &def.param_names {
