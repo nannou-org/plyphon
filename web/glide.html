@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>plyphon: glide</title>
+    <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
+    <script src="audio.js"></script>
+    <link data-trunk rel="copy-file" href="audio.js" />
+    <link data-trunk rel="copy-file" href="style.css" />
+    <link rel="stylesheet" href="style.css" />
+    <link
+      data-trunk
+      rel="rust"
+      href="../crates/examples/glide/Cargo.toml"
+      data-bin="example-glide"
+      data-cargo-profile-release="wasm_release"
+      data-wasm-opt="z"
+      data-wasm-opt-params="--enable-bulk-memory --enable-reference-types --enable-multivalue --enable-tail-call --enable-nontrapping-float-to-int"
+      data-initializer="initializer.js"
+    />
+  </head>
+  <body class="loading">
+    <div id="loading">
+      <p id="loading-title">plyphon</p>
+      <div id="loading-track"><div id="loading-bar"></div></div>
+    </div>
+    <main class="demo">
+      <p class="title">glide</p>
+      <p>
+        The control family. One synth plays a looping melody and is never restarted - the host just
+        retunes two special parameters each beat. <code>freq</code> is a <code>LagControl</code>, so a
+        <code>/n_set</code> <em>glides</em> to the new pitch (a one-pole de-zipper, one step per control
+        block) and the saw lead slides between notes. <code>trig</code> is a <code>TrigControl</code>,
+        seen for exactly one control block then reset to <code>0</code>; gated against noise it makes a
+        short percussive tick at each onset.
+      </p>
+      <p class="hint">Click anywhere to start audio.</p>
+      <a class="back" href="../">&larr; all examples</a>
+    </main>
+  </body>
+</html>
