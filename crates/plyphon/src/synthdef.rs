@@ -15,12 +15,27 @@ use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
+use plyphon_dsp::math;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_unit::error::BuildError;
-use plyphon_unit::graphdef::{AudioParam, GraphDef, OutputWire, UnitVtbl, build_layout};
+use plyphon_unit::graphdef::{AudioParam, GraphDef, LagParam, OutputWire, UnitVtbl, build_layout};
 use plyphon_unit::unit::demand::{BuiltDemandUnit, DemandVtbl, MAX_DEMAND_DEPTH, MAX_DEMAND_STATE};
 use plyphon_unit::unit::registry::{BuildContext, UnitRegistry};
 use plyphon_unit::unit::{BuiltUnit, InputSource};
+
+/// `ln(0.001)` - scsynth's -60 dB decay target for lag coefficients.
+const LOG001: f32 = -6.907_755;
+
+/// A `LagControl` one-pole coefficient: the per-control-block multiplier that decays to 0.001 of a
+/// step over `lag` seconds (`0` - immediate - for a non-positive lag). scsynth computes this from the
+/// *control* rate, since the lag updates once per block.
+fn lag_coef(lag: f32, control_rate: f32) -> f32 {
+    if lag > 0.0 {
+        math::exp(LOG001 / (lag * control_rate))
+    } else {
+        0.0
+    }
+}
 
 /// A named control parameter with a default value (settable later via `set_control`).
 #[derive(Clone, Debug)]
@@ -37,6 +52,9 @@ pub struct Param {
     /// Whether this is a `TrigControl`: its value is seen for exactly the block it is set, then resets
     /// to `0` (scsynth's "output then zero the control").
     pub is_trig: bool,
+    /// `Some(lagTime)` for a `LagControl`: its value is smoothed by a one-pole that decays to within
+    /// 0.1% of a new target over `lagTime` seconds (one step per control block). `None` otherwise.
+    pub lag: Option<f32>,
 }
 
 impl Param {
@@ -47,6 +65,7 @@ impl Param {
             default,
             rate: Rate::Control,
             is_trig: false,
+            lag: None,
         }
     }
 
@@ -58,6 +77,7 @@ impl Param {
             default,
             rate: Rate::Audio,
             is_trig: false,
+            lag: None,
         }
     }
 
@@ -68,6 +88,18 @@ impl Param {
             default,
             rate: Rate::Control,
             is_trig: true,
+            lag: None,
+        }
+    }
+
+    /// A lagged parameter (`LagControl`): its value is de-zippered by a one-pole over `lag` seconds.
+    pub fn lag(name: impl Into<String>, default: f32, lag: f32) -> Self {
+        Param {
+            name: name.into(),
+            default,
+            rate: Rate::Control,
+            is_trig: false,
+            lag: Some(lag),
         }
     }
 }
@@ -211,12 +243,16 @@ impl SynthDef {
 
         // Resolve each parameter. Every param's value lives in its control wire (`p`, the
         // `/n_set`/`/n_map`/`control_value` target). A *control* param's output is that wire directly;
-        // an *audio* param (`AudioControl`) additionally outputs an audio wire, lifted from the value
-        // each block (see `Graph::process`). Allocate those audio param wires first.
+        // an *audio* param (`AudioControl`) outputs an audio wire lifted from the value each block; a
+        // *lagged* param (`LagControl`) outputs a separate control wire, one-poled from the value. A
+        // *trig* param (`TrigControl`) outputs its value slot but is zeroed after the block.
         let mut num_audio_wires = 0u32;
+        let mut num_control_wires = num_params as u32;
         let mut param_source: Vec<InputSource> = Vec::with_capacity(num_params);
         let mut audio_params: Vec<AudioParam> = Vec::new();
         let mut trig_params: Vec<u32> = Vec::new();
+        let mut lag_params: Vec<LagParam> = Vec::new();
+        let control_rate = control.sample_rate as f32;
         for (p, param) in self.params.iter().enumerate() {
             let value_slot = param_wires[p];
             if param.rate == Rate::Audio {
@@ -228,9 +264,16 @@ impl SynthDef {
                     value_slot,
                     wire,
                 });
+            } else if let Some(lag) = param.lag {
+                let wire = num_control_wires;
+                num_control_wires += 1;
+                param_source.push(InputSource::Control(wire));
+                lag_params.push(LagParam {
+                    value_slot,
+                    wire,
+                    b1: lag_coef(lag, control_rate),
+                });
             } else {
-                // A control or trig param outputs its value slot directly; a trig param is
-                // additionally zeroed after the block (its value is seen for one block only).
                 param_source.push(InputSource::Control(value_slot));
                 if param.is_trig {
                     trig_params.push(value_slot);
@@ -240,8 +283,7 @@ impl SynthDef {
 
         // Pass 1: assign a wire to each (unit, output) of the *calc* units by rate. Audio outputs go
         // to audio wires (after the audio param wires); control/scalar outputs go to control wires
-        // after the parameter wires. Demand units get an empty slot so `outputs_plan` stays indexable.
-        let mut num_control_wires = num_params as u32;
+        // after the parameter and lag wires. Demand units get an empty slot so `outputs_plan` indexes.
         let mut outputs_plan: Vec<Box<[OutputWire]>> = Vec::with_capacity(self.units.len());
         for spec in &self.units {
             if spec.rate == Rate::Demand {
@@ -426,6 +468,7 @@ impl SynthDef {
             num_control_wires as usize,
             num_params,
             num_local_channels,
+            lag_params.len(),
             block_size,
         );
         let mut state_image = vec![0u8; layout.state.len];
@@ -477,6 +520,7 @@ impl SynthDef {
             param_wires.into_boxed_slice(),
             audio_params.into_boxed_slice(),
             trig_params.into_boxed_slice(),
+            lag_params.into_boxed_slice(),
             num_params,
             block_size,
         ))

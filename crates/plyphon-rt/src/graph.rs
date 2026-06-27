@@ -107,7 +107,7 @@ impl Graph {
         let bs = def.block_size();
         let layout = def.layout();
 
-        // Carve the per-graph block into its seven disjoint spans (proved disjoint once, here). The
+        // Carve the per-graph block into its eight disjoint spans (proved disjoint once, here). The
         // calc-unit state and the demand-state arena are separate spans so a calc unit's `&mut` state
         // slot and the `&mut` demand arena (pulled re-entrantly during its `process`) never alias.
         let buf = block.pool.slice_mut(&self.block);
@@ -120,6 +120,7 @@ impl Graph {
                 done_bytes,
                 local_bytes,
                 amap_bytes,
+                lag_bytes,
             ],
         ) = buf.get_disjoint_mut([
             layout.state.range(),
@@ -129,6 +130,7 @@ impl Graph {
             layout.done_flags.range(),
             layout.local.range(),
             layout.amaps.range(),
+            layout.lag_state.range(),
         ])
         else {
             // Unreachable: the layout's spans are contiguous and disjoint by construction.
@@ -144,6 +146,8 @@ impl Graph {
         let local = cast_slice_mut::<u8, f32>(local_bytes);
         // Per-parameter audio-bus maps (`/n_mapa`); read for audio params in the lift below.
         let amaps = cast_slice::<u8, u32>(amap_bytes);
+        // Per-lag-param one-pole state (`LagControl`); seeded at build, updated each block below.
+        let lag_state = cast_slice_mut::<u8, f32>(lag_bytes);
         // Audio wires and output scratch are World-shared (separate allocations), reused per graph.
         let audio = &mut *block.wire_scratch;
         let scratch = &mut *block.unit_scratch;
@@ -170,6 +174,15 @@ impl Graph {
             } else {
                 audio[dst..dst + bs].fill(ctrl[ap.value_slot as usize]);
             }
+        }
+        // De-zipper each lagged param (`LagControl`): one one-pole step per block from its value slot
+        // (possibly just `/n_map`'d) into its lagged output wire. The state was seeded to the default
+        // at build, so the first block holds steady.
+        for (li, lp) in def.lag_params().iter().enumerate() {
+            let x = ctrl[lp.value_slot as usize];
+            let y = x + lp.b1 * (lag_state[li] - x);
+            lag_state[li] = y;
+            ctrl[lp.wire as usize] = y;
         }
 
         // On the first block only, run each unit's one-time `init` seeding pass (in topo order, just

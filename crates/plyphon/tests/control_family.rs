@@ -76,3 +76,52 @@ fn trig_control_default_fires_on_first_block() {
     );
     assert_eq!(one(&mut world), 0.0, "then resets to 0");
 }
+
+#[test]
+fn lag_control_dezippers_a_step() {
+    let (mut controller, _nrt, mut world) = engine(opts());
+    let lag = 0.01; // seconds
+    controller.add_synthdef(def("lag", Param::lag("f", 0.0, lag)));
+    let node = controller
+        .synth_new("lag", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+
+    assert_eq!(one(&mut world), 0.0, "holds at the seeded default");
+    controller.set_control(node, 0, 1.0).unwrap();
+    // First block after the step: a partial one-pole move, not the full target.
+    let first = one(&mut world);
+    assert!(
+        first > 0.0 && first < 0.95,
+        "de-zippers, not instant: got {first}"
+    );
+    // After ~lag seconds (lag * controlRate blocks) it settles to within 0.1% - the -60 dB target.
+    // This also confirms the coefficient uses the *control* rate: at audio rate it would barely move
+    // over the same span.
+    let control_rate = 48_000.0 / BLOCK as f32; // = 750 blocks/s
+    let blocks = (lag * control_rate).ceil() as usize; // ~8
+    let mut last = first;
+    for _ in 0..blocks {
+        last = one(&mut world);
+    }
+    assert!(
+        last > 0.99,
+        "settles toward the target after the lag time: got {last}"
+    );
+}
+
+#[test]
+fn lag_control_zero_lag_is_instant() {
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller.add_synthdef(def("lag0", Param::lag("f", 0.0, 0.0)));
+    let node = controller
+        .synth_new("lag0", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+
+    assert_eq!(one(&mut world), 0.0, "holds at the default");
+    controller.set_control(node, 0, 1.0).unwrap();
+    assert_eq!(
+        one(&mut world),
+        1.0,
+        "a zero lag follows the step instantly"
+    );
+}

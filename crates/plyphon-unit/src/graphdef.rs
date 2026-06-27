@@ -37,6 +37,19 @@ pub struct AudioParam {
     pub wire: u32,
 }
 
+/// A lagged parameter (`LagControl`). Its stored value lives in a control wire (`value_slot`, the
+/// `/n_set`/`/n_map` target); each block a one-pole with coefficient `b1` smooths it into a separate
+/// `wire` (what consumers read), with the per-instance state kept in the `lag_state` span.
+#[derive(Copy, Clone, Debug)]
+pub struct LagParam {
+    /// Control-wire index holding the parameter's (un-lagged) value.
+    pub value_slot: u32,
+    /// Control-wire index of the lagged output (what consumers of the param read).
+    pub wire: u32,
+    /// One-pole coefficient (`exp(ln(0.001) / (lagTime * controlRate))`), precomputed at compile.
+    pub b1: f32,
+}
+
 /// One unit's compiled record: its calc/seed vtable, resolved wiring, and state slot in the arena -
 /// plyphon's per-unit `UnitSpec` plus `mCalcFunc`.
 pub struct UnitVtbl {
@@ -78,7 +91,7 @@ impl Span {
 ///
 /// Laid out so every span is correctly aligned given a 64-byte-aligned block base: the two state
 /// arenas (alignment up to 8, for `f64` state) come first, then the 4-byte-aligned `f32` control
-/// wires, `u32` param maps, `u32` done flags, the `f32` local feedback bus, and the `u32` audio-bus maps. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
+/// wires, `u32` param maps, `u32` done flags, the `f32` local feedback bus, the `u32` audio-bus maps, and the `f32` lag state. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
 /// them never fails, and the `bytemuck` casts never hit an alignment error. The calc-unit and
 /// demand-unit state are *separate* spans so the audio thread can hold a calc unit's `&mut` state
 /// slot and the `&mut` demand arena at once (the latter is pulled re-entrantly while the former runs).
@@ -106,6 +119,9 @@ pub struct BlockLayout {
     /// Per-parameter audio-bus map (`u32`; `u32::MAX` = unmapped) for `/n_mapa`. Only audio-rate
     /// parameters read their slot; control params' slots are unused.
     pub amaps: Span,
+    /// One-pole state (`f32`) for each `LagControl` parameter, indexed by lag-param position. Empty
+    /// when the def has no lagged params.
+    pub lag_state: Span,
     /// Total block size in bytes.
     pub total: usize,
 }
@@ -138,6 +154,9 @@ pub struct GraphDef {
     /// Value-slot (control wire) indices of `TrigControl` parameters. The process loop zeros each one
     /// after the unit walk, so a `/n_set` is seen for exactly one block (scsynth's output-then-zero).
     trig_params: Box<[u32]>,
+    /// Lagged parameters (`LagControl`): each one's `(value_slot, lagged_wire, b1)`. Indexed by
+    /// position into the `lag_state` span (one `f32` of one-pole state per lag param).
+    lag_params: Box<[LagParam]>,
     /// Number of control parameters.
     num_params: usize,
     /// Samples per control block.
@@ -159,6 +178,7 @@ impl GraphDef {
         param_wires: Box<[u32]>,
         audio_params: Box<[AudioParam]>,
         trig_params: Box<[u32]>,
+        lag_params: Box<[LagParam]>,
         num_params: usize,
         block_size: usize,
     ) -> Self {
@@ -172,6 +192,7 @@ impl GraphDef {
             param_wires,
             audio_params,
             trig_params,
+            lag_params,
             num_params,
             block_size,
         }
@@ -222,6 +243,12 @@ impl GraphDef {
         &self.trig_params
     }
 
+    /// The lagged parameters (`LagControl`), each as `(value_slot, lagged_wire, b1)`. Indexed by
+    /// position into the `lag_state` span.
+    pub fn lag_params(&self) -> &[LagParam] {
+        &self.lag_params
+    }
+
     /// Number of control parameters.
     pub fn num_params(&self) -> usize {
         self.num_params
@@ -252,6 +279,7 @@ pub fn build_layout(
     num_control_wires: usize,
     num_params: usize,
     num_local_channels: usize,
+    num_lag_params: usize,
     block_size: usize,
 ) -> (BlockLayout, Vec<usize>, Vec<usize>) {
     let pack = |slots: &[(usize, usize)]| -> (Vec<usize>, usize) {
@@ -300,7 +328,12 @@ pub fn build_layout(
         off: local.off + local.len,
         len: num_params * 4,
     };
-    let total = amaps.off + amaps.len;
+    // One `f32` one-pole state per lagged param (`LagControl`), 4-byte-aligned after the audio maps.
+    let lag_state = Span {
+        off: amaps.off + amaps.len,
+        len: num_lag_params * 4,
+    };
+    let total = lag_state.off + lag_state.len;
     (
         BlockLayout {
             state,
@@ -310,6 +343,7 @@ pub fn build_layout(
             done_flags,
             local,
             amaps,
+            lag_state,
             total,
         },
         offsets,

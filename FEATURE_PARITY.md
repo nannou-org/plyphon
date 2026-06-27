@@ -170,7 +170,7 @@ model; the intent is to surface them as typed higher-level actions for the embed
 ## SynthDefs & buffers
 
 - [x] SCgf binary SynthDefs load via `/d_recv` (and the [`scgf`](crates/scgf) crate also encodes them); named parameters are folded from SC's `Control` UGens
-- [ ] Control family beyond plain `Control`: `AudioControl` is rate-aware (an audio-rate parameter, lifted to an audio wire each block and mappable with `/n_mapa`); `TrigControl`/`LagControl` parse but still behave as plain controls
+- [x] Control family beyond plain `Control`: `AudioControl` (an audio-rate parameter, lifted to an audio wire each block and mappable with `/n_mapa`), `TrigControl` (a `/n_set` is seen for one block then resets to 0), and `LagControl` (a control-rate one-pole de-zipper, lag times from the folded UGen's inputs)
 - [x] Buffers: allocate, free, zero, query, `b_gen` (sine/cheby/copy) fills, `b_get`/`b_set` element access, and asynchronous loading through an app-provided [`BufferSource`](crates/plyphon-buffers) (the I/O seam), plus chunk-streaming playback with `DiskIn`
 - [ ] Writing/recording buffers to disk and `b_gen` wavetable fills (no `Osc` UGen to consume them yet)
 

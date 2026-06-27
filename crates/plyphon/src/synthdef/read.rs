@@ -57,6 +57,7 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
     let mut param_of: HashMap<(u32, u32), u32> = HashMap::new();
     let mut param_rate: HashMap<u32, Rate> = HashMap::new();
     let mut param_trig: HashSet<u32> = HashSet::new();
+    let mut param_lag: HashMap<u32, f32> = HashMap::new();
     let mut remap: Vec<Option<u32>> = vec![None; def.ugens.len()];
     let mut next = 0u32;
     for (i, ugen) in def.ugens.iter().enumerate() {
@@ -68,6 +69,13 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
                     param_rate.insert(param as u32, rate(out_rate));
                     if ugen.name == "TrigControl" {
                         param_trig.insert(param as u32);
+                    }
+                    // A `LagControl`'s per-output lag time is the corresponding (constant) UGen input.
+                    if ugen.name == "LagControl"
+                        && let Some(scgf::Input::Constant { index }) = ugen.inputs.get(output)
+                        && let Some(&lag) = def.constants.get(*index as usize)
+                    {
+                        param_lag.insert(param as u32, lag);
                     }
                 }
             }
@@ -90,6 +98,7 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
                 .copied()
                 .unwrap_or(Rate::Control),
             is_trig: param_trig.contains(&(i as u32)),
+            lag: param_lag.get(&(i as u32)).copied(),
         })
         .collect();
     for named in &def.param_names {
