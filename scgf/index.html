@@ -80,7 +80,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './example-scgf.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-scgf_bg.wasm', 191854, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-scgf_bg.wasm', 200241, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,7 +89,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-scgf.js" crossorigin="anonymous" integrity="sha384-algKATbwFiGqg0dtFWd/5KWaWcRcBUfwv3QZgpPL0LhnESL2kO7Fpo+bwGS8qGPC"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-scgf_bg.wasm" crossorigin="anonymous" integrity="sha384-xVDpXIix7rKubZTkFuxD0w4XUSLzkC2gyd20yUlhu/nqZZuNWZ5X/MlGjiOA7XFR" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-scgf.js" crossorigin="anonymous" integrity="sha384-JREz1GuOJQPcMte41Y6NPTVn5UcYAsbgK1mzY1jNP4KRu1aYbSz2wV+1kppOqOVC"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-scgf_bg.wasm" crossorigin="anonymous" integrity="sha384-vz68OZf4E6Lmbkaq8AeWeRljSDipJlXAH5eifXZlkqU0bWqJkBL12ctcD6AZTPAX" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>

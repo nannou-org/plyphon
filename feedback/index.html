@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" href="data:," />
-    <title>plyphon: duty-seq</title>
+    <title>plyphon: feedback</title>
     <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
     <script src="audio.js"></script>
     
@@ -77,10 +77,10 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 }
 
 
-import init, * as bindings from './example-duty-seq.js';
+import init, * as bindings from './example-feedback.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-duty-seq_bg.wasm', 184888, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-feedback_bg.wasm', 181682, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,15 +89,20 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-duty-seq.js" crossorigin="anonymous" integrity="sha384-Vi2GSXgr3WYIZtrjGtbYGXUdhfYV1xTe8tB0D5vGQyesygyNEfUo0UiGLZpyeguo"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-duty-seq_bg.wasm" crossorigin="anonymous" integrity="sha384-h8nMDUCVaNXrGWr5Z51ukbjxC3BD1qX1MLJICd/P2luaknbzYqHu+EgaCH0Vp/Yv" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-feedback.js" crossorigin="anonymous" integrity="sha384-iEXIhKAJz2MbLfSgRaVCUU9GUSeoRzwPkykcXNd/QKdZ1Fq5g1t2DoLhnJltLl6o"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-feedback_bg.wasm" crossorigin="anonymous" integrity="sha384-BWMXTmHJwMiMpcA1ewrOuRu9dGkY9qc/migP+fDS5B8wsD5B0dCIr1ih0xSLlQ8+" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>
       <div id="loading-track"><div id="loading-bar"></div></div>
     </div>
     <main class="demo">
-      <p class="title">duty-seq</p>
-      <p>A self-driving melodic sequencer: <code>Duty.kr</code> pulls the next pitch and beat from demand-rate sources on the audio thread, with no per-note control messages.</p>
+      <p class="title">feedback</p>
+      <p>
+        Feedback FM: three voices each frequency-modulate a sine with their <em>own</em> output, read
+        back a block late through <code>LocalIn</code>/<code>LocalOut</code> (a per-synth feedback
+        bus). A slow LFO sweeps each voice's modulation index, so the chord breathes between pure and
+        bright. <code>LocalIn</code> runs before <code>LocalOut</code>, giving the one-block delay.
+      </p>
       <p class="hint">Click anywhere to start audio.</p>
       <a class="back" href="../">&larr; all examples</a>
     </main>

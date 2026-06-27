@@ -80,7 +80,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './example-osc.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-osc_bg.wasm', 251738, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-osc_bg.wasm', 261489, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,7 +89,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-osc.js" crossorigin="anonymous" integrity="sha384-zX1b2JEA/JH5KRSK91gUBDnO6gXpVxZWGQEQYLuTic9ZTl2dK+ZvS8aoT7KRV6EG"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-osc_bg.wasm" crossorigin="anonymous" integrity="sha384-G9njGMqgi838Lx1lrzKFipkkPzXFAzL+GsololG5RvOQZGWV3J5i2o5Be2wVV9rs" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-osc.js" crossorigin="anonymous" integrity="sha384-zX1b2JEA/JH5KRSK91gUBDnO6gXpVxZWGQEQYLuTic9ZTl2dK+ZvS8aoT7KRV6EG"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-osc_bg.wasm" crossorigin="anonymous" integrity="sha384-mMKMsJalYtd9GR6vEMeDfNcYRX/qq6gWL6WB48pZdNX5/3W8izdALQlYsqy7YcTA" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>
