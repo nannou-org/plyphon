@@ -160,10 +160,7 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
     }
     let note = SynthDef {
         name: "note".to_string(),
-        params: vec![Param {
-            name: "freq".to_string(),
-            default: BASE_FREQ,
-        }],
+        params: vec![Param::control("freq", BASE_FREQ)],
         units: vec![
             UnitSpec {
                 name: "Line".to_string(),

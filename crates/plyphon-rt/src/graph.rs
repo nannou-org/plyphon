@@ -150,6 +150,13 @@ impl Graph {
                 ctrl[def.param_wires()[p] as usize] = unit::control_in(block.buses, bus as usize);
             }
         }
+        // Lift each audio-rate param (`AudioControl`) from its value slot (a control wire, possibly
+        // just updated by `/n_map`) to its audio wire, so audio-rate consumers read it as a block.
+        for ap in def.audio_params() {
+            let value = ctrl[ap.value_slot as usize];
+            let dst = ap.wire as usize * bs;
+            audio[dst..dst + bs].fill(value);
+        }
 
         // On the first block only, run each unit's one-time `init` seeding pass (in topo order, just
         // before its first `process`), so state is seeded from now-live inputs.

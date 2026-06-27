@@ -244,10 +244,7 @@ fn blip_def(channels: usize) -> SynthDef {
     }
     SynthDef {
         name: "blip".into(),
-        params: vec![Param {
-            name: "freq".into(),
-            default: 440.0,
-        }],
+        params: vec![Param::control("freq", 440.0)],
         units: vec![
             UnitSpec::new("EnvGen", Rate::Control, perc_env_inputs(), 1),
             UnitSpec::new(

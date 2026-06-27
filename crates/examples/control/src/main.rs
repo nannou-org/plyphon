@@ -70,16 +70,7 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
     }
     let def = SynthDef {
         name: "voice".to_string(),
-        params: vec![
-            Param {
-                name: "freq".to_string(),
-                default: 220.0,
-            },
-            Param {
-                name: "ratio".to_string(),
-                default: 1.0,
-            },
-        ],
+        params: vec![Param::control("freq", 220.0), Param::control("ratio", 1.0)],
         units: vec![
             UnitSpec {
                 name: "BinaryOpUGen".to_string(),

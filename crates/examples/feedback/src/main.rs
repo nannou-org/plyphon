@@ -68,14 +68,8 @@ fn fbvoice_def(channels: usize) -> SynthDef {
     SynthDef {
         name: "fbvoice".to_string(),
         params: vec![
-            Param {
-                name: "freq".to_string(),
-                default: 220.0,
-            },
-            Param {
-                name: "lfoRate".to_string(),
-                default: 0.1,
-            },
+            Param::control("freq", 220.0),
+            Param::control("lfoRate", 0.1),
         ],
         units: vec![
             // 0: LocalIn.ar(1) - this voice's output from the previous block.

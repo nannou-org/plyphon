@@ -171,7 +171,7 @@ defers I/O to an app-provided `BufferSource`.
 ## SynthDefs & buffers
 
 - [x] SCgf binary SynthDefs load via `/d_recv` (and the [`scgf`](crates/scgf) crate also encodes them); named parameters are folded from SC's `Control` UGens
-- [ ] Control family beyond plain `Control`: `TrigControl`/`LagControl` parse but behave as plain controls; SynthDef variants
+- [ ] Control family beyond plain `Control`: `AudioControl` is rate-aware (an audio-rate parameter, lifted to an audio wire each block and mappable with `/n_mapa`); `TrigControl`/`LagControl` parse but still behave as plain controls
 - [x] Buffers: allocate, free, zero, query, `b_gen` (sine/cheby/copy) fills, `b_get`/`b_set` element access, and asynchronous loading through an app-provided [`BufferSource`](crates/plyphon-buffers) (the I/O seam), plus chunk-streaming playback with `DiskIn`
 - [ ] Writing/recording buffers to disk and `b_gen` wavetable fills (no `Osc` UGen to consume them yet)
 

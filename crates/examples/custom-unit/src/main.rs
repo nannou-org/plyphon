@@ -145,10 +145,7 @@ fn build(sample_rate: f32, channels: usize) -> World {
     }
     let def = SynthDef {
         name: "distorted".to_string(),
-        params: vec![Param {
-            name: "drive".to_string(),
-            default: DRIVE,
-        }],
+        params: vec![Param::control("drive", DRIVE)],
         units: vec![
             // 0: the tone.
             UnitSpec::new(

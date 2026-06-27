@@ -41,10 +41,7 @@ fn lag_seeds_to_its_input_on_the_first_block() {
     // at 5; without it the smoother ramps up from zero, an audible onset glitch.
     let def = SynthDef {
         name: "test".to_string(),
-        params: vec![Param {
-            name: "in".to_string(),
-            default: 0.0,
-        }],
+        params: vec![Param::control("in", 0.0)],
         units: vec![
             unit("Lag", vec![InputRef::Param(0), InputRef::Constant(1.0)], 1),
             unit(
@@ -164,10 +161,7 @@ fn lag_smooths_a_step() {
     // contrast, is held from the first sample - that case is covered by the seeding test above.)
     let def = SynthDef {
         name: "test".to_string(),
-        params: vec![Param {
-            name: "in".to_string(),
-            default: 0.0,
-        }],
+        params: vec![Param::control("in", 0.0)],
         units: vec![
             unit("Lag", vec![InputRef::Param(0), InputRef::Constant(0.1)], 1),
             unit(

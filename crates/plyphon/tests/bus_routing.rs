@@ -210,10 +210,7 @@ fn n_map_maps_control_to_bus() {
     // SinOsc.ar(freq) -> Out.ar(0) with a settable `freq` control defaulting to 440.
     let def = SynthDef {
         name: "mapped".to_string(),
-        params: vec![plyphon::Param {
-            name: "freq".to_string(),
-            default: 440.0,
-        }],
+        params: vec![plyphon::Param::control("freq", 440.0)],
         units: vec![
             UnitSpec::new(
                 "SinOsc",

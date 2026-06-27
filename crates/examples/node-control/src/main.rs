@@ -136,10 +136,7 @@ fn drone_def(channels: usize) -> SynthDef {
     }
     SynthDef {
         name: "drone".to_string(),
-        params: vec![Param {
-            name: "freq".to_string(),
-            default: 220.0,
-        }],
+        params: vec![Param::control("freq", 220.0)],
         units: vec![
             UnitSpec::new(
                 "SinOsc",
@@ -171,16 +168,7 @@ fn drone_def(channels: usize) -> SynthDef {
 fn gater_def() -> SynthDef {
     SynthDef {
         name: "gater".to_string(),
-        params: vec![
-            Param {
-                name: "rate".to_string(),
-                default: 2.0,
-            },
-            Param {
-                name: "id".to_string(),
-                default: -1.0,
-            },
-        ],
+        params: vec![Param::control("rate", 2.0), Param::control("id", -1.0)],
         units: vec![
             // unit 0: In.kr(PANIC_BUS) - the host-raised "free everything" signal.
             UnitSpec::new(

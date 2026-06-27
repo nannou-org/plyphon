@@ -33,16 +33,7 @@ fn peak(samples: &[f32]) -> f32 {
 fn amped_sine() -> SynthDef {
     SynthDef {
         name: "amped".to_string(),
-        params: vec![
-            Param {
-                name: "freq".to_string(),
-                default: 440.0,
-            },
-            Param {
-                name: "amp".to_string(),
-                default: 0.5,
-            },
-        ],
+        params: vec![Param::control("freq", 440.0), Param::control("amp", 0.5)],
         units: vec![
             UnitSpec::new(
                 "SinOsc",
@@ -97,10 +88,7 @@ fn binary_op_multiply_scales_amplitude() {
 fn unary_op_abs_rectifies() {
     let def = SynthDef {
         name: "rect".to_string(),
-        params: vec![Param {
-            name: "freq".to_string(),
-            default: 440.0,
-        }],
+        params: vec![Param::control("freq", 440.0)],
         units: vec![
             UnitSpec::new(
                 "SinOsc",

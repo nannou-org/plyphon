@@ -242,10 +242,7 @@ mod tests {
     fn noise_def() -> SynthDef {
         SynthDef {
             name: "noise".into(),
-            params: vec![Param {
-                name: "amp".into(),
-                default: 1.0,
-            }],
+            params: vec![Param::control("amp", 1.0)],
             units: vec![
                 UnitSpec::new("WhiteNoise", Rate::Audio, vec![], 1),
                 UnitSpec::new(

@@ -33,9 +33,13 @@ pub fn parse(data: &[u8]) -> Result<Vec<SynthDef>, ReadError> {
     file.defs.iter().map(convert).collect()
 }
 
-/// Whether `name` is a control-rate parameter UGen that plyphon folds into [`Param`]s.
+/// Whether `name` is a parameter UGen that plyphon folds into [`Param`]s. `AudioControl` produces
+/// audio-rate parameters; the rest are control-rate.
 fn is_control(name: &str) -> bool {
-    matches!(name, "Control" | "TrigControl" | "LagControl")
+    matches!(
+        name,
+        "Control" | "TrigControl" | "LagControl" | "AudioControl"
+    )
 }
 
 fn rate(rate: scgf::Rate) -> Rate {
@@ -48,16 +52,19 @@ fn rate(rate: scgf::Rate) -> Rate {
 }
 
 fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
-    // Map each control UGen output to its parameter index, and renumber the surviving UGens.
+    // Map each control UGen output to its parameter index (and capture the output's rate, so an
+    // `AudioControl`'s audio-rate outputs become audio-rate params), and renumber the surviving UGens.
     let mut param_of: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut param_rate: HashMap<u32, Rate> = HashMap::new();
     let mut remap: Vec<Option<u32>> = vec![None; def.ugens.len()];
     let mut next = 0u32;
     for (i, ugen) in def.ugens.iter().enumerate() {
         if is_control(&ugen.name) {
-            for output in 0..ugen.outputs.len() {
+            for (output, &out_rate) in ugen.outputs.iter().enumerate() {
                 let param = ugen.special_index as i64 + output as i64;
                 if param >= 0 {
                     param_of.insert((i as u32, output as u32), param as u32);
+                    param_rate.insert(param as u32, rate(out_rate));
                 }
             }
         } else {
@@ -66,13 +73,18 @@ fn convert(def: &scgf::SynthDef) -> Result<SynthDef, ReadError> {
         }
     }
 
-    // Parameters: defaults from the value array, names attached by index.
+    // Parameters: defaults from the value array, names attached by index, rate from the folded UGen.
     let mut params: Vec<Param> = def
         .param_values
         .iter()
-        .map(|&default| Param {
+        .enumerate()
+        .map(|(i, &default)| Param {
             name: String::new(),
             default,
+            rate: param_rate
+                .get(&(i as u32))
+                .copied()
+                .unwrap_or(Rate::Control),
         })
         .collect();
     for named in &def.param_names {

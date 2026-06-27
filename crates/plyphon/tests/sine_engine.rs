@@ -11,10 +11,7 @@ const SR: f32 = 48_000.0;
 fn sine_def() -> SynthDef {
     SynthDef {
         name: "sine".to_string(),
-        params: vec![Param {
-            name: "freq".to_string(),
-            default: 440.0,
-        }],
+        params: vec![Param::control("freq", 440.0)],
         units: vec![
             UnitSpec::new(
                 "SinOsc",

@@ -17,7 +17,7 @@ use hashbrown::HashMap;
 
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_unit::error::BuildError;
-use plyphon_unit::graphdef::{GraphDef, OutputWire, UnitVtbl, build_layout};
+use plyphon_unit::graphdef::{AudioParam, GraphDef, OutputWire, UnitVtbl, build_layout};
 use plyphon_unit::unit::demand::{BuiltDemandUnit, DemandVtbl, MAX_DEMAND_DEPTH, MAX_DEMAND_STATE};
 use plyphon_unit::unit::registry::{BuildContext, UnitRegistry};
 use plyphon_unit::unit::{BuiltUnit, InputSource};
@@ -29,6 +29,32 @@ pub struct Param {
     pub name: String,
     /// Initial value.
     pub default: f32,
+    /// The rate of the parameter's *output*. `Control` (the default) is an ordinary control; `Audio`
+    /// is an `AudioControl` - its value is lifted to an audio wire each block, so it can feed
+    /// audio-rate inputs and be mapped to an audio bus with `/n_mapa`. `Scalar`/`Demand` behave as
+    /// `Control`. The `/n_set`/`/n_map`/`/c_get` target (the parameter's stored value) is unaffected.
+    pub rate: Rate,
+}
+
+impl Param {
+    /// A control-rate parameter (the common case).
+    pub fn control(name: impl Into<String>, default: f32) -> Self {
+        Param {
+            name: name.into(),
+            default,
+            rate: Rate::Control,
+        }
+    }
+
+    /// An audio-rate parameter (`AudioControl`): its value feeds audio-rate inputs and can be mapped
+    /// to an audio bus with `/n_mapa`.
+    pub fn audio(name: impl Into<String>, default: f32) -> Self {
+        Param {
+            name: name.into(),
+            default,
+            rate: Rate::Audio,
+        }
+    }
 }
 
 /// Where a unit input comes from, as specified in a [`SynthDef`].
@@ -168,10 +194,28 @@ impl SynthDef {
             });
         }
 
-        // Pass 1: assign a wire to each (unit, output) of the *calc* units by rate. Audio outputs go
-        // to audio wires; control/scalar outputs go to control wires after the parameter wires.
-        // Demand units get an empty slot so `outputs_plan` stays indexable by original unit index.
+        // Resolve each parameter. Every param's value lives in its control wire (`p`, the
+        // `/n_set`/`/n_map`/`control_value` target). A *control* param's output is that wire directly;
+        // an *audio* param (`AudioControl`) additionally outputs an audio wire, lifted from the value
+        // each block (see `Graph::process`). Allocate those audio param wires first.
         let mut num_audio_wires = 0u32;
+        let mut param_source: Vec<InputSource> = Vec::with_capacity(num_params);
+        let mut audio_params: Vec<AudioParam> = Vec::new();
+        for (p, param) in self.params.iter().enumerate() {
+            let value_slot = param_wires[p];
+            if param.rate == Rate::Audio {
+                let wire = num_audio_wires;
+                num_audio_wires += 1;
+                param_source.push(InputSource::Audio(wire));
+                audio_params.push(AudioParam { value_slot, wire });
+            } else {
+                param_source.push(InputSource::Control(value_slot));
+            }
+        }
+
+        // Pass 1: assign a wire to each (unit, output) of the *calc* units by rate. Audio outputs go
+        // to audio wires (after the audio param wires); control/scalar outputs go to control wires
+        // after the parameter wires. Demand units get an empty slot so `outputs_plan` stays indexable.
         let mut num_control_wires = num_params as u32;
         let mut outputs_plan: Vec<Box<[OutputWire]>> = Vec::with_capacity(self.units.len());
         for spec in &self.units {
@@ -226,10 +270,9 @@ impl SynthDef {
             for input in &spec.inputs {
                 let source = match *input {
                     InputRef::Constant(v) => InputSource::Constant(v),
-                    InputRef::Param(p) => {
-                        let wire = *param_wires.get(p as usize).ok_or(BuildError::BadInputRef)?;
-                        InputSource::Control(wire)
-                    }
+                    InputRef::Param(p) => *param_source
+                        .get(p as usize)
+                        .ok_or(BuildError::BadInputRef)?,
                     InputRef::Unit { unit, output } => {
                         let kind = *demand_index
                             .get(unit as usize)
@@ -407,6 +450,7 @@ impl SynthDef {
             demand_state_image.into_boxed_slice(),
             control_defaults.into_boxed_slice(),
             param_wires.into_boxed_slice(),
+            audio_params.into_boxed_slice(),
             num_params,
             block_size,
         ))

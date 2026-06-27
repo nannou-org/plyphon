@@ -143,10 +143,7 @@ fn adsr_sustains_until_the_gate_falls() {
     let env = env_array(0.0, 2.0, &[(1.0, 0.01), (0.5, 0.1), (0.0, 0.1)]);
     let def = enveloped_sine(
         "adsr",
-        vec![Param {
-            name: "gate".to_string(),
-            default: 1.0,
-        }],
+        vec![Param::control("gate", 1.0)],
         InputRef::Param(0),
         env,
     );

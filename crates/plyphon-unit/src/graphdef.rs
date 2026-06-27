@@ -24,6 +24,17 @@ pub struct OutputWire {
     pub wire: u32,
 }
 
+/// An audio-rate parameter (`AudioControl`). Its stored value lives in a control wire (`value_slot`,
+/// the `/n_set`/`/n_map` target) and is lifted to an audio wire (`wire`) at the start of every block,
+/// so it can feed audio-rate inputs; `/n_mapa` instead fills the wire from an audio bus.
+#[derive(Copy, Clone, Debug)]
+pub struct AudioParam {
+    /// Control-wire index holding the parameter's value.
+    pub value_slot: u32,
+    /// Audio-wire index the value is lifted to each block (what consumers of the param read).
+    pub wire: u32,
+}
+
 /// One unit's compiled record: its calc/seed vtable, resolved wiring, and state slot in the arena -
 /// plyphon's per-unit `UnitSpec` plus `mCalcFunc`.
 pub struct UnitVtbl {
@@ -113,8 +124,12 @@ pub struct GraphDef {
     demand_state_image: Box<[u8]>,
     /// Initial control-wire values: parameter defaults in the first `num_params` slots, then zeros.
     control_defaults: Box<[f32]>,
-    /// Control-parameter index -> control wire index.
+    /// Control-parameter index -> its value-slot control wire index (the `/n_set`/`/n_map` target,
+    /// for every parameter regardless of rate).
     param_wires: Box<[u32]>,
+    /// Audio-rate parameters (`AudioControl`): each one's `(value_slot, audio_wire)`. Empty when the
+    /// def has none. The process loop lifts each value slot to its audio wire every block.
+    audio_params: Box<[AudioParam]>,
     /// Number of control parameters.
     num_params: usize,
     /// Samples per control block.
@@ -134,6 +149,7 @@ impl GraphDef {
         demand_state_image: Box<[u8]>,
         control_defaults: Box<[f32]>,
         param_wires: Box<[u32]>,
+        audio_params: Box<[AudioParam]>,
         num_params: usize,
         block_size: usize,
     ) -> Self {
@@ -145,6 +161,7 @@ impl GraphDef {
             demand_state_image,
             control_defaults,
             param_wires,
+            audio_params,
             num_params,
             block_size,
         }
@@ -180,9 +197,14 @@ impl GraphDef {
         &self.control_defaults
     }
 
-    /// Control-parameter index -> control wire index.
+    /// Control-parameter index -> its value-slot control wire index.
     pub fn param_wires(&self) -> &[u32] {
         &self.param_wires
+    }
+
+    /// The audio-rate parameters (`AudioControl`), each as `(value_slot, audio_wire)`.
+    pub fn audio_params(&self) -> &[AudioParam] {
+        &self.audio_params
     }
 
     /// Number of control parameters.
