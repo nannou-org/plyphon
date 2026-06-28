@@ -11,19 +11,47 @@
     <main>
       <p class="title">plyphon <small>(AudioWorklet)</small></p>
       <p class="lede">
-        The same examples as the <a href="../">default build</a>, but driven by cpal's AudioWorklet
-        backend - audio runs on a dedicated Web Audio worklet thread (off the deprecated
-        <code>ScriptProcessorNode</code>) via WASM threads and <code>SharedArrayBuffer</code>.
+        SuperCollider's <code>scsynth</code> engine, rebuilt in pure Rust - the same engine and API
+        on native and <code>wasm32-unknown-unknown</code>. Each example below runs the engine live in
+        your browser; open it and click the page to start audio.
       </p>
 
       <h2>Synthesis</h2>
       <ul class="examples">
         <li><a href="sine/">sine</a> <span class="desc">- the simplest example: a continuous 440 Hz sine.</span></li>
+        <li><a href="motif/">motif</a> <span class="desc">- a looping motif of self-freeing notes.</span></li>
+        <li><a href="waveforms/">waveforms</a> <span class="desc">- cycles through the oscillators through a filter.</span></li>
+        <li><a href="envelope/">envelope</a> <span class="desc">- percussive plucks shaped by multi-segment <code>EnvGen</code> envelopes.</span></li>
+        <li><a href="pan/">pan</a> <span class="desc">- a tone auto-panned across the stereo field with <code>Pan2</code>.</span></li>
+        <li><a href="feedback/">feedback</a> <span class="desc">- feedback FM: voices modulate themselves through a one-block-delayed <code>LocalIn</code>/<code>LocalOut</code> bus.</span></li>
+        <li><a href="custom-unit/">custom-unit</a> <span class="desc">- a custom unit generator (a <code>tanh</code> saturator) registered alongside the base set.</span></li>
+        <li><a href="duty-seq/">duty-seq</a> <span class="desc">- a self-driving melodic sequencer: <code>Duty.kr</code> pulls pitch and rhythm from demand-rate <code>Dseq</code>/<code>Dseries</code>/<code>Dwhite</code> sources on the audio thread.</span></li>
+      </ul>
+
+      <h2>Buses &amp; control</h2>
+      <ul class="examples">
+        <li><a href="routing/">routing</a> <span class="desc">- an LFO-swept filter on noise, wired through audio and control buses.</span></li>
+        <li><a href="control/">control</a> <span class="desc">- host-driven control buses: an arpeggio steered by <code>/n_map</code> + <code>/c_set</code>.</span></li>
+        <li><a href="node-control/">node-control</a> <span class="desc">- in-graph node-to-node control: separate <code>gater</code> nodes pause, resume, and free the drones by id with <code>Pause</code>/<code>Free</code>.</span></li>
+        <li><a href="glide/">glide</a> <span class="desc">- the control family: a portamento lead glides between notes via a <code>LagControl</code> while a <code>TrigControl</code> ticks each onset.</span></li>
+      </ul>
+
+      <h2>OSC &amp; scheduling</h2>
+      <ul class="examples">
+        <li><a href="osc/">osc</a> <span class="desc">- drives the engine through encoded OSC packets; the command log prints to the console.</span></li>
+        <li><a href="schedule/">schedule</a> <span class="desc">- sample-accurate rhythm: time-tagged OSC bundles scheduled ahead of the audio clock.</span></li>
+        <li><a href="triggers/">triggers</a> <span class="desc">- a <code>SendTrig</code> clock fires <code>/tr</code> beats the host turns into notes; voice groups self-free via a done action.</span></li>
+      </ul>
+
+      <h2>Buffers &amp; files</h2>
+      <ul class="examples">
+        <li><a href="scgf/">scgf</a> <span class="desc">- loads a SuperCollider SCgf-compiled SynthDef and plays it.</span></li>
+        <li><a href="sampler/">sampler</a> <span class="desc">- loads a WAV through a <code>BufferSource</code> (fetched on the web) and loops it with <code>PlayBuf</code>.</span></li>
+        <li><a href="stream/">stream</a> <span class="desc">- streams a WAV from storage in chunks and plays it with <code>DiskIn</code>.</span></li>
       </ul>
 
       <p class="note">
-        More examples are migrated to this backend during rollout. Run any example natively with
-        <code>cargo run -p example-&lt;name&gt;</code>. See the
+        Run any example natively with <code>cargo run -p example-&lt;name&gt;</code>. See the
         <a href="https://github.com/mitchmindtree/plyphon">repository</a> for details.
       </p>
     </main>

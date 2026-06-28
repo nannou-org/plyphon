@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" href="data:," />
-    <title>plyphon: sine (AudioWorklet)</title>
+    <title>plyphon: waveforms (AudioWorklet)</title>
     <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
     <script src="coi-serviceworker.min.js"></script>
     <script src="audio.js"></script>
@@ -15,8 +15,8 @@
     <link
       data-trunk
       rel="rust"
-      href="../../crates/examples/sine/Cargo.toml"
-      data-bin="example-sine"
+      href="../../crates/examples/waveforms/Cargo.toml"
+      data-bin="example-waveforms"
       data-cargo-features="audioworklet"
       data-cargo-profile-release="wasm_release"
       data-wasm-opt="z"
@@ -30,8 +30,8 @@
       <div id="loading-track"><div id="loading-bar"></div></div>
     </div>
     <main class="demo">
-      <p class="title">sine</p>
-      <p>The simplest example: a continuous 440 Hz sine.</p>
+      <p class="title">waveforms</p>
+      <p>Cycles through the oscillators (Saw, Pulse, LFSaw, LFPulse, Impulse) through a filter.</p>
       <p class="hint">Click anywhere to start audio.</p>
       <a class="back" href="../">&larr; all examples</a>
     </main>

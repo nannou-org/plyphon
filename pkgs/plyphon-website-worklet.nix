@@ -90,9 +90,12 @@ stdenv.mkDerivation (
       runHook preBuild
       mkdir -p $out
       # Each example is its own wasm binary built to its own page under $out/<name>/. The worklet
-      # pages live under web/worklet/ and opt into cpal's `audioworklet` feature; the shared build
-      # flags (atomics + build-std) come from the derivation env below.
-      for name in sine; do
+      # pages (web/worklet/*.html, generated from web/*.html by web/worklet/generate.sh) opt into
+      # cpal's `audioworklet` feature; the shared build flags (atomics + build-std) come from the
+      # derivation env below.
+      for name in \
+        sine motif waveforms envelope pan feedback custom-unit duty-seq \
+        routing control node-control glide osc schedule triggers scgf sampler stream; do
         trunk build --config Trunk.worklet.toml --release --dist $out/$name web/worklet/$name.html
       done
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" href="data:," />
-    <title>plyphon: sine (AudioWorklet)</title>
+    <title>plyphon: osc (AudioWorklet)</title>
     <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
     <script src="coi-serviceworker.min.js"></script>
     <script src="audio.js"></script>
@@ -15,8 +15,8 @@
     <link
       data-trunk
       rel="rust"
-      href="../../crates/examples/sine/Cargo.toml"
-      data-bin="example-sine"
+      href="../../crates/examples/osc/Cargo.toml"
+      data-bin="example-osc"
       data-cargo-features="audioworklet"
       data-cargo-profile-release="wasm_release"
       data-wasm-opt="z"
@@ -30,9 +30,9 @@
       <div id="loading-track"><div id="loading-bar"></div></div>
     </div>
     <main class="demo">
-      <p class="title">sine</p>
-      <p>The simplest example: a continuous 440 Hz sine.</p>
-      <p class="hint">Click anywhere to start audio.</p>
+      <p class="title">osc</p>
+      <p>Drives the engine through encoded SuperCollider OSC packets (no sockets).</p>
+      <p class="hint">Click to start audio, then open the browser console to see the OSC command log.</p>
       <a class="back" href="../">&larr; all examples</a>
     </main>
   </body>

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" href="data:," />
-    <title>plyphon: sine (AudioWorklet)</title>
+    <title>plyphon: feedback (AudioWorklet)</title>
     <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
     <script src="coi-serviceworker.min.js"></script>
     <script src="audio.js"></script>
@@ -15,8 +15,8 @@
     <link
       data-trunk
       rel="rust"
-      href="../../crates/examples/sine/Cargo.toml"
-      data-bin="example-sine"
+      href="../../crates/examples/feedback/Cargo.toml"
+      data-bin="example-feedback"
       data-cargo-features="audioworklet"
       data-cargo-profile-release="wasm_release"
       data-wasm-opt="z"
@@ -30,8 +30,13 @@
       <div id="loading-track"><div id="loading-bar"></div></div>
     </div>
     <main class="demo">
-      <p class="title">sine</p>
-      <p>The simplest example: a continuous 440 Hz sine.</p>
+      <p class="title">feedback</p>
+      <p>
+        Feedback FM: three voices each frequency-modulate a sine with their <em>own</em> output, read
+        back a block late through <code>LocalIn</code>/<code>LocalOut</code> (a per-synth feedback
+        bus). A slow LFO sweeps each voice's modulation index, so the chord breathes between pure and
+        bright. <code>LocalIn</code> runs before <code>LocalOut</code>, giving the one-block delay.
+      </p>
       <p class="hint">Click anywhere to start audio.</p>
       <a class="back" href="../">&larr; all examples</a>
     </main>
