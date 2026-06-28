@@ -6,7 +6,9 @@
     <link rel="icon" href="data:," />
     <title>plyphon: motif</title>
     <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
+    <script src="coi-serviceworker.min.js"></script>
     <script src="audio.js"></script>
+    
     
     
     <link rel="stylesheet" href="style.css" />
@@ -80,7 +82,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './example-motif.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-motif_bg.wasm', 181567, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-motif_bg.wasm', 201455, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,7 +91,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-motif.js" crossorigin="anonymous" integrity="sha384-uj8XfWdJN/4pKmhVgnsYVRfRKoZMZ+np5dhiFWD5QyTl9+nLuOApny0NxSe+cvD8"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-motif_bg.wasm" crossorigin="anonymous" integrity="sha384-Uz+RMO0EIFqua6wSvOzSFV6Raj4iHpOb5QR8ei4CmKP5/abAy7DU9yYp3FW6RT+z" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-motif.js" crossorigin="anonymous"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous"><link rel="preload" href="./example-motif_bg.wasm" crossorigin="anonymous" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>

@@ -6,7 +6,9 @@
     <link rel="icon" href="data:," />
     <title>plyphon: node-control</title>
     <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
+    <script src="coi-serviceworker.min.js"></script>
     <script src="audio.js"></script>
+    
     
     
     <link rel="stylesheet" href="style.css" />
@@ -80,7 +82,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './example-node-control.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-node-control_bg.wasm', 188316, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-node-control_bg.wasm', 205725, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -89,7 +91,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-node-control.js" crossorigin="anonymous" integrity="sha384-wxADx+MWLZRM01SD9P8dKZl6ZSplZz0/LTggVBqHwMn0oB3CkO/QM7ycDlD8dXQx"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-K0uzRZOVOqmwg48X2WBfHKEH1wvraaOfEHlSqdm5TmeitevnG1KciBduPdTCuXQp"><link rel="preload" href="./example-node-control_bg.wasm" crossorigin="anonymous" integrity="sha384-ruJbgrZ+hjtP+T3bEXOytMmuhXdXcrZca22I1Q0zYOsVynKTF9DfxVH7/Jsri0eT" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-node-control.js" crossorigin="anonymous"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous"><link rel="preload" href="./example-node-control_bg.wasm" crossorigin="anonymous" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>
