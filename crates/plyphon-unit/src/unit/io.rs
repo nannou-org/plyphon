@@ -87,6 +87,13 @@ pub fn buffer_at(buffers: &BufferTable, index: usize) -> Option<&Buffer> {
     buffers.get(index)
 }
 
+/// The (flat, in-memory) buffer at `index`, mutably, for units that write samples from the audio
+/// thread (`RecordBuf`/`BufWr`). Wraps the RT-safe `BufferTable::get_mut`; a stream/empty/out-of-range
+/// slot yields `None`.
+pub fn buffer_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut Buffer> {
+    buffers.get_mut(index)
+}
+
 /// The streaming endpoint at `index`, mutably (to pull chunks), for `DiskIn`.
 pub fn stream_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut StreamPlayback> {
     buffers.stream_mut(index)

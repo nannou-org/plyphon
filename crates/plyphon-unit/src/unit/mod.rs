@@ -14,6 +14,7 @@
 
 pub mod band_limited;
 pub mod binary_op;
+pub mod buf_wr;
 pub mod delay;
 pub mod demand;
 pub mod disk_in;
@@ -31,6 +32,7 @@ pub mod out;
 pub mod pan;
 pub mod play_buf;
 pub mod rate_conv;
+pub mod record_buf;
 pub mod registry;
 pub mod send_reply;
 pub mod send_trig;
@@ -131,6 +133,7 @@ impl DoneAction {
 
 pub use band_limited::{Pulse, Saw};
 pub use binary_op::BinaryOp;
+pub use buf_wr::BufWr;
 pub use delay::DelayN;
 pub use demand::{
     Demand, DemandAccess, DemandCtx, DemandUnit, DemandVtbl, Dseq, Dseries, Duty, Dwhite,
@@ -142,8 +145,9 @@ pub use filter::Butter;
 pub use info::{BufInfo, BufInfoKind, Info, InfoKind};
 pub use input::In;
 pub use io::{
-    audio_in, audio_out, buffer_at, control_in, control_out, local_in, local_out, num_audio_buses,
-    num_buffers, num_control_buses, num_input_buses, num_output_buses, stream_at_mut,
+    audio_in, audio_out, buffer_at, buffer_at_mut, control_in, control_out, local_in, local_out,
+    num_audio_buses, num_buffers, num_control_buses, num_input_buses, num_output_buses,
+    stream_at_mut,
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
@@ -154,6 +158,7 @@ pub use out::{OffsetOut, Out};
 pub use pan::Pan2;
 pub use play_buf::PlayBuf;
 pub use rate_conv::{A2K, Dc, K2A, T2A};
+pub use record_buf::RecordBuf;
 pub use registry::{BuildContext, DemandUnitDef, UnitDef, UnitRegistry};
 pub use send_reply::SendReply;
 pub use send_trig::SendTrig;

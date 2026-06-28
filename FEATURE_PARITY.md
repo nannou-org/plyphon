@@ -22,7 +22,7 @@ partial items stay unchecked and spell out what is missing.
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
-## UGens (61 of scsynth's ~250, grouped by category)
+## UGens (63 of scsynth's ~250, grouped by category)
 
 - [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`); missing ReplaceOut, XOut, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
@@ -32,7 +32,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **Panning** - have Pan2; missing LinPan2, Pan4, Balance2, Rotate2, XFade2, LinXFade2, PanAz, Splay
 - [ ] **Dynamics** - have Amplitude; missing Compander, Limiter, Normalizer, DetectSilence
 - [ ] **Math / multichannel** - have BinaryOpUGen, UnaryOpUGen, MulAdd; missing Sum3/Sum4, Select, Index, Clip/Wrap/Fold, LinLin/LinExp
-- [ ] **Buffer playback** - have PlayBuf, DiskIn; missing BufRd, BufWr, RecordBuf, DiskOut, VDiskIn, TGrains, GrainBuf
+- [ ] **Buffer playback / recording** - have PlayBuf, DiskIn, RecordBuf (record into a buffer with overdub/run/loop/doneAction), BufWr (write channels at a phase index); missing BufRd, DiskOut, VDiskIn, TGrains, GrainBuf, Dbufwr
 - [ ] **Triggers / timing** - have SendTrig (fires `/tr` on a rising edge, at control or audio rate), SendReply (emits a custom OSC path with a bounded number of values, over a dedicated node-message ring), FreeSelf, PauseSelf, Done, FreeSelfWhenDone, PauseSelfWhenDone, Free, Pause; missing Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, Poll
 - [ ] **Info** - have SampleRate, SampleDur, RadiansPerSample, ControlRate, ControlDur, NumOutputBuses, NumInputBuses, NumAudioBuses, NumControlBuses, NumRunningSynths, NumBuffers, BufFrames, BufChannels, BufSamples, BufSampleRate, BufRateScale, BufDur; missing SubsampleOffset
 - [ ] **Delays / reverb** - have DelayN (the first UGen on per-instance aux memory); missing DelayL/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
