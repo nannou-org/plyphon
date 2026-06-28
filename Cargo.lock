@@ -439,6 +439,7 @@ name = "example-audio"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "web-sys",
 ]
 
 [[package]]

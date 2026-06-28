@@ -56,6 +56,12 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
+    // cpal's AudioWorklet backend re-instantiates this module on the audio thread, re-running
+    // `main` there; only set up audio on the main browser thread.
+    if example_audio::on_worklet_thread() {
+        return;
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     println!("playing a {FREQ} Hz sine for 10s...");
 

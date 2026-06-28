@@ -11,6 +11,24 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 
+/// True when this module is executing on the Web Audio worklet thread rather than the main browser
+/// thread.
+///
+/// cpal's AudioWorklet backend re-instantiates the wasm module on the worklet thread (sharing the
+/// main thread's memory). With a binary crate that re-runs `main` there, so each example must skip
+/// its setup on the worklet thread - audio is driven by cpal's processor, not by `main`. The
+/// worklet's `AudioWorkletGlobalScope` has no `window`, which is how we tell the threads apart.
+pub fn on_worklet_thread() -> bool {
+    #[cfg(all(target_arch = "wasm32", feature = "audioworklet"))]
+    {
+        web_sys::window().is_none()
+    }
+    #[cfg(not(all(target_arch = "wasm32", feature = "audioworklet")))]
+    {
+        false
+    }
+}
+
 /// The output host: cpal's AudioWorklet host on the web under the `audioworklet` feature, otherwise
 /// the platform default. The worklet host needs a cross-origin-isolated page (`SharedArrayBuffer`).
 fn output_host() -> cpal::Host {

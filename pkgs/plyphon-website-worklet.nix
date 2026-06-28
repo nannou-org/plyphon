@@ -93,7 +93,7 @@ stdenv.mkDerivation (
       # pages live under web/worklet/ and opt into cpal's `audioworklet` feature; the shared build
       # flags (atomics + build-std) come from the derivation env below.
       for name in sine; do
-        trunk build --release --dist $out/$name web/worklet/$name.html
+        trunk build --config Trunk.worklet.toml --release --dist $out/$name web/worklet/$name.html
       done
 
       # Static landing page + stylesheet at the site root (a `trunk build --dist $out` would wipe

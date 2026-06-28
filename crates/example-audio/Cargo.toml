@@ -14,8 +14,10 @@ cpal.workspace = true
 
 # Web-only: cpal's wasm backend. Without the `audioworklet` feature this is the default
 # Web Audio (ScriptProcessor) host; with it, cpal's AudioWorklet host is selected instead.
+# `web-sys` (Window) lets us detect the worklet thread (see `on_worklet_thread`).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cpal = { workspace = true, features = ["wasm-bindgen"] }
+web-sys = { version = "0.3", features = ["Window"] }
 
 [features]
 # Opt into cpal's AudioWorklet backend. Only ever enable this for `wasm32` builds compiled with
