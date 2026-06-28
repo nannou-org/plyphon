@@ -12,6 +12,7 @@ partial items stay unchecked and spell out what is missing.
 - [x] One engine across native and `wasm32-unknown-unknown` (runs in the browser)
 - [x] Reblocks any host buffer size to the internal control block
 - [x] Per-UGen RNG (Taus88) and engine-owned wavetables
+- [x] Per-instance UGen auxiliary memory - a UGen can reserve a build-time-sized buffer (a delay line, sized from a scalar input like `maxdelaytime`) folded into the synth's single rt-pool block, so the whole delay/comb/allpass family is a pure UGen addition. Unlike scsynth's per-unit `RTAlloc` there is still one allocation and one free per synth; the arena is left uninitialised (no `/s_new` memset) and units guard their own cold start, as scsynth's `_z` calc variants do
 - [x] Multi-channel output buses and audio input buses (duplex via `World::fill_duplex`)
 - [x] Calc rates: scalar, control, audio
 - [x] Demand rate - pull-based, like scsynth: a consumer (`Demand`/`Duty`) pulls a source's next value (or resets it) on the audio thread, recursing through nested sources; sources are single-output and emit `NaN` at exhaustion. Demand units are split out of the per-block calc list into a separate demand plan with their own block span, and the recursion is allocation-free (a bounded stack copy of `Pod` state); off-RT compilation rejects over-large state or over-deep nesting so the audio thread stays bounded
@@ -21,7 +22,7 @@ partial items stay unchecked and spell out what is missing.
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
-## UGens (57 of scsynth's ~250, grouped by category)
+## UGens (58 of scsynth's ~250, grouped by category)
 
 - [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`); missing ReplaceOut, XOut, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
@@ -34,7 +35,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **Buffer playback** - have PlayBuf, DiskIn; missing BufRd, BufWr, RecordBuf, DiskOut, VDiskIn, TGrains, GrainBuf
 - [ ] **Triggers / timing** - have SendTrig (fires `/tr` on a rising edge, at control or audio rate), FreeSelf, PauseSelf, Done, FreeSelfWhenDone, PauseSelfWhenDone, Free, Pause; missing Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, SendReply
 - [ ] **Info** - have SampleRate, SampleDur, RadiansPerSample, ControlRate, ControlDur, NumOutputBuses, NumInputBuses, NumAudioBuses, NumControlBuses, BufFrames, BufChannels, BufSamples, BufSampleRate, BufRateScale, BufDur; missing NumRunningSynths, NumBuffers, SubsampleOffset
-- [ ] **Delays / reverb** - none yet: DelayN/L/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
+- [ ] **Delays / reverb** - have DelayN (the first UGen on per-instance aux memory); missing DelayL/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
 - [ ] **Demand-rate** - have Demand, Duty, Dseq, Dseries, Dwhite; missing TDuty, Dser, Drand, Dxrand, Dwrand, Dgeom, Dbrown/Dibrown, Diwhite, Dbufrd/Dbufwr, Dswitch/Dswitch1, Dstutter, Dconst, Dreset, Dpoll
 - [ ] **FFT / spectral** - none yet: FFT/IFFT, the `PV_*` set, Pitch, Onsets, BeatTrack
 - [ ] **Chaos / rate conversion** - have A2K, K2A, T2A, DC; missing the chaos set: Lorenz, LinCong, Henon, ...

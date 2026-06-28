@@ -13,7 +13,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 
-examples="sine motif waveforms envelope pan feedback custom-unit duty-seq \
+examples="sine motif waveforms envelope pan feedback delay custom-unit duty-seq \
   routing control node-control glide osc schedule triggers scgf sampler stream"
 
 mkdir -p web/worklet

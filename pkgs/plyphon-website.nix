@@ -92,7 +92,7 @@ stdenv.mkDerivation (
       # cpal's `audioworklet` feature; the shared build flags (atomics + build-std) come from the
       # derivation env below.
       for name in \
-        sine motif waveforms envelope pan feedback custom-unit duty-seq \
+        sine motif waveforms envelope pan feedback delay custom-unit duty-seq \
         routing control node-control glide osc schedule triggers scgf sampler stream; do
         trunk build --config Trunk.worklet.toml --release --dist $out/$name web/worklet/$name.html
       done
