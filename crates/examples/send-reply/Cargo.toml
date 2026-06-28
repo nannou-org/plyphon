@@ -1,0 +1,24 @@
+[package]
+name = "example-send-reply"
+version = "0.1.0"
+publish = false
+description = "An amplitude follower that reports its level to the host via SendReply (logged to the console)."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+example-audio.workspace = true
+plyphon.workspace = true
+
+# Web-only: the panic hook for readable console errors, plus `console.log` for the reply trace.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { version = "0.3", features = ["console"] }
+
+[features]
+# Build the web demo on cpal's AudioWorklet backend (see pkgs/plyphon-website.nix).
+audioworklet = ["example-audio/audioworklet"]

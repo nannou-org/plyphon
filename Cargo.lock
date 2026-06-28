@@ -602,6 +602,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-send-reply"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "example-sine"
 version = "0.1.0"
 dependencies = [

@@ -93,7 +93,7 @@ stdenv.mkDerivation (
       # derivation env below.
       for name in \
         sine motif waveforms envelope pan feedback delay custom-unit duty-seq \
-        routing control node-control glide osc schedule triggers scgf sampler stream; do
+        routing control node-control glide osc schedule triggers send-reply scgf sampler stream; do
         trunk build --config Trunk.worklet.toml --release --dist $out/$name web/worklet/$name.html
       done
 
