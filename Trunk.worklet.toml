@@ -7,6 +7,10 @@
 target = "web/worklet/index.html"
 public_url = "./"
 filehash = false
+# The post-build hook below rewrites the wasm-bindgen glue (to add the TextEncoder/TextDecoder
+# polyfill) after Trunk computes subresource-integrity hashes, which would make the baked-in
+# `integrity` attributes mismatch and block loading. Disable SRI for this (same-origin) build.
+no_sri = true
 
 [[hooks]]
 stage = "post_build"
