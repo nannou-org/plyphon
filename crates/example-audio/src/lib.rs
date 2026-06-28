@@ -31,7 +31,10 @@ pub fn on_worklet_thread() -> bool {
 
 /// The output host: cpal's AudioWorklet host on the web under the `audioworklet` feature, otherwise
 /// the platform default. The worklet host needs a cross-origin-isolated page (`SharedArrayBuffer`).
-fn output_host() -> cpal::Host {
+///
+/// Most examples should use [`play`]/[`play_with`]; this is the escape hatch for the few that build
+/// their stream by hand (e.g. to drift-correct with the callback timestamp, or to feed from disk).
+pub fn output_host() -> cpal::Host {
     #[cfg(all(target_arch = "wasm32", feature = "audioworklet"))]
     {
         cpal::host_from_id(cpal::HostId::AudioWorklet)
@@ -43,13 +46,18 @@ fn output_host() -> cpal::Host {
     }
 }
 
-/// Build and start the output stream that drives an example.
+/// Build and start the output stream that drives an example, returning it alongside a caller-owned
+/// control-plane value.
 ///
-/// `make_source` receives the resolved sample rate (Hz) and channel count and returns the
-/// interleaved-`f32` fill closure (the engine's `World::fill`-style callback). Its output is scaled
-/// by `gain` and converted to the device's sample format. The returned stream is already playing
-/// and must be kept alive for audio to continue (see [`keep_alive`]).
-pub fn play<F>(gain: f32, make_source: impl FnOnce(f64, usize) -> F) -> cpal::Stream
+/// `make_source` receives the resolved sample rate (Hz) and channel count and returns
+/// `(fill, control)`: the interleaved-`f32` fill closure (the engine's `World::fill`-style callback,
+/// scaled by `gain` and converted to the device's sample format) and any state the caller wants back
+/// to drive with [`run_control`] (e.g. a `Controller`/`Nrt` wrapper). The stream is already playing
+/// and must be kept alive for audio to continue.
+pub fn play_with<F, C>(
+    gain: f32,
+    make_source: impl FnOnce(f64, usize) -> (F, C),
+) -> (cpal::Stream, C)
 where
     F: FnMut(&mut [f32], usize) + Send + 'static,
 {
@@ -65,7 +73,7 @@ where
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate as f64;
 
-    let fill = make_source(sample_rate, channels);
+    let (fill, control) = make_source(sample_rate, channels);
     let stream = match sample_format {
         cpal::SampleFormat::F32 => build::<f32, _>(&device, config, channels, gain, fill),
         cpal::SampleFormat::I16 => build::<i16, _>(&device, config, channels, gain, fill),
@@ -73,7 +81,21 @@ where
         format => panic!("unsupported sample format: {format}"),
     };
     stream.play().expect("failed to start audio stream");
-    stream
+    (stream, control)
+}
+
+/// Build and start the output stream that drives an example with no separate control plane.
+///
+/// `make_source` returns just the interleaved-`f32` fill closure; see [`play_with`] for the details
+/// and [`keep_alive`] for keeping the returned stream alive.
+pub fn play<F>(gain: f32, make_source: impl FnOnce(f64, usize) -> F) -> cpal::Stream
+where
+    F: FnMut(&mut [f32], usize) + Send + 'static,
+{
+    play_with(gain, |sample_rate, channels| {
+        (make_source(sample_rate, channels), ())
+    })
+    .0
 }
 
 /// Construct a typed output stream, reblocking the engine's `f32` fill into the device format `T`.
@@ -118,6 +140,34 @@ pub fn keep_alive(stream: cpal::Stream, native_secs: u64) {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = native_secs;
+        std::mem::forget(stream);
+    }
+}
+
+/// Drive an example's control plane while keeping `stream` alive: natively, tick every `step_ms` for
+/// `total_ms` then stop; on the web, tick on a `step_ms` timer and run indefinitely (`main` returns
+/// immediately there). `tick` is the off-audio-thread control step (NRT processing, scheduling,
+/// spawning/freeing notes, etc.).
+pub fn run_control(
+    stream: cpal::Stream,
+    total_ms: u32,
+    step_ms: u32,
+    mut tick: impl FnMut() + 'static,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = &stream;
+        for _ in 0..(total_ms / step_ms.max(1)) {
+            std::thread::sleep(std::time::Duration::from_millis(u64::from(step_ms)));
+            tick();
+        }
+        drop(stream);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = total_ms;
+        let interval = gloo_timers::callback::Interval::new(step_ms, move || tick());
+        interval.forget();
         std::mem::forget(stream);
     }
 }

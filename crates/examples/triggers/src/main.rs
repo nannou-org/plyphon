@@ -18,8 +18,6 @@
 
 use std::collections::HashSet;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SizedSample};
 use plyphon::{
     AddAction, Controller, Event, InputRef, Nrt, Options, Param, ROOT_GROUP_ID, Rate, SynthDef,
     Trigger, UnitSpec, World, engine,
@@ -33,6 +31,8 @@ const LFO_HZ: f32 = 0.2;
 const NOTE_DUR: f32 = 0.35;
 /// Each note's starting amplitude (it decays to zero).
 const NOTE_AMP: f32 = 0.25;
+/// Master gain applied in the audio callback (the notes are already scaled by `NOTE_AMP`).
+const GAIN: f32 = 1.0;
 /// How often to tick the control plane, in milliseconds.
 const TICK_MS: u32 = 25;
 /// Major-pentatonic ratios over two octaves, indexed by the `/tr` value.
@@ -216,70 +216,21 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("no output device available");
-    let config = device
-        .default_output_config()
-        .expect("no default output config");
-
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into()),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into()),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into()),
-        format => panic!("unsupported sample format: {format}"),
+    // cpal's AudioWorklet backend re-instantiates this module on the audio thread, re-running
+    // `main` there; only set up audio on the main browser thread.
+    if example_audio::on_worklet_thread() {
+        return;
     }
-}
 
-/// Play the demo: the `World` feeds the cpal stream, while the `Controls` are ticked off the audio
-/// thread to react to `/tr`s and run the NRT cleanup.
-fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate as f32;
-
-    let (controls, mut source) = build(sample_rate, channels);
-    // Reused interleaved `f32` scratch buffer; the source fills it, then we convert to `T`.
-    let mut scratch: Vec<f32> = Vec::new();
-
-    let stream = device
-        .build_output_stream(
-            *config,
-            move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-                scratch.clear();
-                scratch.resize(output.len(), 0.0);
-                source.fill(&mut scratch, channels);
-                for (out, sample) in output.iter_mut().zip(scratch.iter()) {
-                    *out = T::from_sample(*sample);
-                }
-            },
-            |err| eprintln!("audio stream error: {err}"),
-            None,
-        )
-        .expect("failed to build output stream");
-    stream.play().expect("failed to start audio stream");
-
-    run_control_plane(controls, stream);
-}
-
-/// Tick the control plane off the audio thread for the demo's lifetime, holding the stream alive
-/// meanwhile.
-#[cfg(not(target_arch = "wasm32"))]
-fn run_control_plane(mut controls: Controls, _stream: cpal::Stream) {
-    use std::time::Duration;
+    #[cfg(not(target_arch = "wasm32"))]
     println!("SendTrig clock driving notes for 12s...");
-    let ticks = 12_000 / TICK_MS;
-    for _ in 0..ticks {
-        controls.tick();
-        std::thread::sleep(Duration::from_millis(u64::from(TICK_MS)));
-    }
-}
 
-/// On the web, `main` returns immediately, so run the control plane on a periodic timer and keep
-/// both it and the audio stream alive.
-#[cfg(target_arch = "wasm32")]
-fn run_control_plane(mut controls: Controls, stream: cpal::Stream) {
-    let interval = gloo_timers::callback::Interval::new(TICK_MS, move || controls.tick());
-    interval.forget();
-    std::mem::forget(stream);
+    let (stream, mut controls) = example_audio::play_with(GAIN, |sample_rate, channels| {
+        let (controls, mut world) = build(sample_rate as f32, channels);
+        (
+            move |out: &mut [f32], channels: usize| world.fill(out, channels),
+            controls,
+        )
+    });
+    example_audio::run_control(stream, 12_000, TICK_MS, move || controls.tick());
 }

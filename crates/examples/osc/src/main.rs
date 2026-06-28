@@ -15,8 +15,6 @@
 //! (`/n_free`). The `plyphon` engine driving the audio is pure Rust and identical on native and
 //! web; only the control-plane ticking differs (a thread loop vs a timer).
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SizedSample};
 use plyphon::{Nrt, Options, World, engine};
 use plyphon_osc::OscDispatcher;
 use rosc::{OscMessage, OscPacket, OscType};
@@ -25,6 +23,10 @@ use rosc::{OscMessage, OscPacket, OscType};
 const TICK_MS: u32 = 800;
 /// Number of commands in the scripted session.
 const SCRIPT_LEN: usize = 6;
+/// Tick once per scripted command, plus a few trailing ticks so the final `/n_end` drains.
+const TRAILING_TICKS: u32 = 4;
+/// Master gain applied in the audio callback (the `tone` def already scales by 0.2).
+const GAIN: f32 = 1.0;
 
 /// The control plane: a dispatcher (wrapping the engine's `Controller`) plus the `Nrt`, ticked off
 /// the audio thread. Each tick sends the next scripted OSC command and prints the replies the
@@ -214,72 +216,28 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("no output device available");
-    let config = device
-        .default_output_config()
-        .expect("no default output config");
-
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into()),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into()),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into()),
-        format => panic!("unsupported sample format: {format}"),
+    // cpal's AudioWorklet backend re-instantiates this module on the audio thread, re-running
+    // `main` there; only set up audio on the main browser thread.
+    if example_audio::on_worklet_thread() {
+        return;
     }
-}
 
-/// Play the demo: the `World` feeds the cpal stream while the `Session` is ticked off the audio
-/// thread to send OSC commands and print the replies.
-fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate as f32;
+    #[cfg(not(target_arch = "wasm32"))]
+    println!(
+        "OSC session driving the plyphon engine (packets handed straight to the dispatcher):\n"
+    );
 
-    let (session, mut source) = build(sample_rate, channels);
-    let mut scratch: Vec<f32> = Vec::new();
-
-    let stream = device
-        .build_output_stream(
-            *config,
-            move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-                scratch.clear();
-                scratch.resize(output.len(), 0.0);
-                source.fill(&mut scratch, channels);
-                for (out, sample) in output.iter_mut().zip(scratch.iter()) {
-                    *out = T::from_sample(*sample);
-                }
-            },
-            |err| eprintln!("audio stream error: {err}"),
-            None,
+    let (stream, mut session) = example_audio::play_with(GAIN, |sample_rate, channels| {
+        let (session, mut world) = build(sample_rate as f32, channels);
+        (
+            move |out: &mut [f32], channels: usize| world.fill(out, channels),
+            session,
         )
-        .expect("failed to build output stream");
-    stream.play().expect("failed to start audio stream");
-
-    run_control_plane(session, stream);
-}
-
-/// Tick the control plane off the audio thread for the demo's lifetime, holding the stream alive
-/// meanwhile.
-#[cfg(not(target_arch = "wasm32"))]
-fn run_control_plane(mut session: Session, _stream: cpal::Stream) {
-    use std::time::Duration;
-    // Tick once per scripted command, plus a few trailing ticks so the final `/n_end` drains.
-    const TRAILING_TICKS: usize = 4;
-    trace("OSC session driving the plyphon engine (packets handed straight to the dispatcher):\n");
-    for _ in 0..(SCRIPT_LEN + TRAILING_TICKS) {
-        session.tick();
-        std::thread::sleep(Duration::from_millis(u64::from(TICK_MS)));
-    }
-}
-
-/// On the web, `main` returns immediately, so run the control plane on a periodic timer and keep
-/// both it and the audio stream alive (ticks past the script are harmless no-ops).
-#[cfg(target_arch = "wasm32")]
-fn run_control_plane(mut session: Session, stream: cpal::Stream) {
-    let interval = gloo_timers::callback::Interval::new(TICK_MS, move || session.tick());
-    interval.forget();
-    std::mem::forget(stream);
+    });
+    // One tick per scripted command, plus a few trailing ticks so the final `/n_end` drains; web
+    // ticks past the script are harmless no-ops.
+    let total_ms = (SCRIPT_LEN as u32 + TRAILING_TICKS) * TICK_MS;
+    example_audio::run_control(stream, total_ms, TICK_MS, move || session.tick());
 }
 
 /// Build an `OscMessage` from an address and arguments.

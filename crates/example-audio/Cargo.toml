@@ -18,6 +18,8 @@ cpal.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cpal = { workspace = true, features = ["wasm-bindgen"] }
 web-sys = { version = "0.3", features = ["Window"] }
+# Drives the control-plane tick on the web (see `run_control`).
+gloo-timers = "0.3"
 
 [features]
 # Opt into cpal's AudioWorklet backend. Only ever enable this for `wasm32` builds compiled with

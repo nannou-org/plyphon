@@ -13,8 +13,6 @@
 //! the graph is queued, leaving only the `World` for the cpal callback to fill. The whole patch is
 //! static - the sweep is driven by the in-engine LFO, not the host - so it needs no control plane.
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SizedSample};
 use plyphon::{
     AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
@@ -151,56 +149,20 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("no output device available");
-    let config = device
-        .default_output_config()
-        .expect("no default output config");
-
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into()),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into()),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into()),
-        format => panic!("unsupported sample format: {format}"),
+    // cpal's AudioWorklet backend re-instantiates this module on the audio thread, re-running
+    // `main` there; only set up audio on the main browser thread.
+    if example_audio::on_worklet_thread() {
+        return;
     }
-}
-
-/// Build and play an output stream fed by the engine `World`.
-fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate as f32;
-
-    let mut source = build(sample_rate, channels);
-    // Reused interleaved `f32` scratch buffer; the source fills it, then we convert to `T`.
-    let mut scratch: Vec<f32> = Vec::new();
-
-    let stream = device
-        .build_output_stream(
-            *config,
-            move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-                scratch.clear();
-                scratch.resize(output.len(), 0.0);
-                source.fill(&mut scratch, channels);
-                for (out, sample) in output.iter_mut().zip(scratch.iter()) {
-                    *out = T::from_sample(*sample * GAIN);
-                }
-            },
-            |err| eprintln!("audio stream error: {err}"),
-            None,
-        )
-        .expect("failed to build output stream");
-    stream.play().expect("failed to start audio stream");
 
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        println!("playing LFO-swept filtered noise (routed through buses) for 10s...");
-        std::thread::sleep(std::time::Duration::from_secs(10));
-    }
-    // On the web `main` returns immediately; keep the stream (and its callback) alive.
-    #[cfg(target_arch = "wasm32")]
-    std::mem::forget(stream);
+    println!("playing LFO-swept filtered noise (routed through buses) for 10s...");
+
+    let stream = example_audio::play(GAIN, |sample_rate, channels| {
+        let mut world = build(sample_rate as f32, channels);
+        move |out: &mut [f32], channels: usize| world.fill(out, channels)
+    });
+    example_audio::keep_alive(stream, 10);
 }
 
 #[cfg(test)]

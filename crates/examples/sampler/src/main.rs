@@ -16,8 +16,6 @@
 
 use std::io::Cursor;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SizedSample};
 use plyphon::{
     AddAction, Controller, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
     engine,
@@ -166,66 +164,39 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("no output device available");
-    let config = device
-        .default_output_config()
-        .expect("no default output config");
-
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into()),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into()),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into()),
-        format => panic!("unsupported sample format: {format}"),
+    // cpal's AudioWorklet backend re-instantiates this module on the audio thread, re-running
+    // `main` there; only set up audio on the main browser thread.
+    if example_audio::on_worklet_thread() {
+        return;
     }
-}
 
-/// Start the audio stream, then load the sample and begin playback when it arrives.
-fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate as f32;
-
-    let (controller, world) = build_engine(sample_rate, channels);
-    let mut source = world;
-    let mut scratch: Vec<f32> = Vec::new();
-
-    let stream = device
-        .build_output_stream(
-            *config,
-            move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-                scratch.clear();
-                scratch.resize(output.len(), 0.0);
-                source.fill(&mut scratch, channels);
-                for (out, sample) in output.iter_mut().zip(scratch.iter()) {
-                    *out = T::from_sample(*sample * GAIN);
-                }
-            },
-            |err| eprintln!("audio stream error: {err}"),
-            None,
-        )
-        .expect("failed to build output stream");
-    stream.play().expect("failed to start audio stream");
+    // Build-then-load: start the (initially silent) stream, then load the sample off to the side and
+    // begin playback when it arrives. `play_with` hands back the controller + resolved rate/channels.
+    let (stream, (controller, sample_rate, channels)) =
+        example_audio::play_with(GAIN, |sample_rate, channels| {
+            let (controller, mut world) = build_engine(sample_rate as f32, channels);
+            (
+                move |out: &mut [f32], channels: usize| world.fill(out, channels),
+                (controller, sample_rate as f32, channels),
+            )
+        });
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         // The filesystem read resolves immediately, so the sample starts right away.
         block_on(load_and_play(controller, FsSource, sample_rate, channels));
         println!("playing a sample loaded from assets/{SAMPLE} for 10s...");
-        std::thread::sleep(std::time::Duration::from_secs(10));
     }
     #[cfg(target_arch = "wasm32")]
-    {
-        // The fetch genuinely awaits; playback begins when it completes.
-        wasm_bindgen_futures::spawn_local(load_and_play(
-            controller,
-            FetchSource,
-            sample_rate,
-            channels,
-        ));
-        std::mem::forget(stream);
-    }
+    // The fetch genuinely awaits; playback begins when it completes.
+    wasm_bindgen_futures::spawn_local(load_and_play(
+        controller,
+        FetchSource,
+        sample_rate,
+        channels,
+    ));
+
+    example_audio::keep_alive(stream, 10);
 }
 
 /// Drive a future to completion. Sufficient for sources that resolve synchronously (the filesystem

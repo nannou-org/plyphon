@@ -10,14 +10,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-cpal.workspace = true
+example-audio.workspace = true
 plyphon.workspace = true
 plyphon-osc.workspace = true
 rosc.workspace = true
 scgf.workspace = true
 
-# Web-only: cpal's WebAudio backend, the wasm glue, and a timer to tick the control plane.
+# Web-only: the wasm panic hook for readable console errors.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-cpal = { workspace = true, features = ["wasm-bindgen"] }
 console_error_panic_hook.workspace = true
-gloo-timers = "0.3"
+
+[features]
+# Build the web demo on cpal's AudioWorklet backend (see pkgs/plyphon-website-worklet.nix).
+audioworklet = ["example-audio/audioworklet"]

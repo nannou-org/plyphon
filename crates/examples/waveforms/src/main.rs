@@ -5,8 +5,6 @@
 //! filtered at 1.8 kHz). As in `example-control`, the only platform-specific part is how the
 //! control plane is ticked (a thread loop natively, a timer on the web).
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SizedSample};
 use plyphon::{
     AddAction, Controller, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
     engine,
@@ -102,65 +100,23 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("no output device available");
-    let config = device
-        .default_output_config()
-        .expect("no default output config");
-
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into()),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into()),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into()),
-        format => panic!("unsupported sample format: {format}"),
+    // cpal's AudioWorklet backend re-instantiates this module on the audio thread, re-running
+    // `main` there; only set up audio on the main browser thread.
+    if example_audio::on_worklet_thread() {
+        return;
     }
-}
 
-fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate as f32;
-
-    let (mut controls, mut source) = build(sample_rate, channels);
-    let mut scratch: Vec<f32> = Vec::new();
-
-    let stream = device
-        .build_output_stream(
-            *config,
-            move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-                scratch.clear();
-                scratch.resize(output.len(), 0.0);
-                source.fill(&mut scratch, channels);
-                for (out, sample) in output.iter_mut().zip(scratch.iter()) {
-                    *out = T::from_sample(*sample * GAIN);
-                }
-            },
-            |err| eprintln!("audio stream error: {err}"),
-            None,
-        )
-        .expect("failed to build output stream");
-    stream.play().expect("failed to start audio stream");
-
-    controls.tick(); // start the first waveform immediately
-    run_control_plane(controls, stream);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn run_control_plane(mut controls: Controls, _stream: cpal::Stream) {
-    use std::time::Duration;
+    #[cfg(not(target_arch = "wasm32"))]
     println!("cycling through the oscillators for ~10s...");
-    for _ in 0..(10_000 / STEP_MS) {
-        std::thread::sleep(Duration::from_millis(u64::from(STEP_MS)));
-        controls.tick();
-    }
-}
 
-#[cfg(target_arch = "wasm32")]
-fn run_control_plane(mut controls: Controls, stream: cpal::Stream) {
-    let interval = gloo_timers::callback::Interval::new(STEP_MS, move || controls.tick());
-    interval.forget();
-    std::mem::forget(stream);
+    let (stream, mut controls) = example_audio::play_with(GAIN, |sample_rate, channels| {
+        let (controls, mut world) = build(sample_rate as f32, channels);
+        (
+            move |out: &mut [f32], channels: usize| world.fill(out, channels),
+            controls,
+        )
+    });
+    example_audio::run_control(stream, 10_000, STEP_MS, move || controls.tick());
 }
 
 #[cfg(test)]

@@ -19,8 +19,6 @@
 //! The engine is identical on native and web; only the control-plane tick differs (a thread loop vs
 //! a timer), exactly as in the `triggers` and `motif` examples.
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SizedSample};
 use plyphon::{
     AddAction, Controller, Event, InputRef, Nrt, Options, Param, ROOT_GROUP_ID, Rate, SynthDef,
     UnitSpec, World, engine,
@@ -210,78 +208,47 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("no output device available");
-    let config = device
-        .default_output_config()
-        .expect("no default output config");
-
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into()),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into()),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into()),
-        format => panic!("unsupported sample format: {format}"),
+    // cpal's AudioWorklet backend re-instantiates this module on the audio thread, re-running
+    // `main` there; only set up audio on the main browser thread.
+    if example_audio::on_worklet_thread() {
+        return;
     }
-}
 
-/// Play the demo: the `World` feeds the cpal stream, while the `Controls` are ticked off the audio
-/// thread to run the NRT cleanup and log the gate/free notifications.
-fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate as f32;
-
-    let (controls, mut source) = build(sample_rate, channels);
-    // Reused interleaved `f32` scratch buffer; the source fills it, then we convert to `T`.
-    let mut scratch: Vec<f32> = Vec::new();
-
-    let stream = device
-        .build_output_stream(
-            *config,
-            move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-                scratch.clear();
-                scratch.resize(output.len(), 0.0);
-                source.fill(&mut scratch, channels);
-                for (out, sample) in output.iter_mut().zip(scratch.iter()) {
-                    *out = T::from_sample(*sample);
-                }
-            },
-            |err| eprintln!("audio stream error: {err}"),
-            None,
+    // The drones are already scaled by `DRONE_AMP`, so no extra master gain (1.0).
+    let (stream, mut controls) = example_audio::play_with(1.0, |sample_rate, channels| {
+        let (controls, mut world) = build(sample_rate as f32, channels);
+        (
+            move |out: &mut [f32], channels: usize| world.fill(out, channels),
+            controls,
         )
-        .expect("failed to build output stream");
-    stream.play().expect("failed to start audio stream");
+    });
 
-    run_control_plane(controls, stream);
-}
-
-/// Native: gate for [`GATE_SECS`], then raise the panic bus so the gaters free the drones by id, and
-/// keep ticking briefly so the `/n_end`s drain.
-#[cfg(not(target_arch = "wasm32"))]
-fn run_control_plane(mut controls: Controls, _stream: cpal::Stream) {
-    use std::time::Duration;
-    println!(
-        "gated drones: {} voices pausing/resuming by id...",
-        DRONES.len()
-    );
-    let tick = || std::thread::sleep(Duration::from_millis(u64::from(TICK_MS)));
-    for _ in 0..(GATE_SECS * 1000 / TICK_MS) {
-        controls.tick();
-        tick();
+    // This example's control plane is non-uniform, so it drives the tick itself rather than using
+    // `example_audio::run_control`. Native: gate for `GATE_SECS`, raise the panic bus so the gaters
+    // free the drones by id, then tick briefly so the `/n_end`s drain. Web: `main` returns
+    // immediately, so tick forever on a timer (the panic bus is never raised, so the texture loops).
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        println!(
+            "gated drones: {} voices pausing/resuming by id...",
+            DRONES.len()
+        );
+        let sleep = || std::thread::sleep(std::time::Duration::from_millis(u64::from(TICK_MS)));
+        for _ in 0..(GATE_SECS * 1000 / TICK_MS) {
+            controls.tick();
+            sleep();
+        }
+        controls.panic();
+        for _ in 0..(DRAIN_SECS * 1000 / TICK_MS) {
+            controls.tick();
+            sleep();
+        }
+        drop(stream);
     }
-    controls.panic();
-    for _ in 0..(DRAIN_SECS * 1000 / TICK_MS) {
-        controls.tick();
-        tick();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let interval = gloo_timers::callback::Interval::new(TICK_MS, move || controls.tick());
+        interval.forget();
+        std::mem::forget(stream);
     }
-}
-
-/// Web: `main` returns immediately, so tick the control plane on a periodic timer and keep both it
-/// and the audio stream alive. The panic bus is never raised, so the gated texture loops forever.
-#[cfg(target_arch = "wasm32")]
-fn run_control_plane(mut controls: Controls, stream: cpal::Stream) {
-    let interval = gloo_timers::callback::Interval::new(TICK_MS, move || controls.tick());
-    interval.forget();
-    std::mem::forget(stream);
 }

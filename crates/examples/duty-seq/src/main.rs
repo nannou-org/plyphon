@@ -11,14 +11,14 @@
 //! through `Dseq`, `Dseries`, and `Dwhite`. The only off-RT work is compiling the `SynthDef`; the
 //! pulling, sequencing, and randomness all happen in the audio callback.
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SizedSample};
 use plyphon::{
     AddAction, InputRef, Nrt, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 /// Peak amplitude of the oscillator.
 const AMP: f32 = 0.2;
+/// Master gain applied in the audio callback (the voice is already scaled by `AMP`).
+const GAIN: f32 = 1.0;
 
 /// The sequencer synth, built entirely from demand-rate units:
 ///
@@ -148,71 +148,28 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("no output device available");
-    let config = device
-        .default_output_config()
-        .expect("no default output config");
-
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into()),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into()),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into()),
-        format => panic!("unsupported sample format: {format}"),
+    // cpal's AudioWorklet backend re-instantiates this module on the audio thread, re-running
+    // `main` there; only set up audio on the main browser thread.
+    if example_audio::on_worklet_thread() {
+        return;
     }
-}
 
-fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate as f64;
-
-    let (nrt, mut world) = build(sample_rate, channels);
-
-    let mut scratch: Vec<f32> = Vec::new();
-    let stream = device
-        .build_output_stream(
-            *config,
-            move |output: &mut [T], _info: &cpal::OutputCallbackInfo| {
-                scratch.clear();
-                scratch.resize(output.len(), 0.0);
-                world.fill(&mut scratch, channels);
-                for (out, sample) in output.iter_mut().zip(scratch.iter()) {
-                    *out = T::from_sample(*sample);
-                }
-            },
-            |err| eprintln!("audio stream error: {err}"),
-            None,
-        )
-        .expect("failed to build output stream");
-    stream.play().expect("failed to start audio stream");
-
-    run_control_plane(nrt, stream);
-}
-
-/// The synth sequences itself on the audio thread, so the control plane has nothing to schedule - it
-/// just ticks NRT cleanup and holds the stream alive for the demo's duration.
-#[cfg(not(target_arch = "wasm32"))]
-fn run_control_plane(mut nrt: Nrt, _stream: cpal::Stream) {
-    use std::time::Duration;
+    #[cfg(not(target_arch = "wasm32"))]
     println!("playing a self-driving demand-rate sequence (~12s); no per-note control messages...");
-    for _ in 0..240 {
-        nrt.process();
-        while nrt.poll().is_some() {}
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
 
-/// On the web, tick NRT cleanup on a periodic timer and keep it and the stream alive.
-#[cfg(target_arch = "wasm32")]
-fn run_control_plane(mut nrt: Nrt, stream: cpal::Stream) {
-    let interval = gloo_timers::callback::Interval::new(50, move || {
+    // The synth sequences itself on the audio thread, so the control plane has nothing to schedule -
+    // it just ticks NRT cleanup (dropping any boxes the audio thread has freed) off the audio thread.
+    let (stream, mut nrt) = example_audio::play_with(GAIN, |sample_rate, channels| {
+        let (nrt, mut world) = build(sample_rate, channels);
+        (
+            move |out: &mut [f32], channels: usize| world.fill(out, channels),
+            nrt,
+        )
+    });
+    example_audio::run_control(stream, 12_000, 50, move || {
         nrt.process();
         while nrt.poll().is_some() {}
     });
-    interval.forget();
-    std::mem::forget(stream);
 }
 
 #[cfg(test)]

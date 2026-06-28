@@ -439,6 +439,7 @@ name = "example-audio"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "gloo-timers",
  "web-sys",
 ]
 
@@ -447,8 +448,7 @@ name = "example-control"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
- "gloo-timers",
+ "example-audio",
  "plyphon",
 ]
 
@@ -458,7 +458,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",
- "cpal",
+ "example-audio",
  "plyphon",
 ]
 
@@ -467,8 +467,7 @@ name = "example-duty-seq"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
- "gloo-timers",
+ "example-audio",
  "plyphon",
 ]
 
@@ -477,8 +476,7 @@ name = "example-envelope"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
- "gloo-timers",
+ "example-audio",
  "plyphon",
 ]
 
@@ -487,7 +485,7 @@ name = "example-feedback"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
+ "example-audio",
  "plyphon",
 ]
 
@@ -496,8 +494,7 @@ name = "example-glide"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
- "gloo-timers",
+ "example-audio",
  "plyphon",
 ]
 
@@ -506,8 +503,7 @@ name = "example-motif"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
- "gloo-timers",
+ "example-audio",
  "plyphon",
 ]
 
@@ -516,7 +512,7 @@ name = "example-node-control"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
+ "example-audio",
  "gloo-timers",
  "plyphon",
 ]
@@ -526,8 +522,7 @@ name = "example-osc"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
- "gloo-timers",
+ "example-audio",
  "plyphon",
  "plyphon-osc",
  "rosc",
@@ -539,7 +534,7 @@ name = "example-pan"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
+ "example-audio",
  "plyphon",
 ]
 
@@ -558,7 +553,7 @@ name = "example-routing"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
+ "example-audio",
  "plyphon",
 ]
 
@@ -567,7 +562,7 @@ name = "example-sampler"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
+ "example-audio",
  "gloo-net",
  "hound",
  "plyphon",
@@ -580,7 +575,7 @@ name = "example-scgf"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
+ "example-audio",
  "plyphon",
  "scgf",
 ]
@@ -591,7 +586,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "cpal",
- "gloo-timers",
+ "example-audio",
  "plyphon",
  "plyphon-osc",
  "rosc",
@@ -611,7 +606,7 @@ name = "example-stream"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
+ "example-audio",
  "gloo-net",
  "gloo-timers",
  "hound",
@@ -625,8 +620,7 @@ name = "example-triggers"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
- "gloo-timers",
+ "example-audio",
  "plyphon",
 ]
 
@@ -635,8 +629,7 @@ name = "example-waveforms"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
- "gloo-timers",
+ "example-audio",
  "plyphon",
 ]
 

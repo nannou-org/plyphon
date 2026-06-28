@@ -189,7 +189,15 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    let host = cpal::default_host();
+    // cpal's AudioWorklet backend re-instantiates this module on the audio thread, re-running
+    // `main` there; only set up audio on the main browser thread.
+    if example_audio::on_worklet_thread() {
+        return;
+    }
+
+    // This example builds its own stream (to drift-correct with the callback timestamp via
+    // `fill_at`), so it only borrows the helper's host selection.
+    let host = example_audio::output_host();
     let device = host
         .default_output_device()
         .expect("no output device available");
@@ -244,30 +252,15 @@ fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::S
         .expect("failed to build output stream");
     stream.play().expect("failed to start audio stream");
 
-    run_control_plane(sched, stream);
-}
-
-/// Tick the NRT cleanup off the audio thread for the phrase's lifetime, holding the stream alive.
-#[cfg(not(target_arch = "wasm32"))]
-fn run_control_plane(mut sched: Sched, _stream: cpal::Stream) {
-    use std::time::Duration;
-    let total = LEAD_SECS + NUM_BEATS as f64 * BEAT_SECS + 0.5;
+    // The phrase is scheduled up front, so the tick only runs the NRT cleanup.
+    let total_secs = LEAD_SECS + NUM_BEATS as f64 * BEAT_SECS + 0.5;
+    #[cfg(not(target_arch = "wasm32"))]
     println!(
-        "scheduled {NUM_BEATS} beats up front; playing ~{total:.1}s of sample-accurate rhythm..."
+        "scheduled {NUM_BEATS} beats up front; playing ~{total_secs:.1}s of sample-accurate rhythm..."
     );
-    let tick_ms = 50u64;
-    for _ in 0..((total * 1000.0 / tick_ms as f64) as u32) {
-        sched.tick();
-        std::thread::sleep(Duration::from_millis(tick_ms));
-    }
-}
-
-/// On the web, run the NRT cleanup on a periodic timer and keep it and the stream alive.
-#[cfg(target_arch = "wasm32")]
-fn run_control_plane(mut sched: Sched, stream: cpal::Stream) {
-    let interval = gloo_timers::callback::Interval::new(50, move || sched.tick());
-    interval.forget();
-    std::mem::forget(stream);
+    example_audio::run_control(stream, (total_secs * 1000.0) as u32, 50, move || {
+        sched.tick()
+    });
 }
 
 #[cfg(test)]
