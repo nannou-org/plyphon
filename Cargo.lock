@@ -435,6 +435,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-audio"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+]
+
+[[package]]
 name = "example-control"
 version = "0.1.0"
 dependencies = [
@@ -594,7 +601,7 @@ name = "example-sine"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "cpal",
+ "example-audio",
  "plyphon",
 ]
 

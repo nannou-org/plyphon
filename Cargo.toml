@@ -9,6 +9,7 @@ members = [
     "crates/plyphon-unit",
     "crates/rt-alloc",
     "crates/scgf",
+    "crates/example-audio",
     "crates/examples/*",
 ]
 # `plyphon-cli` (the `plyphon` binary) is the repo's default build/run target, so a bare
@@ -36,6 +37,8 @@ plyphon-rt = { version = "0.1.0", path = "crates/plyphon-rt", default-features =
 plyphon-unit = { version = "0.1.0", path = "crates/plyphon-unit", default-features = false }
 rt-alloc = { version = "0.1.0", path = "crates/rt-alloc" }
 scgf = { version = "0.1.0", path = "crates/scgf", default-features = false }
+# Shared cpal output-stream glue for the example crates (native + web AudioWorklet).
+example-audio = { version = "0.1.0", path = "crates/example-audio" }
 
 # Shared dependencies.
 # Safe, no_std byte/slice reinterpretation - backs Pod ugen state in the rt-pool.
