@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>plyphon: sine (AudioWorklet)</title>
+    <!--
+      Enable cross-origin isolation (SharedArrayBuffer) on hosts that can't send COOP/COEP headers
+      (e.g. GitHub Pages). The service worker injects the headers and reloads once on first visit.
+      Must run before the wasm module, which imports shared memory. Local servers that already send
+      the headers (trunk serve / serve-plyphon-website-worklet) make this a no-op.
+    -->
+    <script src="coi-serviceworker.min.js"></script>
+    <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
+    <script src="audio.js"></script>
+    <link data-trunk rel="copy-file" href="../coi-serviceworker.min.js" />
+    <link data-trunk rel="copy-file" href="../audio.js" />
+    <link data-trunk rel="copy-file" href="../style.css" />
+    <link rel="stylesheet" href="style.css" />
+    <link
+      data-trunk
+      rel="rust"
+      href="../../crates/examples/sine/Cargo.toml"
+      data-bin="example-sine"
+      data-cargo-features="audioworklet"
+      data-cargo-profile-release="wasm_release"
+      data-wasm-opt="z"
+      data-wasm-opt-params="--enable-threads --enable-bulk-memory --enable-mutable-globals --enable-reference-types --enable-multivalue --enable-tail-call --enable-nontrapping-float-to-int"
+      data-initializer="../initializer.js"
+    />
+  </head>
+  <body class="loading">
+    <div id="loading">
+      <p id="loading-title">plyphon</p>
+      <div id="loading-track"><div id="loading-bar"></div></div>
+    </div>
+    <main class="demo">
+      <p class="title">sine <small>(AudioWorklet)</small></p>
+      <p>The simplest example: a continuous 440 Hz sine, running on a Web Audio worklet thread.</p>
+      <p class="hint">Click anywhere to start audio.</p>
+      <a class="back" href="../">&larr; all examples</a>
+    </main>
+  </body>
+</html>

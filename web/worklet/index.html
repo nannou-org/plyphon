@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>plyphon examples (AudioWorklet)</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <p class="title">plyphon <small>(AudioWorklet)</small></p>
+      <p class="lede">
+        The same examples as the <a href="../">default build</a>, but driven by cpal's AudioWorklet
+        backend - audio runs on a dedicated Web Audio worklet thread (off the deprecated
+        <code>ScriptProcessorNode</code>) via WASM threads and <code>SharedArrayBuffer</code>.
+      </p>
+
+      <h2>Synthesis</h2>
+      <ul class="examples">
+        <li><a href="sine/">sine</a> <span class="desc">- the simplest example: a continuous 440 Hz sine.</span></li>
+      </ul>
+
+      <p class="note">
+        More examples are migrated to this backend during rollout. Run any example natively with
+        <code>cargo run -p example-&lt;name&gt;</code>. See the
+        <a href="https://github.com/mitchmindtree/plyphon">repository</a> for details.
+      </p>
+    </main>
+  </body>
+</html>
