@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" href="data:," />
-    <title>plyphon: schedule</title>
+    <title>plyphon: send-reply</title>
     <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
     <script src="coi-serviceworker.min.js"></script>
     <script src="audio.js"></script>
@@ -79,10 +79,10 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 }
 
 
-import init, * as bindings from './example-schedule.js';
+import init, * as bindings from './example-send-reply.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './example-schedule_bg.wasm', 266270, initializer(), true);
+const wasm = await __trunkInitializer(init, './example-send-reply_bg.wasm', 209645, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -91,16 +91,16 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="./example-schedule.js" crossorigin="anonymous"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous"><link rel="preload" href="./example-schedule_bg.wasm" crossorigin="anonymous" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./example-send-reply.js" crossorigin="anonymous"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous"><link rel="preload" href="./example-send-reply_bg.wasm" crossorigin="anonymous" as="fetch" type="application/wasm"></head>
   <body class="loading">
     <div id="loading">
       <p id="loading-title">plyphon</p>
       <div id="loading-track"><div id="loading-bar"></div></div>
     </div>
     <main class="demo">
-      <p class="title">schedule</p>
-      <p>Sample-accurate rhythm: time-tagged OSC bundles scheduled ahead of the audio clock.</p>
-      <p class="hint">Click anywhere to start audio.</p>
+      <p class="title">send-reply</p>
+      <p>A tremolo tone reports its amplitude to the host with <code>SendReply</code>, four times a second.</p>
+      <p class="hint">Click anywhere to start audio, then open the browser console to watch the <code>/amp</code> replies.</p>
       <a class="back" href="../">&larr; all examples</a>
     </main>
   </body>
