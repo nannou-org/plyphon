@@ -22,7 +22,7 @@ partial items stay unchecked and spell out what is missing.
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
-## UGens (58 of scsynth's ~250, grouped by category)
+## UGens (61 of scsynth's ~250, grouped by category)
 
 - [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`); missing ReplaceOut, XOut, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
@@ -33,8 +33,8 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **Dynamics** - have Amplitude; missing Compander, Limiter, Normalizer, DetectSilence
 - [ ] **Math / multichannel** - have BinaryOpUGen, UnaryOpUGen, MulAdd; missing Sum3/Sum4, Select, Index, Clip/Wrap/Fold, LinLin/LinExp
 - [ ] **Buffer playback** - have PlayBuf, DiskIn; missing BufRd, BufWr, RecordBuf, DiskOut, VDiskIn, TGrains, GrainBuf
-- [ ] **Triggers / timing** - have SendTrig (fires `/tr` on a rising edge, at control or audio rate), FreeSelf, PauseSelf, Done, FreeSelfWhenDone, PauseSelfWhenDone, Free, Pause; missing Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, SendReply
-- [ ] **Info** - have SampleRate, SampleDur, RadiansPerSample, ControlRate, ControlDur, NumOutputBuses, NumInputBuses, NumAudioBuses, NumControlBuses, BufFrames, BufChannels, BufSamples, BufSampleRate, BufRateScale, BufDur; missing NumRunningSynths, NumBuffers, SubsampleOffset
+- [ ] **Triggers / timing** - have SendTrig (fires `/tr` on a rising edge, at control or audio rate), SendReply (emits a custom OSC path with a bounded number of values, over a dedicated node-message ring), FreeSelf, PauseSelf, Done, FreeSelfWhenDone, PauseSelfWhenDone, Free, Pause; missing Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, Poll
+- [ ] **Info** - have SampleRate, SampleDur, RadiansPerSample, ControlRate, ControlDur, NumOutputBuses, NumInputBuses, NumAudioBuses, NumControlBuses, NumRunningSynths, NumBuffers, BufFrames, BufChannels, BufSamples, BufSampleRate, BufRateScale, BufDur; missing SubsampleOffset
 - [ ] **Delays / reverb** - have DelayN (the first UGen on per-instance aux memory); missing DelayL/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
 - [ ] **Demand-rate** - have Demand, Duty, Dseq, Dseries, Dwhite; missing TDuty, Dser, Drand, Dxrand, Dwrand, Dgeom, Dbrown/Dibrown, Diwhite, Dbufrd/Dbufwr, Dswitch/Dswitch1, Dstutter, Dconst, Dreset, Dpoll
 - [ ] **FFT / spectral** - none yet: FFT/IFFT, the `PV_*` set, Pitch, Onsets, BeatTrack
@@ -163,8 +163,10 @@ model; the intent is to surface them as typed higher-level actions for the embed
 - [x] Getter replies: /status.reply, /synced (the `/sync` barrier), /rtMemoryStatus.reply, /n_info
   (`/n_query`), /g_queryTree.reply, /c_set·/c_setn (`/c_get`·`/c_getn`), /n_set·/n_setn
   (`/s_get`·`/s_getn`), /b_set·/b_setn (`/b_get`·`/b_getn`)
-- [x] /tr (SendTrig, over a dedicated best-effort trigger ring) and /n_move from out-of-band node
-  moves (broadcast in `/n_info`'s format when a move command relinks the tree)
+- [x] /tr (SendTrig, over a dedicated best-effort trigger ring) and SendReply's custom `/<path>
+  [nodeID, replyID, values...]` (over a parallel best-effort node-message ring; path + values are
+  carried inline in a bounded `Copy` carrier, no audio-thread allocation) and /n_move from
+  out-of-band node moves (broadcast in `/n_info`'s format when a move command relinks the tree)
 - [x] Done actions beyond 0 (none), 1 (pause self), 2 (free self): codes 3-14, the free/pause variants that also touch neighbours or the enclosing group
 - [x] Per-unit done flag (scsynth's `mDone`, kept in the RT-pool block): producers (`EnvGen`/`Line`/`PlayBuf`) mark completion independently of the done action, so the done-watching units (`Done`/`FreeSelfWhenDone`/`PauseSelfWhenDone`) can observe a source unit finishing
 

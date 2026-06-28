@@ -78,4 +78,24 @@ pub enum BuildError {
         /// The index of the offending input.
         input: usize,
     },
+    /// An emitting unit (`SendReply`) was given a non-constant label length or character. The OSC path
+    /// is encoded as constant float inputs (scsynth's scheme), so it must be known at compile time.
+    #[error("an emitting unit's label must be encoded as compile-time constant inputs")]
+    EmitBadLabel,
+    /// An emitting unit's label is longer than the inline carrier allows (`MAX_LABEL`).
+    #[error("an emitting unit's label is {len} bytes but the limit is {limit}")]
+    EmitLabelTooLong {
+        /// The requested label length.
+        len: usize,
+        /// The `MAX_LABEL` limit.
+        limit: usize,
+    },
+    /// An emitting unit (`SendReply`) carries more values than the inline carrier allows (`MAX_VALUES`).
+    #[error("an emitting unit carries {count} values but the limit is {limit}")]
+    EmitTooManyValues {
+        /// The requested value count.
+        count: usize,
+        /// The `MAX_VALUES` limit.
+        limit: usize,
+    },
 }

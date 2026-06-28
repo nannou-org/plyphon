@@ -50,15 +50,16 @@
 use rtrb::Consumer;
 
 use crate::command::{Event, Reply, Trash};
-use plyphon_unit::unit::Trigger;
+use plyphon_unit::unit::{NodeMsg, Trigger};
 
 /// The NRT-side state machine: drops freed synths, surfaces node notifications, surfaces query
-/// answers, and surfaces `SendTrig` triggers.
+/// answers, and surfaces `SendTrig` triggers and `SendReply` messages.
 pub struct Nrt {
     trash_rx: Consumer<Trash>,
     events_rx: Consumer<Event>,
     replies_rx: Consumer<Reply>,
     triggers_rx: Consumer<Trigger>,
+    node_msgs_rx: Consumer<NodeMsg>,
 }
 
 impl Nrt {
@@ -67,12 +68,14 @@ impl Nrt {
         events_rx: Consumer<Event>,
         replies_rx: Consumer<Reply>,
         triggers_rx: Consumer<Trigger>,
+        node_msgs_rx: Consumer<NodeMsg>,
     ) -> Self {
         Nrt {
             trash_rx,
             events_rx,
             replies_rx,
             triggers_rx,
+            node_msgs_rx,
         }
     }
 
@@ -102,5 +105,11 @@ impl Nrt {
     /// feeding each to the dispatcher's `notify_trigger` to emit a `/tr`.
     pub fn poll_trigger(&mut self) -> Option<Trigger> {
         self.triggers_rx.pop().ok()
+    }
+
+    /// Pop the next `SendReply` message, if any. Drain in a loop alongside [`poll`](Self::poll),
+    /// feeding each to the dispatcher's `notify_node_msg` to emit its OSC reply.
+    pub fn poll_node_msg(&mut self) -> Option<NodeMsg> {
+        self.node_msgs_rx.pop().ok()
     }
 }

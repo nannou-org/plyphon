@@ -35,6 +35,10 @@ pub enum InfoKind {
     NumAudioBuses,
     /// Total control bus channels (`NumControlBuses`).
     NumControlBuses,
+    /// Number of synths currently running (`NumRunningSynths`).
+    NumRunningSynths,
+    /// Number of buffer table slots (`NumBuffers`).
+    NumBuffers,
 }
 
 impl InfoKind {
@@ -50,6 +54,8 @@ impl InfoKind {
             InfoKind::NumInputBuses => 6,
             InfoKind::NumAudioBuses => 7,
             InfoKind::NumControlBuses => 8,
+            InfoKind::NumRunningSynths => 9,
+            InfoKind::NumBuffers => 10,
         }
     }
 
@@ -64,6 +70,8 @@ impl InfoKind {
             6 => InfoKind::NumInputBuses,
             7 => InfoKind::NumAudioBuses,
             8 => InfoKind::NumControlBuses,
+            9 => InfoKind::NumRunningSynths,
+            10 => InfoKind::NumBuffers,
             _ => InfoKind::SampleRate,
         }
     }
@@ -81,6 +89,8 @@ impl InfoKind {
             InfoKind::NumInputBuses => unit::num_input_buses(ctx.buses) as f32,
             InfoKind::NumAudioBuses => unit::num_audio_buses(ctx.buses) as f32,
             InfoKind::NumControlBuses => unit::num_control_buses(ctx.buses) as f32,
+            InfoKind::NumRunningSynths => ctx.running_synths as f32,
+            InfoKind::NumBuffers => unit::num_buffers(ctx.buffers) as f32,
         }
     }
 }

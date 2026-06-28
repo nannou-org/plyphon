@@ -95,6 +95,9 @@ pub struct NodeTree {
     id_map: HashMap<i32, u32>,
     root_id: i32,
     root_index: u32,
+    /// Live synth count (scsynth's `mNumGraphs`), maintained O(1) on add/free so `NumRunningSynths`
+    /// can read it without an O(nodes) scan. Always equals `counts().0`.
+    synth_count: usize,
 }
 
 impl NodeTree {
@@ -127,7 +130,13 @@ impl NodeTree {
             id_map,
             root_id,
             root_index,
+            synth_count: 0,
         }
+    }
+
+    /// Live synth count (scsynth's `mNumGraphs`), O(1). Equals [`counts`](Self::counts)`.0`.
+    pub(crate) fn running_synths(&self) -> usize {
+        self.synth_count
     }
 
     /// The root group's client id.
@@ -164,6 +173,7 @@ impl NodeTree {
         });
         self.id_map.insert(id, idx);
         self.link_at(idx, placement);
+        self.synth_count += 1;
         Ok(())
     }
 
@@ -394,6 +404,8 @@ impl NodeTree {
         self.id_map.remove(&id);
         let slot = core::mem::replace(&mut self.slots[idx as usize], Slot::Free);
         self.free.push(idx);
+        // The early guard above means the removed slot was a synth, so always one fewer.
+        self.synth_count = self.synth_count.saturating_sub(1);
         match slot {
             Slot::Node(Node {
                 kind: NodeKind::Synth(graph),
@@ -700,6 +712,9 @@ impl NodeTree {
             }) => Some(synth),
             _ => None,
         };
+        if synth.is_some() {
+            self.synth_count = self.synth_count.saturating_sub(1);
+        }
         sink.push((id, synth));
     }
 

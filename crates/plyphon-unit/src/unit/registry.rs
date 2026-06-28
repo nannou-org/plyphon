@@ -36,6 +36,7 @@ use crate::unit::out::{OffsetOutCtor, OutCtor};
 use crate::unit::pan::Pan2Ctor;
 use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor};
+use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::sin_osc::SinOscCtor;
 use crate::unit::unary_op::UnaryOpCtor;
@@ -145,6 +146,7 @@ impl UnitRegistry {
         registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry.register("EnvGen", Box::new(EnvGenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
+        registry.register("SendReply", Box::new(SendReplyCtor));
         // Info: engine constants and per-buffer info.
         registry.register("SampleRate", Box::new(InfoCtor(InfoKind::SampleRate)));
         registry.register("SampleDur", Box::new(InfoCtor(InfoKind::SampleDur)));
@@ -164,6 +166,11 @@ impl UnitRegistry {
             "NumControlBuses",
             Box::new(InfoCtor(InfoKind::NumControlBuses)),
         );
+        registry.register(
+            "NumRunningSynths",
+            Box::new(InfoCtor(InfoKind::NumRunningSynths)),
+        );
+        registry.register("NumBuffers", Box::new(InfoCtor(InfoKind::NumBuffers)));
         registry.register("BufFrames", Box::new(BufInfoCtor(BufInfoKind::Frames)));
         registry.register("BufChannels", Box::new(BufInfoCtor(BufInfoKind::Channels)));
         registry.register("BufSamples", Box::new(BufInfoCtor(BufInfoKind::Samples)));

@@ -35,6 +35,6 @@ pub use command::{Command, CommandTime, Event, Reply, TimedCommand, Trash};
 pub use graph::Graph;
 pub use nrt::Nrt;
 pub use options::{Options, ROOT_GROUP_ID};
-pub use plyphon_unit::unit::Trigger;
+pub use plyphon_unit::unit::{NodeMsg, NodeMsgKind, Trigger};
 pub use tree::AddAction;
 pub use world::World;

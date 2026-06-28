@@ -32,6 +32,7 @@ pub mod pan;
 pub mod play_buf;
 pub mod rate_conv;
 pub mod registry;
+pub mod send_reply;
 pub mod send_trig;
 pub mod sin_osc;
 pub mod unary_op;
@@ -142,7 +143,7 @@ pub use info::{BufInfo, BufInfoKind, Info, InfoKind};
 pub use input::In;
 pub use io::{
     audio_in, audio_out, buffer_at, control_in, control_out, local_in, local_out, num_audio_buses,
-    num_control_buses, num_input_buses, num_output_buses, stream_at_mut,
+    num_buffers, num_control_buses, num_input_buses, num_output_buses, stream_at_mut,
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
@@ -154,6 +155,7 @@ pub use pan::Pan2;
 pub use play_buf::PlayBuf;
 pub use rate_conv::{A2K, Dc, K2A, T2A};
 pub use registry::{BuildContext, DemandUnitDef, UnitDef, UnitRegistry};
+pub use send_reply::SendReply;
 pub use send_trig::SendTrig;
 pub use sin_osc::SinOsc;
 pub use unary_op::UnaryOp;
@@ -190,6 +192,64 @@ impl<'a> TriggerSink<'a> {
     pub fn push(&mut self, trigger: Trigger) {
         if self.buf.len() < self.capacity {
             self.buf.push(trigger);
+        }
+    }
+}
+
+/// Maximum bytes in a [`NodeMsg`] label (an OSC path for `SendReply`). A unit whose label is longer
+/// is rejected at compile time - plyphon bounds the carrier so the audio thread never allocates.
+pub const MAX_LABEL: usize = 32;
+/// Maximum values a [`NodeMsg`] carries (`SendReply`'s value count). Over-long is rejected at build.
+pub const MAX_VALUES: usize = 32;
+
+/// What kind of host message a [`NodeMsg`] is - which decides how the dispatcher surfaces it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum NodeMsgKind {
+    /// `SendReply`: emit an OSC message `/<label> [node, reply_id, values...]`.
+    Reply,
+}
+
+/// A message a unit emits from the audio thread for the host - `SendReply`'s analogue of [`Trigger`],
+/// but carrying a custom OSC path (`label`) and a bounded number of `values`. Unlike scsynth's
+/// `NodeReplyMsg` (a pointer to RT-allocated memory), the path and values are **inline**, so the whole
+/// message is one `Copy` value pushed onto a ring with no audio-thread allocation. The path is a
+/// compile-time constant baked into the emitting unit, copied in here when it fires.
+#[derive(Copy, Clone, Debug)]
+pub struct NodeMsg {
+    /// The enclosing synth's node id.
+    pub node: i32,
+    /// `SendReply`'s reply id (echoed in the OSC reply).
+    pub reply_id: i32,
+    /// How the host should surface this message.
+    pub kind: NodeMsgKind,
+    /// The OSC path bytes (UTF-8), the first `label_len` of which are valid.
+    pub label: [u8; MAX_LABEL],
+    /// Valid byte length of `label` (`<= MAX_LABEL`).
+    pub label_len: u32,
+    /// The emitted values, the first `num_values` of which are valid.
+    pub values: [f32; MAX_VALUES],
+    /// Valid length of `values` (`<= MAX_VALUES`).
+    pub num_values: u32,
+}
+
+/// A bounded, allocation-free sink a unit pushes [`NodeMsg`]s into during one control block - the
+/// custom-path analogue of [`TriggerSink`]. The engine drains it to a ring after the tree walk;
+/// pushes past `capacity` are dropped (best-effort, like `/tr`) so the audio thread never reallocates.
+pub struct NodeMsgSink<'a> {
+    buf: &'a mut Vec<NodeMsg>,
+    capacity: usize,
+}
+
+impl<'a> NodeMsgSink<'a> {
+    /// Wrap `buf`, capping the block at `capacity` messages.
+    pub fn new(buf: &'a mut Vec<NodeMsg>, capacity: usize) -> Self {
+        NodeMsgSink { buf, capacity }
+    }
+
+    /// Record `msg`, unless the block's capacity is already reached (then drop it).
+    pub fn push(&mut self, msg: NodeMsg) {
+        if self.buf.len() < self.capacity {
+            self.buf.push(msg);
         }
     }
 }
@@ -380,6 +440,11 @@ pub struct ProcessCtx<'a> {
     pub node_id: i32,
     /// Sink for triggers a unit fires this block (`SendTrig`). Most units ignore it.
     pub triggers: TriggerSink<'a>,
+    /// Sink for custom-path host messages a unit emits this block (`SendReply`). Most units ignore it.
+    pub node_msgs: NodeMsgSink<'a>,
+    /// Number of synths running at the start of this block (`NumRunningSynths`), snapshotted before
+    /// the tree walk. Most units ignore it.
+    pub running_synths: usize,
     /// This block's per-unit done flags (scsynth's `mDone`): a producer marks itself done, a watcher
     /// reads a source unit's flag. Most units ignore it.
     pub done: DoneState<'a>,

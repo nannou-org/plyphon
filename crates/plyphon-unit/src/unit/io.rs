@@ -77,6 +77,11 @@ pub fn num_control_buses(buses: &Buses) -> usize {
     buses.control().num_channels()
 }
 
+/// The number of buffer slots (the table capacity), for `NumBuffers`.
+pub fn num_buffers(buffers: &BufferTable) -> usize {
+    buffers.capacity()
+}
+
 /// The (flat, in-memory) buffer at `index`, if one is installed, for `PlayBuf`.
 pub fn buffer_at(buffers: &BufferTable, index: usize) -> Option<&Buffer> {
     buffers.get(index)

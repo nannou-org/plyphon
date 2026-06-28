@@ -27,8 +27,8 @@ use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
 use plyphon_unit::unit::{
-    self, Aux, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBus, NodeOp, NodeOpSink,
-    Outputs, ProcessCtx, Trigger, TriggerSink,
+    self, Aux, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBus, NodeMsg,
+    NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger, TriggerSink,
 };
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
@@ -61,10 +61,16 @@ pub(crate) struct Block<'a> {
     pub triggers: &'a mut Vec<Trigger>,
     /// Cap on triggers per block; pushes past it are dropped so the audio thread never reallocates.
     pub trigger_cap: usize,
+    /// World-shared sink for `SendReply` messages emitted this block, drained after the tree walk.
+    pub node_msgs: &'a mut Vec<NodeMsg>,
+    /// Cap on node messages per block; pushes past it are dropped so the audio thread never reallocates.
+    pub node_msg_cap: usize,
     /// World-shared sink for node ops (`Free`/`Pause` by id) emitted this block, applied after walk.
     pub node_ops: &'a mut Vec<NodeOp>,
     /// Cap on node ops per block; pushes past it are dropped so the audio thread never reallocates.
     pub node_op_cap: usize,
+    /// Live synth count at the start of this block, surfaced to `NumRunningSynths`.
+    pub running_synths: usize,
 }
 
 /// A live synth instance.
@@ -241,6 +247,8 @@ impl Graph {
                     ),
                     node_id,
                     triggers: TriggerSink::new(&mut *block.triggers, block.trigger_cap),
+                    node_msgs: NodeMsgSink::new(&mut *block.node_msgs, block.node_msg_cap),
+                    running_synths: block.running_synths,
                     done: DoneState::new(&*done_flags, &mut done_flag),
                     node_ops: NodeOpSink::new(&mut *block.node_ops, block.node_op_cap),
                     local: LocalBus::new(&mut *local, bs),

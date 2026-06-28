@@ -79,7 +79,10 @@ use hashbrown::HashMap;
 
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
-use plyphon::{AddAction, CommandTime, Controller, Event, Render, RenderUntil, Reply, Trigger};
+use plyphon::{
+    AddAction, CommandTime, Controller, Event, NodeMsg, NodeMsgKind, Render, RenderUntil, Reply,
+    Trigger,
+};
 use plyphon_buffers::{BufferSource, ReadRegion};
 use plyphon_dsp::buffer::Buffer;
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
@@ -386,6 +389,26 @@ impl OscDispatcher {
                 OscType::Float(trigger.value),
             ],
         );
+    }
+
+    /// Translate a `SendReply` [`NodeMsg`] into its OSC message and queue it for
+    /// [`take_replies`](Self::take_replies). For `SendReply` that is `<path> [nodeID, replyID,
+    /// values...]`, where the path is the unit's `cmdName` verbatim (scsynth's path includes its
+    /// leading `/`). Feed this the messages drained from
+    /// [`Nrt::poll_node_msg`](plyphon::Nrt::poll_node_msg). Broadcast, like `/tr`.
+    pub fn notify_node_msg(&mut self, msg: NodeMsg) {
+        match msg.kind {
+            NodeMsgKind::Reply => {
+                let path = core::str::from_utf8(&msg.label[..msg.label_len as usize]).unwrap_or("");
+                let mut args = Vec::with_capacity(2 + msg.num_values as usize);
+                args.push(OscType::Int(msg.node));
+                args.push(OscType::Int(msg.reply_id));
+                for &v in &msg.values[..msg.num_values as usize] {
+                    args.push(OscType::Float(v));
+                }
+                self.push_reply(ReplyTarget::Broadcast, path, args);
+            }
+        }
     }
 
     /// Run the buffer loads queued by `apply` (`/b_allocRead`, `/b_read`), in order.

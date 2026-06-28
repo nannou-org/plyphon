@@ -146,6 +146,23 @@ impl UnitSpec {
             special_index: 0,
         }
     }
+
+    /// A `SendReply` unit that emits `/<path> [nodeID, replyID, values...]` on each rising edge of
+    /// `trig`. Expands `path` to scsynth's constant-char input layout
+    /// (`[trig, replyID, len, chars..., values...]`), so callers pass a plain `&str` instead of
+    /// hand-encoding it. `rate` is the trigger rate (`Rate::Audio` or `Rate::Control`).
+    pub fn send_reply(
+        rate: Rate,
+        trig: InputRef,
+        reply_id: InputRef,
+        path: &str,
+        values: &[InputRef],
+    ) -> Self {
+        let mut inputs = vec![trig, reply_id, InputRef::Constant(path.len() as f32)];
+        inputs.extend(path.bytes().map(|b| InputRef::Constant(b as f32)));
+        inputs.extend_from_slice(values);
+        UnitSpec::new("SendReply", rate, inputs, 0)
+    }
 }
 
 /// A synth definition: a template instantiated into a [`plyphon_rt::graph::Graph`].

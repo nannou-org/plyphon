@@ -130,3 +130,68 @@ fn buffer_info() {
     approx(f[4], (frames as f64 / buf_sr) as f32, "BufDur");
     approx(f[5], (frames * channels) as f32, "BufSamples");
 }
+
+#[test]
+fn num_running_synths_and_buffers() {
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR,
+        output_channels: 2,
+        block_size: BLOCK,
+        max_buffers: 7,
+        ..Options::default()
+    });
+    // A meter synth: NumRunningSynths -> ch0, NumBuffers -> ch1.
+    controller.add_synthdef(def_from(
+        "meter",
+        vec![
+            ("NumRunningSynths", vec![], 0.0),
+            ("NumBuffers", vec![], 1.0),
+        ],
+    ));
+    // A silent synth that bumps the running count without writing any output bus.
+    controller.add_synthdef(SynthDef {
+        name: "extra".to_string(),
+        params: vec![],
+        units: vec![UnitSpec::new(
+            "DC",
+            Rate::Audio,
+            vec![InputRef::Constant(0.0)],
+            1,
+        )],
+    });
+
+    // Render a whole control block (so each call drains the commands queued since the last) and
+    // return the meter's two channels from the first frame.
+    fn read(world: &mut World) -> Vec<f32> {
+        let mut buf = vec![0.0f32; BLOCK * 2];
+        world.fill(&mut buf, 2);
+        vec![buf[0], buf[1]]
+    }
+
+    controller
+        .synth_new("meter", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("meter");
+    let f = read(&mut world);
+    approx(f[0], 1.0, "NumRunningSynths (meter only)");
+    approx(f[1], 7.0, "NumBuffers (slot capacity)");
+
+    // A group (groups are not counted) holding two extras: running = meter + 2 = 3.
+    let g = controller
+        .new_group(ROOT_GROUP_ID, AddAction::Tail)
+        .expect("group");
+    let e1 = controller
+        .synth_new("extra", g, AddAction::Tail)
+        .expect("e1");
+    controller
+        .synth_new("extra", g, AddAction::Tail)
+        .expect("e2");
+    approx(read(&mut world)[0], 3.0, "NumRunningSynths (meter + 2)");
+
+    // Explicit free of one extra exercises the `destroy` removal path.
+    controller.free(e1).expect("free e1");
+    approx(read(&mut world)[0], 2.0, "NumRunningSynths after free");
+
+    // Deep-freeing the group's remaining synth exercises the `free_by_index` removal path.
+    controller.deep_free(g).expect("deep_free");
+    approx(read(&mut world)[0], 1.0, "NumRunningSynths after deep_free");
+}

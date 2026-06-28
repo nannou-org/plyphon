@@ -186,6 +186,12 @@ impl Render {
         self.nrt.poll_reply()
     }
 
+    /// Drain the next `SendReply` message ([`NodeMsg`](plyphon_rt::NodeMsg)), or `None`. Call in a
+    /// loop after each [`Render::step`], alongside [`poll`](Self::poll), to forward emitted replies.
+    pub fn poll_node_msg(&mut self) -> Option<plyphon_rt::NodeMsg> {
+        self.nrt.poll_node_msg()
+    }
+
     /// Tick the [`Nrt`] cleanup to completion, dropping every freed `Box` still in flight. Call after
     /// the final [`Render::step`] (the offline analog of the real-time shutdown drain) before the
     /// `World` is dropped.

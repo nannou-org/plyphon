@@ -164,6 +164,12 @@ impl BufferTable {
         BufferTable { slots }
     }
 
+    /// The number of buffer slots (scsynth's `mNumSndBufs`), i.e. the table's fixed capacity. This is
+    /// what `NumBuffers` reports - the slot count, not how many are currently loaded.
+    pub fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
     /// The flat buffer at `index`, or `None` if the slot is empty, a stream, or out of range.
     /// RT-safe (no panic).
     pub fn get(&self, index: usize) -> Option<&Buffer> {

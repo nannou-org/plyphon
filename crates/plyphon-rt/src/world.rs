@@ -30,7 +30,7 @@ use plyphon_dsp::bus::Buses;
 use plyphon_dsp::rate::RateInfo;
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
-use plyphon_unit::unit::{DoneAction, NodeOp, NodeOpKind, Trigger};
+use plyphon_unit::unit::{DoneAction, NodeMsg, NodeOp, NodeOpKind, Trigger};
 
 /// The seed the per-instance RNG counter starts from (any fixed non-zero value; keeps runs
 /// deterministic while decorrelating distinct synth instances).
@@ -66,6 +66,7 @@ pub struct World {
     events_tx: Producer<Event>,
     replies_tx: Producer<Reply>,
     triggers_tx: Producer<Trigger>,
+    node_msgs_tx: Producer<NodeMsg>,
     /// Freed items awaiting space in the trash ring (pre-allocated; never reallocates at runtime).
     pending_trash: Vec<Trash>,
     /// Events awaiting space in the events ring (pre-allocated; never reallocates at runtime).
@@ -86,6 +87,11 @@ pub struct World {
     trigger_buf: Vec<Trigger>,
     /// Cap on triggers per block; the sink and the trigger ring share it. Excess is dropped.
     trigger_cap: usize,
+    /// Per-block sink for `SendReply` messages (pre-allocated to `node_msg_cap`; never reallocates),
+    /// drained into the node-message ring after the tree walk.
+    node_msg_buf: Vec<NodeMsg>,
+    /// Cap on node messages per block; the sink and the ring share it. Excess is dropped.
+    node_msg_cap: usize,
     /// Per-block sink for `Free`/`Pause`-by-id node ops (pre-allocated; never reallocates), applied
     /// to the tree after the walk.
     node_op_buf: Vec<NodeOp>,
@@ -106,7 +112,7 @@ pub struct World {
 }
 
 impl World {
-    // The command consumer plus the four RT->NRT producer rings the World writes to, wired once by
+    // The command consumer plus the five RT->NRT producer rings the World writes to, wired once by
     // the engine builder.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -118,9 +124,11 @@ impl World {
         events_tx: Producer<Event>,
         replies_tx: Producer<Reply>,
         triggers_tx: Producer<Trigger>,
+        node_msgs_tx: Producer<NodeMsg>,
     ) -> Self {
         let capacity = options.max_nodes.max(1);
         let trigger_cap = options.max_triggers;
+        let node_msg_cap = options.max_node_msgs;
         // A node op targets a node, so at most one per live node could be emitted in a block.
         let node_op_cap = capacity;
         let bs = options.block_size;
@@ -151,6 +159,7 @@ impl World {
             events_tx,
             replies_tx,
             triggers_tx,
+            node_msgs_tx,
             pending_trash: Vec::with_capacity(capacity),
             pending_events: Vec::with_capacity(capacity),
             pending_replies: VecDeque::with_capacity(tree_capacity),
@@ -160,6 +169,8 @@ impl World {
             paused_nodes: Vec::with_capacity(capacity),
             trigger_buf: Vec::with_capacity(trigger_cap),
             trigger_cap,
+            node_msg_buf: Vec::with_capacity(node_msg_cap),
+            node_msg_cap,
             node_op_buf: Vec::with_capacity(node_op_cap),
             node_op_cap,
             clock: Clock::new(options.sample_rate, bs),
@@ -271,7 +282,11 @@ impl World {
         self.buf_counter += 1;
         self.done_nodes.clear();
         self.trigger_buf.clear();
+        self.node_msg_buf.clear();
         self.node_op_buf.clear();
+        // Snapshot the synth count before the walk: a synth that frees itself this block is still
+        // counted (its done action applies after the walk), matching scsynth's `mNumGraphs`.
+        let running_synths = self.tree.running_synths();
         // Borrow the World's fields disjointly to assemble the per-block bundle: the pool, the shared
         // wire/output scratch, the buses/buffers, and the constants - all distinct fields, threaded
         // through the tree to each graph.
@@ -287,14 +302,18 @@ impl World {
             unit_scratch: &mut self.unit_scratch[..],
             triggers: &mut self.trigger_buf,
             trigger_cap: self.trigger_cap,
+            node_msgs: &mut self.node_msg_buf,
+            node_msg_cap: self.node_msg_cap,
             node_ops: &mut self.node_op_buf,
             node_op_cap: self.node_op_cap,
+            running_synths,
         };
         self.tree.process(&mut block, &mut self.done_nodes);
         self.buses.silence_untouched_outputs(self.buf_counter);
         self.apply_done_actions();
         self.drain_node_ops();
         self.drain_triggers();
+        self.drain_node_msgs();
         self.clock.advance();
     }
 
@@ -335,6 +354,16 @@ impl World {
     fn drain_triggers(&mut self) {
         for trigger in self.trigger_buf.drain(..) {
             if self.triggers_tx.push(trigger).is_err() {
+                break;
+            }
+        }
+    }
+
+    /// Push this block's `SendReply` messages onto the node-message ring; drop any that do not fit
+    /// (best-effort, like `/tr` - one ring slot is one whole message, so a drop is never partial).
+    fn drain_node_msgs(&mut self) {
+        for msg in self.node_msg_buf.drain(..) {
+            if self.node_msgs_tx.push(msg).is_err() {
                 break;
             }
         }

@@ -42,6 +42,10 @@ pub struct Options {
     /// ring. Triggers beyond this in a block, or beyond the ring when the host lags, are dropped -
     /// `/tr` is best-effort, like scsynth's trigger FIFO under load.
     pub max_triggers: usize,
+    /// Most custom-path host messages (`SendReply`) carried per block; sizes the per-block sink and the
+    /// node-message ring. Excess is dropped, best-effort like `/tr` (scsynth's `NodeReplyMsg` FIFO is
+    /// 1024).
+    pub max_node_msgs: usize,
 }
 
 impl Default for Options {
@@ -63,6 +67,7 @@ impl Default for Options {
             command_capacity: 1024,
             max_scheduled: 2048,
             max_triggers: 1024,
+            max_node_msgs: 1024,
         }
     }
 }

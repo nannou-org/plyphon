@@ -4,7 +4,7 @@
 use rtrb::RingBuffer;
 
 use plyphon_dsp::rate::RateInfo;
-use plyphon_rt::{Event, Nrt, Options, Reply, TimedCommand, Trash, Trigger, World};
+use plyphon_rt::{Event, NodeMsg, Nrt, Options, Reply, TimedCommand, Trash, Trigger, World};
 
 use crate::controller::Controller;
 
@@ -28,6 +28,9 @@ pub fn engine(options: Options) -> (Controller, Nrt, World) {
     // from the events ring so a burst of audio-rate triggers can never starve or delay node
     // lifecycle notifications; triggers beyond its capacity are dropped (best-effort, like scsynth).
     let (triggers_tx, triggers_rx) = RingBuffer::<Trigger>::new(options.max_triggers.max(1));
+    // The node-message ring carries `SendReply` messages back for the dispatcher to emit as OSC. Like
+    // the trigger ring it is separate and best-effort; excess is dropped when the host lags.
+    let (node_msgs_tx, node_msgs_rx) = RingBuffer::<NodeMsg>::new(options.max_node_msgs.max(1));
 
     let audio = RateInfo::new(options.sample_rate, options.block_size);
     // Control rate: one value per control block.
@@ -42,8 +45,9 @@ pub fn engine(options: Options) -> (Controller, Nrt, World) {
         events_tx,
         replies_tx,
         triggers_tx,
+        node_msgs_tx,
     );
-    let nrt = Nrt::new(trash_rx, events_rx, replies_rx, triggers_rx);
+    let nrt = Nrt::new(trash_rx, events_rx, replies_rx, triggers_rx, node_msgs_rx);
     let controller = Controller::new(&options, audio, control, cmd_tx);
     (controller, nrt, world)
 }

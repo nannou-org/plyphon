@@ -216,6 +216,9 @@ fn service(server: &mut Server) {
     while let Some(trigger) = server.nrt.poll_trigger() {
         server.dispatcher.notify_trigger(trigger);
     }
+    while let Some(msg) = server.nrt.poll_node_msg() {
+        server.dispatcher.notify_node_msg(msg);
+    }
     while let Some(reply) = server.nrt.poll_reply() {
         server.dispatcher.reply(reply);
     }
