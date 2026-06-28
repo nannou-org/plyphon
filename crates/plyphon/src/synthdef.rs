@@ -387,6 +387,7 @@ impl SynthDef {
             let build_ctx = BuildContext {
                 input_rates: &input_rates,
                 input_units: &input_units,
+                input_sources: &sources,
                 audio,
                 control,
                 rate: spec.rate,
@@ -462,9 +463,15 @@ impl SynthDef {
             calc_built.iter().map(|b| (b.size, b.align)).collect();
         let demand_state_slots: Vec<(usize, usize)> =
             demand_built.iter().map(|b| (b.size, b.align)).collect();
-        let (layout, state_offsets, demand_offsets) = build_layout(
+        // Per-calc-unit auxiliary memory (delay lines), in calc order - parallel to `state_slots`.
+        let aux_slots: Vec<(usize, usize)> = calc_built
+            .iter()
+            .map(|b| (b.aux_bytes, b.aux_align))
+            .collect();
+        let (layout, state_offsets, demand_offsets, aux_offsets) = build_layout(
             &state_slots,
             &demand_state_slots,
+            &aux_slots,
             num_control_wires as usize,
             num_params,
             num_local_channels,
@@ -485,15 +492,20 @@ impl SynthDef {
             .zip(calc_inputs)
             .zip(calc_outputs)
             .zip(state_offsets)
-            .map(|(((b, inputs), outputs), state_offset)| UnitVtbl {
-                process: b.process,
-                init: b.init,
-                reseed: b.reseed,
-                inputs,
-                outputs,
-                state_offset,
-                state_size: b.size,
-            })
+            .zip(aux_offsets)
+            .map(
+                |((((b, inputs), outputs), state_offset), aux_offset)| UnitVtbl {
+                    process: b.process,
+                    init: b.init,
+                    reseed: b.reseed,
+                    inputs,
+                    outputs,
+                    state_offset,
+                    state_size: b.size,
+                    aux_offset,
+                    aux_size: b.aux_bytes,
+                },
+            )
             .collect();
 
         let demand_units: Vec<DemandVtbl> = demand_built

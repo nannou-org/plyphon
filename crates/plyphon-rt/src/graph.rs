@@ -27,7 +27,7 @@ use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
 use plyphon_unit::unit::{
-    self, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBus, NodeOp, NodeOpSink,
+    self, Aux, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBus, NodeOp, NodeOpSink,
     Outputs, ProcessCtx, Trigger, TriggerSink,
 };
 
@@ -107,14 +107,17 @@ impl Graph {
         let bs = def.block_size();
         let layout = def.layout();
 
-        // Carve the per-graph block into its eight disjoint spans (proved disjoint once, here). The
+        // Carve the per-graph block into its disjoint spans (proved disjoint once, here). The
         // calc-unit state and the demand-state arena are separate spans so a calc unit's `&mut` state
-        // slot and the `&mut` demand arena (pulled re-entrantly during its `process`) never alias.
+        // slot and the `&mut` demand arena (pulled re-entrantly during its `process`) never alias; the
+        // `aux` arena (delay lines) is likewise separate so a unit holds its `&mut` state and `&mut`
+        // aux slice at once.
         let buf = block.pool.slice_mut(&self.block);
         let Ok(
             [
                 state_arena,
                 demand_state,
+                aux_arena,
                 ctrl_bytes,
                 pmap_bytes,
                 done_bytes,
@@ -125,6 +128,7 @@ impl Graph {
         ) = buf.get_disjoint_mut([
             layout.state.range(),
             layout.demand_state.range(),
+            layout.aux.range(),
             layout.control.range(),
             layout.pmaps.range(),
             layout.done_flags.range(),
@@ -195,6 +199,9 @@ impl Graph {
         let mut done = DoneAction::Nothing;
         for (i, v) in def.units().iter().enumerate() {
             let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
+            // This unit's private aux memory (a delay line), a disjoint sub-slice of the aux arena;
+            // empty (`&mut []`) for units that declared none. Persists across blocks like `state`.
+            let aux = &mut aux_arena[v.aux_offset..v.aux_offset + v.aux_size];
             // This unit's done flag, carried in from last block; written back after `process` so
             // done-ness persists. A watcher reads earlier units' flags (already written this block).
             let mut done_flag = done_flags[i];
@@ -237,6 +244,7 @@ impl Graph {
                     done: DoneState::new(&*done_flags, &mut done_flag),
                     node_ops: NodeOpSink::new(&mut *block.node_ops, block.node_op_cap),
                     local: LocalBus::new(&mut *local, bs),
+                    aux: Aux::new(aux),
                 };
                 (v.process)(state, &mut ctx)
             });

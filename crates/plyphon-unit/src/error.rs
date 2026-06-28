@@ -70,4 +70,12 @@ pub enum BuildError {
         /// Channels the `LocalOut` writes (its input count).
         local_out: usize,
     },
+    /// A unit that sizes per-instance auxiliary memory (a delay line) from a scalar input was given a
+    /// non-constant for that input. The size must be known at compile time, so - like scsynth's
+    /// instantiation-only `maxdelaytime` (`ZIN0` at ctor) - the input must be a baked constant.
+    #[error("input {input} must be a compile-time constant to size auxiliary memory")]
+    AuxRequiresConstant {
+        /// The index of the offending input.
+        input: usize,
+    },
 }

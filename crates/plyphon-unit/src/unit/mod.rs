@@ -14,6 +14,7 @@
 
 pub mod band_limited;
 pub mod binary_op;
+pub mod delay;
 pub mod demand;
 pub mod disk_in;
 pub mod env;
@@ -129,6 +130,7 @@ impl DoneAction {
 
 pub use band_limited::{Pulse, Saw};
 pub use binary_op::BinaryOp;
+pub use delay::DelayN;
 pub use demand::{
     Demand, DemandAccess, DemandCtx, DemandUnit, DemandVtbl, Dseq, Dseries, Duty, Dwhite,
     demand_next, demand_reset,
@@ -307,6 +309,38 @@ impl<'a> LocalBus<'a> {
     }
 }
 
+/// A unit's private auxiliary memory for the block - a delay line / circular buffer sized at build
+/// time (see [`unit_spec_aux`]). It is the safe stand-in for scsynth's `RTAlloc`'d `float* m_dlybuf`:
+/// the bytes live in the per-instance pool block (so there is still one allocation per synth) and
+/// **persist across blocks**, so a delay reads back what earlier blocks wrote.
+///
+/// Empty for units that declared no aux memory. The bytes are **not** zeroed at instantiation (a
+/// recycled block carries a previous tenant's data), so a unit must guard its first reads with a
+/// cold-start counter in its own state - exactly as scsynth's `_z` calc variants do.
+pub struct Aux<'a> {
+    bytes: &'a mut [u8],
+}
+
+impl<'a> Aux<'a> {
+    /// Wrap this unit's aux byte region. Used by the synth process loop.
+    pub fn new(bytes: &'a mut [u8]) -> Self {
+        Aux { bytes }
+    }
+
+    /// Whether this unit declared no aux memory.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// The aux region as an `f32` slice (the usual delay-line element type). Its length is
+    /// `aux_bytes / 4`; an empty region yields an empty slice. Never panics - a malformed region
+    /// (the architecture rules this out for a well-built unit) yields an empty slice rather than
+    /// aborting the audio thread.
+    pub fn f32_mut(&mut self) -> &mut [f32] {
+        bytemuck::try_cast_slice_mut(self.bytes).unwrap_or(&mut [])
+    }
+}
+
 /// Everything a unit touches while processing one control block - plyphon's safe decomposition of
 /// scsynth's `unit` (which reaches inputs, outputs, and the world through one pointer).
 ///
@@ -355,6 +389,9 @@ pub struct ProcessCtx<'a> {
     /// The synth's private feedback bus (`LocalIn`/`LocalOut`). Empty for synths with no local bus;
     /// most units ignore it.
     pub local: LocalBus<'a>,
+    /// This unit's private auxiliary memory (a delay line). Empty for units that declared none; most
+    /// units ignore it.
+    pub aux: Aux<'a>,
 }
 
 /// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].
@@ -593,6 +630,14 @@ pub struct BuiltUnit {
     pub align: usize,
     /// The initial state, as bytes to `copy_from_slice` into the slot when a synth is built on-RT.
     pub init_bytes: Box<[u8]>,
+    /// Bytes of per-instance auxiliary memory (a delay line / circular buffer) this unit needs,
+    /// summed into the block's `aux` arena at compile time. `0` for units with no aux memory. Unlike
+    /// `init_bytes` (a fixed image), aux memory is sized per build (e.g. from a delay's
+    /// `maxdelaytime`) and handed to the unit each block as [`ProcessCtx::aux`].
+    pub aux_bytes: usize,
+    /// Alignment the aux region needs (e.g. `align_of::<f32>()` for an `f32` delay line). Ignored
+    /// when `aux_bytes == 0`.
+    pub aux_align: usize,
 }
 
 /// Build a [`BuiltUnit`] from an initial unit state. The thunks are monomorphised for `T` here, so a
@@ -605,5 +650,23 @@ pub fn unit_spec<T: Unit>(state: T) -> BuiltUnit {
         size: core::mem::size_of::<T>(),
         align: core::mem::align_of::<T>(),
         init_bytes: bytemuck::bytes_of(&state).to_vec().into_boxed_slice(),
+        aux_bytes: 0,
+        aux_align: 1,
+    }
+}
+
+/// Build a [`BuiltUnit`] that also reserves `aux_bytes` of per-instance auxiliary memory aligned to
+/// `aux_align` - a delay line / circular buffer whose size a `UnitDef` computes at build time (e.g.
+/// from a delay's scalar `maxdelaytime`). The unit receives the region as [`ProcessCtx::aux`] each
+/// block; it lives in the per-instance pool block and persists across blocks.
+///
+/// The region is **not** zeroed at instantiation (a large delay line would make that an unbounded
+/// audio-thread memset at `/s_new`); like scsynth's `RTAlloc`'d delay buffers, a unit must treat its
+/// aux as initially undefined and guard cold-start reads (e.g. with a written-sample counter).
+pub fn unit_spec_aux<T: Unit>(state: T, aux_bytes: usize, aux_align: usize) -> BuiltUnit {
+    BuiltUnit {
+        aux_bytes,
+        aux_align: aux_align.max(1),
+        ..unit_spec(state)
     }
 }

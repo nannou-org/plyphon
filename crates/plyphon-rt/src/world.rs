@@ -747,10 +747,15 @@ impl World {
 
         let buf = self.pool.slice_mut(&region);
         // Carve the block into its disjoint spans. The layout guarantees they are in-bounds and
-        // non-overlapping, so this never fails.
+        // non-overlapping, so this never fails. The `aux` arena (delay lines) is carved out so the
+        // other spans land at their layout offsets, but deliberately left *uninitialised*: a delay
+        // line can be megabytes, so zeroing it here would be an unbounded memset on the audio thread
+        // at `/s_new`. Like scsynth's `RTAlloc`'d delay buffers, each unit guards its own cold start
+        // (a written-sample counter), so it never reads the stale bytes a recycled block carries.
         let [
             state_arena,
             demand_state,
+            _aux_bytes,
             ctrl_bytes,
             pmap_bytes,
             done_bytes,
@@ -761,6 +766,7 @@ impl World {
             .get_disjoint_mut([
                 layout.state.range(),
                 layout.demand_state.range(),
+                layout.aux.range(),
                 layout.control.range(),
                 layout.pmaps.range(),
                 layout.done_flags.range(),

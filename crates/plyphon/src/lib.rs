@@ -37,8 +37,8 @@ pub use plyphon_rt::{
     AddAction, CommandTime, Event, Graph, Nrt, Options, ROOT_GROUP_ID, Reply, Trigger, World,
 };
 pub use plyphon_unit::{
-    BuildContext, BuildError, BuiltUnit, DoneAction, GraphDef, InitCtx, Inputs, Outputs,
-    ProcessCtx, Unit, UnitDef, UnitRegistry, unit_spec,
+    Aux, BuildContext, BuildError, BuiltUnit, DoneAction, GraphDef, InitCtx, Inputs, Outputs,
+    ProcessCtx, Unit, UnitDef, UnitRegistry, unit_spec, unit_spec_aux,
 };
 
 pub use controller::{Controller, QueueFull, SynthNewError};

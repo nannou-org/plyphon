@@ -67,6 +67,11 @@ pub struct UnitVtbl {
     pub state_offset: usize,
     /// Exactly `size_of::<T>()` - the bytes this unit's state occupies.
     pub state_size: usize,
+    /// Byte offset of this unit's auxiliary memory (a delay line) within the `aux` arena. Unused when
+    /// `aux_size == 0`.
+    pub aux_offset: usize,
+    /// Bytes this unit's aux region occupies in the `aux` arena (`0` for units with no aux memory).
+    pub aux_size: usize,
 }
 
 /// A byte sub-range within the per-graph pool block.
@@ -90,7 +95,8 @@ impl Span {
 /// scsynth, which keeps those in `mWireBufSpace`, not the per-graph allocation).
 ///
 /// Laid out so every span is correctly aligned given a 64-byte-aligned block base: the two state
-/// arenas (alignment up to 8, for `f64` state) come first, then the 4-byte-aligned `f32` control
+/// arenas (alignment up to 8, for `f64` state) come first, then the 8-byte-aligned `aux` arena, then
+/// the 4-byte-aligned `f32` control
 /// wires, `u32` param maps, `u32` done flags, the `f32` local feedback bus, the `u32` audio-bus maps, and the `f32` lag state. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
 /// them never fails, and the `bytemuck` casts never hit an alignment error. The calc-unit and
 /// demand-unit state are *separate* spans so the audio thread can hold a calc unit's `&mut` state
@@ -102,6 +108,12 @@ pub struct BlockLayout {
     /// Heterogeneous demand-unit state (each demand unit's `Pod` bytes at its `state_offset`). Empty
     /// when the def has no demand units.
     pub demand_state: Span,
+    /// Heterogeneous per-unit auxiliary memory (delay lines / circular buffers): each unit's bytes at
+    /// its `aux_offset`. Empty when no unit declared aux memory. Sized at compile time (e.g. from a
+    /// delay's `maxdelaytime`) and, unlike the state arenas, **not** initialized on instantiation - a
+    /// unit guards its own cold start. This is plyphon's fold of scsynth's per-unit `RTAlloc`'d delay
+    /// buffers into the single per-graph block, keeping one allocation (and one free) per synth.
+    pub aux: Span,
     /// Control wires (`f32`): the parameters first, then control-rate unit outputs.
     pub control: Span,
     /// Per-parameter control-bus map (`u32`; `u32::MAX` = unmapped).
@@ -265,23 +277,25 @@ const fn align_up(x: usize, align: usize) -> usize {
     (x + align - 1) & !(align - 1)
 }
 
-/// Compute the per-graph [`BlockLayout`], each calc unit's state offset, and each demand unit's state
-/// offset (relative to the `demand_state` span) from the units' `(size, align)` slots, the
-/// control-wire count, and the parameter count.
+/// Compute the per-graph [`BlockLayout`], each calc unit's state offset, each demand unit's state
+/// offset (relative to the `demand_state` span), and each calc unit's aux offset (relative to the
+/// `aux` span) from the units' `(size, align)` slots, the control-wire count, and the parameter count.
 ///
-/// The two state arenas pack their slots in order (each bumped to its own alignment), then the
-/// control wires and param maps follow on 4-byte boundaries. The calc-state arena is padded to 8 so
-/// the demand-state arena that follows starts 8-aligned (it may hold `f64` state). Because the block
-/// base is 64-byte aligned, every resulting span is aligned for its element type.
+/// The two state arenas pack their slots in order (each bumped to its own alignment), then the `aux`
+/// arena, then the control wires and param maps on 4-byte boundaries. Each arena is padded to 8 so
+/// the next one starts 8-aligned (state and aux may hold `f64`/`f32` data). Because the block base is
+/// 64-byte aligned, every resulting span is aligned for its element type.
+#[allow(clippy::too_many_arguments)]
 pub fn build_layout(
     state_slots: &[(usize, usize)],
     demand_state_slots: &[(usize, usize)],
+    aux_slots: &[(usize, usize)],
     num_control_wires: usize,
     num_params: usize,
     num_local_channels: usize,
     num_lag_params: usize,
     block_size: usize,
-) -> (BlockLayout, Vec<usize>, Vec<usize>) {
+) -> (BlockLayout, Vec<usize>, Vec<usize>, Vec<usize>) {
     let pack = |slots: &[(usize, usize)]| -> (Vec<usize>, usize) {
         let mut offsets = Vec::with_capacity(slots.len());
         let mut cursor = 0usize;
@@ -295,17 +309,25 @@ pub fn build_layout(
     };
     let (offsets, state_end) = pack(state_slots);
     let (demand_offsets, demand_end) = pack(demand_state_slots);
+    let (aux_offsets, aux_end) = pack(aux_slots);
     // Pad the calc-state arena to 8 so the demand-state arena starts aligned for `f64` state.
     let state = Span {
         off: 0,
         len: align_up(state_end, 8),
     };
+    // Pad the demand-state arena to 8 so the `aux` arena that follows starts 8-aligned.
     let demand_state = Span {
         off: state.off + state.len,
-        len: align_up(demand_end, 4),
+        len: align_up(demand_end, 8),
+    };
+    // The per-unit aux arena (delay lines), padded to 8 so the `f32` control wires that follow stay
+    // aligned. Empty (`len == 0`) when no unit declared aux memory.
+    let aux = Span {
+        off: demand_state.off + demand_state.len,
+        len: align_up(aux_end, 8),
     };
     let control = Span {
-        off: demand_state.off + demand_state.len,
+        off: aux.off + aux.len,
         len: num_control_wires * 4,
     };
     let pmaps = Span {
@@ -338,6 +360,7 @@ pub fn build_layout(
         BlockLayout {
             state,
             demand_state,
+            aux,
             control,
             pmaps,
             done_flags,
@@ -348,5 +371,57 @@ pub fn build_layout(
         },
         offsets,
         demand_offsets,
+        aux_offsets,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{align_up, build_layout};
+
+    /// Lay out a block with a single 8-byte state slot and the given aux slots, returning the layout
+    /// and the per-unit aux offsets. Everything but `aux_slots` is held fixed.
+    fn layout(aux_slots: &[(usize, usize)]) -> (super::BlockLayout, alloc::vec::Vec<usize>) {
+        let (l, _state, _demand, aux) = build_layout(&[(8, 4)], &[], aux_slots, 4, 1, 0, 0, 64);
+        (l, aux)
+    }
+
+    #[test]
+    fn aux_empty_when_no_unit_declares_it() {
+        let (l, aux) = layout(&[]);
+        assert_eq!(l.aux.len, 0);
+        assert!(aux.is_empty());
+        // The empty aux span sits exactly where control begins; no downstream span is displaced.
+        assert_eq!(l.aux.off, l.control.off);
+        assert_eq!(l.aux.off, l.demand_state.off + l.demand_state.len);
+    }
+
+    #[test]
+    fn aux_single_slot_is_packed_and_8_aligned() {
+        let (l, aux) = layout(&[(100, 4)]);
+        assert_eq!(aux, alloc::vec![0]);
+        assert_eq!(l.aux.off % 8, 0);
+        assert_eq!(l.aux.len, align_up(100, 8));
+        assert_eq!(l.control.off, l.aux.off + l.aux.len);
+    }
+
+    #[test]
+    fn aux_two_slots_pack_contiguously() {
+        let (l, aux) = layout(&[(100, 4), (40, 4)]);
+        assert_eq!(aux, alloc::vec![0, align_up(100, 4)]);
+        assert_eq!(l.aux.len, align_up(100 + 40, 8));
+    }
+
+    #[test]
+    fn aux_respects_slot_alignment() {
+        let (_l, aux) = layout(&[(4, 4), (8, 8)]);
+        assert_eq!(aux, alloc::vec![0, align_up(4, 8)]);
+    }
+
+    #[test]
+    fn aux_grows_total_by_its_arena() {
+        let base = layout(&[]).0;
+        let with = layout(&[(256, 4)]).0;
+        assert_eq!(with.total, base.total + align_up(256, 8));
+    }
 }

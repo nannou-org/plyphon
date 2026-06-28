@@ -10,9 +10,9 @@ use alloc::string::{String, ToString};
 use hashbrown::HashMap;
 
 use crate::error::BuildError;
-use crate::unit::BuiltUnit;
 use crate::unit::band_limited::{PulseCtor, SawCtor};
 use crate::unit::binary_op::BinaryOpCtor;
+use crate::unit::delay::DelayNCtor;
 use crate::unit::demand::BuiltDemandUnit;
 use crate::unit::demand::demand_ugen::DemandCtor;
 use crate::unit::demand::dseq::DseqCtor;
@@ -40,6 +40,7 @@ use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::sin_osc::SinOscCtor;
 use crate::unit::unary_op::UnaryOpCtor;
 use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor};
+use crate::unit::{BuiltUnit, InputSource};
 use plyphon_dsp::rate::{Rate, RateInfo};
 
 /// Build-time context for constructing a unit. Runs off the audio thread, so allocation is fine.
@@ -51,6 +52,10 @@ pub struct BuildContext<'a> {
     /// unit (`Done`/`FreeSelfWhenDone`/`PauseSelfWhenDone`) reads input 0's entry to find the unit
     /// whose done flag it observes.
     pub input_units: &'a [Option<u32>],
+    /// Each input's resolved source, in order (the same data `input_rates`/`input_units` are derived
+    /// from). A unit that must size auxiliary memory at compile time reads a scalar input's value
+    /// here via [`BuildContext::const_input`] - e.g. `DelayN`'s `maxdelaytime`.
+    pub input_sources: &'a [InputSource],
     /// The unit's own calculation rate (so it can specialize its output: a block vs one value).
     pub rate: Rate,
     /// Number of outputs the SynthDef assigns this unit (e.g. how many channels `In` reads).
@@ -63,6 +68,19 @@ pub struct BuildContext<'a> {
     pub special_index: i16,
     /// A seed for this unit's random number generator (distinct per unit and per synth instance).
     pub seed: u64,
+}
+
+impl BuildContext<'_> {
+    /// The compile-time value of input `i` if it is a baked constant, else `None`. A unit that sizes
+    /// auxiliary memory from a scalar input requires a constant here (it must reject a non-constant,
+    /// e.g. with [`BuildError::AuxRequiresConstant`]), mirroring scsynth, where a delay's
+    /// `maxdelaytime` is read once at ctor and can never change.
+    pub fn const_input(&self, i: usize) -> Option<f32> {
+        match self.input_sources.get(i) {
+            Some(InputSource::Constant(v)) => Some(*v),
+            _ => None,
+        }
+    }
 }
 
 /// A unit definition - scsynth's `UnitDef`. Builds a [`BuiltUnit`] (vtable + initial state image)
@@ -112,6 +130,7 @@ impl UnitRegistry {
         registry.register("Line", Box::new(LineCtor));
         registry.register("LPF", Box::new(ButterCtor(Kind::LowPass)));
         registry.register("HPF", Box::new(ButterCtor(Kind::HighPass)));
+        registry.register("DelayN", Box::new(DelayNCtor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
