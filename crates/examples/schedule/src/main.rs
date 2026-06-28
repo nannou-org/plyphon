@@ -180,10 +180,7 @@ mod clock {
     /// The OSC/NTP time at which this callback's first output frame is heard: now + output latency.
     pub fn buffer_time(info: &cpal::OutputCallbackInfo) -> u64 {
         let ts = info.timestamp();
-        let ahead = ts
-            .playback
-            .duration_since(&ts.callback)
-            .unwrap_or(Duration::ZERO);
+        let ahead = ts.playback.duration_since(ts.callback);
         now(ahead)
     }
 }
@@ -210,7 +207,7 @@ fn main() {
 
 fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
     let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0 as f64;
+    let sample_rate = config.sample_rate as f64;
 
     let (mut sched, mut world) = build(sample_rate, channels);
 
@@ -224,7 +221,7 @@ fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::S
     let mut scratch: Vec<f32> = Vec::new();
     let stream = device
         .build_output_stream(
-            config,
+            *config,
             move |output: &mut [T], info: &cpal::OutputCallbackInfo| {
                 scratch.clear();
                 scratch.resize(output.len(), 0.0);

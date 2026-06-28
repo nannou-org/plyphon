@@ -40,7 +40,7 @@ scgf = { version = "0.1.0", path = "crates/scgf", default-features = false }
 # Shared dependencies.
 # Safe, no_std byte/slice reinterpretation - backs Pod ugen state in the rt-pool.
 bytemuck = { version = "1", features = ["derive"] }
-cpal = "0.16"
+cpal = "0.18"
 # Lock-free SPSC ring for control -> RT command delivery (wait-free, no_std-friendly).
 # `default-features = false` drops its `std` feature; re-enabled via each crate's `std`.
 rtrb = { version = "0.3", default-features = false }

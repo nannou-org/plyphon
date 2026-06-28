@@ -230,7 +230,7 @@ fn main() {
 /// thread to run the NRT cleanup and log the gate/free notifications.
 fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
     let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0 as f32;
+    let sample_rate = config.sample_rate as f32;
 
     let (controls, mut source) = build(sample_rate, channels);
     // Reused interleaved `f32` scratch buffer; the source fills it, then we convert to `T`.
@@ -238,7 +238,7 @@ fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::S
 
     let stream = device
         .build_output_stream(
-            config,
+            *config,
             move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
                 scratch.clear();
                 scratch.resize(output.len(), 0.0);

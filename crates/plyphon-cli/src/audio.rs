@@ -39,14 +39,14 @@ pub fn resolve(args: &AudioArgs) -> Result<Audio, String> {
         config.channels = channels as u16;
     }
     if let Some(rate) = args.sample_rate {
-        config.sample_rate = cpal::SampleRate(rate as u32);
+        config.sample_rate = rate as u32;
     }
     if let Some(frames) = args.hardware_buffer_size {
         config.buffer_size = cpal::BufferSize::Fixed(frames);
     }
 
     let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0 as f64;
+    let sample_rate = config.sample_rate as f64;
     Ok(Audio {
         device,
         config,
@@ -90,7 +90,7 @@ where
     let mut scratch: Vec<f32> = Vec::new();
     device
         .build_output_stream(
-            config,
+            *config,
             move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
                 scratch.clear();
                 scratch.resize(output.len(), 0.0);
@@ -109,10 +109,10 @@ where
 pub fn list_devices() -> Result<(), String> {
     let host = cpal::default_host();
 
-    let default_out = host.default_output_device().and_then(|d| d.name().ok());
+    let default_out = host.default_output_device().map(|d| d.to_string());
     println!("output devices:");
     for device in host.output_devices().map_err(|e| e.to_string())? {
-        let name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
+        let name = device.to_string();
         let marker = if Some(&name) == default_out.as_ref() {
             " (default)"
         } else {
@@ -122,17 +122,17 @@ pub fn list_devices() -> Result<(), String> {
             Ok(c) => println!(
                 "  {name}{marker} - {} ch, {} Hz, {}",
                 c.channels(),
-                c.sample_rate().0,
+                c.sample_rate(),
                 c.sample_format()
             ),
             Err(_) => println!("  {name}{marker}"),
         }
     }
 
-    let default_in = host.default_input_device().and_then(|d| d.name().ok());
+    let default_in = host.default_input_device().map(|d| d.to_string());
     println!("input devices:");
     for device in host.input_devices().map_err(|e| e.to_string())? {
-        let name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
+        let name = device.to_string();
         let marker = if Some(&name) == default_in.as_ref() {
             " (default)"
         } else {
@@ -142,7 +142,7 @@ pub fn list_devices() -> Result<(), String> {
             Ok(c) => println!(
                 "  {name}{marker} - {} ch, {} Hz, {}",
                 c.channels(),
-                c.sample_rate().0,
+                c.sample_rate(),
                 c.sample_format()
             ),
             Err(_) => println!("  {name}{marker}"),
@@ -154,7 +154,7 @@ pub fn list_devices() -> Result<(), String> {
 /// Find an output device by name, or list-and-error if absent.
 fn output_device_by_name(host: &cpal::Host, name: &str) -> Result<cpal::Device, String> {
     for device in host.output_devices().map_err(|e| e.to_string())? {
-        if device.name().map(|n| n == name).unwrap_or(false) {
+        if device.to_string() == name {
             return Ok(device);
         }
     }

@@ -185,7 +185,7 @@ fn main() {
 /// Start the audio stream, then load the sample and begin playback when it arrives.
 fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig) {
     let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0 as f32;
+    let sample_rate = config.sample_rate as f32;
 
     let (controller, world) = build_engine(sample_rate, channels);
     let mut source = world;
@@ -193,7 +193,7 @@ fn run<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::S
 
     let stream = device
         .build_output_stream(
-            config,
+            *config,
             move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
                 scratch.clear();
                 scratch.resize(output.len(), 0.0);
