@@ -1,5 +1,6 @@
-# Short-hand for serving `plyphon-website` locally with the COOP/COEP headers a future
-# AudioWorklet/SharedArrayBuffer backend needs.
+# Short-hand for serving the default `plyphon-website` (the AudioWorklet build) locally with the
+# COOP/COEP headers its SharedArrayBuffer needs. With real headers the bundled coi-serviceworker is
+# a no-op; it only matters on hosts that can't send headers (e.g. GitHub Pages).
 {
   writeShellScriptBin,
   plyphon-website,

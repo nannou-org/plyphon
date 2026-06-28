@@ -56,20 +56,20 @@
         wasm-bindgen-cli = prev.callPackage ./pkgs/wasm-bindgen-cli.nix { };
         # The `plyphon` CLI binary (the default package).
         plyphon = final.callPackage ./pkgs/plyphon.nix { };
+        # The web demo (default) is the AudioWorklet build (nightly + WASM threads); the legacy
+        # ScriptProcessor build is kept alongside as a fallback. Plus their serve helpers.
         plyphon-website = final.callPackage ./pkgs/plyphon-website.nix { };
         serve-plyphon-website = final.callPackage ./pkgs/serve-plyphon-website.nix { };
-        # The AudioWorklet variant of the web demo (nightly + WASM threads) and its serve helper,
-        # alongside the default ones so the simple backend stays available as a fallback.
-        plyphon-website-worklet = final.callPackage ./pkgs/plyphon-website-worklet.nix { };
-        serve-plyphon-website-worklet = final.callPackage ./pkgs/serve-plyphon-website-worklet.nix { };
+        plyphon-website-legacy = final.callPackage ./pkgs/plyphon-website-legacy.nix { };
+        serve-plyphon-website-legacy = final.callPackage ./pkgs/serve-plyphon-website-legacy.nix { };
       };
 
       packages = perSystemPkgs (pkgs: {
         plyphon = pkgs.plyphon;
         plyphon-website = pkgs.plyphon-website;
         serve-plyphon-website = pkgs.serve-plyphon-website;
-        plyphon-website-worklet = pkgs.plyphon-website-worklet;
-        serve-plyphon-website-worklet = pkgs.serve-plyphon-website-worklet;
+        plyphon-website-legacy = pkgs.plyphon-website-legacy;
+        serve-plyphon-website-legacy = pkgs.serve-plyphon-website-legacy;
         default = pkgs.plyphon;
       });
 

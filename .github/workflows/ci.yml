@@ -33,7 +33,11 @@ jobs:
           # the engine for wasm32 with default features off to catch missing `alloc` imports directly.
           - command: develop -c cargo build --locked --no-default-features --target wasm32-unknown-unknown -p plyphon -p plyphon-osc
           - command: fmt -- --ci
+          # The default web demo is the AudioWorklet build: nightly + `-Z build-std` with WASM
+          # atomics (pinned in the derivation). The legacy ScriptProcessor build is kept as a
+          # fallback and built here too.
           - command: build --print-build-logs --no-update-lock-file .#plyphon-website
+          - command: build --print-build-logs --no-update-lock-file .#plyphon-website-legacy
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main

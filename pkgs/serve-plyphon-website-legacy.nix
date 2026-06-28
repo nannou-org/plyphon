@@ -1,12 +1,11 @@
-# Short-hand for serving the AudioWorklet site locally with the COOP/COEP headers SharedArrayBuffer
-# needs. With real headers the bundled coi-serviceworker is a no-op; it only matters on hosts that
-# can't send headers (e.g. GitHub Pages).
+# Short-hand for serving the legacy/fallback `plyphon-website-legacy` (the ScriptProcessor build)
+# locally. The COOP/COEP headers aren't needed for that backend, but are harmless.
 {
   writeShellScriptBin,
-  plyphon-website-worklet,
+  plyphon-website-legacy,
   miniserve,
 }:
-writeShellScriptBin "serve-plyphon-website-worklet" ''
+writeShellScriptBin "serve-plyphon-website-legacy" ''
   ${miniserve}/bin/miniserve \
     --index index.html \
     --disable-indexing \
@@ -19,5 +18,5 @@ writeShellScriptBin "serve-plyphon-website-worklet" ''
     --header "Expires:0" \
     -i 0.0.0.0 \
     --port 8089 \
-    ${plyphon-website-worklet}
+    ${plyphon-website-legacy}
 ''
