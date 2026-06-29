@@ -154,6 +154,17 @@ struct PendingLoad {
     target: ReplyTarget,
 }
 
+/// A queued asynchronous SynthDef load (`/d_load`, `/d_loadDir`), run by
+/// [`OscDispatcher::run_pending`] through the host's [`DefSource`].
+struct PendingDef {
+    command: &'static str,
+    /// `true` for `/d_loadDir` (every def file under `key`), `false` for `/d_load` (one file).
+    is_dir: bool,
+    key: String,
+    completion: Option<Vec<u8>>,
+    target: ReplyTarget,
+}
+
 /// One outstanding getter, in the FIFO order queries were issued. As [`Reply`] items arrive (in that
 /// same order), the matching entry accumulates them and, when complete, emits exactly one OSC reply
 /// message - so a getter that issued several per-element queries answers with one grouped message.
@@ -285,9 +296,11 @@ pub struct OscDispatcher {
     node_defs: HashMap<i32, String>,
     /// Control-side mirror of each buffer's dimensions, for `/b_query` and `/b_zero`.
     buffers: HashMap<i32, BufferInfo>,
-    /// Loads queued by `apply`, awaiting [`OscDispatcher::run_pending`] (which the host drives with the
-    /// [`BufferSource`] it owns - the dispatcher holds no source itself).
+    /// Buffer loads queued by `apply`, awaiting [`OscDispatcher::run_pending`] (which the host drives
+    /// with the [`Host`] it lends - the dispatcher holds no I/O itself).
     pending: Vec<PendingLoad>,
+    /// SynthDef loads (`/d_load`/`/d_loadDir`) queued by `apply`, awaiting `run_pending`.
+    pending_defs: Vec<PendingDef>,
     /// Outbound replies, each tagged with its destination, drained by
     /// [`take_replies`](OscDispatcher::take_replies)/[`take_replies_targeted`](OscDispatcher::take_replies_targeted).
     replies: Vec<(ReplyTarget, OscPacket)>,
@@ -319,6 +332,7 @@ impl OscDispatcher {
             node_defs: HashMap::new(),
             buffers: HashMap::new(),
             pending: Vec::new(),
+            pending_defs: Vec::new(),
             replies: Vec::new(),
             current_target: ReplyTarget::Broadcast,
             error_perm: true,
@@ -455,6 +469,48 @@ impl OscDispatcher {
                 }
             }
         }
+
+        // SynthDef loads (`/d_load`/`/d_loadDir`): read the SCgf bytes through the host's `DefSource`,
+        // parse and register each def, run the completion message, and reply `/done /<command>`.
+        let def_source = host.and_then(|h| h.def_source());
+        for load in core::mem::take(&mut self.pending_defs) {
+            self.current_target = load.target;
+            let Some(source) = def_source else {
+                self.fail(load.command, "no def source configured");
+                continue;
+            };
+            let blobs = if load.is_dir {
+                source.read_def_dir(&load.key).await
+            } else {
+                source.read_def(&load.key).await.map(|bytes| vec![bytes])
+            };
+            match blobs {
+                Err(err) => self.fail(load.command, &err.to_string()),
+                Ok(blobs) => {
+                    let mut error = None;
+                    for blob in &blobs {
+                        match plyphon::synthdef::read::parse(blob) {
+                            Ok(defs) => {
+                                for def in defs {
+                                    controller.add_synthdef(def);
+                                }
+                            }
+                            Err(err) => {
+                                error = Some(err.to_string());
+                                break;
+                            }
+                        }
+                    }
+                    match error {
+                        Some(err) => self.fail(load.command, &err),
+                        None => {
+                            self.run_completion_bytes(controller, load.completion.as_deref());
+                            self.done_command(load.command);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Decode and apply a single OSC packet from raw bytes.
@@ -508,6 +564,8 @@ impl OscDispatcher {
     ) -> Result<(), OscError> {
         match message.addr.as_str() {
             "/d_recv" => self.d_recv(controller, &message.args),
+            "/d_load" => self.d_load(&message.args),
+            "/d_loadDir" => self.d_load_dir(&message.args),
             "/d_free" => self.d_free(controller, &message.args),
             "/d_freeAll" => self.d_free_all(controller),
             "/s_new" => self.s_new(controller, &message.args),
@@ -1723,6 +1781,41 @@ impl OscDispatcher {
         self.queue_load("/b_read", args)
     }
 
+    /// `/d_load <path>` [completion]: load the SynthDef file at `path` - the host's [`DefSource`]
+    /// reads the bytes in [`run_pending`](Self::run_pending), which parses and registers each def, then
+    /// replies `/done /d_load`. (plyphon treats `path` as a single file; scsynth globs it.)
+    fn d_load(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        self.queue_def("/d_load", false, args)
+    }
+
+    /// `/d_loadDir <dir>` [completion]: load every SynthDef file under `dir`, then reply `/done
+    /// /d_loadDir`.
+    fn d_load_dir(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        self.queue_def("/d_loadDir", true, args)
+    }
+
+    /// Queue an asynchronous def load of `path`, run later by [`Self::run_pending`].
+    fn queue_def(
+        &mut self,
+        command: &'static str,
+        is_dir: bool,
+        args: &[OscType],
+    ) -> Result<(), OscError> {
+        let key = str_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("def load expects a path"))?,
+        )?
+        .to_string();
+        self.pending_defs.push(PendingDef {
+            command,
+            is_dir,
+            key,
+            completion: last_blob(args).map(|bytes| bytes.to_vec()),
+            target: self.current_target,
+        });
+        Ok(())
+    }
+
     /// Queue an asynchronous load of `path` into `bufnum`, run later by [`Self::run_pending`].
     fn queue_load(&mut self, command: &'static str, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
@@ -1808,6 +1901,12 @@ impl OscDispatcher {
             "/done",
             vec![OscType::String(command.to_string()), OscType::Int(bufnum)],
         );
+    }
+
+    /// Queue a `/done <command>` reply (no value), for actions that answer with just the command name
+    /// (scsynth's `SendDone`, e.g. `/d_load`).
+    fn done_command(&mut self, command: &str) {
+        self.reply_msg("/done", vec![OscType::String(command.to_string())]);
     }
 
     /// Queue a `/fail <command> <error>` reply, unless error posting is currently suppressed

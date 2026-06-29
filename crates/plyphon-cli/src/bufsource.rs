@@ -9,18 +9,22 @@ use std::future::Future;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
-use plyphon_buffers::{BufFuture, BufferData, BufferSource, LoadError, ReadRegion};
+use plyphon_buffers::{BufFuture, BufferData, BufferSource, DefSource, LoadError, ReadRegion};
 use plyphon_osc::Host;
 
 use crate::wav;
 
 /// The server's [`Host`]: bundles the filesystem-backed capabilities the dispatcher drives through
-/// `run_pending` (sound-file loads today; def-file loads and buffer saves as they land).
+/// `run_pending` (sound-file loads, def-file loads; buffer saves as they land).
 pub struct CliHost;
 
 impl Host for CliHost {
     fn buffer_source(&self) -> Option<&dyn BufferSource> {
         Some(&FsSource)
+    }
+
+    fn def_source(&self) -> Option<&dyn DefSource> {
+        Some(&FsDefs)
     }
 }
 
@@ -36,6 +40,34 @@ impl BufferSource for FsSource {
         let result = load_region(key, region);
         Box::pin(async move { result })
     }
+}
+
+/// A [`DefSource`] that reads `/d_load`/`/d_loadDir` keys as SCgf (`.scsyndef`) file paths.
+pub struct FsDefs;
+
+impl DefSource for FsDefs {
+    fn read_def<'a>(&'a self, key: &'a str) -> BufFuture<'a, Result<Vec<u8>, LoadError>> {
+        let result = std::fs::read(key).map_err(|err| LoadError::Io(err.to_string()));
+        Box::pin(async move { result })
+    }
+
+    fn read_def_dir<'a>(&'a self, key: &'a str) -> BufFuture<'a, Result<Vec<Vec<u8>>, LoadError>> {
+        let result = read_def_dir(key);
+        Box::pin(async move { result })
+    }
+}
+
+/// Read every `.scsyndef` file under `dir`, returning each one's bytes.
+fn read_def_dir(dir: &str) -> Result<Vec<Vec<u8>>, LoadError> {
+    let entries = std::fs::read_dir(dir).map_err(|err| LoadError::Io(err.to_string()))?;
+    let mut blobs = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(|err| LoadError::Io(err.to_string()))?.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("scsyndef") {
+            blobs.push(std::fs::read(&path).map_err(|err| LoadError::Io(err.to_string()))?);
+        }
+    }
+    Ok(blobs)
 }
 
 /// Read `key` as a WAV file and return the requested `region` as interleaved `f32`.
