@@ -40,7 +40,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **FFT / spectral** (behind the default-on `fft` feature; realfft, std-only) - have FFT, IFFT (short-time analysis/resynthesis over a packed-spectrum chain buffer, via the shared `FftTables`), PV_MagMul (the first `PV_*`, proving the two-buffer access); missing the rest of the `PV_*` set, Pitch, Onsets, BeatTrack
 - [ ] **Chaos / rate conversion** - have A2K, K2A, T2A, DC; missing the chaos set: Lorenz, LinCong, Henon, ...
 
-## OSC server commands (55 of ~65)
+## OSC server commands (60 of ~65)
 
 The *getters* (`/status`, `/sync`, `/rtMemoryStatus`, `/n_query`, `/c_get`/`/c_getn`, `/s_get`/`/s_getn`,
 `/b_get`/`/b_getn`, `/g_queryTree`) read live engine state over a third RT→NRT ring - a fixed-size
@@ -61,17 +61,20 @@ its `notified` set mirroring `mUsers`), `/quit`, `/dumpOSC`, and `/version`. (Th
 queries `/status`/`/sync`/`/rtMemoryStatus` are *not* server commands - the server forwards them to
 the dispatcher and routes each async answer back to the requester, alongside the other getters.)
 
-The genuinely-deferred host actions - `/cmd`/`/u_cmd`/`/n_cmd`, `/d_load`/`/d_loadDir`,
-`/b_write`/`/b_close`, and `/n_trace` - need a plugin registry or filesystem the engine does not
-model; the intent is to surface them as typed higher-level actions for the embedding host, the way
-`/b_allocRead` already defers I/O to an app-provided `BufferSource`.
+The **host actions** need a plugin registry or filesystem the engine does not model, so they are
+surfaced upward as typed capabilities on a `Host` trait the dispatcher drives in `run_pending` -
+exactly as `/b_allocRead` already defers I/O to an app-provided `BufferSource`. Wired: `/cmd`/`/u_cmd`
+(a `CommandHost`), `/d_load`/`/d_loadDir` (a `DefSource`), and `/b_write`'s whole-buffer snapshot (a
+`BufferSink`, the engine streaming the buffer out race-free). What remains: `/n_trace` (a per-unit RT
+dump), and `/b_close` together with `/b_write`'s `leaveOpen=1` streaming form. (scsynth's `/n_cmd` is
+unimplemented - commented out in its command table - so plyphon omits it too.)
 
-**Server / top-level** (9/10)
+**Server / top-level** (10/10)
 
 - [x] /notify - server-owned (plyphon-cli): per-connection subscription to node notifications
 - [x] /status - engine query: real ugen/synth/group/synthdef counts (avg/peak CPU reported as `0.0`)
 - [x] /quit - server-owned (plyphon-cli)
-- [ ] /cmd
+- [x] /cmd - routes a plugin command to an app-provided `CommandHost` (plyphon ships none, so this is a seam for embedders); the host owns any reply, as scsynth's `PlugIn_DoCmd` does
 - [x] /dumpOSC - server-owned (plyphon-cli)
 - [x] /clearSched - engine front-end (clears the World scheduler)
 - [x] /sync - engine query: a command-stream barrier answered with `/synced`
@@ -79,11 +82,11 @@ model; the intent is to surface them as typed higher-level actions for the embed
 - [x] /version - server-owned (plyphon-cli)
 - [x] /rtMemoryStatus - engine query: rt-pool free/largest-chunk bytes
 
-**SynthDef** (3/5)
+**SynthDef** (5/5)
 
 - [x] /d_recv
-- [ ] /d_load
-- [ ] /d_loadDir
+- [x] /d_load - loads a SynthDef file through an app-provided `DefSource`, registers each def, replies `/done /d_load` (plyphon reads one file; scsynth globs the path)
+- [x] /d_loadDir - loads every def file under a directory through the `DefSource`
 - [x] /d_free
 - [x] /d_freeAll
 
@@ -111,7 +114,7 @@ model; the intent is to surface them as typed higher-level actions for the embed
 - [ ] /n_trace
 - [x] /n_mapa - maps an `AudioControl` parameter to an audio bus (its audio wire takes the bus each block); a no-op on a control-rate param
 - [x] /n_mapan - the range form of `/n_mapa`
-- [ ] /n_cmd
+- [ ] /n_cmd - not applicable: unimplemented in scsynth itself (commented out in its command table), so plyphon omits it
 
 **Group** (8/8)
 
@@ -124,9 +127,9 @@ model; the intent is to surface them as typed higher-level actions for the embed
 - [x] /g_dumpTree - getter; formats an indented tree to an optional host text sink (no OSC reply)
 - [x] /g_queryTree - getter; pre-order tree stream with optional control values
 
-**Unit** (0/1)
+**Unit** (1/1)
 
-- [ ] /u_cmd
+- [x] /u_cmd - routes a unit command (node id + unit index + name) to the `CommandHost`, mirroring scsynth's `Unit_DoCmd`
 
 **Control bus** (5/5)
 
@@ -136,7 +139,7 @@ model; the intent is to surface them as typed higher-level actions for the embed
 - [x] /c_get - getter
 - [x] /c_getn - getter
 
-**Buffer** (13/17)
+**Buffer** (14/17)
 
 - [x] /b_alloc
 - [x] /b_allocRead
@@ -144,7 +147,7 @@ model; the intent is to surface them as typed higher-level actions for the embed
 - [x] /b_free
 - [x] /b_zero
 - [x] /b_query
-- [ ] /b_write
+- [x] /b_write - whole-buffer snapshot (`leaveOpen=0`): the engine streams the buffer's samples out race-free to an app-provided [`BufferSink`] (no shared buffer memory), driven across `run_pending` ticks; replies `/done /b_write <bufnum>`. The `leaveOpen=1` streaming form and partial `numFrames`/`startFrame` ranges are deferred; header/sample formats are the sink's choice (the path)
 - [ ] /b_close
 - [x] /b_set
 - [x] /b_setn
@@ -175,6 +178,6 @@ model; the intent is to surface them as typed higher-level actions for the embed
 - [x] SCgf binary SynthDefs load via `/d_recv` (and the [`scgf`](crates/scgf) crate also encodes them); named parameters are folded from SC's `Control` UGens
 - [x] Control family beyond plain `Control`: `AudioControl` (an audio-rate parameter, lifted to an audio wire each block and mappable with `/n_mapa`), `TrigControl` (a `/n_set` is seen for one block then resets to 0), and `LagControl` (a control-rate one-pole de-zipper, lag times from the folded UGen's inputs)
 - [x] Buffers: allocate, free, zero, query, `b_gen` (sine/cheby/copy) fills, `b_get`/`b_set` element access, and asynchronous loading through an app-provided [`BufferSource`](crates/plyphon-buffers) (the I/O seam), plus chunk-streaming playback with `DiskIn` and chunk-streaming recording with `DiskOut` (drained off the audio thread through the mirror [`BufferSink`] write seam)
-- [ ] OSC `/b_write`/`/b_close` and non-streaming whole-buffer saves to disk (`DiskOut` covers streaming recording; the OSC surface and a one-shot buffer snapshot remain), and `b_gen` wavetable fills (no `Osc` UGen to consume them yet)
+- [x] `/b_write` whole-buffer snapshot to disk: the engine streams a buffer's samples out race-free to an app-provided [`BufferSink`] (it shares no buffer memory with the host, unlike scsynth reading `SndBuf::data` from its NRT thread), driven across `run_pending` ticks; the CLI writes a float WAV. The `/b_write` `leaveOpen=1` streaming form, `/b_close`, and partial frame ranges remain, as do `b_gen` wavetable fills (no `Osc` UGen to consume them yet)
 
 [scsynth]: https://github.com/supercollider/supercollider
