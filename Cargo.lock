@@ -472,6 +472,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-demand-looper"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-duty-seq"
 version = "0.1.0"
 dependencies = [
