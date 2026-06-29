@@ -65,9 +65,16 @@
 #[macro_use]
 extern crate alloc;
 
+pub mod args;
 mod bgen;
+pub mod encode;
 pub mod score;
 
+pub use args::{bus_index, count_arg, float_arg, index_arg, int_arg, last_blob, map_bus, str_arg};
+pub use encode::{
+    encode_event, encode_node_info, encode_node_msg, encode_rt_memory, encode_status,
+    encode_synced, encode_trigger, node_info_args,
+};
 pub use score::{ScoreEntry, ScoreError, ScoreReader, parse_score};
 
 use alloc::boxed::Box;
@@ -80,8 +87,7 @@ use hashbrown::HashMap;
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
 use plyphon::{
-    AddAction, CommandTime, Controller, Event, NodeMsg, NodeMsgKind, Render, RenderUntil, Reply,
-    Trigger,
+    AddAction, CommandTime, Controller, Event, NodeMsg, Render, RenderUntil, Reply, Trigger,
 };
 use plyphon_buffers::{BufferSource, ReadRegion};
 use plyphon_dsp::buffer::Buffer;
@@ -337,58 +343,20 @@ impl OscDispatcher {
     /// host/transport's job. The lifecycle events carry only the node id; `/n_move` carries the full
     /// `/n_info`-shaped position (parent/prev/next/isGroup, plus head/tail for a group).
     pub fn notify(&mut self, event: Event) {
-        let (addr, id) = match event {
-            Event::NodeStarted { id } => ("/n_go", id),
-            Event::NodeEnded { id } => ("/n_end", id),
-            Event::NodePaused { id } => ("/n_off", id),
-            Event::NodeResumed { id } => ("/n_on", id),
-            // A move carries the moved node's new tree position, like `/n_info`, not just the id.
-            Event::NodeMoved {
-                node,
-                parent,
-                prev,
-                next,
-                is_group,
-                head,
-                tail,
-            } => {
-                let args = node_info_args(node, parent, prev, next, is_group, head, tail);
-                self.push_reply(ReplyTarget::Broadcast, "/n_move", args);
-                return;
-            }
-            // No node was created (empty def slot or pool exhaustion); report a `/s_new` failure,
-            // mirroring scsynth's `/fail` reply, and drop any def tracking for the would-be id.
-            Event::SynthFailed { id } => {
-                self.node_defs.remove(&id);
-                self.push_reply(
-                    ReplyTarget::Broadcast,
-                    "/fail",
-                    vec![OscType::String("/s_new".to_string()), OscType::Int(id)],
-                );
-                return;
-            }
-        };
-        // A freed node's def tracking is no longer needed; self-freed synths never reach `/n_free`,
-        // so this is where their entry is reclaimed.
-        if let Event::NodeEnded { id } = event {
+        // The only stateful effect: reclaim def tracking for a node that never reaches `/n_free` (a
+        // self-freed synth's `NodeEnded`) or never existed (a failed `/s_new`). The OSC mapping
+        // itself is pure - see [`encode::encode_event`].
+        if let Event::NodeEnded { id } | Event::SynthFailed { id } = event {
             self.node_defs.remove(&id);
         }
-        self.push_reply(ReplyTarget::Broadcast, addr, vec![OscType::Int(id)]);
+        self.push_packet(ReplyTarget::Broadcast, encode::encode_event(event));
     }
 
     /// Translate a `SendTrig` [`Trigger`] into a `/tr [nodeID, id, value]` message and queue it for
     /// [`take_replies`](Self::take_replies). Feed this the triggers drained from
     /// [`Nrt::poll_trigger`](plyphon::Nrt::poll_trigger). Broadcast, like the node notifications.
     pub fn notify_trigger(&mut self, trigger: Trigger) {
-        self.push_reply(
-            ReplyTarget::Broadcast,
-            "/tr",
-            vec![
-                OscType::Int(trigger.node),
-                OscType::Int(trigger.id),
-                OscType::Float(trigger.value),
-            ],
-        );
+        self.push_packet(ReplyTarget::Broadcast, encode::encode_trigger(trigger));
     }
 
     /// Translate a `SendReply` [`NodeMsg`] into its OSC message and queue it for
@@ -397,17 +365,8 @@ impl OscDispatcher {
     /// leading `/`). Feed this the messages drained from
     /// [`Nrt::poll_node_msg`](plyphon::Nrt::poll_node_msg). Broadcast, like `/tr`.
     pub fn notify_node_msg(&mut self, msg: NodeMsg) {
-        match msg.kind {
-            NodeMsgKind::Reply => {
-                let path = core::str::from_utf8(&msg.label[..msg.label_len as usize]).unwrap_or("");
-                let mut args = Vec::with_capacity(2 + msg.num_values as usize);
-                args.push(OscType::Int(msg.node));
-                args.push(OscType::Int(msg.reply_id));
-                for &v in &msg.values[..msg.num_values as usize] {
-                    args.push(OscType::Float(v));
-                }
-                self.push_reply(ReplyTarget::Broadcast, path, args);
-            }
+        if let Some(packet) = encode::encode_node_msg(msg) {
+            self.push_packet(ReplyTarget::Broadcast, packet);
         }
     }
 
@@ -1063,75 +1022,32 @@ impl OscDispatcher {
         match pending {
             PendingQuery::Sync => {
                 if let Reply::Synced { id } = reply {
-                    self.reply_msg("/synced", vec![OscType::Int(id)]);
+                    self.reply_packet(encode::encode_synced(id));
                 }
                 true
             }
             PendingQuery::Status => {
-                if let Reply::Status {
-                    num_ugens,
-                    num_synths,
-                    num_groups,
-                    num_synthdefs,
-                    avg_cpu,
-                    peak_cpu,
-                    nominal_sr,
-                    actual_sr,
-                } = reply
-                {
-                    self.reply_msg(
-                        "/status.reply",
-                        vec![
-                            OscType::Int(1),
-                            OscType::Int(num_ugens),
-                            OscType::Int(num_synths),
-                            OscType::Int(num_groups),
-                            OscType::Int(num_synthdefs),
-                            OscType::Float(avg_cpu),
-                            OscType::Float(peak_cpu),
-                            OscType::Double(nominal_sr),
-                            OscType::Double(actual_sr),
-                        ],
-                    );
+                if let Some(packet) = encode::encode_status(&reply) {
+                    self.reply_packet(packet);
                 }
                 true
             }
             PendingQuery::RtMemory => {
-                if let Reply::RtMemoryStatus {
-                    total_free,
-                    largest_free,
-                } = reply
-                {
-                    self.reply_msg(
-                        "/rtMemoryStatus.reply",
-                        vec![OscType::Int(total_free), OscType::Int(largest_free)],
-                    );
+                if let Some(packet) = encode::encode_rt_memory(&reply) {
+                    self.reply_packet(packet);
                 }
                 true
             }
             PendingQuery::Node => {
-                match reply {
-                    Reply::NodeInfo {
-                        node,
-                        parent,
-                        prev,
-                        next,
-                        is_group,
-                        head,
-                        tail,
-                    } => {
-                        let args = node_info_args(node, parent, prev, next, is_group, head, tail);
-                        // scsynth answers `/n_query` by broadcasting `/n_info` to all registered
-                        // clients (Server-Command-Reference: "sent to all registered clients"), not
-                        // just the asker - so an unregistered querier receives nothing.
-                        self.push_reply(ReplyTarget::Broadcast, "/n_info", args);
-                    }
+                if let Some(packet) = encode::encode_node_info(&reply) {
+                    // scsynth answers `/n_query` by broadcasting `/n_info` to all registered clients
+                    // (Server-Command-Reference: "sent to all registered clients"), not just the
+                    // asker - so an unregistered querier receives nothing.
+                    self.push_packet(ReplyTarget::Broadcast, packet);
+                } else if let Reply::NodeNotFound { node } = reply {
                     // scsynth returns kSCErr_NodeNotFound, which the dispatcher reports as a `/fail`
                     // back to the requester (errors are not broadcast).
-                    Reply::NodeNotFound { node } => {
-                        self.fail("/n_query", &alloc::format!("Node {node} not found"))
-                    }
-                    _ => {}
+                    self.fail("/n_query", &alloc::format!("Node {node} not found"));
                 }
                 true
             }
@@ -1779,16 +1695,29 @@ impl OscDispatcher {
         self.push_reply(target, addr, args);
     }
 
+    /// Queue a pre-built reply packet for the current requester - the packet twin of [`reply_msg`](
+    /// Self::reply_msg), used by the getter arms that delegate to the pure [`encode`] encoders.
+    fn reply_packet(&mut self, packet: OscPacket) {
+        let target = self.current_target;
+        self.push_packet(target, packet);
+    }
+
     /// Queue an OSC reply for an explicit destination, regardless of the current requester (e.g. node
     /// notifications and the success `/n_info`, which broadcast).
     fn push_reply(&mut self, target: ReplyTarget, addr: &str, args: Vec<OscType>) {
-        self.replies.push((
+        self.push_packet(
             target,
             OscPacket::Message(OscMessage {
                 addr: addr.to_string(),
                 args,
             }),
-        ));
+        );
+    }
+
+    /// Queue a pre-built OSC packet for `target` - the single leaf the reply/notify helpers and the
+    /// pure [`encode`] encoders funnel through.
+    fn push_packet(&mut self, target: ReplyTarget, packet: OscPacket) {
+        self.replies.push((target, packet));
     }
 
     /// Record an outstanding getter against the current requester, in issue order, so its later
@@ -1965,84 +1894,6 @@ fn add_action(code: i32) -> Result<AddAction, OscError> {
         3 => Ok(AddAction::After),
         // 4 is addReplace, not yet supported.
         other => Err(OscError::UnsupportedAddAction(other)),
-    }
-}
-
-/// Build the arguments shared by `/n_info` (the `/n_query` answer) and `/n_move` (the node-move
-/// notification): node, parent, prev, next, isGroup, plus head/tail when the node is a group.
-fn node_info_args(
-    node: i32,
-    parent: i32,
-    prev: i32,
-    next: i32,
-    is_group: i32,
-    head: i32,
-    tail: i32,
-) -> Vec<OscType> {
-    let mut args = vec![
-        OscType::Int(node),
-        OscType::Int(parent),
-        OscType::Int(prev),
-        OscType::Int(next),
-        OscType::Int(is_group),
-    ];
-    if is_group == 1 {
-        args.push(OscType::Int(head));
-        args.push(OscType::Int(tail));
-    }
-    args
-}
-
-fn int_arg(arg: &OscType) -> Result<i32, OscError> {
-    match arg {
-        OscType::Int(i) => Ok(*i),
-        _ => Err(OscError::BadArguments("expected an int")),
-    }
-}
-
-/// A non-negative bus index (`/c_set`, `/c_setn`).
-fn bus_index(arg: &OscType) -> Result<u32, OscError> {
-    u32::try_from(int_arg(arg)?).map_err(|_| OscError::BadArguments("negative bus index"))
-}
-
-/// A bus index for `/n_map`/`/n_mapn`, where a negative index means "unmap".
-fn map_bus(arg: &OscType) -> Result<Option<u32>, OscError> {
-    let bus = int_arg(arg)?;
-    Ok(u32::try_from(bus).ok())
-}
-
-/// A non-negative count argument (`/c_setn`, `/n_mapn`).
-fn count_arg(arg: Option<&OscType>) -> Result<usize, OscError> {
-    let arg = arg.ok_or(OscError::BadArguments("expected a count"))?;
-    usize::try_from(int_arg(arg)?).map_err(|_| OscError::BadArguments("negative count"))
-}
-
-/// A non-negative `usize` index argument (`/b_set`, `/b_setn`, `/b_fill`).
-fn index_arg(arg: &OscType) -> Result<usize, OscError> {
-    usize::try_from(int_arg(arg)?).map_err(|_| OscError::BadArguments("negative index"))
-}
-
-fn float_arg(arg: &OscType) -> Result<f32, OscError> {
-    match arg {
-        OscType::Float(f) => Ok(*f),
-        OscType::Int(i) => Ok(*i as f32),
-        OscType::Double(d) => Ok(*d as f32),
-        _ => Err(OscError::BadArguments("expected a number")),
-    }
-}
-
-fn str_arg(arg: &OscType) -> Result<&str, OscError> {
-    match arg {
-        OscType::String(s) => Ok(s.as_str()),
-        _ => Err(OscError::BadArguments("expected a string")),
-    }
-}
-
-/// The trailing OSC completion blob of an async command, if the last argument is one.
-fn last_blob(args: &[OscType]) -> Option<&[u8]> {
-    match args.last() {
-        Some(OscType::Blob(bytes)) => Some(bytes),
-        _ => None,
     }
 }
 
