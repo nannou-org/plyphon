@@ -561,6 +561,31 @@ impl Controller {
         Ok(consumer)
     }
 
+    /// Snapshot the in-memory buffer at `index` to a host sink (scsynth's `/b_write`, `leaveOpen=0`).
+    ///
+    /// Unlike [`buffer_cue_write`](Self::buffer_cue_write) - which installs a *recording* slot for
+    /// `DiskOut` to fill with live audio - this leaves the buffer in place and has the engine copy its
+    /// existing samples into a fresh recording stream over the following blocks (back-pressured by the
+    /// returned [`StreamConsumer`]'s recycle ring), so RT readers are undisturbed. Allocates the chunk
+    /// pool off the audio thread; drain the returned consumer to a sink and poll
+    /// [`StreamConsumer::is_finished`](plyphon_dsp::stream::StreamConsumer::is_finished) (or
+    /// `StreamDrainer::is_done` in `plyphon-buffers`) for when the copy is complete.
+    /// `channels`/`sample_rate` should match the buffer (they head the written file).
+    /// Immediate (`send_now`): the copy-out is a host action the dispatcher drives after queueing, so
+    /// it never rides a bundle time tag.
+    pub fn buffer_write_out(
+        &mut self,
+        index: usize,
+        channels: usize,
+        sample_rate: f64,
+        chunk_frames: usize,
+        num_chunks: usize,
+    ) -> Result<StreamConsumer, QueueFull> {
+        let (recording, consumer) = cue_recording(channels, sample_rate, chunk_frames, num_chunks);
+        self.send_now(Command::WriteBuffer { index, recording })?;
+        Ok(consumer)
+    }
+
     // --- Queries (getters). Each pushes a query the World answers over the reply ring, drained on the
     // NRT side. They take effect immediately (`send_now`) except `/sync`, which honors a bundle time
     // tag (`send`) so a scheduled barrier fires in its block. ---

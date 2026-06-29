@@ -29,6 +29,7 @@ use plyphon_dsp::buffer::{BufferSlot, BufferTable};
 use plyphon_dsp::bus::Buses;
 use plyphon_dsp::fft::FftTables;
 use plyphon_dsp::rate::RateInfo;
+use plyphon_dsp::stream::StreamRecording;
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
 use plyphon_unit::unit::{DoneAction, NodeMsg, NodeOp, NodeOpKind, Trigger};
@@ -43,6 +44,20 @@ const SEED_STEP: u64 = 0x9e37_79b9_7f4a_7c15;
 /// The most values a single range getter (`/c_getn`/`/s_getn`/`/b_getn`) answers, so one oversized
 /// request cannot overflow the reply ring. scsynth similarly bounds its reply sizes.
 pub const MAX_QUERY_RANGE: usize = 256;
+
+/// An in-flight `/b_write` copy-out: the engine copies the in-memory buffer at `src` into `recording`
+/// a poolful of chunks at a time across blocks (back-pressured by the recording's recycle ring),
+/// never touching the buffer slot, so RT readers keep working. When `cursor` reaches the buffer's
+/// frame count the recording is trashed - its drop abandons the host's consumer, signalling
+/// completion.
+struct BufferWriteOut {
+    /// Buffer table index being copied from (held by index so a freed or replaced slot is detected).
+    src: usize,
+    /// The recording stream the samples are copied into.
+    recording: Box<StreamRecording>,
+    /// Frames already copied.
+    cursor: usize,
+}
 
 /// The real-time engine half.
 pub struct World {
@@ -69,6 +84,10 @@ pub struct World {
     replies_tx: Producer<Reply>,
     triggers_tx: Producer<Trigger>,
     node_msgs_tx: Producer<NodeMsg>,
+    /// In-flight `/b_write` buffer copy-outs, advanced each block (pre-allocated to the buffer-table
+    /// size; one entry per buffer being snapshotted). Empty in the common case, so the per-block drive
+    /// is a no-op.
+    pending_writes: Vec<BufferWriteOut>,
     /// Freed items awaiting space in the trash ring (pre-allocated; never reallocates at runtime).
     pending_trash: Vec<Trash>,
     /// Events awaiting space in the events ring (pre-allocated; never reallocates at runtime).
@@ -163,6 +182,7 @@ impl World {
             replies_tx,
             triggers_tx,
             node_msgs_tx,
+            pending_writes: Vec::with_capacity(options.max_buffers),
             pending_trash: Vec::with_capacity(capacity),
             pending_events: Vec::with_capacity(capacity),
             pending_replies: VecDeque::with_capacity(tree_capacity),
@@ -318,6 +338,9 @@ impl World {
         self.drain_node_ops();
         self.drain_triggers();
         self.drain_node_msgs();
+        // After the tree walk, so a buffer just written this block (RecordBuf/BufWr) is snapshotted
+        // with its latest samples.
+        self.drive_writes();
         self.clock.advance();
     }
 
@@ -369,6 +392,55 @@ impl World {
         for msg in self.node_msg_buf.drain(..) {
             if self.node_msgs_tx.push(msg).is_err() {
                 break;
+            }
+        }
+    }
+
+    /// Advance each in-flight `/b_write` copy-out (scsynth's `BufWriteCmd`, but race-free). For each,
+    /// re-read the live buffer at `src` *fresh* - a freed slot, a replaced slot, or one turned into a
+    /// stream all return `None` and end the copy - and copy as many frames as the recording's recycle
+    /// ring allows this block (back-pressure: `write` self-limits to the available chunks, advancing
+    /// `cursor` only by the frames actually recorded). A completed or abandoned copy routes its
+    /// recording to the trash ring, whose drop abandons the host's consumer - the completion signal.
+    ///
+    /// The slot is never replaced, so RT readers are undisturbed (scsynth instead reads the shared
+    /// `SndBuf::data` from its NRT thread, a race that is only benign while nothing frees the buffer).
+    /// RT-safe: `buffers` and the `pending_writes` entry are disjoint borrows, `write` fills only
+    /// pre-allocated chunks, and no `Box` is freed here (the recording goes to the trash ring).
+    fn drive_writes(&mut self) {
+        let mut i = 0;
+        while i < self.pending_writes.len() {
+            let done = {
+                let World {
+                    buffers,
+                    pending_writes,
+                    ..
+                } = &mut *self;
+                let write = &mut pending_writes[i];
+                match buffers.get(write.src) {
+                    Some(buffer) => {
+                        let total = buffer.num_frames();
+                        let channels = buffer.num_channels();
+                        let cursor = write.cursor;
+                        let remaining = total.saturating_sub(cursor);
+                        let recorded = write
+                            .recording
+                            .write(remaining, channels, |f, ch| buffer.sample(cursor + f, ch));
+                        write.cursor += recorded;
+                        // Finish only once the final (partial) chunk is flushed; if the ring is
+                        // momentarily full the flush fails, so retry it next block.
+                        write.cursor >= total && write.recording.flush()
+                    }
+                    // The buffer was freed, replaced, or turned into a stream: flush what was copied so
+                    // far and finish (retry the flush next block if the ring is full).
+                    None => write.recording.flush(),
+                }
+            };
+            if done {
+                let write = self.pending_writes.swap_remove(i);
+                self.trash(Trash::Recording(write.recording));
+            } else {
+                i += 1;
             }
         }
     }
@@ -495,6 +567,16 @@ impl World {
             Command::FreeBuffer { index } => {
                 let old = self.buffers.free(index);
                 self.trash_slot(old);
+            }
+            Command::WriteBuffer { index, recording } => {
+                // Begin a copy-out without disturbing the slot: `drive_writes` copies the buffer's
+                // samples into `recording` over the following blocks (the buffer keeps serving RT
+                // readers). Pushes onto the pre-sized `pending_writes`; never replaces the buffer.
+                self.pending_writes.push(BufferWriteOut {
+                    src: index,
+                    recording,
+                    cursor: 0,
+                });
             }
             Command::SetBufferSample {
                 index,
@@ -865,14 +947,16 @@ impl World {
 
     /// Route any heap a discarded scheduled command owns to the trash ring before the command is
     /// dropped, so clearing the scheduler (`/clearSched`) never frees a `Box` on the audio thread.
-    /// Only [`SetBuffer`](Command::SetBuffer) and [`CueStream`](Command::CueStream) own such a `Box`;
-    /// every other command is flat or holds a non-final `Arc` (the Controller retains its own), so
-    /// letting it drop here is RT-safe.
+    /// Only the buffer-installing commands - [`SetBuffer`](Command::SetBuffer),
+    /// [`CueStream`](Command::CueStream), [`CueRecording`](Command::CueRecording), and
+    /// [`WriteBuffer`](Command::WriteBuffer) - own such a `Box`; every other command is flat or holds a
+    /// non-final `Arc` (the Controller retains its own), so letting it drop here is RT-safe.
     fn trash_command(&mut self, command: Command) {
         match command {
             Command::SetBuffer { buffer, .. } => self.trash(Trash::Buffer(buffer)),
             Command::CueStream { playback, .. } => self.trash(Trash::Stream(playback)),
             Command::CueRecording { recording, .. } => self.trash(Trash::Recording(recording)),
+            Command::WriteBuffer { recording, .. } => self.trash(Trash::Recording(recording)),
             _ => {}
         }
     }

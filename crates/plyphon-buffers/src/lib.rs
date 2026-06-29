@@ -276,4 +276,12 @@ impl StreamDrainer {
         self.drain(sink).await?;
         sink.close().await
     }
+
+    /// Whether the recording is complete - the RT side dropped its end and every chunk has been
+    /// drained (see [`StreamConsumer::is_finished`]). A host driving [`drain`](Self::drain) each tick
+    /// uses this to know when to [`finish`](Self::finish) and stop polling - the completion signal for
+    /// a bounded recording such as a `/b_write` copy-out, which has no explicit "stop" command.
+    pub fn is_done(&self) -> bool {
+        self.consumer.is_finished()
+    }
 }

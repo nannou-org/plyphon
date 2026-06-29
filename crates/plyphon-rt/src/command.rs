@@ -150,6 +150,18 @@ pub enum Command {
         /// The pre-built RT-side recording endpoint (its rings allocated off the audio thread).
         recording: Box<StreamRecording>,
     },
+    /// Begin a race-free copy-out of the in-memory buffer at `index` into `recording` (scsynth's
+    /// `/b_write` `leaveOpen=0` snapshot). Unlike [`CueRecording`](Self::CueRecording) this does *not*
+    /// replace the slot: the buffer stays `Loaded` and RT readers keep working while the World copies
+    /// its samples into the recording stream over the following blocks (back-pressured by the
+    /// recording's recycle ring). When the copy finishes the recording is routed to the trash ring,
+    /// whose drop abandons the consumer the host is draining - the completion signal.
+    WriteBuffer {
+        /// Buffer table index to copy *from* (left in place).
+        index: usize,
+        /// The pre-built RT-side recording endpoint the buffer's samples are copied into.
+        recording: Box<StreamRecording>,
+    },
     /// Free the buffer at `index` (scsynth's `/b_free`), routing any slot to the trash ring.
     FreeBuffer {
         /// Buffer table index.

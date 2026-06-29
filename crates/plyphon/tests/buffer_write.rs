@@ -3,8 +3,8 @@
 //! at a chosen frame. Exercises the `buffer_at_mut` write seam.
 
 use plyphon::{
-    AddAction, Buffer, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
-    engine,
+    AddAction, Buffer, Controller, Event, InputRef, Nrt, Options, ROOT_GROUP_ID, Rate, SynthDef,
+    UnitSpec, World, engine,
 };
 
 const SR: f32 = 48_000.0;
@@ -168,6 +168,69 @@ fn record_buf_done_action_frees_synth() {
         std::iter::from_fn(|| nrt.poll()).any(|e| e == Event::NodeEnded { id: node }),
         "expected a NodeEnded for the self-freed RecordBuf synth"
     );
+}
+
+/// Drive a `/b_write` copy-out of the buffer at `bufnum` to completion, returning every interleaved
+/// frame the engine streamed out. Each tick advances the engine (which copies a poolful of chunks
+/// without touching the slot), drops trash (so the finished recording abandons the consumer), and
+/// drains whatever was produced - exactly the non-blocking multi-tick loop the host runs.
+fn drive_write_out(
+    controller: &mut Controller,
+    nrt: &mut Nrt,
+    world: &mut World,
+    bufnum: usize,
+    channels: usize,
+    frames: usize,
+) -> Vec<f32> {
+    // A small chunk pool (4 chunks of 64 frames) forces the multi-tick back-pressure path.
+    let mut consumer = controller
+        .buffer_write_out(bufnum, channels, SR as f64, 64, 4)
+        .expect("cue the copy-out");
+    let mut blk = [0.0f32; 64];
+    let mut got = Vec::new();
+    // A generous cap: the copy needs ~frames/256 ticks; far fewer than this bound.
+    for _ in 0..(frames + 256) {
+        world.fill(&mut blk, 1);
+        nrt.process();
+        while let Some(chunk) = consumer.pop_filled() {
+            got.extend_from_slice(chunk.filled_samples());
+            consumer.recycle(chunk);
+        }
+        if consumer.is_finished() {
+            break;
+        }
+    }
+    assert!(consumer.is_finished(), "copy-out did not finish");
+    got
+}
+
+#[test]
+fn buffer_write_out_snapshots_the_whole_buffer() {
+    let (mut controller, mut nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    // 1000 frames is not a multiple of the 64-frame chunk, so the final partial chunk's flush is
+    // exercised (without it the snapshot would come up short by up to a chunk).
+    let frames = 1000;
+    let ramp: Vec<f32> = (0..frames).map(|f| f as f32).collect();
+    controller
+        .buffer_set(
+            0,
+            Box::new(Buffer::from_interleaved(ramp.clone(), 1, SR as f64)),
+        )
+        .unwrap();
+    // Let the SetBuffer land before the copy-out reads the slot.
+    world.fill(&mut [0.0f32; 64], 1);
+
+    let got = drive_write_out(&mut controller, &mut nrt, &mut world, 0, 1, frames);
+    assert_eq!(got, ramp, "snapshot did not round-trip the buffer");
+
+    // The slot is left in place: a second snapshot still round-trips, proving the copy never consumed
+    // or replaced the buffer (RT readers stay intact).
+    let again = drive_write_out(&mut controller, &mut nrt, &mut world, 0, 1, frames);
+    assert_eq!(again, ramp, "buffer was disturbed by the first copy-out");
 }
 
 #[test]

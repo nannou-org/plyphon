@@ -283,6 +283,33 @@ impl StreamRecording {
         }
         recorded
     }
+
+    /// Push the partially-filled current chunk to the consumer, so a recording that ends mid-chunk
+    /// still delivers its final frames. Returns `true` when nothing remains to flush (no partial chunk,
+    /// or it was pushed); `false` if the filled ring is momentarily full - keep the chunk and retry
+    /// next block. RT-safe (no allocation, no blocking, never drops a `Chunk`).
+    ///
+    /// A continuous `DiskOut` never needs this (it drops the sub-chunk tail as a bounded overrun), but
+    /// a *bounded* copy-out (`/b_write`) must flush to deliver every frame exactly.
+    pub fn flush(&mut self) -> bool {
+        if self.cursor == 0 {
+            return true;
+        }
+        let Some(mut chunk) = self.current.take() else {
+            return true;
+        };
+        chunk.frames = self.cursor;
+        match self.filled.push(chunk) {
+            Ok(()) => {
+                self.cursor = 0;
+                true
+            }
+            Err(PushError::Full(chunk)) => {
+                self.current = Some(chunk);
+                false
+            }
+        }
+    }
 }
 
 /// The off-RT consumer side of a recording stream, drained by a sink. The inverse of
@@ -316,6 +343,15 @@ impl StreamConsumer {
     pub fn recycle(&mut self, mut chunk: Chunk) {
         chunk.frames = 0;
         let _ = self.recycle.push(chunk);
+    }
+
+    /// Whether the recording is complete: every filled chunk has been drained *and* the RT-side
+    /// [`StreamRecording`] has been dropped, so no further chunk can ever arrive. A drainer polls this
+    /// to know when to close its sink. (`is_abandoned` reports the dropped producer; `is_empty` that
+    /// nothing remains queued.) A finite recording that is still running but momentarily drained is
+    /// *not* finished - the producer is still alive.
+    pub fn is_finished(&self) -> bool {
+        self.filled.is_empty() && self.filled.is_abandoned()
     }
 }
 
@@ -394,6 +430,32 @@ mod tests {
         let chunk = consumer.pop_filled().expect("a filled chunk");
         consumer.recycle(chunk);
         assert_eq!(rec.write(4, 1, |_, _| 4.0), 4);
+    }
+
+    #[test]
+    fn flush_delivers_the_final_partial_chunk() {
+        let (mut rec, mut consumer) = cue_recording(1, 48_000.0, 4, 3);
+        // 6 frames into chunks of 4: one full chunk is pushed, a 2-frame partial is held back.
+        assert_eq!(rec.write(6, 1, |frame, _| frame as f32), 6);
+        assert_eq!(drain(&mut consumer), vec![0.0, 1.0, 2.0, 3.0]);
+        // The partial only arrives after a flush - the difference a bounded copy-out depends on.
+        assert!(rec.flush());
+        assert_eq!(drain(&mut consumer), vec![4.0, 5.0]);
+        // A second flush is a no-op (nothing pending).
+        assert!(rec.flush());
+        assert!(consumer.pop_filled().is_none());
+    }
+
+    #[test]
+    fn is_finished_requires_drain_then_drop() {
+        let (mut rec, mut consumer) = cue_recording(1, 48_000.0, 4, 2);
+        assert!(!consumer.is_finished()); // producer alive, nothing queued
+        rec.write(4, 1, |_, _| 1.0); // one full chunk pushed
+        drop(rec); // RT side gone, but a chunk is still queued
+        assert!(!consumer.is_finished()); // abandoned but not yet empty
+        let chunk = consumer.pop_filled().expect("the queued chunk");
+        consumer.recycle(chunk);
+        assert!(consumer.is_finished()); // empty + abandoned
     }
 
     #[test]
