@@ -14,7 +14,7 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 
 examples="sine motif waveforms envelope pan feedback delay custom-unit duty-seq \
-  routing control node-control glide osc schedule triggers send-reply scgf sampler stream"
+  routing control node-control glide osc schedule triggers send-reply scgf sampler stream record"
 
 mkdir -p web/worklet
 

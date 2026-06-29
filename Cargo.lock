@@ -548,6 +548,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-record"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-render"
 version = "0.1.0"
 dependencies = [
