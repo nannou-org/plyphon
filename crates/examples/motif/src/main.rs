@@ -7,7 +7,7 @@
 //!
 //! The engine is pure Rust with no platform-specific paths, so [`build`] is identical on both
 //! targets. The *only* difference is how the control plane is ticked (a thread loop natively, a
-//! timer on the web), in [`run_control_plane`].
+//! timer on the web), which `example_audio::run_control` abstracts over.
 
 use plyphon::{
     AddAction, Controller, Event, InputRef, Nrt, Options, Param, ROOT_GROUP_ID, Rate, SynthDef,

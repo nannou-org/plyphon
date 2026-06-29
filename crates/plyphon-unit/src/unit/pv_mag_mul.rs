@@ -6,8 +6,9 @@
 //! Both inputs are the frame-ready signals from upstream `FFT`s (a buffer number, or `< 0` when no
 //! frame is ready); `A`'s signal is passed through so a downstream `IFFT`/`PV_*` sees the frame.
 //!
-//! The two-buffer access (read `B`, write `A` at once) goes through [`buffer_pair_mut`], which hands
-//! out the two slots as disjoint borrows - the seam every two-buffer `PV_*` unit shares.
+//! The two-buffer access (read `B`, write `A` at once) goes through
+//! [`buffer_pair_mut`](crate::unit::buffer_pair_mut), which hands out the two slots as disjoint
+//! borrows - the seam every two-buffer `PV_*` unit shares.
 
 use bytemuck::{Pod, Zeroable};
 
