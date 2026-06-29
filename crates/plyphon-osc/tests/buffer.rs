@@ -128,7 +128,7 @@ fn loads_a_buffer_over_osc_and_plays_it() {
         output_channels: 1,
         ..Options::default()
     });
-    let mut osc = OscDispatcher::with_source(Box::new(ToneSource));
+    let mut osc = OscDispatcher::new();
     controller.add_synthdef(player_def());
 
     // /b_allocRead queues an async load; nothing happens until run_pending.
@@ -145,7 +145,7 @@ fn loads_a_buffer_over_osc_and_plays_it() {
         "no reply until the load runs"
     );
 
-    block_on(osc.run_pending(&mut controller));
+    block_on(osc.run_pending(&mut controller, Some(&ToneSource)));
     let replies = osc.take_replies();
     let done = find(&replies, "/done").expect("/done after the load");
     assert_eq!(
@@ -204,7 +204,7 @@ fn completion_b_query_routes_to_the_loader() {
         output_channels: 1,
         ..Options::default()
     });
-    let mut osc = OscDispatcher::with_source(Box::new(ToneSource));
+    let mut osc = OscDispatcher::new();
 
     // Tag this load's requester, then queue a load whose completion queries the just-loaded buffer.
     osc.set_reply_target(ReplyTarget::Requester(7));
@@ -221,7 +221,7 @@ fn completion_b_query_routes_to_the_loader() {
         ),
     )
     .expect("/b_allocRead");
-    block_on(osc.run_pending(&mut controller));
+    block_on(osc.run_pending(&mut controller, Some(&ToneSource)));
 
     let replies = osc.take_replies_targeted();
     assert!(
@@ -250,7 +250,7 @@ fn completion_getter_answers_the_loader() {
         output_channels: 1,
         ..Options::default()
     });
-    let mut osc = OscDispatcher::with_source(Box::new(ToneSource));
+    let mut osc = OscDispatcher::new();
 
     osc.set_reply_target(ReplyTarget::Requester(9));
     let completion = msg("/c_get", vec![OscType::Int(0)]);
@@ -266,7 +266,7 @@ fn completion_getter_answers_the_loader() {
         ),
     )
     .expect("/b_allocRead");
-    block_on(osc.run_pending(&mut controller));
+    block_on(osc.run_pending(&mut controller, Some(&ToneSource)));
     // The immediate replies (the terminal /done) are the loader's; the /c_get answer is still in flight.
     let immediate = osc.take_replies_targeted();
     assert!(
@@ -306,7 +306,7 @@ fn alloc_read_without_a_source_fails() {
         ),
     )
     .expect("/b_allocRead");
-    block_on(osc.run_pending(&mut controller));
+    block_on(osc.run_pending(&mut controller, None));
     let replies = osc.take_replies();
     let fail = find(&replies, "/fail").expect("/fail without a source");
     assert_eq!(

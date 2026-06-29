@@ -71,7 +71,7 @@ pub fn run(args: ServerArgs) -> Result<(), String> {
         let count = load_dir(&mut controller, dir)?;
         eprintln!("loaded {count} synthdef(s) from {}", dir.display());
     }
-    let dispatcher = OscDispatcher::with_source(Box::new(FsSource));
+    let dispatcher = OscDispatcher::new();
 
     // The World plays on the audio thread (output-only for v1); keep the stream alive for the run.
     let mut world = world;
@@ -226,7 +226,11 @@ fn service(server: &mut Server) {
         server.dispatcher.reply(&server.controller, reply);
     }
     // Buffer loads queued by `apply` (`/b_allocRead`/`/b_read`); the fs source is ready at once.
-    block_on(server.dispatcher.run_pending(&mut server.controller));
+    block_on(
+        server
+            .dispatcher
+            .run_pending(&mut server.controller, Some(&FsSource)),
+    );
 
     flush_replies(server);
 }
@@ -442,7 +446,7 @@ mod tests {
         };
         let (mut controller, nrt, mut world) = plyphon::engine(options);
         controller.add_synthdef(note_def());
-        let dispatcher = OscDispatcher::with_source(Box::new(FsSource));
+        let dispatcher = OscDispatcher::new();
 
         // Drive the World on a background thread, standing in for the audio callback.
         let stop = Arc::new(AtomicBool::new(false));
@@ -533,7 +537,7 @@ mod tests {
             ..Options::default()
         };
         let (controller, nrt, _world) = plyphon::engine(options);
-        let dispatcher = OscDispatcher::with_source(Box::new(FsSource));
+        let dispatcher = OscDispatcher::new();
 
         let Transport { events, udp } =
             transport::start("127.0.0.1".parse().unwrap(), 0, None).unwrap();
@@ -596,7 +600,7 @@ mod tests {
         };
         let (mut controller, nrt, mut world) = plyphon::engine(options);
         controller.add_synthdef(note_def());
-        let dispatcher = OscDispatcher::with_source(Box::new(FsSource));
+        let dispatcher = OscDispatcher::new();
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_driver = stop.clone();

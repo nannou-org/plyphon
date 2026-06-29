@@ -56,10 +56,10 @@
 //! # Asynchronous buffer loading
 //!
 //! `/b_allocRead` and `/b_read` read sound files, which plyphon keeps off the OSC-handling path:
-//! configure the dispatcher with a [`BufferSource`] via [`OscDispatcher::with_source`], and
-//! `apply` *queues* the load; the host drives queued loads on its own executor with
-//! [`OscDispatcher::run_pending`] (lending the `Controller`), which installs the buffer, runs the
-//! command's completion message, and queues `/done`. (Sources are decoded the host's way - see
+//! `apply` *queues* the load and the host drives queued loads on its own executor with
+//! [`OscDispatcher::run_pending`], lending the `Controller` and the [`BufferSource`] to read through
+//! (the dispatcher owns neither). It installs the buffer, runs the command's completion message, and
+//! queues `/done` - or `/fail` if no source is given. (Sources are decoded the host's way - see
 //! `plyphon-buffers`.)
 
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -230,9 +230,8 @@ pub struct OscDispatcher {
     node_defs: HashMap<i32, String>,
     /// Control-side mirror of each buffer's dimensions, for `/b_query` and `/b_zero`.
     buffers: HashMap<i32, BufferInfo>,
-    /// Source for asynchronous buffer loads, if configured.
-    source: Option<Box<dyn BufferSource>>,
-    /// Loads queued by `apply`, awaiting [`OscDispatcher::run_pending`].
+    /// Loads queued by `apply`, awaiting [`OscDispatcher::run_pending`] (which the host drives with the
+    /// [`BufferSource`] it owns - the dispatcher holds no source itself).
     pending: Vec<PendingLoad>,
     /// Outbound replies, each tagged with its destination, drained by
     /// [`take_replies`](OscDispatcher::take_replies)/[`take_replies_targeted`](OscDispatcher::take_replies_targeted).
@@ -258,13 +257,12 @@ impl Default for OscDispatcher {
 }
 
 impl OscDispatcher {
-    /// A fresh dispatcher with no buffer source (`/b_allocRead`/`/b_read` will fail with `/fail`).
-    /// The host lends it the [`Controller`] per call.
+    /// A fresh dispatcher. The host lends it the [`Controller`] per call, and the [`BufferSource`] for
+    /// asynchronous `/b_allocRead`/`/b_read` loads when it drives [`run_pending`](Self::run_pending).
     pub fn new() -> Self {
         OscDispatcher {
             node_defs: HashMap::new(),
             buffers: HashMap::new(),
-            source: None,
             pending: Vec::new(),
             replies: Vec::new(),
             current_target: ReplyTarget::Broadcast,
@@ -272,14 +270,6 @@ impl OscDispatcher {
             error_bundle: None,
             pending_queries: VecDeque::new(),
             dump_sink: None,
-        }
-    }
-
-    /// A dispatcher with a [`BufferSource`] for asynchronous `/b_allocRead`/`/b_read` loads.
-    pub fn with_source(source: Box<dyn BufferSource>) -> Self {
-        OscDispatcher {
-            source: Some(source),
-            ..Self::new()
         }
     }
 
@@ -370,17 +360,21 @@ impl OscDispatcher {
 
     /// Run the buffer loads queued by `apply` (`/b_allocRead`, `/b_read`), in order.
     ///
-    /// For each: load through the configured [`BufferSource`], install the buffer, run the command's
-    /// completion message, and queue `/done` - or queue `/fail` if there is no source or the load
-    /// errors. Drive this on whatever executor suits the host (a background thread natively,
-    /// `spawn_local` on the web); it never touches the audio thread.
-    pub async fn run_pending(&mut self, controller: &mut Controller) {
+    /// For each: load through `source`, install the buffer, run the command's completion message, and
+    /// queue `/done` - or queue `/fail` if `source` is `None` or the load errors. Drive this on
+    /// whatever executor suits the host (a background thread natively, `spawn_local` on the web); it
+    /// never touches the audio thread.
+    pub async fn run_pending(
+        &mut self,
+        controller: &mut Controller,
+        source: Option<&dyn BufferSource>,
+    ) {
         for load in core::mem::take(&mut self.pending) {
             // Answer this load (its `/done`/`/fail`, and anything its completion message emits) back to
             // the client that issued it - exactly as scsynth stamps completion packets with the
             // command's stored reply address.
             self.current_target = load.target;
-            let result = match &self.source {
+            let result = match source {
                 Some(source) => Some(source.load(&load.key, load.region).await),
                 None => None,
             };
