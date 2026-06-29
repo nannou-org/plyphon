@@ -23,6 +23,7 @@ use rt_alloc::{Align64, Region, RtPool};
 
 use plyphon_dsp::buffer::BufferTable;
 use plyphon_dsp::bus::Buses;
+use plyphon_dsp::fft::FftTables;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
@@ -45,6 +46,8 @@ pub(crate) struct Block<'a> {
     pub control: &'a RateInfo,
     /// Shared wavetables.
     pub wavetables: &'a Wavetables,
+    /// Shared FFT plans + windows (empty without the `fft` feature).
+    pub fft: &'a FftTables,
     /// The World's shared buses.
     pub buses: &'a mut Buses,
     /// The World's shared buffer table.
@@ -217,6 +220,7 @@ impl Graph {
                     audio: block.audio,
                     control: block.control,
                     wavetables: block.wavetables,
+                    fft: block.fft,
                     ins,
                     buses: &*block.buses,
                     buffers: &*block.buffers,
@@ -230,6 +234,7 @@ impl Graph {
                     audio: block.audio,
                     control: block.control,
                     wavetables: block.wavetables,
+                    fft: block.fft,
                     ins,
                     outs: Outputs::new(&mut scratch[..], bs),
                     buses: &mut *block.buses,

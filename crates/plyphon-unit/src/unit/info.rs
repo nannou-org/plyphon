@@ -14,7 +14,7 @@ use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// Which engine constant an [`Info`] unit reports. The build-time domain; stored in [`Info`] as a
-/// `u32` tag (via [`InfoKind::to_tag`]) so the state is [`Pod`] and lives in the rt-pool.
+/// `u32` tag (via `InfoKind::to_tag`) so the state is [`Pod`] and lives in the rt-pool.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum InfoKind {
     /// Audio sample rate in Hz (`SampleRate`).

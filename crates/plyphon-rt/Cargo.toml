@@ -9,8 +9,10 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["std"]
+default = ["std", "fft"]
 std = ["plyphon-dsp/std", "plyphon-unit/std", "rt-alloc/std", "rtrb/std"]
+# FFT/spectral support: turns on the `FftTables` plans and the FFT/IFFT/PV_* units. Depends on `std`.
+fft = ["std", "plyphon-dsp/fft", "plyphon-unit/fft"]
 
 [dependencies]
 bytemuck.workspace = true

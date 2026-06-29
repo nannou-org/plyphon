@@ -22,6 +22,7 @@ extern crate alloc;
 
 pub mod buffer;
 pub mod bus;
+pub mod fft;
 pub mod math;
 pub mod rate;
 pub mod rng;
@@ -29,5 +30,6 @@ pub mod stream;
 pub mod wavetable;
 
 pub use buffer::Buffer;
+pub use fft::{FftTables, WindowType};
 pub use rate::{Rate, RateInfo};
 pub use stream::{Chunk, StreamConsumer, StreamProducer, StreamRecording, cue_recording};

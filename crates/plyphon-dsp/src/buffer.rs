@@ -73,6 +73,12 @@ impl Buffer {
         &self.data
     }
 
+    /// All samples, interleaved, mutably - for a unit that rewrites a whole buffer in one pass from
+    /// the audio thread (e.g. `FFT` writing a packed spectrum). RT-safe (no reallocation).
+    pub fn data_mut(&mut self) -> &mut [f32] {
+        &mut self.data
+    }
+
     /// Sample at `frame`, `channel`. Returns 0.0 for an out-of-range index, so RT readers never panic.
     pub fn sample(&self, frame: usize, channel: usize) -> f32 {
         if frame >= self.num_frames || channel >= self.num_channels {

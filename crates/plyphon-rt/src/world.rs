@@ -27,6 +27,7 @@ use crate::sched::{Clock, Scheduler};
 use crate::tree::{AddAction, FreedNode, NodeTree};
 use plyphon_dsp::buffer::{BufferSlot, BufferTable};
 use plyphon_dsp::bus::Buses;
+use plyphon_dsp::fft::FftTables;
 use plyphon_dsp::rate::RateInfo;
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
@@ -48,6 +49,7 @@ pub struct World {
     audio: RateInfo,
     control: RateInfo,
     wavetables: Wavetables,
+    fft: FftTables,
     buses: Buses,
     buffers: BufferTable,
     tree: NodeTree,
@@ -140,6 +142,7 @@ impl World {
             audio,
             control,
             wavetables: Wavetables::new(),
+            fft: FftTables::new(),
             buses: Buses::new(
                 options.output_channels,
                 options.input_channels,
@@ -294,6 +297,7 @@ impl World {
             audio: &self.audio,
             control: &self.control,
             wavetables: &self.wavetables,
+            fft: &self.fft,
             buses: &mut self.buses,
             buffers: &mut self.buffers,
             buf_counter: self.buf_counter,

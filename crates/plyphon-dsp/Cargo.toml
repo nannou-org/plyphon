@@ -9,12 +9,19 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["std"]
+default = ["std", "fft"]
 std = ["rtrb/std"]
+# FFT/spectral support: the `FftTables` plans and the FFT/IFFT/PV_* units. Backed by `realfft`,
+# which is std-only, so `fft` depends on `std`. On by default; dropped by `--no-default-features`.
+fft = ["std", "dep:realfft"]
 
 [dependencies]
 bytemuck.workspace = true
 # Provides the transcendental float fns (sin, exp, sqrt, ...) for `no_std` builds, where the
 # inherent `f32`/`f64` methods are unavailable; see `math`. Dependency-free.
 libm = "0.2"
+# Real-to-complex FFT (over `rustfft`) for the spectral units, gated behind `fft` (it is std-only).
+# Its plans are precomputed off-RT and `Send + Sync`; `process_with_scratch` with caller-owned scratch
+# keeps the audio thread allocation-free.
+realfft = { version = "3", optional = true }
 rtrb.workspace = true

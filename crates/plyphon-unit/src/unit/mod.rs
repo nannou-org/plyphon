@@ -48,6 +48,7 @@ use bytemuck::Pod;
 
 use plyphon_dsp::buffer::BufferTable;
 use plyphon_dsp::bus::Buses;
+use plyphon_dsp::fft::FftTables;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 
@@ -264,7 +265,7 @@ impl<'a> NodeMsgSink<'a> {
     }
 
     /// A shorter-lived view over the same buffer, so the sink can be threaded through a nested borrow
-    /// (e.g. into a demand pull, via [`DemandCtx`](crate::unit::demand::DemandCtx)) without moving it.
+    /// (e.g. into a demand pull, via [`DemandCtx`]) without moving it.
     pub fn reborrow(&mut self) -> NodeMsgSink<'_> {
         NodeMsgSink {
             buf: &mut *self.buf,
@@ -350,7 +351,7 @@ impl<'a> NodeOpSink<'a> {
 /// per-instance pool block and **persists across blocks**, so a `LocalIn` reads the value the
 /// `LocalOut` wrote *last* block (a one-block feedback delay). Channel-major: channel `ch` occupies
 /// `data[ch*block_size .. (ch+1)*block_size]`. Units touch it only through the crate-private
-/// [`io::local_in`](crate::unit::io::local_in)/[`io::local_out`](crate::unit::io::local_out) free fns.
+/// [`io::local_in`]/[`io::local_out`] free fns.
 pub struct LocalBus<'a> {
     data: &'a mut [f32],
     block_size: usize,
@@ -436,6 +437,9 @@ pub struct ProcessCtx<'a> {
     pub control: &'a RateInfo,
     /// Shared wavetables (sine, ...), owned by the engine.
     pub wavetables: &'a Wavetables,
+    /// Shared FFT plans + windows (`FFT`/`IFFT`/`PV_*`); empty without the `fft` feature. Most units
+    /// ignore it.
+    pub fft: &'a FftTables,
     /// This unit's inputs for the block (read-only).
     pub ins: Inputs<'a>,
     /// This unit's output scratch for the block.
@@ -489,6 +493,8 @@ pub struct InitCtx<'a> {
     pub control: &'a RateInfo,
     /// Shared wavetables.
     pub wavetables: &'a Wavetables,
+    /// Shared FFT plans + windows (empty without the `fft` feature).
+    pub fft: &'a FftTables,
     /// This unit's inputs for the block (read-only).
     pub ins: Inputs<'a>,
     /// The World's shared buses (read-only), via the [`io`] free fns.

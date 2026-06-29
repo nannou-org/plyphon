@@ -9,7 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["std"]
+default = ["std", "fft"]
 std = [
     "plyphon-dsp/std",
     "plyphon-rt/std",
@@ -18,6 +18,8 @@ std = [
     "scgf/std",
     "thiserror/std",
 ]
+# FFT/spectral support (FFT/IFFT/PV_* units + the `FftTables` plans). Depends on `std`.
+fft = ["std", "plyphon-dsp/fft", "plyphon-rt/fft", "plyphon-unit/fft"]
 
 [dependencies]
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
