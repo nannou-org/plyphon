@@ -11,8 +11,8 @@
 //! - **Groups & node tree:** `/g_new`, `/p_new`, `/g_head`/`/g_tail`/`/n_before`/`/n_after`/
 //!   `/n_order`/`/g_freeAll`/`/g_deepFree`.
 //! - **Control buses:** `/c_set`/`/c_setn`/`/c_fill`.
-//! - **Buffers:** `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_free`, `/b_zero`, `/b_query`, `/b_set`,
-//!   `/b_setn`, `/b_fill`, `/b_setSampleRate`, `/b_gen`.
+//! - **Buffers:** `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_write`, `/b_free`, `/b_zero`, `/b_query`,
+//!   `/b_set`, `/b_setn`, `/b_fill`, `/b_setSampleRate`, `/b_gen`.
 //! - **Server admin:** `/clearSched`, `/error`.
 //! - **Host commands** (deferred to the host - see below): `/cmd`, `/u_cmd`.
 //! - **Getters** (engine state reads; answered asynchronously - see below): `/sync`, `/status`,
@@ -93,7 +93,10 @@ use plyphon::synthdef::read::ReadError;
 use plyphon::{
     AddAction, CommandTime, Controller, Event, NodeMsg, Render, RenderUntil, Reply, Trigger,
 };
-use plyphon_buffers::{BufFuture, BufferSink, BufferSource, DefSource, ReadRegion};
+use plyphon_buffers::{
+    BufFuture, BufferSink, BufferSinkStream, BufferSource, DefSource, ReadRegion, StreamDrainer,
+    StreamInfo,
+};
 use plyphon_dsp::buffer::Buffer;
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
 use thiserror::Error;
@@ -162,6 +165,33 @@ struct PendingDef {
     /// `true` for `/d_loadDir` (every def file under `key`), `false` for `/d_load` (one file).
     is_dir: bool,
     key: String,
+    completion: Option<Vec<u8>>,
+    target: ReplyTarget,
+}
+
+/// Chunk size (frames) and pool depth for a `/b_write` copy-out's recording stream. A generous pool
+/// (16 chunks of 4096 frames) lets each `run_pending` tick drain a large buffer in few passes; the
+/// engine only fills what the pool allows per block, so this bounds the per-tick copy without
+/// affecting correctness.
+const WRITE_CHUNK_FRAMES: usize = 4096;
+const WRITE_CHUNKS: usize = 16;
+
+/// An in-flight `/b_write` buffer copy-out, driven across [`OscDispatcher::run_pending`] ticks: the
+/// engine streams the buffer's samples into a recording the `drainer` pulls and writes to the host
+/// `sink`. It is multi-tick by necessity (the copy spans many control blocks) and must stay non-
+/// blocking - those same ticks recycle drained chunks back to the RT producer, so a busy-wait would
+/// starve it and the copy would never complete.
+struct PendingWrite {
+    command: &'static str,
+    bufnum: i32,
+    /// The sink key (a path) to open on the first drive.
+    key: String,
+    /// Header metadata (channels, sample rate) the sink needs up front.
+    info: StreamInfo,
+    /// Pulls recorded chunks from the engine.
+    drainer: StreamDrainer,
+    /// The opened sink, or `None` until the first drive opens it.
+    sink: Option<Box<dyn BufferSinkStream>>,
     completion: Option<Vec<u8>>,
     target: ReplyTarget,
 }
@@ -321,6 +351,9 @@ pub struct OscDispatcher {
     pending_defs: Vec<PendingDef>,
     /// Plugin/unit commands (`/cmd`/`/u_cmd`) queued by `apply`, awaiting `run_pending`.
     pending_commands: Vec<PendingCommand>,
+    /// `/b_write` buffer copy-outs in progress, advanced each `run_pending` tick until the engine
+    /// finishes streaming the buffer out (see [`PendingWrite`]).
+    writes_in_progress: Vec<PendingWrite>,
     /// Outbound replies, each tagged with its destination, drained by
     /// [`take_replies`](OscDispatcher::take_replies)/[`take_replies_targeted`](OscDispatcher::take_replies_targeted).
     replies: Vec<(ReplyTarget, OscPacket)>,
@@ -354,6 +387,7 @@ impl OscDispatcher {
             pending: Vec::new(),
             pending_defs: Vec::new(),
             pending_commands: Vec::new(),
+            writes_in_progress: Vec::new(),
             replies: Vec::new(),
             current_target: ReplyTarget::Broadcast,
             error_perm: true,
@@ -552,6 +586,67 @@ impl OscDispatcher {
                 Err(err) => self.fail(command.command, &err),
             }
         }
+
+        // `/b_write` copy-outs in progress: open each sink on first sight, drain whatever the engine
+        // produced since the last tick, and finish (close + `/done`) once the copy completes. This is
+        // multi-tick and deliberately non-blocking - draining recycles chunks back to the RT producer,
+        // so busy-waiting here would starve it and the copy would never finish.
+        let sink_host = host.and_then(|h| h.buffer_sink());
+        let mut i = 0;
+        while i < self.writes_in_progress.len() {
+            self.current_target = self.writes_in_progress[i].target;
+            // Open the sink on the first drive; a missing sink host or an open failure fails the
+            // command and drops the copy.
+            if self.writes_in_progress[i].sink.is_none() {
+                let opened = match sink_host {
+                    None => Err("no buffer sink configured".to_string()),
+                    Some(sink_host) => {
+                        let write = &self.writes_in_progress[i];
+                        sink_host
+                            .open_write(&write.key, write.info)
+                            .await
+                            .map_err(|err| err.to_string())
+                    }
+                };
+                match opened {
+                    Ok(sink) => self.writes_in_progress[i].sink = Some(sink),
+                    Err(err) => {
+                        let write = self.writes_in_progress.swap_remove(i);
+                        self.fail(write.command, &err);
+                        continue;
+                    }
+                }
+            }
+            // Drain whatever the engine produced since the last tick; a write error fails the copy.
+            let drained = {
+                let write = &mut self.writes_in_progress[i];
+                let sink = write.sink.as_mut().expect("sink opened above");
+                write.drainer.drain(sink.as_mut()).await
+            };
+            if let Err(err) = drained {
+                let write = self.writes_in_progress.swap_remove(i);
+                self.fail(write.command, &err.to_string());
+                continue;
+            }
+            // Not finished (the engine is still copying): revisit on the next tick.
+            if !self.writes_in_progress[i].drainer.is_done() {
+                i += 1;
+                continue;
+            }
+            // Finished: close the sink, run the completion message, reply `/done /b_write <bufnum>`.
+            let mut write = self.writes_in_progress.swap_remove(i);
+            let closed = match write.sink.as_mut() {
+                Some(sink) => sink.close().await,
+                None => Ok(()),
+            };
+            match closed {
+                Ok(()) => {
+                    self.run_completion_bytes(controller, write.completion.as_deref());
+                    self.done(write.command, write.bufnum);
+                }
+                Err(err) => self.fail(write.command, &err.to_string()),
+            }
+        }
     }
 
     /// Decode and apply a single OSC packet from raw bytes.
@@ -639,6 +734,7 @@ impl OscDispatcher {
             "/b_gen" => self.b_gen(controller, &message.args),
             "/b_allocRead" => self.b_alloc_read(&message.args),
             "/b_read" => self.b_read(&message.args),
+            "/b_write" => self.b_write(controller, &message.args),
             "/g_head" => self.group_moves(controller, &message.args, AddAction::Head),
             "/g_tail" => self.group_moves(controller, &message.args, AddAction::Tail),
             "/n_before" => self.node_moves(controller, &message.args, AddAction::Before),
@@ -1822,6 +1918,69 @@ impl OscDispatcher {
         // Simplified: reads the file region and replaces the buffer (the `bufStartFrame`/`leaveOpen`
         // arguments are ignored for now).
         self.queue_load("/b_read", args)
+    }
+
+    /// `/b_write bufnum path [header] [sample] [numFrames] [startFrame] [leaveOpen]` [completion]:
+    /// snapshot the buffer at `bufnum` to `path`. The engine streams the buffer's samples out
+    /// race-free (it shares no buffer memory with the host); this queues a [`PendingWrite`] that
+    /// [`run_pending`](Self::run_pending) drives to completion across ticks, replying `/done /b_write
+    /// <bufnum>`. Mirrors scsynth's `BufWriteCmd` (`SC_SequencedCommand.cpp`), but writes through the
+    /// host's [`BufferSink`] rather than libsndfile - so the header/sample formats are the sink's
+    /// choice (`path`'s extension), not these arguments.
+    ///
+    /// Only the whole-buffer snapshot (`leaveOpen = 0`) is supported: `leaveOpen = 1` (leave the file
+    /// open for `DiskOut` to stream into) and partial `numFrames`/`startFrame` ranges are deferred.
+    fn b_write(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
+        let bufnum = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_write expects a bufnum"))?,
+        )?;
+        let path = str_arg(
+            args.get(1)
+                .ok_or(OscError::BadArguments("b_write expects a path"))?,
+        )?
+        .to_string();
+        // `leaveOpen` follows the two format strings and the numFrames/startFrame ints (scsynth's
+        // positional layout); default 0. A non-zero value selects the open-for-streaming form.
+        let leave_open = match args.get(6) {
+            Some(OscType::Int(v)) => *v,
+            _ => 0,
+        };
+        if leave_open != 0 {
+            self.fail(
+                "/b_write",
+                "leaveOpen=1 (leave open for DiskOut streaming) not yet supported",
+            );
+            return Ok(());
+        }
+        let Some(info) = self.buffers.get(&bufnum).copied() else {
+            self.fail("/b_write", "buffer not allocated");
+            return Ok(());
+        };
+        let consumer = controller
+            .buffer_write_out(
+                bufnum as usize,
+                info.num_channels,
+                info.sample_rate,
+                WRITE_CHUNK_FRAMES,
+                WRITE_CHUNKS,
+            )
+            .map_err(|_| OscError::QueueFull)?;
+        self.writes_in_progress.push(PendingWrite {
+            command: "/b_write",
+            bufnum,
+            key: path,
+            info: StreamInfo {
+                num_channels: info.num_channels,
+                sample_rate: info.sample_rate,
+                total_frames: Some(info.num_frames as u64),
+            },
+            drainer: StreamDrainer::new(consumer),
+            sink: None,
+            completion: last_blob(args).map(|bytes| bytes.to_vec()),
+            target: self.current_target,
+        });
+        Ok(())
     }
 
     /// `/d_load <path>` [completion]: load the SynthDef file at `path` - the host's [`DefSource`]

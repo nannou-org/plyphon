@@ -284,6 +284,13 @@ impl StreamRecording {
         recorded
     }
 
+    /// Whether the off-RT [`StreamConsumer`] has been dropped, so nothing will ever drain this
+    /// recording again. A bounded copy-out polls this to abandon a recording whose host gave up (e.g.
+    /// a sink that failed to open), instead of spinning forever on a recycle ring that never refills.
+    pub fn is_abandoned(&self) -> bool {
+        self.filled.is_abandoned()
+    }
+
     /// Push the partially-filled current chunk to the consumer, so a recording that ends mid-chunk
     /// still delivers its final frames. Returns `true` when nothing remains to flush (no partial chunk,
     /// or it was pushed); `false` if the filled ring is momentarily full - keep the chunk and retry

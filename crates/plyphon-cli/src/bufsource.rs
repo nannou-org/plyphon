@@ -6,12 +6,18 @@
 //! `example-sampler` uses, built on the stable no-op waker - no `unsafe`) drives it.
 
 use std::future::Future;
+use std::io::{Seek, Write};
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
-use plyphon_buffers::{BufFuture, BufferData, BufferSource, DefSource, LoadError, ReadRegion};
+use hound::WavWriter;
+use plyphon_buffers::{
+    BufFuture, BufferData, BufferSink, BufferSinkStream, BufferSource, DefSource, LoadError,
+    ReadRegion, SaveError, StreamInfo,
+};
 use plyphon_osc::Host;
 
+use crate::cli::SampleFormat;
 use crate::wav;
 
 /// The server's [`Host`]: bundles the filesystem-backed capabilities the dispatcher drives through
@@ -21,6 +27,10 @@ pub struct CliHost;
 impl Host for CliHost {
     fn buffer_source(&self) -> Option<&dyn BufferSource> {
         Some(&FsSource)
+    }
+
+    fn buffer_sink(&self) -> Option<&dyn BufferSink> {
+        Some(&FsSink)
     }
 
     fn def_source(&self) -> Option<&dyn DefSource> {
@@ -70,6 +80,67 @@ fn read_def_dir(dir: &str) -> Result<Vec<Vec<u8>>, LoadError> {
     Ok(blobs)
 }
 
+/// A filesystem [`BufferSink`] for the server's `/b_write`: `key` is the output path; `open_write`
+/// creates a 32-bit-float WAV there with the channel count and sample rate from `info`. (scsynth's
+/// `/b_write` header/sample-format arguments are not honoured - the CLI always writes float WAV.)
+pub struct FsSink;
+
+impl BufferSink for FsSink {
+    fn open_write<'a>(
+        &'a self,
+        key: &'a str,
+        info: StreamInfo,
+    ) -> BufFuture<'a, Result<Box<dyn BufferSinkStream>, SaveError>> {
+        Box::pin(async move {
+            let spec = wav::spec(SampleFormat::F32, info.num_channels, info.sample_rate);
+            let writer = WavWriter::create(key, spec).map_err(|e| SaveError::Io(e.to_string()))?;
+            Ok(Box::new(WavSink {
+                writer: Some(writer),
+                info,
+            }) as Box<dyn BufferSinkStream>)
+        })
+    }
+}
+
+/// A [`BufferSinkStream`] backed by a hound WAV writer (32-bit float), generic over the underlying
+/// sink so a test can target an in-memory cursor while the server targets a file.
+struct WavSink<W: Write + Seek> {
+    writer: Option<WavWriter<W>>,
+    info: StreamInfo,
+}
+
+impl<W: Write + Seek> BufferSinkStream for WavSink<W> {
+    fn info(&self) -> StreamInfo {
+        self.info
+    }
+
+    fn write<'a>(&'a mut self, samples: &'a [f32]) -> BufFuture<'a, Result<usize, SaveError>> {
+        Box::pin(async move {
+            let writer = self
+                .writer
+                .as_mut()
+                .ok_or_else(|| SaveError::Io("write after close".to_string()))?;
+            for &s in samples {
+                writer
+                    .write_sample(s)
+                    .map_err(|e| SaveError::Encode(e.to_string()))?;
+            }
+            Ok(samples.len() / self.info.num_channels.max(1))
+        })
+    }
+
+    fn close<'a>(&'a mut self) -> BufFuture<'a, Result<(), SaveError>> {
+        Box::pin(async move {
+            if let Some(writer) = self.writer.take() {
+                writer
+                    .finalize()
+                    .map_err(|e| SaveError::Io(e.to_string()))?;
+            }
+            Ok(())
+        })
+    }
+}
+
 /// Read `key` as a WAV file and return the requested `region` as interleaved `f32`.
 fn load_region(key: &str, region: ReadRegion) -> Result<BufferData, LoadError> {
     let bytes = std::fs::read(key).map_err(|e| match e.kind() {
@@ -111,5 +182,34 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
         if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
             return value;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The server's `/b_write` sink: write a ramp through `FsSink` to a temp WAV, then decode it back
+    /// and confirm it round-trips - exercising `FsSink`/`WavSink` and the float-WAV format end to end.
+    #[test]
+    fn fs_sink_round_trips_a_ramp_through_a_wav() {
+        let path = std::env::temp_dir().join(format!("plyphon-bwrite-{}.wav", std::process::id()));
+        let key = path.to_str().expect("temp path is valid utf-8");
+        let info = StreamInfo {
+            num_channels: 1,
+            sample_rate: 48_000.0,
+            total_frames: None,
+        };
+        let ramp: Vec<f32> = (0..200).map(|f| f as f32).collect();
+
+        let mut sink = block_on(FsSink.open_write(key, info)).expect("open the wav");
+        block_on(sink.write(&ramp)).expect("write the ramp");
+        block_on(sink.close()).expect("finalize the wav");
+
+        let bytes = std::fs::read(&path).expect("read back the wav");
+        std::fs::remove_file(&path).ok();
+        let wav = wav::decode(&bytes).expect("decode the wav");
+        assert_eq!(wav.channels, 1);
+        assert_eq!(wav.samples, ramp, "the wav did not round-trip the ramp");
     }
 }

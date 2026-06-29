@@ -417,23 +417,30 @@ impl World {
                     ..
                 } = &mut *self;
                 let write = &mut pending_writes[i];
-                match buffers.get(write.src) {
-                    Some(buffer) => {
-                        let total = buffer.num_frames();
-                        let channels = buffer.num_channels();
-                        let cursor = write.cursor;
-                        let remaining = total.saturating_sub(cursor);
-                        let recorded = write
-                            .recording
-                            .write(remaining, channels, |f, ch| buffer.sample(cursor + f, ch));
-                        write.cursor += recorded;
-                        // Finish only once the final (partial) chunk is flushed; if the ring is
-                        // momentarily full the flush fails, so retry it next block.
-                        write.cursor >= total && write.recording.flush()
+                if write.recording.is_abandoned() {
+                    // The host dropped the consumer (e.g. its sink failed to open); no one will ever
+                    // drain this, so finish at once rather than spin on a recycle ring that never
+                    // refills.
+                    true
+                } else {
+                    match buffers.get(write.src) {
+                        Some(buffer) => {
+                            let total = buffer.num_frames();
+                            let channels = buffer.num_channels();
+                            let cursor = write.cursor;
+                            let remaining = total.saturating_sub(cursor);
+                            let recorded = write
+                                .recording
+                                .write(remaining, channels, |f, ch| buffer.sample(cursor + f, ch));
+                            write.cursor += recorded;
+                            // Finish only once the final (partial) chunk is flushed; if the ring is
+                            // momentarily full the flush fails, so retry it next block.
+                            write.cursor >= total && write.recording.flush()
+                        }
+                        // The buffer was freed, replaced, or turned into a stream: flush what was
+                        // copied so far and finish (retry the flush next block if the ring is full).
+                        None => write.recording.flush(),
                     }
-                    // The buffer was freed, replaced, or turned into a stream: flush what was copied so
-                    // far and finish (retry the flush next block if the ring is full).
-                    None => write.recording.flush(),
                 }
             };
             if done {
