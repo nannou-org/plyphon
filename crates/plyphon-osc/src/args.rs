@@ -1,7 +1,7 @@
 //! Pure OSC argument extraction - the controller-free, dispatcher-free half of decoding a command.
 //!
 //! These helpers turn a single [`OscType`] (or a message's trailing blob) into the typed value a
-//! command handler wants, with the same [`OscError`](crate::OscError) the dispatcher reports. They
+//! command handler wants, with the same [`OscError`] the dispatcher reports. They
 //! hold no state and touch neither the engine nor the dispatcher, so a host can reuse them to
 //! pre-validate or hand-decode messages without constructing an [`OscDispatcher`](crate::OscDispatcher).
 
