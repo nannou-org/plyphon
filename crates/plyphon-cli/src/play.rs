@@ -32,7 +32,7 @@ pub fn run(args: PlayArgs) -> Result<(), String> {
     if let Some(dir) = &args.engine.load_dir {
         load_dir(&mut controller, dir)?;
     }
-    let mut dispatcher = OscDispatcher::new(controller);
+    let mut dispatcher = OscDispatcher::new();
 
     // The World plays on the audio thread on its free-running clock; that is all scripted playback
     // needs (no wall-clock resync). Keep the stream alive for the run.
@@ -43,7 +43,9 @@ pub fn run(args: PlayArgs) -> Result<(), String> {
     for entry in &score {
         let onset = Duration::from_secs_f64(entry.osc_time as f64 / OSC_UNITS_PER_SEC);
         wait_until(onset.saturating_sub(LEAD), started, &mut nrt);
-        dispatcher.apply(&entry.packet).map_err(|e| e.to_string())?;
+        dispatcher
+            .apply(&mut controller, &entry.packet)
+            .map_err(|e| e.to_string())?;
     }
 
     // Let the tail ring out, still servicing NRT cleanup.

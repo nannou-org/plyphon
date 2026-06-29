@@ -5,7 +5,9 @@
 use std::f32::consts::TAU;
 use std::future::Future;
 
-use plyphon::{InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine};
+use plyphon::{
+    Controller, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
+};
 use plyphon_buffers::{BufFuture, BufferData, BufferSource, LoadError, ReadRegion};
 use plyphon_osc::{OscDispatcher, ReplyTarget};
 use rosc::{OscMessage, OscPacket, OscType};
@@ -121,26 +123,29 @@ fn player_def() -> SynthDef {
 
 #[test]
 fn loads_a_buffer_over_osc_and_plays_it() {
-    let (controller, _nrt, mut world) = engine(Options {
+    let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    let mut osc = OscDispatcher::with_buffer_source(controller, Box::new(ToneSource));
-    osc.controller().add_synthdef(player_def());
+    let mut osc = OscDispatcher::with_source(Box::new(ToneSource));
+    controller.add_synthdef(player_def());
 
     // /b_allocRead queues an async load; nothing happens until run_pending.
-    osc.apply_bytes(&msg(
-        "/b_allocRead",
-        vec![OscType::Int(0), OscType::String("tone".to_string())],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_allocRead",
+            vec![OscType::Int(0), OscType::String("tone".to_string())],
+        ),
+    )
     .expect("/b_allocRead");
     assert!(
         osc.take_replies().is_empty(),
         "no reply until the load runs"
     );
 
-    block_on(osc.run_pending());
+    block_on(osc.run_pending(&mut controller));
     let replies = osc.take_replies();
     let done = find(&replies, "/done").expect("/done after the load");
     assert_eq!(
@@ -149,15 +154,18 @@ fn loads_a_buffer_over_osc_and_plays_it() {
     );
 
     // Start a PlayBuf on the loaded buffer and confirm it plays the tone.
-    osc.apply_bytes(&msg(
-        "/s_new",
-        vec![
-            OscType::String("player".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/s_new",
+            vec![
+                OscType::String("player".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/s_new");
     let out = render(&mut world, SR as usize / 4);
     assert!(
@@ -170,7 +178,7 @@ fn loads_a_buffer_over_osc_and_plays_it() {
     );
 
     // /b_query answers with the mirrored dimensions.
-    osc.apply_bytes(&msg("/b_query", vec![OscType::Int(0)]))
+    osc.apply_bytes(&mut controller, &msg("/b_query", vec![OscType::Int(0)]))
         .expect("/b_query");
     let replies = osc.take_replies();
     let info = find(&replies, "/b_info").expect("/b_info reply");
@@ -191,26 +199,29 @@ fn loads_a_buffer_over_osc_and_plays_it() {
 /// `/b_info` was mis-attributed to an unrelated getter.)
 #[test]
 fn completion_b_query_routes_to_the_loader() {
-    let (controller, _nrt, _world) = engine(Options {
+    let (mut controller, _nrt, _world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    let mut osc = OscDispatcher::with_buffer_source(controller, Box::new(ToneSource));
+    let mut osc = OscDispatcher::with_source(Box::new(ToneSource));
 
     // Tag this load's requester, then queue a load whose completion queries the just-loaded buffer.
     osc.set_reply_target(ReplyTarget::Requester(7));
     let completion = msg("/b_query", vec![OscType::Int(0)]);
-    osc.apply_bytes(&msg(
-        "/b_allocRead",
-        vec![
-            OscType::Int(0),
-            OscType::String("tone".to_string()),
-            OscType::Blob(completion),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_allocRead",
+            vec![
+                OscType::Int(0),
+                OscType::String("tone".to_string()),
+                OscType::Blob(completion),
+            ],
+        ),
+    )
     .expect("/b_allocRead");
-    block_on(osc.run_pending());
+    block_on(osc.run_pending(&mut controller));
 
     let replies = osc.take_replies_targeted();
     assert!(
@@ -234,25 +245,28 @@ fn completion_b_query_routes_to_the_loader() {
 /// answer - the case the old FIFO routing could not handle at all (no slot was ever recorded).
 #[test]
 fn completion_getter_answers_the_loader() {
-    let (controller, mut nrt, mut world) = engine(Options {
+    let (mut controller, mut nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    let mut osc = OscDispatcher::with_buffer_source(controller, Box::new(ToneSource));
+    let mut osc = OscDispatcher::with_source(Box::new(ToneSource));
 
     osc.set_reply_target(ReplyTarget::Requester(9));
     let completion = msg("/c_get", vec![OscType::Int(0)]);
-    osc.apply_bytes(&msg(
-        "/b_allocRead",
-        vec![
-            OscType::Int(0),
-            OscType::String("tone".to_string()),
-            OscType::Blob(completion),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_allocRead",
+            vec![
+                OscType::Int(0),
+                OscType::String("tone".to_string()),
+                OscType::Blob(completion),
+            ],
+        ),
+    )
     .expect("/b_allocRead");
-    block_on(osc.run_pending());
+    block_on(osc.run_pending(&mut controller));
     // The immediate replies (the terminal /done) are the loader's; the /c_get answer is still in flight.
     let immediate = osc.take_replies_targeted();
     assert!(
@@ -266,7 +280,7 @@ fn completion_getter_answers_the_loader() {
     render(&mut world, 2);
     nrt.process();
     while let Some(reply) = nrt.poll_reply() {
-        osc.reply(reply);
+        osc.reply(&controller, reply);
     }
     let answers = osc.take_replies_targeted();
     let (target, _) = answers
@@ -282,14 +296,17 @@ fn completion_getter_answers_the_loader() {
 
 #[test]
 fn alloc_read_without_a_source_fails() {
-    let (controller, _nrt, _world) = engine(Options::default());
-    let mut osc = OscDispatcher::new(controller); // no buffer source
-    osc.apply_bytes(&msg(
-        "/b_allocRead",
-        vec![OscType::Int(0), OscType::String("tone".to_string())],
-    ))
+    let (mut controller, _nrt, _world) = engine(Options::default());
+    let mut osc = OscDispatcher::new(); // no buffer source
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_allocRead",
+            vec![OscType::Int(0), OscType::String("tone".to_string())],
+        ),
+    )
     .expect("/b_allocRead");
-    block_on(osc.run_pending());
+    block_on(osc.run_pending(&mut controller));
     let replies = osc.take_replies();
     let fail = find(&replies, "/fail").expect("/fail without a source");
     assert_eq!(
@@ -299,51 +316,59 @@ fn alloc_read_without_a_source_fails() {
 }
 
 /// A one-channel engine + dispatcher with the `player` def registered.
-fn player_engine() -> (OscDispatcher, World) {
-    let (controller, _nrt, world) = engine(Options {
+fn player_engine() -> (OscDispatcher, Controller, World) {
+    let (mut controller, _nrt, world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    let mut osc = OscDispatcher::new(controller);
-    osc.controller().add_synthdef(player_def());
-    (osc, world)
+    controller.add_synthdef(player_def());
+    (OscDispatcher::new(), controller, world)
 }
 
 /// Start the `player` (node 1000) on buffer 0.
-fn start_player(osc: &mut OscDispatcher) {
-    osc.apply_bytes(&msg(
-        "/s_new",
-        vec![
-            OscType::String("player".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+fn start_player(osc: &mut OscDispatcher, controller: &mut Controller) {
+    osc.apply_bytes(
+        controller,
+        &msg(
+            "/s_new",
+            vec![
+                OscType::String("player".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/s_new");
 }
 
 #[test]
 fn b_fill_writes_a_constant_buffer() {
-    let (mut osc, mut world) = player_engine();
-    osc.apply_bytes(&msg(
-        "/b_alloc",
-        vec![OscType::Int(0), OscType::Int(256), OscType::Int(1)],
-    ))
+    let (mut osc, mut controller, mut world) = player_engine();
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_alloc",
+            vec![OscType::Int(0), OscType::Int(256), OscType::Int(1)],
+        ),
+    )
     .expect("/b_alloc");
     // Fill the whole buffer with 0.5 in a single command.
-    osc.apply_bytes(&msg(
-        "/b_fill",
-        vec![
-            OscType::Int(0),
-            OscType::Int(0),
-            OscType::Int(256),
-            OscType::Float(0.5),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_fill",
+            vec![
+                OscType::Int(0),
+                OscType::Int(0),
+                OscType::Int(256),
+                OscType::Float(0.5),
+            ],
+        ),
+    )
     .expect("/b_fill");
-    start_player(&mut osc);
+    start_player(&mut osc, &mut controller);
 
     let out = render(&mut world, SR as usize / 4);
     assert!(
@@ -354,29 +379,35 @@ fn b_fill_writes_a_constant_buffer() {
 
 #[test]
 fn b_set_writes_individual_samples() {
-    let (mut osc, mut world) = player_engine();
-    osc.apply_bytes(&msg(
-        "/b_alloc",
-        vec![OscType::Int(0), OscType::Int(4), OscType::Int(1)],
-    ))
+    let (mut osc, mut controller, mut world) = player_engine();
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_alloc",
+            vec![OscType::Int(0), OscType::Int(4), OscType::Int(1)],
+        ),
+    )
     .expect("/b_alloc");
     // Set each of the four samples individually to 0.3.
-    osc.apply_bytes(&msg(
-        "/b_set",
-        vec![
-            OscType::Int(0),
-            OscType::Int(0),
-            OscType::Float(0.3),
-            OscType::Int(1),
-            OscType::Float(0.3),
-            OscType::Int(2),
-            OscType::Float(0.3),
-            OscType::Int(3),
-            OscType::Float(0.3),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_set",
+            vec![
+                OscType::Int(0),
+                OscType::Int(0),
+                OscType::Float(0.3),
+                OscType::Int(1),
+                OscType::Float(0.3),
+                OscType::Int(2),
+                OscType::Float(0.3),
+                OscType::Int(3),
+                OscType::Float(0.3),
+            ],
+        ),
+    )
     .expect("/b_set");
-    start_player(&mut osc);
+    start_player(&mut osc, &mut controller);
 
     let out = render(&mut world, SR as usize / 4);
     assert!(
@@ -387,16 +418,19 @@ fn b_set_writes_individual_samples() {
 
 #[test]
 fn b_setn_writes_a_waveform() {
-    let (mut osc, mut world) = player_engine();
+    let (mut osc, mut controller, mut world) = player_engine();
     let frames = 240usize; // 2 cycles over 240 frames at 48 kHz -> 400 Hz when looped
-    osc.apply_bytes(&msg(
-        "/b_alloc",
-        vec![
-            OscType::Int(0),
-            OscType::Int(frames as i32),
-            OscType::Int(1),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_alloc",
+            vec![
+                OscType::Int(0),
+                OscType::Int(frames as i32),
+                OscType::Int(1),
+            ],
+        ),
+    )
     .expect("/b_alloc");
     let mut args = vec![
         OscType::Int(0),
@@ -407,8 +441,9 @@ fn b_setn_writes_a_waveform() {
         let v = (TAU * 2.0 * i as f32 / frames as f32).sin() * 0.5;
         args.push(OscType::Float(v));
     }
-    osc.apply_bytes(&msg("/b_setn", args)).expect("/b_setn");
-    start_player(&mut osc);
+    osc.apply_bytes(&mut controller, &msg("/b_setn", args))
+        .expect("/b_setn");
+    start_player(&mut osc, &mut controller);
 
     let out = render(&mut world, SR as usize / 4);
     assert!(
@@ -419,20 +454,26 @@ fn b_setn_writes_a_waveform() {
 
 #[test]
 fn b_set_sample_rate_updates_the_query_mirror() {
-    let (mut osc, _world) = player_engine();
-    osc.apply_bytes(&msg(
-        "/b_alloc",
-        vec![OscType::Int(0), OscType::Int(100), OscType::Int(1)],
-    ))
+    let (mut osc, mut controller, _world) = player_engine();
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_alloc",
+            vec![OscType::Int(0), OscType::Int(100), OscType::Int(1)],
+        ),
+    )
     .expect("/b_alloc");
     let _ = osc.take_replies(); // drop the /b_alloc /done
 
-    osc.apply_bytes(&msg(
-        "/b_setSampleRate",
-        vec![OscType::Int(0), OscType::Float(22_050.0)],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_setSampleRate",
+            vec![OscType::Int(0), OscType::Float(22_050.0)],
+        ),
+    )
     .expect("/b_setSampleRate");
-    osc.apply_bytes(&msg("/b_query", vec![OscType::Int(0)]))
+    osc.apply_bytes(&mut controller, &msg("/b_query", vec![OscType::Int(0)]))
         .expect("/b_query");
     let replies = osc.take_replies();
     let info = find(&replies, "/b_info").expect("/b_info");
@@ -449,25 +490,31 @@ fn b_set_sample_rate_updates_the_query_mirror() {
 
 #[test]
 fn b_gen_sine1_plays_a_tone() {
-    let (mut osc, mut world) = player_engine();
+    let (mut osc, mut controller, mut world) = player_engine();
     // sine1 lays one cycle of its (single) partial across the whole table; 120 frames @ 48 kHz looped
     // -> 400 Hz.
-    osc.apply_bytes(&msg(
-        "/b_alloc",
-        vec![OscType::Int(0), OscType::Int(120), OscType::Int(1)],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_alloc",
+            vec![OscType::Int(0), OscType::Int(120), OscType::Int(1)],
+        ),
+    )
     .expect("/b_alloc");
-    osc.apply_bytes(&msg(
-        "/b_gen",
-        vec![
-            OscType::Int(0),
-            OscType::String("sine1".to_string()),
-            OscType::Int(0), // flags
-            OscType::Float(1.0),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_gen",
+            vec![
+                OscType::Int(0),
+                OscType::String("sine1".to_string()),
+                OscType::Int(0), // flags
+                OscType::Float(1.0),
+            ],
+        ),
+    )
     .expect("/b_gen");
-    start_player(&mut osc);
+    start_player(&mut osc, &mut controller);
     let out = render(&mut world, SR as usize / 4);
     assert!(
         goertzel(&out, 400.0) > 5.0 * goertzel(&out, 800.0),
@@ -477,40 +524,49 @@ fn b_gen_sine1_plays_a_tone() {
 
 #[test]
 fn b_gen_copy_duplicates_a_buffer() {
-    let (mut osc, mut world) = player_engine();
+    let (mut osc, mut controller, mut world) = player_engine();
     // Generate a tone into buffer 1, copy it into buffer 0, then play buffer 0.
     for buf in [0, 1] {
-        osc.apply_bytes(&msg(
-            "/b_alloc",
-            vec![OscType::Int(buf), OscType::Int(120), OscType::Int(1)],
-        ))
+        osc.apply_bytes(
+            &mut controller,
+            &msg(
+                "/b_alloc",
+                vec![OscType::Int(buf), OscType::Int(120), OscType::Int(1)],
+            ),
+        )
         .expect("/b_alloc");
     }
-    osc.apply_bytes(&msg(
-        "/b_gen",
-        vec![
-            OscType::Int(1),
-            OscType::String("sine1".to_string()),
-            OscType::Int(0),
-            OscType::Float(1.0),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_gen",
+            vec![
+                OscType::Int(1),
+                OscType::String("sine1".to_string()),
+                OscType::Int(0),
+                OscType::Float(1.0),
+            ],
+        ),
+    )
     .expect("/b_gen sine1");
     // copy: dstStart 0, srcBuf 1, srcStart 0, count 120.
-    osc.apply_bytes(&msg(
-        "/b_gen",
-        vec![
-            OscType::Int(0),
-            OscType::String("copy".to_string()),
-            OscType::Int(0),
-            OscType::Int(0),
-            OscType::Int(1),
-            OscType::Int(0),
-            OscType::Int(120),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_gen",
+            vec![
+                OscType::Int(0),
+                OscType::String("copy".to_string()),
+                OscType::Int(0),
+                OscType::Int(0),
+                OscType::Int(1),
+                OscType::Int(0),
+                OscType::Int(120),
+            ],
+        ),
+    )
     .expect("/b_gen copy");
-    start_player(&mut osc);
+    start_player(&mut osc, &mut controller);
     let out = render(&mut world, SR as usize / 4);
     assert!(
         goertzel(&out, 400.0) > 5.0 * goertzel(&out, 800.0),

@@ -1,7 +1,9 @@
 //! Node-tree commands over OSC: `/g_new` + `/s_new` build a group, `/g_freeAll` empties it, and
 //! `/g_tail` moves a synth between groups (so it survives its old group being freed).
 
-use plyphon::{Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine};
+use plyphon::{
+    Controller, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
+};
 use plyphon_osc::OscDispatcher;
 use rosc::{OscMessage, OscPacket, OscType};
 
@@ -73,39 +75,44 @@ fn sine_def() -> SynthDef {
     }
 }
 
-fn dispatcher() -> (OscDispatcher, plyphon::Nrt, World) {
-    let (controller, nrt, world) = engine(Options {
+fn dispatcher() -> (OscDispatcher, Controller, plyphon::Nrt, World) {
+    let (mut controller, nrt, world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    let mut osc = OscDispatcher::new(controller);
-    osc.controller().add_synthdef(sine_def());
-    (osc, nrt, world)
+    controller.add_synthdef(sine_def());
+    (OscDispatcher::new(), controller, nrt, world)
 }
 
 #[test]
 fn g_free_all_over_osc() {
-    let (mut osc, mut nrt, mut world) = dispatcher();
+    let (mut osc, mut controller, mut nrt, mut world) = dispatcher();
     // /g_new id 1 addToTail target root; /s_new "sine" 1000 addToTail target group 1.
-    osc.apply_bytes(&msg(
-        "/g_new",
-        vec![
-            OscType::Int(1),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/g_new",
+            vec![
+                OscType::Int(1),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .unwrap();
-    osc.apply_bytes(&msg(
-        "/s_new",
-        vec![
-            OscType::String("sine".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(1),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(1),
+            ],
+        ),
+    )
     .unwrap();
     let _ = render(&mut world, 512);
     assert!(
@@ -113,7 +120,7 @@ fn g_free_all_over_osc() {
         "group should play"
     );
 
-    osc.apply_bytes(&msg("/g_freeAll", vec![OscType::Int(1)]))
+    osc.apply_bytes(&mut controller, &msg("/g_freeAll", vec![OscType::Int(1)]))
         .unwrap();
     let _ = render(&mut world, 1024);
     assert!(
@@ -130,35 +137,44 @@ fn g_free_all_over_osc() {
 
 #[test]
 fn g_tail_moves_a_synth_between_groups_over_osc() {
-    let (mut osc, mut nrt, mut world) = dispatcher();
+    let (mut osc, mut controller, mut nrt, mut world) = dispatcher();
     // Two groups under the root; a synth in group 1.
-    osc.apply_bytes(&msg(
-        "/g_new",
-        vec![
-            OscType::Int(1),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-            OscType::Int(2),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/g_new",
+            vec![
+                OscType::Int(1),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+                OscType::Int(2),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .unwrap();
-    osc.apply_bytes(&msg(
-        "/s_new",
-        vec![
-            OscType::String("sine".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(1),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(1),
+            ],
+        ),
+    )
     .unwrap();
 
     // /g_tail group=2 node=1000: move the synth to group 2's tail, then free group 1.
-    osc.apply_bytes(&msg("/g_tail", vec![OscType::Int(2), OscType::Int(1000)]))
-        .unwrap();
-    osc.apply_bytes(&msg("/n_free", vec![OscType::Int(1)]))
+    osc.apply_bytes(
+        &mut controller,
+        &msg("/g_tail", vec![OscType::Int(2), OscType::Int(1000)]),
+    )
+    .unwrap();
+    osc.apply_bytes(&mut controller, &msg("/n_free", vec![OscType::Int(1)]))
         .unwrap();
     let _ = render(&mut world, 1024);
 
@@ -194,25 +210,28 @@ fn drain_notifications(osc: &mut OscDispatcher, nrt: &mut plyphon::Nrt) -> Vec<O
 
 #[test]
 fn n_after_emits_n_move_over_osc() {
-    let (mut osc, mut nrt, mut world) = dispatcher();
+    let (mut osc, mut controller, mut nrt, mut world) = dispatcher();
     // root -> [1000, 1001].
     for id in [1000, 1001] {
-        osc.apply_bytes(&msg(
-            "/s_new",
-            vec![
-                OscType::String("sine".to_string()),
-                OscType::Int(id),
-                OscType::Int(1),
-                OscType::Int(ROOT_GROUP_ID),
-            ],
-        ))
+        osc.apply_bytes(
+            &mut controller,
+            &msg(
+                "/s_new",
+                vec![
+                    OscType::String("sine".to_string()),
+                    OscType::Int(id),
+                    OscType::Int(1),
+                    OscType::Int(ROOT_GROUP_ID),
+                ],
+            ),
+        )
         .unwrap();
     }
     // /n_after node=1000 target=1001: move 1000 to just after 1001 -> root -> [1001, 1000].
-    osc.apply_bytes(&msg(
-        "/n_after",
-        vec![OscType::Int(1000), OscType::Int(1001)],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg("/n_after", vec![OscType::Int(1000), OscType::Int(1001)]),
+    )
     .unwrap();
     let _ = render(&mut world, 256);
 
@@ -236,23 +255,29 @@ fn n_after_emits_n_move_over_osc() {
 
 #[test]
 fn moving_a_group_emits_n_move_with_head_tail() {
-    let (mut osc, mut nrt, mut world) = dispatcher();
+    let (mut osc, mut controller, mut nrt, mut world) = dispatcher();
     // Two empty groups under the root -> [1, 2].
-    osc.apply_bytes(&msg(
-        "/g_new",
-        vec![
-            OscType::Int(1),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-            OscType::Int(2),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/g_new",
+            vec![
+                OscType::Int(1),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+                OscType::Int(2),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .unwrap();
     // /n_after node=1 target=2: move group 1 to just after group 2 -> root -> [2, 1].
-    osc.apply_bytes(&msg("/n_after", vec![OscType::Int(1), OscType::Int(2)]))
-        .unwrap();
+    osc.apply_bytes(
+        &mut controller,
+        &msg("/n_after", vec![OscType::Int(1), OscType::Int(2)]),
+    )
+    .unwrap();
     let _ = render(&mut world, 256);
 
     let msgs = drain_notifications(&mut osc, &mut nrt);

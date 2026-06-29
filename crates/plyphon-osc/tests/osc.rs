@@ -2,7 +2,7 @@
 //! `/s_new`, retune it with `/n_set` (by control name), and stop it with `/n_free` - checking the
 //! audio out of a `World` at each step.
 
-use plyphon::{Options, ROOT_GROUP_ID, engine};
+use plyphon::{Controller, Options, ROOT_GROUP_ID, engine};
 use plyphon_osc::OscDispatcher;
 use rosc::{OscMessage, OscPacket, OscType};
 use scgf::{Input, ParamName, Rate, SynthDef, SynthDefFile, Ugen};
@@ -188,27 +188,33 @@ fn render(world: &mut plyphon::World, frames: usize) -> Vec<f32> {
 
 #[test]
 fn drives_engine_over_osc() {
-    let (controller, mut nrt, mut world) = engine(Options {
+    let (mut controller, mut nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    let mut dispatcher = OscDispatcher::new(controller);
+    let mut dispatcher = OscDispatcher::new();
 
     // Receive the SynthDef and start a synth (node 1000) at the tail of the root group.
     dispatcher
-        .apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
+        .apply_bytes(
+            &mut controller,
+            &osc("/d_recv", vec![OscType::Blob(sine_scgf())]),
+        )
         .expect("/d_recv");
     dispatcher
-        .apply_bytes(&osc(
-            "/s_new",
-            vec![
-                OscType::String("sine".to_string()),
-                OscType::Int(1000),
-                OscType::Int(1), // addToTail
-                OscType::Int(ROOT_GROUP_ID),
-            ],
-        ))
+        .apply_bytes(
+            &mut controller,
+            &osc(
+                "/s_new",
+                vec![
+                    OscType::String("sine".to_string()),
+                    OscType::Int(1000),
+                    OscType::Int(1), // addToTail
+                    OscType::Int(ROOT_GROUP_ID),
+                ],
+            ),
+        )
         .expect("/s_new");
 
     let a = render(&mut world, SR as usize / 2);
@@ -219,14 +225,17 @@ fn drives_engine_over_osc() {
 
     // Retune by control name.
     dispatcher
-        .apply_bytes(&osc(
-            "/n_set",
-            vec![
-                OscType::Int(1000),
-                OscType::String("freq".to_string()),
-                OscType::Float(330.0),
-            ],
-        ))
+        .apply_bytes(
+            &mut controller,
+            &osc(
+                "/n_set",
+                vec![
+                    OscType::Int(1000),
+                    OscType::String("freq".to_string()),
+                    OscType::Float(330.0),
+                ],
+            ),
+        )
         .expect("/n_set");
     let _ = render(&mut world, 512);
     let b = render(&mut world, SR as usize / 2);
@@ -237,7 +246,7 @@ fn drives_engine_over_osc() {
 
     // Free the node; after flushing the in-flight block the output is silent.
     dispatcher
-        .apply_bytes(&osc("/n_free", vec![OscType::Int(1000)]))
+        .apply_bytes(&mut controller, &osc("/n_free", vec![OscType::Int(1000)]))
         .expect("/n_free");
     let _ = render(&mut world, 1024);
     let c = render(&mut world, SR as usize / 4);
@@ -251,26 +260,32 @@ fn drives_engine_over_osc() {
 
 #[test]
 fn notifies_node_lifecycle_over_osc() {
-    let (controller, mut nrt, mut world) = engine(Options {
+    let (mut controller, mut nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    let mut dispatcher = OscDispatcher::new(controller);
+    let mut dispatcher = OscDispatcher::new();
 
     dispatcher
-        .apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
+        .apply_bytes(
+            &mut controller,
+            &osc("/d_recv", vec![OscType::Blob(sine_scgf())]),
+        )
         .expect("/d_recv");
     dispatcher
-        .apply_bytes(&osc(
-            "/s_new",
-            vec![
-                OscType::String("sine".to_string()),
-                OscType::Int(1000),
-                OscType::Int(1),
-                OscType::Int(ROOT_GROUP_ID),
-            ],
-        ))
+        .apply_bytes(
+            &mut controller,
+            &osc(
+                "/s_new",
+                vec![
+                    OscType::String("sine".to_string()),
+                    OscType::Int(1000),
+                    OscType::Int(1),
+                    OscType::Int(ROOT_GROUP_ID),
+                ],
+            ),
+        )
         .expect("/s_new");
 
     // The World links the synth and emits a NodeStarted event; notify turns it into /n_go.
@@ -285,7 +300,7 @@ fn notifies_node_lifecycle_over_osc() {
 
     // Free it; the World emits NodeEnded, surfaced as /n_end.
     dispatcher
-        .apply_bytes(&osc("/n_free", vec![OscType::Int(1000)]))
+        .apply_bytes(&mut controller, &osc("/n_free", vec![OscType::Int(1000)]))
         .expect("/n_free");
     let _ = render(&mut world, 1024);
     let ended = drain_notifications(&mut dispatcher, &mut nrt);
@@ -299,42 +314,54 @@ fn notifies_node_lifecycle_over_osc() {
 
 #[test]
 fn maps_and_sets_control_buses_over_osc() {
-    let (controller, _nrt, mut world) = engine(Options {
+    let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    let mut dispatcher = OscDispatcher::new(controller);
+    let mut dispatcher = OscDispatcher::new();
 
     dispatcher
-        .apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
+        .apply_bytes(
+            &mut controller,
+            &osc("/d_recv", vec![OscType::Blob(sine_scgf())]),
+        )
         .expect("/d_recv");
     dispatcher
-        .apply_bytes(&osc(
-            "/s_new",
-            vec![
-                OscType::String("sine".to_string()),
-                OscType::Int(1000),
-                OscType::Int(1),
-                OscType::Int(ROOT_GROUP_ID),
-            ],
-        ))
+        .apply_bytes(
+            &mut controller,
+            &osc(
+                "/s_new",
+                vec![
+                    OscType::String("sine".to_string()),
+                    OscType::Int(1000),
+                    OscType::Int(1),
+                    OscType::Int(ROOT_GROUP_ID),
+                ],
+            ),
+        )
         .expect("/s_new");
 
     // Map the `freq` control (by name) to control bus 3, then drive that bus with /c_set: the
     // synth ignores its 440 default and follows the bus.
     dispatcher
-        .apply_bytes(&osc(
-            "/n_map",
-            vec![
-                OscType::Int(1000),
-                OscType::String("freq".to_string()),
-                OscType::Int(3),
-            ],
-        ))
+        .apply_bytes(
+            &mut controller,
+            &osc(
+                "/n_map",
+                vec![
+                    OscType::Int(1000),
+                    OscType::String("freq".to_string()),
+                    OscType::Int(3),
+                ],
+            ),
+        )
         .expect("/n_map");
     dispatcher
-        .apply_bytes(&osc("/c_set", vec![OscType::Int(3), OscType::Float(220.0)]))
+        .apply_bytes(
+            &mut controller,
+            &osc("/c_set", vec![OscType::Int(3), OscType::Float(220.0)]),
+        )
         .expect("/c_set");
     let _ = render(&mut world, 512);
     let a = render(&mut world, SR as usize / 2);
@@ -345,7 +372,10 @@ fn maps_and_sets_control_buses_over_osc() {
 
     // Move the bus; the mapped control follows.
     dispatcher
-        .apply_bytes(&osc("/c_set", vec![OscType::Int(3), OscType::Float(660.0)]))
+        .apply_bytes(
+            &mut controller,
+            &osc("/c_set", vec![OscType::Int(3), OscType::Float(660.0)]),
+        )
         .expect("/c_set");
     let _ = render(&mut world, 512);
     let b = render(&mut world, SR as usize / 2);
@@ -360,82 +390,100 @@ fn n_mapa_dispatches_over_osc() {
     // `/n_mapa`/`/n_mapan` on a control parameter are no-ops, but must parse and dispatch cleanly -
     // this guards the dispatch entries and handlers. (The audio-bus behaviour is covered by the
     // `audio_control` integration test.)
-    let (controller, _nrt, mut world) = engine(Options {
+    let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    let mut dispatcher = OscDispatcher::new(controller);
+    let mut dispatcher = OscDispatcher::new();
     dispatcher
-        .apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
+        .apply_bytes(
+            &mut controller,
+            &osc("/d_recv", vec![OscType::Blob(sine_scgf())]),
+        )
         .expect("/d_recv");
     dispatcher
-        .apply_bytes(&osc(
-            "/s_new",
-            vec![
-                OscType::String("sine".to_string()),
-                OscType::Int(1000),
-                OscType::Int(1),
-                OscType::Int(ROOT_GROUP_ID),
-            ],
-        ))
+        .apply_bytes(
+            &mut controller,
+            &osc(
+                "/s_new",
+                vec![
+                    OscType::String("sine".to_string()),
+                    OscType::Int(1000),
+                    OscType::Int(1),
+                    OscType::Int(ROOT_GROUP_ID),
+                ],
+            ),
+        )
         .expect("/s_new");
     dispatcher
-        .apply_bytes(&osc(
-            "/n_mapa",
-            vec![
-                OscType::Int(1000),
-                OscType::String("freq".to_string()),
-                OscType::Int(0),
-            ],
-        ))
+        .apply_bytes(
+            &mut controller,
+            &osc(
+                "/n_mapa",
+                vec![
+                    OscType::Int(1000),
+                    OscType::String("freq".to_string()),
+                    OscType::Int(0),
+                ],
+            ),
+        )
         .expect("/n_mapa");
     dispatcher
-        .apply_bytes(&osc(
-            "/n_mapan",
-            vec![
-                OscType::Int(1000),
-                OscType::String("freq".to_string()),
-                OscType::Int(0),
-                OscType::Int(1),
-            ],
-        ))
+        .apply_bytes(
+            &mut controller,
+            &osc(
+                "/n_mapan",
+                vec![
+                    OscType::Int(1000),
+                    OscType::String("freq".to_string()),
+                    OscType::Int(0),
+                    OscType::Int(1),
+                ],
+            ),
+        )
         .expect("/n_mapan");
     let _ = render(&mut world, 64);
 }
 
-/// Build a one-channel engine wrapped in a dispatcher.
-fn engine_1ch() -> (OscDispatcher, plyphon::Nrt, plyphon::World) {
+/// Build a one-channel engine and a dispatcher, returning the controller the host lends per call.
+fn engine_1ch() -> (OscDispatcher, Controller, plyphon::Nrt, plyphon::World) {
     let (controller, nrt, world) = engine(Options {
         sample_rate: SR as f64,
         output_channels: 1,
         ..Options::default()
     });
-    (OscDispatcher::new(controller), nrt, world)
+    (OscDispatcher::new(), controller, nrt, world)
 }
 
 /// Receive the `sine` def and start node 1000 at the root's tail.
-fn start_sine(dispatcher: &mut OscDispatcher) {
+fn start_sine(dispatcher: &mut OscDispatcher, controller: &mut Controller) {
     dispatcher
-        .apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
+        .apply_bytes(
+            controller,
+            &osc("/d_recv", vec![OscType::Blob(sine_scgf())]),
+        )
         .expect("/d_recv");
     dispatcher
-        .apply_bytes(&osc(
-            "/s_new",
-            vec![
-                OscType::String("sine".to_string()),
-                OscType::Int(1000),
-                OscType::Int(1),
-                OscType::Int(ROOT_GROUP_ID),
-            ],
-        ))
+        .apply_bytes(
+            controller,
+            &osc(
+                "/s_new",
+                vec![
+                    OscType::String("sine".to_string()),
+                    OscType::Int(1000),
+                    OscType::Int(1),
+                    OscType::Int(ROOT_GROUP_ID),
+                ],
+            ),
+        )
         .expect("/s_new");
 }
 
 #[test]
 fn n_run_pauses_and_resumes() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
-    start_sine(&mut d);
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    start_sine(&mut d, &mut controller);
     let a = render(&mut world, SR as usize / 4);
     assert!(
         goertzel(&a, 440.0) > 0.01,
@@ -443,8 +491,11 @@ fn n_run_pauses_and_resumes() {
     );
 
     // Pause: after flushing the in-flight block the synth is silent, and /n_off is notified.
-    d.apply_bytes(&osc("/n_run", vec![OscType::Int(1000), OscType::Int(0)]))
-        .expect("/n_run pause");
+    d.apply_bytes(
+        &mut controller,
+        &osc("/n_run", vec![OscType::Int(1000), OscType::Int(0)]),
+    )
+    .expect("/n_run pause");
     let _ = render(&mut world, 1024);
     let paused = render(&mut world, SR as usize / 4);
     assert!(
@@ -459,8 +510,11 @@ fn n_run_pauses_and_resumes() {
     );
 
     // Resume: the tone returns and /n_on is notified.
-    d.apply_bytes(&osc("/n_run", vec![OscType::Int(1000), OscType::Int(1)]))
-        .expect("/n_run resume");
+    d.apply_bytes(
+        &mut controller,
+        &osc("/n_run", vec![OscType::Int(1000), OscType::Int(1)]),
+    )
+    .expect("/n_run resume");
     let _ = render(&mut world, 512);
     let resumed = render(&mut world, SR as usize / 4);
     assert!(
@@ -477,22 +531,28 @@ fn n_run_pauses_and_resumes() {
 
 #[test]
 fn c_fill_drives_a_mapped_control() {
-    let (mut d, _nrt, mut world) = engine_1ch();
-    start_sine(&mut d);
+    let (mut d, mut controller, _nrt, mut world) = engine_1ch();
+    start_sine(&mut d, &mut controller);
     // Map freq to bus 5, then fill buses 5..8 with 330 in one command.
-    d.apply_bytes(&osc(
-        "/n_map",
-        vec![
-            OscType::Int(1000),
-            OscType::String("freq".to_string()),
-            OscType::Int(5),
-        ],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/n_map",
+            vec![
+                OscType::Int(1000),
+                OscType::String("freq".to_string()),
+                OscType::Int(5),
+            ],
+        ),
+    )
     .expect("/n_map");
-    d.apply_bytes(&osc(
-        "/c_fill",
-        vec![OscType::Int(5), OscType::Int(3), OscType::Float(330.0)],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/c_fill",
+            vec![OscType::Int(5), OscType::Int(3), OscType::Float(330.0)],
+        ),
+    )
     .expect("/c_fill");
     let _ = render(&mut world, 512);
     let a = render(&mut world, SR as usize / 2);
@@ -504,31 +564,40 @@ fn c_fill_drives_a_mapped_control() {
 
 #[test]
 fn n_setn_and_n_fill_set_control_ranges() {
-    let (mut d, _nrt, mut world) = engine_1ch();
-    d.apply_bytes(&osc("/d_recv", vec![OscType::Blob(dual_sine_scgf())]))
-        .expect("/d_recv");
-    d.apply_bytes(&osc(
-        "/s_new",
-        vec![
-            OscType::String("dual".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    let (mut d, mut controller, _nrt, mut world) = engine_1ch();
+    d.apply_bytes(
+        &mut controller,
+        &osc("/d_recv", vec![OscType::Blob(dual_sine_scgf())]),
+    )
+    .expect("/d_recv");
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/s_new",
+            vec![
+                OscType::String("dual".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/s_new");
 
     // /n_setn by name: set the two partials to 300 and 500 in one contiguous range.
-    d.apply_bytes(&osc(
-        "/n_setn",
-        vec![
-            OscType::Int(1000),
-            OscType::String("freq".to_string()),
-            OscType::Int(2),
-            OscType::Float(300.0),
-            OscType::Float(500.0),
-        ],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/n_setn",
+            vec![
+                OscType::Int(1000),
+                OscType::String("freq".to_string()),
+                OscType::Int(2),
+                OscType::Float(300.0),
+                OscType::Float(500.0),
+            ],
+        ),
+    )
     .expect("/n_setn");
     let _ = render(&mut world, 512);
     let a = render(&mut world, SR as usize / 2);
@@ -539,15 +608,18 @@ fn n_setn_and_n_fill_set_control_ranges() {
     );
 
     // /n_fill by index: fill the same range with 400, so both partials land on 400 Hz.
-    d.apply_bytes(&osc(
-        "/n_fill",
-        vec![
-            OscType::Int(1000),
-            OscType::Int(0),
-            OscType::Int(2),
-            OscType::Float(400.0),
-        ],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/n_fill",
+            vec![
+                OscType::Int(1000),
+                OscType::Int(0),
+                OscType::Int(2),
+                OscType::Float(400.0),
+            ],
+        ),
+    )
     .expect("/n_fill");
     let _ = render(&mut world, 512);
     let b = render(&mut world, SR as usize / 2);
@@ -559,27 +631,30 @@ fn n_setn_and_n_fill_set_control_ranges() {
 
 #[test]
 fn error_mode_gates_fail_replies() {
-    let (mut d, _nrt, _world) = engine_1ch();
+    let (mut d, mut controller, _nrt, _world) = engine_1ch();
     let zero_unknown = || osc("/b_zero", vec![OscType::Int(99)]);
 
     // Default: a failing command queues /fail.
-    d.apply_bytes(&zero_unknown()).expect("/b_zero");
+    d.apply_bytes(&mut controller, &zero_unknown())
+        .expect("/b_zero");
     assert!(
         take_msgs(&mut d).iter().any(|m| m.addr == "/fail"),
         "default error mode should queue /fail"
     );
 
     // /error 0 suppresses /fail; /error 1 restores it.
-    d.apply_bytes(&osc("/error", vec![OscType::Int(0)]))
+    d.apply_bytes(&mut controller, &osc("/error", vec![OscType::Int(0)]))
         .expect("/error 0");
-    d.apply_bytes(&zero_unknown()).expect("/b_zero");
+    d.apply_bytes(&mut controller, &zero_unknown())
+        .expect("/b_zero");
     assert!(
         !take_msgs(&mut d).iter().any(|m| m.addr == "/fail"),
         "/error 0 should suppress /fail"
     );
-    d.apply_bytes(&osc("/error", vec![OscType::Int(1)]))
+    d.apply_bytes(&mut controller, &osc("/error", vec![OscType::Int(1)]))
         .expect("/error 1");
-    d.apply_bytes(&zero_unknown()).expect("/b_zero");
+    d.apply_bytes(&mut controller, &zero_unknown())
+        .expect("/b_zero");
     assert!(
         take_msgs(&mut d).iter().any(|m| m.addr == "/fail"),
         "/error 1 should restore /fail"
@@ -602,12 +677,13 @@ fn error_mode_gates_fail_replies() {
             }),
         ],
     });
-    d.apply(&bundle).expect("error bundle");
+    d.apply(&mut controller, &bundle).expect("error bundle");
     assert!(
         !take_msgs(&mut d).iter().any(|m| m.addr == "/fail"),
         "/error -2 should suppress /fail inside its bundle"
     );
-    d.apply_bytes(&zero_unknown()).expect("/b_zero");
+    d.apply_bytes(&mut controller, &zero_unknown())
+        .expect("/b_zero");
     assert!(
         take_msgs(&mut d).iter().any(|m| m.addr == "/fail"),
         "the bundle-local /error -2 must not leak past the bundle"
@@ -616,30 +692,36 @@ fn error_mode_gates_fail_replies() {
 
 #[test]
 fn s_noid_detaches_name_resolution() {
-    let (mut d, _nrt, mut world) = engine_1ch();
-    start_sine(&mut d);
+    let (mut d, mut controller, _nrt, mut world) = engine_1ch();
+    start_sine(&mut d, &mut controller);
     let _ = render(&mut world, 512);
 
-    d.apply_bytes(&osc("/s_noid", vec![OscType::Int(1000)]))
+    d.apply_bytes(&mut controller, &osc("/s_noid", vec![OscType::Int(1000)]))
         .expect("/s_noid");
     // By-name control resolution now fails (the def association is gone)...
     assert!(
-        d.apply_bytes(&osc(
-            "/n_set",
-            vec![
-                OscType::Int(1000),
-                OscType::String("freq".to_string()),
-                OscType::Float(330.0),
-            ],
-        ))
+        d.apply_bytes(
+            &mut controller,
+            &osc(
+                "/n_set",
+                vec![
+                    OscType::Int(1000),
+                    OscType::String("freq".to_string()),
+                    OscType::Float(330.0),
+                ],
+            )
+        )
         .is_err(),
         "/n_set by name should fail after /s_noid"
     );
     // ...but the still-running node remains addressable by control index.
-    d.apply_bytes(&osc(
-        "/n_set",
-        vec![OscType::Int(1000), OscType::Int(0), OscType::Float(330.0)],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/n_set",
+            vec![OscType::Int(1000), OscType::Int(0), OscType::Float(330.0)],
+        ),
+    )
     .expect("/n_set by index");
     let _ = render(&mut world, 512);
     let a = render(&mut world, SR as usize / 2);
@@ -651,27 +733,36 @@ fn s_noid_detaches_name_resolution() {
 
 #[test]
 fn p_new_creates_an_addressable_group() {
-    let (mut d, _nrt, mut world) = engine_1ch();
-    d.apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
-        .expect("/d_recv");
-    d.apply_bytes(&osc(
-        "/p_new",
-        vec![
-            OscType::Int(2000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    let (mut d, mut controller, _nrt, mut world) = engine_1ch();
+    d.apply_bytes(
+        &mut controller,
+        &osc("/d_recv", vec![OscType::Blob(sine_scgf())]),
+    )
+    .expect("/d_recv");
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/p_new",
+            vec![
+                OscType::Int(2000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/p_new");
-    d.apply_bytes(&osc(
-        "/s_new",
-        vec![
-            OscType::String("sine".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(2000), // into the parallel group
-        ],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(2000), // into the parallel group
+            ],
+        ),
+    )
     .expect("/s_new into p_new group");
     let a = render(&mut world, SR as usize / 2);
     assert!(
@@ -682,37 +773,49 @@ fn p_new_creates_an_addressable_group() {
 
 #[test]
 fn d_free_removes_a_def() {
-    let (mut d, _nrt, _world) = engine_1ch();
-    start_sine(&mut d); // /d_recv sine + /s_new 1000
+    let (mut d, mut controller, _nrt, _world) = engine_1ch();
+    start_sine(&mut d, &mut controller); // /d_recv sine + /s_new 1000
 
     // Free the def; a later /s_new of it fails until it is re-sent.
-    d.apply_bytes(&osc("/d_free", vec![OscType::String("sine".to_string())]))
-        .expect("/d_free");
+    d.apply_bytes(
+        &mut controller,
+        &osc("/d_free", vec![OscType::String("sine".to_string())]),
+    )
+    .expect("/d_free");
     assert!(
-        d.apply_bytes(&osc(
-            "/s_new",
-            vec![
-                OscType::String("sine".to_string()),
-                OscType::Int(1001),
-                OscType::Int(1),
-                OscType::Int(ROOT_GROUP_ID),
-            ],
-        ))
+        d.apply_bytes(
+            &mut controller,
+            &osc(
+                "/s_new",
+                vec![
+                    OscType::String("sine".to_string()),
+                    OscType::Int(1001),
+                    OscType::Int(1),
+                    OscType::Int(ROOT_GROUP_ID),
+                ],
+            )
+        )
         .is_err(),
         "/s_new of a freed def should fail"
     );
 
     // Re-receiving the def makes it usable again (the def slot is reused).
-    d.apply_bytes(&osc("/d_recv", vec![OscType::Blob(sine_scgf())]))
-        .expect("/d_recv again");
-    d.apply_bytes(&osc(
-        "/s_new",
-        vec![
-            OscType::String("sine".to_string()),
-            OscType::Int(1002),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc("/d_recv", vec![OscType::Blob(sine_scgf())]),
+    )
+    .expect("/d_recv again");
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1002),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/s_new after re-recv");
 }

@@ -15,7 +15,7 @@
 //! (`/n_free`). The `plyphon` engine driving the audio is pure Rust and identical on native and
 //! web; only the control-plane ticking differs (a thread loop vs a timer).
 
-use plyphon::{Nrt, Options, World, engine};
+use plyphon::{Controller, Nrt, Options, World, engine};
 use plyphon_osc::OscDispatcher;
 use rosc::{OscMessage, OscPacket, OscType};
 
@@ -28,11 +28,13 @@ const TRAILING_TICKS: u32 = 4;
 /// Master gain applied in the audio callback (the `tone` def already scales by 0.2).
 const GAIN: f32 = 1.0;
 
-/// The control plane: a dispatcher (wrapping the engine's `Controller`) plus the `Nrt`, ticked off
-/// the audio thread. Each tick sends the next scripted OSC command and prints the replies the
-/// dispatcher has queued - including the node notifications synthesized from `Nrt` events.
+/// The control plane: a dispatcher applying OSC to the engine's `Controller` (owned here, lent per
+/// call), plus the `Nrt`, ticked off the audio thread. Each tick sends the next scripted OSC command
+/// and prints the replies the dispatcher has queued - including the node notifications synthesized
+/// from `Nrt` events.
 struct Session {
     dispatcher: OscDispatcher,
+    controller: Controller,
     nrt: Nrt,
     /// The next scripted command to send.
     step: usize,
@@ -109,7 +111,7 @@ impl Session {
         };
         trace(&format!("-> {label}"));
         let bytes = rosc::encoder::encode(&OscPacket::Message(message)).expect("encode OSC packet");
-        if let Err(err) = self.dispatcher.apply_bytes(&bytes) {
+        if let Err(err) = self.dispatcher.apply_bytes(&mut self.controller, &bytes) {
             trace(&format!("   (dispatcher rejected the packet: {err})"));
         }
     }
@@ -204,7 +206,8 @@ fn build(sample_rate: f32, channels: usize) -> (Session, World) {
         ..Options::default()
     });
     let session = Session {
-        dispatcher: OscDispatcher::new(controller),
+        dispatcher: OscDispatcher::new(),
+        controller,
         nrt,
         step: 0,
         tone: tone_scgf(),

@@ -45,7 +45,7 @@ pub fn run(args: RenderArgs) -> Result<(), String> {
     if let Some(dir) = &args.engine.load_dir {
         load_dir(&mut controller, dir)?;
     }
-    let mut dispatcher = OscDispatcher::new(controller);
+    let mut dispatcher = OscDispatcher::new();
     let mut render = Render::new(world, nrt, &options);
 
     let mut writer = WavWriter::create(
@@ -58,6 +58,7 @@ pub fn run(args: RenderArgs) -> Result<(), String> {
     render_osc_score(
         &mut render,
         &mut dispatcher,
+        &mut controller,
         &score,
         Some(&mut |block: &mut [f32]| feed.fill(block)),
         |block| {

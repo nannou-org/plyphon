@@ -53,22 +53,25 @@ fn drain(osc: &mut OscDispatcher, nrt: &mut Nrt) -> Vec<OscMessage> {
 
 #[test]
 fn send_reply_broadcasts_over_osc() {
-    let (controller, mut nrt, mut world) = engine(Options {
+    let (mut controller, mut nrt, mut world) = engine(Options {
         sample_rate: SR,
         output_channels: 1,
         ..Options::default()
     });
-    let mut osc = OscDispatcher::new(controller);
-    osc.controller().add_synthdef(rep_def());
-    osc.apply_bytes(&msg(
-        "/s_new",
-        vec![
-            OscType::String("rep".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    let mut osc = OscDispatcher::new();
+    controller.add_synthdef(rep_def());
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/s_new",
+            vec![
+                OscType::String("rep".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/s_new");
 
     let mut buf = [0.0f32; 64];

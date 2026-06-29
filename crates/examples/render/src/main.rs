@@ -117,7 +117,7 @@ fn render(args: &[String]) -> Result<(), String> {
     let (mut controller, nrt, world) = engine(options);
     // Register the demo def so a score using `/s_new blip` plays; scores may also `/d_recv` their own.
     controller.add_synthdef(blip_def(out_channels));
-    let mut dispatcher = OscDispatcher::new(controller);
+    let mut dispatcher = OscDispatcher::new();
     let mut render = Render::new(world, nrt, &options);
 
     let mut writer = WavWriter::create(out_path, format.spec(out_channels, sample_rate))
@@ -127,6 +127,7 @@ fn render(args: &[String]) -> Result<(), String> {
     render_osc_score(
         &mut render,
         &mut dispatcher,
+        &mut controller,
         &score,
         Some(&mut |block: &mut [f32]| feed.fill(block)),
         |block| {
@@ -445,7 +446,7 @@ mod tests {
         };
         let (mut controller, nrt, world) = engine(options);
         controller.add_synthdef(click_def());
-        let mut dispatcher = OscDispatcher::new(controller);
+        let mut dispatcher = OscDispatcher::new();
         let mut render = Render::new(world, nrt, &options);
 
         let packets: Vec<OscPacket> = targets
@@ -460,6 +461,7 @@ mod tests {
         render_osc_score(
             &mut render,
             &mut dispatcher,
+            &mut controller,
             &score,
             Some(&mut no_input),
             |block| out.extend_from_slice(block),
@@ -563,7 +565,7 @@ mod tests {
         };
         let (mut controller, nrt, world) = engine(options);
         controller.add_synthdef(passthrough_def(options.output_channels as f32));
-        let mut dispatcher = OscDispatcher::new(controller);
+        let mut dispatcher = OscDispatcher::new();
         let mut render = Render::new(world, nrt, &options);
 
         // Start the passthrough immediately (time tag 0 = immediate), before any audio block.
@@ -597,6 +599,7 @@ mod tests {
         render_osc_score(
             &mut render,
             &mut dispatcher,
+            &mut controller,
             &score,
             Some(&mut |block: &mut [f32]| wav_in.fill(block)),
             |block| out.extend_from_slice(block),

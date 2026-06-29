@@ -1,7 +1,9 @@
 //! A SuperCollider-compatible OSC front-end for the plyphon engine.
 //!
-//! [`OscDispatcher`] wraps a plyphon [`Controller`] and applies the OSC server commands a typical
-//! SuperCollider client sends, translating them into [`Controller`] calls:
+//! [`OscDispatcher`] applies the OSC server commands a typical SuperCollider client sends,
+//! translating them into calls on a plyphon [`Controller`] the host lends it per call (the host owns
+//! the `Controller` alongside its `Nrt`/`World`, and passes `&mut Controller`/`&Controller` into each
+//! [`apply`](OscDispatcher::apply)/[`reply`](OscDispatcher::reply)). The commands handled:
 //!
 //! - **SynthDefs:** `/d_recv`, `/d_free`, `/d_freeAll`.
 //! - **Synths & nodes:** `/s_new`, `/s_noid`, `/n_set`, `/n_setn`, `/n_fill`, `/n_free`, `/n_run`,
@@ -54,10 +56,11 @@
 //! # Asynchronous buffer loading
 //!
 //! `/b_allocRead` and `/b_read` read sound files, which plyphon keeps off the OSC-handling path:
-//! configure the dispatcher with a [`BufferSource`] via [`OscDispatcher::with_buffer_source`], and
+//! configure the dispatcher with a [`BufferSource`] via [`OscDispatcher::with_source`], and
 //! `apply` *queues* the load; the host drives queued loads on its own executor with
-//! [`OscDispatcher::run_pending`], which installs the buffer, runs the command's completion message,
-//! and queues `/done`. (Sources are decoded the host's way - see `plyphon-buffers`.)
+//! [`OscDispatcher::run_pending`] (lending the `Controller`), which installs the buffer, runs the
+//! command's completion message, and queues `/done`. (Sources are decoded the host's way - see
+//! `plyphon-buffers`.)
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
@@ -221,9 +224,8 @@ pub enum ReplyTarget {
     Requester(u64),
 }
 
-/// Applies SuperCollider OSC commands to a plyphon [`Controller`].
+/// Applies SuperCollider OSC commands to a plyphon [`Controller`] lent per call by the host.
 pub struct OscDispatcher {
-    controller: Controller,
     /// Tracks the SynthDef each live node was created from, for control-name resolution.
     node_defs: HashMap<i32, String>,
     /// Control-side mirror of each buffer's dimensions, for `/b_query` and `/b_zero`.
@@ -249,11 +251,17 @@ pub struct OscDispatcher {
     dump_sink: Option<DumpSink>,
 }
 
+impl Default for OscDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OscDispatcher {
-    /// Wrap a controller (no buffer source: `/b_allocRead`/`/b_read` will fail with `/fail`).
-    pub fn new(controller: Controller) -> Self {
+    /// A fresh dispatcher with no buffer source (`/b_allocRead`/`/b_read` will fail with `/fail`).
+    /// The host lends it the [`Controller`] per call.
+    pub fn new() -> Self {
         OscDispatcher {
-            controller,
             node_defs: HashMap::new(),
             buffers: HashMap::new(),
             source: None,
@@ -267,22 +275,12 @@ impl OscDispatcher {
         }
     }
 
-    /// Wrap a controller with a [`BufferSource`] for asynchronous `/b_allocRead`/`/b_read` loads.
-    pub fn with_buffer_source(controller: Controller, source: Box<dyn BufferSource>) -> Self {
+    /// A dispatcher with a [`BufferSource`] for asynchronous `/b_allocRead`/`/b_read` loads.
+    pub fn with_source(source: Box<dyn BufferSource>) -> Self {
         OscDispatcher {
             source: Some(source),
-            ..Self::new(controller)
+            ..Self::new()
         }
-    }
-
-    /// Access the wrapped controller (e.g. to add SynthDefs or register custom units).
-    pub fn controller(&mut self) -> &mut Controller {
-        &mut self.controller
-    }
-
-    /// Unwrap the controller.
-    pub fn into_controller(self) -> Controller {
-        self.controller
     }
 
     /// Install a text sink for `/g_dumpTree` (scsynth prints the tree to stdout; plyphon is headless,
@@ -296,14 +294,14 @@ impl OscDispatcher {
     /// `Nrt::poll_reply`) into its OSC reply, queued for [`take_replies`](Self::take_replies). Feed
     /// every reply in order, alongside [`notify`](Self::notify); replies arrive in the same FIFO order
     /// the getters were issued, so each is matched against the oldest outstanding query.
-    pub fn reply(&mut self, reply: Reply) {
+    pub fn reply(&mut self, controller: &Controller, reply: Reply) {
         let Some((target, mut pending)) = self.pending_queries.pop_front() else {
             return; // a stray reply with nothing outstanding (e.g. after a reset); ignore.
         };
         // Replay the requester captured when the query was issued, so the reassembled message routes
         // back to it (the success `/n_info` overrides this to `Broadcast` itself).
         self.current_target = target;
-        if !self.apply_reply(&mut pending, reply) {
+        if !self.apply_reply(controller, &mut pending, reply) {
             self.pending_queries.push_front((target, pending));
         }
     }
@@ -376,7 +374,7 @@ impl OscDispatcher {
     /// completion message, and queue `/done` - or queue `/fail` if there is no source or the load
     /// errors. Drive this on whatever executor suits the host (a background thread natively,
     /// `spawn_local` on the web); it never touches the audio thread.
-    pub async fn run_pending(&mut self) {
+    pub async fn run_pending(&mut self, controller: &mut Controller) {
         for load in core::mem::take(&mut self.pending) {
             // Answer this load (its `/done`/`/fail`, and anything its completion message emits) back to
             // the client that issued it - exactly as scsynth stamps completion packets with the
@@ -396,8 +394,7 @@ impl OscDispatcher {
                         num_channels,
                         sample_rate: data.sample_rate,
                     };
-                    if self
-                        .controller
+                    if controller
                         .buffer_set(load.bufnum as usize, Box::new(data.into()))
                         .is_err()
                     {
@@ -405,7 +402,7 @@ impl OscDispatcher {
                         continue;
                     }
                     self.buffers.insert(load.bufnum, info);
-                    self.run_completion_bytes(load.completion.as_deref());
+                    self.run_completion_bytes(controller, load.completion.as_deref());
                     self.done(load.command, load.bufnum);
                 }
             }
@@ -413,9 +410,13 @@ impl OscDispatcher {
     }
 
     /// Decode and apply a single OSC packet from raw bytes.
-    pub fn apply_bytes(&mut self, data: &[u8]) -> Result<(), OscError> {
+    pub fn apply_bytes(
+        &mut self,
+        controller: &mut Controller,
+        data: &[u8],
+    ) -> Result<(), OscError> {
         let (_, packet) = rosc::decoder::decode_udp(data).map_err(OscError::Decode)?;
-        self.apply(&packet)
+        self.apply(controller, &packet)
     }
 
     /// Apply a decoded OSC packet: a message immediately, or every message in a bundle at the
@@ -424,19 +425,21 @@ impl OscDispatcher {
     /// A future time tag schedules the bundle's messages (and any nested bundles) for that absolute
     /// OSC/NTP time; the engine maps the tag to a sample-exact block on the audio thread, against a
     /// drift-corrected clock. The "immediately" tags `0`/`1` (and any already-past time) apply now.
-    pub fn apply(&mut self, packet: &OscPacket) -> Result<(), OscError> {
+    pub fn apply(
+        &mut self,
+        controller: &mut Controller,
+        packet: &OscPacket,
+    ) -> Result<(), OscError> {
         match packet {
-            OscPacket::Message(message) => self.message(message),
+            OscPacket::Message(message) => self.message(controller, message),
             OscPacket::Bundle(bundle) => {
-                let prev = self
-                    .controller
-                    .begin_scheduled(bundle_command_time(bundle.timetag));
+                let prev = controller.begin_scheduled(bundle_command_time(bundle.timetag));
                 // A bundle-local `/error -1|-2` override is scoped to this bundle (and its nested
                 // bundles); save it here and restore on exit, exactly like the schedule window.
                 let prev_error = self.error_bundle;
                 let mut result = Ok(());
                 for inner in &bundle.content {
-                    result = self.apply(inner);
+                    result = self.apply(controller, inner);
                     if result.is_err() {
                         break;
                     }
@@ -444,102 +447,102 @@ impl OscDispatcher {
                 // Restore the enclosing window and error scope (Immediate / inherited at the top
                 // level), even on error.
                 self.error_bundle = prev_error;
-                self.controller.begin_scheduled(prev);
+                controller.begin_scheduled(prev);
                 result
             }
         }
     }
 
-    fn message(&mut self, message: &OscMessage) -> Result<(), OscError> {
+    fn message(
+        &mut self,
+        controller: &mut Controller,
+        message: &OscMessage,
+    ) -> Result<(), OscError> {
         match message.addr.as_str() {
-            "/d_recv" => self.d_recv(&message.args),
-            "/d_free" => self.d_free(&message.args),
-            "/d_freeAll" => self.d_free_all(),
-            "/s_new" => self.s_new(&message.args),
+            "/d_recv" => self.d_recv(controller, &message.args),
+            "/d_free" => self.d_free(controller, &message.args),
+            "/d_freeAll" => self.d_free_all(controller),
+            "/s_new" => self.s_new(controller, &message.args),
             "/s_noid" => self.s_noid(&message.args),
-            "/n_set" => self.n_set(&message.args),
-            "/n_setn" => self.n_setn(&message.args),
-            "/n_fill" => self.n_fill(&message.args),
-            "/n_free" => self.n_free(&message.args),
-            "/n_run" => self.n_run(&message.args),
-            "/g_new" => self.g_new(&message.args),
+            "/n_set" => self.n_set(controller, &message.args),
+            "/n_setn" => self.n_setn(controller, &message.args),
+            "/n_fill" => self.n_fill(controller, &message.args),
+            "/n_free" => self.n_free(controller, &message.args),
+            "/n_run" => self.n_run(controller, &message.args),
+            "/g_new" => self.g_new(controller, &message.args),
             // scsynth emulates parallel groups with ordinary groups; same triple layout as `/g_new`.
-            "/p_new" => self.g_new(&message.args),
-            "/c_set" => self.c_set(&message.args),
-            "/c_setn" => self.c_setn(&message.args),
-            "/c_fill" => self.c_fill(&message.args),
-            "/n_map" => self.n_map(&message.args),
-            "/n_mapn" => self.n_mapn(&message.args),
-            "/n_mapa" => self.n_mapa(&message.args),
-            "/n_mapan" => self.n_mapan(&message.args),
-            "/b_alloc" => self.b_alloc(&message.args),
-            "/b_free" => self.b_free(&message.args),
-            "/b_zero" => self.b_zero(&message.args),
+            "/p_new" => self.g_new(controller, &message.args),
+            "/c_set" => self.c_set(controller, &message.args),
+            "/c_setn" => self.c_setn(controller, &message.args),
+            "/c_fill" => self.c_fill(controller, &message.args),
+            "/n_map" => self.n_map(controller, &message.args),
+            "/n_mapn" => self.n_mapn(controller, &message.args),
+            "/n_mapa" => self.n_mapa(controller, &message.args),
+            "/n_mapan" => self.n_mapan(controller, &message.args),
+            "/b_alloc" => self.b_alloc(controller, &message.args),
+            "/b_free" => self.b_free(controller, &message.args),
+            "/b_zero" => self.b_zero(controller, &message.args),
             "/b_query" => self.b_query(&message.args),
-            "/b_set" => self.b_set(&message.args),
-            "/b_setn" => self.b_setn(&message.args),
-            "/b_fill" => self.b_fill(&message.args),
-            "/b_setSampleRate" => self.b_set_sample_rate(&message.args),
-            "/b_gen" => self.b_gen(&message.args),
+            "/b_set" => self.b_set(controller, &message.args),
+            "/b_setn" => self.b_setn(controller, &message.args),
+            "/b_fill" => self.b_fill(controller, &message.args),
+            "/b_setSampleRate" => self.b_set_sample_rate(controller, &message.args),
+            "/b_gen" => self.b_gen(controller, &message.args),
             "/b_allocRead" => self.b_alloc_read(&message.args),
             "/b_read" => self.b_read(&message.args),
-            "/g_head" => self.group_moves(&message.args, AddAction::Head),
-            "/g_tail" => self.group_moves(&message.args, AddAction::Tail),
-            "/n_before" => self.node_moves(&message.args, AddAction::Before),
-            "/n_after" => self.node_moves(&message.args, AddAction::After),
-            "/n_order" => self.n_order(&message.args),
-            "/g_freeAll" => self.g_free_all(&message.args),
-            "/g_deepFree" => self.g_deep_free(&message.args),
-            "/clearSched" => self.clear_sched(),
+            "/g_head" => self.group_moves(controller, &message.args, AddAction::Head),
+            "/g_tail" => self.group_moves(controller, &message.args, AddAction::Tail),
+            "/n_before" => self.node_moves(controller, &message.args, AddAction::Before),
+            "/n_after" => self.node_moves(controller, &message.args, AddAction::After),
+            "/n_order" => self.n_order(controller, &message.args),
+            "/g_freeAll" => self.g_free_all(controller, &message.args),
+            "/g_deepFree" => self.g_deep_free(controller, &message.args),
+            "/clearSched" => self.clear_sched(controller),
             "/error" => self.error_cmd(&message.args),
-            "/sync" => self.sync(&message.args),
-            "/status" => self.status(),
-            "/rtMemoryStatus" => self.rt_memory_status(),
-            "/n_query" => self.n_query(&message.args),
-            "/c_get" => self.c_get(&message.args),
-            "/c_getn" => self.c_getn(&message.args),
-            "/s_get" => self.s_get(&message.args),
-            "/s_getn" => self.s_getn(&message.args),
-            "/b_get" => self.b_get(&message.args),
-            "/b_getn" => self.b_getn(&message.args),
-            "/g_queryTree" => self.g_query_tree(&message.args, false),
-            "/g_dumpTree" => self.g_query_tree(&message.args, true),
+            "/sync" => self.sync(controller, &message.args),
+            "/status" => self.status(controller),
+            "/rtMemoryStatus" => self.rt_memory_status(controller),
+            "/n_query" => self.n_query(controller, &message.args),
+            "/c_get" => self.c_get(controller, &message.args),
+            "/c_getn" => self.c_getn(controller, &message.args),
+            "/s_get" => self.s_get(controller, &message.args),
+            "/s_getn" => self.s_getn(controller, &message.args),
+            "/b_get" => self.b_get(controller, &message.args),
+            "/b_getn" => self.b_getn(controller, &message.args),
+            "/g_queryTree" => self.g_query_tree(controller, &message.args, false),
+            "/g_dumpTree" => self.g_query_tree(controller, &message.args, true),
             other => Err(OscError::UnsupportedCommand(other.to_string())),
         }
     }
 
-    fn d_recv(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn d_recv(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let blob = match args.first() {
             Some(OscType::Blob(bytes)) => bytes,
             _ => return Err(OscError::BadArguments("d_recv expects a blob")),
         };
         let defs = plyphon::synthdef::read::parse(blob).map_err(OscError::SynthDef)?;
         for def in defs {
-            self.controller.add_synthdef(def);
+            controller.add_synthdef(def);
         }
         Ok(())
     }
 
     /// `/d_free <name>...`: free each named synth definition (a later `/s_new` of it then fails until
     /// it is re-sent).
-    fn d_free(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn d_free(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         for arg in args {
             let name = str_arg(arg)?;
-            self.controller
-                .free_def(name)
-                .map_err(|_| OscError::QueueFull)?;
+            controller.free_def(name).map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }
 
     /// `/d_freeAll`: free every registered synth definition.
-    fn d_free_all(&mut self) -> Result<(), OscError> {
-        self.controller
-            .free_all_defs()
-            .map_err(|_| OscError::QueueFull)
+    fn d_free_all(&mut self, controller: &mut Controller) -> Result<(), OscError> {
+        controller.free_all_defs().map_err(|_| OscError::QueueFull)
     }
 
-    fn s_new(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn s_new(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         if args.len() < 4 {
             return Err(OscError::BadArguments(
                 "s_new expects name, id, addAction, target",
@@ -551,17 +554,17 @@ impl OscDispatcher {
         let target = int_arg(&args[3])?;
 
         let id = if id < 0 {
-            self.controller
+            controller
                 .synth_new(&name, target, action)
                 .map_err(OscError::SynthNew)?
         } else {
-            self.controller
+            controller
                 .synth_new_with_id(id, &name, target, action)
                 .map_err(OscError::SynthNew)?;
             id
         };
         self.node_defs.insert(id, name.clone());
-        self.apply_controls(id, Some(&name), &args[4..])
+        self.apply_controls(controller, id, Some(&name), &args[4..])
     }
 
     /// `/s_noid <nodeID>...`: detach each node's def tracking so it is no longer addressed by control
@@ -575,16 +578,16 @@ impl OscDispatcher {
         Ok(())
     }
 
-    fn n_set(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_set(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("n_set expects a node"))?,
         )?;
-        self.apply_controls(node, None, &args[1..])
+        self.apply_controls(controller, node, None, &args[1..])
     }
 
     /// `/n_setn nodeID (control, count, value...)...`: set contiguous ranges of a node's controls.
-    fn n_setn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_setn(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("n_setn expects a node"))?,
@@ -592,7 +595,7 @@ impl OscDispatcher {
         let rest = &args[1..];
         let mut i = 0;
         while i < rest.len() {
-            let start = self.control_index(node, &rest[i])?;
+            let start = self.control_index(controller, node, &rest[i])?;
             let count = count_arg(rest.get(i + 1))?;
             i += 2;
             if i + count > rest.len() {
@@ -601,7 +604,7 @@ impl OscDispatcher {
                 ));
             }
             for (j, arg) in rest[i..i + count].iter().enumerate() {
-                self.controller
+                controller
                     .set_control(node, start + j, float_arg(arg)?)
                     .map_err(|_| OscError::QueueFull)?;
             }
@@ -611,7 +614,7 @@ impl OscDispatcher {
     }
 
     /// `/n_fill nodeID (control, count, value)...`: fill contiguous ranges of a node's controls.
-    fn n_fill(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_fill(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("n_fill expects a node"))?,
@@ -623,11 +626,11 @@ impl OscDispatcher {
             ));
         }
         for triple in rest.chunks_exact(3) {
-            let start = self.control_index(node, &triple[0])?;
+            let start = self.control_index(controller, node, &triple[0])?;
             let count = count_arg(Some(&triple[1]))?;
             let value = float_arg(&triple[2])?;
             for j in 0..count {
-                self.controller
+                controller
                     .set_control(node, start + j, value)
                     .map_err(|_| OscError::QueueFull)?;
             }
@@ -635,33 +638,31 @@ impl OscDispatcher {
         Ok(())
     }
 
-    fn n_free(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_free(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         for arg in args {
             let node = int_arg(arg)?;
-            self.controller
-                .free(node)
-                .map_err(|_| OscError::QueueFull)?;
+            controller.free(node).map_err(|_| OscError::QueueFull)?;
             self.node_defs.remove(&node);
         }
         Ok(())
     }
 
     /// `/n_run (nodeID, flag)...`: pause (flag 0) or resume (flag 1) each node.
-    fn n_run(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_run(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         if !args.len().is_multiple_of(2) {
             return Err(OscError::BadArguments("n_run expects node/flag pairs"));
         }
         for pair in args.chunks_exact(2) {
             let node = int_arg(&pair[0])?;
             let run = int_arg(&pair[1])? != 0;
-            self.controller
+            controller
                 .node_run(node, run)
                 .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }
 
-    fn g_new(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn g_new(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         if args.is_empty() || !args.len().is_multiple_of(3) {
             return Err(OscError::BadArguments(
                 "g_new expects id, addAction, target triples",
@@ -672,11 +673,11 @@ impl OscDispatcher {
             let action = add_action(int_arg(&triple[1])?)?;
             let target = int_arg(&triple[2])?;
             if id < 0 {
-                self.controller
+                controller
                     .new_group(target, action)
                     .map_err(|_| OscError::QueueFull)?;
             } else {
-                self.controller
+                controller
                     .new_group_with_id(id, target, action)
                     .map_err(|_| OscError::QueueFull)?;
             }
@@ -685,14 +686,19 @@ impl OscDispatcher {
     }
 
     /// `/g_head`/`/g_tail`: `(group, node)` pairs - move each node to the group's head/tail.
-    fn group_moves(&mut self, args: &[OscType], action: AddAction) -> Result<(), OscError> {
+    fn group_moves(
+        &mut self,
+        controller: &mut Controller,
+        args: &[OscType],
+        action: AddAction,
+    ) -> Result<(), OscError> {
         if !args.len().is_multiple_of(2) {
             return Err(OscError::BadArguments("expects group/node pairs"));
         }
         for pair in args.chunks_exact(2) {
             let group = int_arg(&pair[0])?;
             let node = int_arg(&pair[1])?;
-            self.controller
+            controller
                 .move_node(node, group, action)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -700,14 +706,19 @@ impl OscDispatcher {
     }
 
     /// `/n_before`/`/n_after`: `(node, target)` pairs - move each node before/after its target.
-    fn node_moves(&mut self, args: &[OscType], action: AddAction) -> Result<(), OscError> {
+    fn node_moves(
+        &mut self,
+        controller: &mut Controller,
+        args: &[OscType],
+        action: AddAction,
+    ) -> Result<(), OscError> {
         if !args.len().is_multiple_of(2) {
             return Err(OscError::BadArguments("expects node/target pairs"));
         }
         for pair in args.chunks_exact(2) {
             let node = int_arg(&pair[0])?;
             let target = int_arg(&pair[1])?;
-            self.controller
+            controller
                 .move_node(node, target, action)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -715,7 +726,7 @@ impl OscDispatcher {
     }
 
     /// `/n_order addAction target node...`: place the nodes consecutively, in order, at the location.
-    fn n_order(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_order(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         if args.len() < 3 {
             return Err(OscError::BadArguments(
                 "n_order expects addAction, target, nodes",
@@ -725,7 +736,7 @@ impl OscDispatcher {
         let mut action = add_action(int_arg(&args[0])?)?;
         for arg in &args[2..] {
             let node = int_arg(arg)?;
-            self.controller
+            controller
                 .move_node(node, anchor, action)
                 .map_err(|_| OscError::QueueFull)?;
             // Subsequent nodes follow the previous one, preserving the given order.
@@ -736,10 +747,14 @@ impl OscDispatcher {
     }
 
     /// `/g_freeAll group...`: empty each group, keeping the group.
-    fn g_free_all(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn g_free_all(
+        &mut self,
+        controller: &mut Controller,
+        args: &[OscType],
+    ) -> Result<(), OscError> {
         for arg in args {
             let group = int_arg(arg)?;
-            self.controller
+            controller
                 .free_all(group)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -747,10 +762,14 @@ impl OscDispatcher {
     }
 
     /// `/g_deepFree group...`: free each group's synths recursively, keeping the groups.
-    fn g_deep_free(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn g_deep_free(
+        &mut self,
+        controller: &mut Controller,
+        args: &[OscType],
+    ) -> Result<(), OscError> {
         for arg in args {
             let group = int_arg(arg)?;
-            self.controller
+            controller
                 .deep_free(group)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -758,10 +777,8 @@ impl OscDispatcher {
     }
 
     /// `/clearSched`: clear the engine scheduler's pending time-tagged commands.
-    fn clear_sched(&mut self) -> Result<(), OscError> {
-        self.controller
-            .clear_sched()
-            .map_err(|_| OscError::QueueFull)
+    fn clear_sched(&mut self, controller: &mut Controller) -> Result<(), OscError> {
+        controller.clear_sched().map_err(|_| OscError::QueueFull)
     }
 
     /// `/error <mode>`: set the error-posting mode. `0`/`1` set the permanent mode; `-1`/`-2` set a
@@ -786,30 +803,26 @@ impl OscDispatcher {
     // per node for `/n_query`). ---
 
     /// `/sync <id>` -> `/synced <id>`.
-    fn sync(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn sync(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let id = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("sync expects an id"))?,
         )?;
-        self.controller
-            .query_sync(id)
-            .map_err(|_| OscError::QueueFull)?;
+        controller.query_sync(id).map_err(|_| OscError::QueueFull)?;
         self.push_query(PendingQuery::Sync);
         Ok(())
     }
 
     /// `/status` -> `/status.reply`.
-    fn status(&mut self) -> Result<(), OscError> {
-        self.controller
-            .query_status()
-            .map_err(|_| OscError::QueueFull)?;
+    fn status(&mut self, controller: &mut Controller) -> Result<(), OscError> {
+        controller.query_status().map_err(|_| OscError::QueueFull)?;
         self.push_query(PendingQuery::Status);
         Ok(())
     }
 
     /// `/rtMemoryStatus` -> `/rtMemoryStatus.reply`.
-    fn rt_memory_status(&mut self) -> Result<(), OscError> {
-        self.controller
+    fn rt_memory_status(&mut self, controller: &mut Controller) -> Result<(), OscError> {
+        controller
             .query_rt_memory()
             .map_err(|_| OscError::QueueFull)?;
         self.push_query(PendingQuery::RtMemory);
@@ -817,10 +830,10 @@ impl OscDispatcher {
     }
 
     /// `/n_query <node>...` -> one `/n_info` per node.
-    fn n_query(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_query(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         for arg in args {
             let node = int_arg(arg)?;
-            self.controller
+            controller
                 .query_node(node)
                 .map_err(|_| OscError::QueueFull)?;
             self.push_query(PendingQuery::Node);
@@ -829,10 +842,10 @@ impl OscDispatcher {
     }
 
     /// `/c_get <bus>...` -> one `/c_set`.
-    fn c_get(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn c_get(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         for arg in args {
             let bus = bus_index(arg)?;
-            self.controller
+            controller
                 .query_control_bus(bus)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -849,14 +862,14 @@ impl OscDispatcher {
     }
 
     /// `/c_getn (start, count)...` -> one `/c_setn`.
-    fn c_getn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn c_getn(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         if !args.len().is_multiple_of(2) {
             return Err(OscError::BadArguments("c_getn expects start/count pairs"));
         }
         for pair in args.chunks_exact(2) {
             let start = bus_index(&pair[0])?;
             let count = count_arg(Some(&pair[1]))? as u32;
-            self.controller
+            controller
                 .query_control_bus_range(start, count)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -875,7 +888,7 @@ impl OscDispatcher {
     }
 
     /// `/s_get <node> <control>...` -> one `/n_set` (echoing the as-given control tokens).
-    fn s_get(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn s_get(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("s_get expects a node"))?,
@@ -883,8 +896,8 @@ impl OscDispatcher {
         let rest = &args[1..];
         let mut controls = VecDeque::with_capacity(rest.len());
         for arg in rest {
-            let control = self.control_index(node, arg)?;
-            self.controller
+            let control = self.control_index(controller, node, arg)?;
+            controller
                 .query_synth_control(node, control)
                 .map_err(|_| OscError::QueueFull)?;
             controls.push_back(arg.clone());
@@ -902,7 +915,7 @@ impl OscDispatcher {
     }
 
     /// `/s_getn <node> (control, count)...` -> one `/n_setn`.
-    fn s_getn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn s_getn(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("s_getn expects a node"))?,
@@ -913,9 +926,9 @@ impl OscDispatcher {
         }
         let mut controls = VecDeque::with_capacity(rest.len() / 2);
         for pair in rest.chunks_exact(2) {
-            let control = self.control_index(node, &pair[0])?;
+            let control = self.control_index(controller, node, &pair[0])?;
             let count = count_arg(Some(&pair[1]))?;
-            self.controller
+            controller
                 .query_synth_control_range(node, control, count)
                 .map_err(|_| OscError::QueueFull)?;
             controls.push_back(pair[0].clone());
@@ -935,7 +948,7 @@ impl OscDispatcher {
     }
 
     /// `/b_get <buf> <index>...` -> one `/b_set`.
-    fn b_get(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_get(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let buf = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_get expects a bufnum"))?,
@@ -943,7 +956,7 @@ impl OscDispatcher {
         let rest = &args[1..];
         for arg in rest {
             let index = index_arg(arg)?;
-            self.controller
+            controller
                 .query_buffer(buf as usize, index)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -960,7 +973,7 @@ impl OscDispatcher {
     }
 
     /// `/b_getn <buf> (index, count)...` -> one `/b_setn`.
-    fn b_getn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_getn(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let buf = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_getn expects a bufnum"))?,
@@ -972,7 +985,7 @@ impl OscDispatcher {
         for pair in rest.chunks_exact(2) {
             let index = index_arg(&pair[0])?;
             let count = count_arg(Some(&pair[1]))?;
-            self.controller
+            controller
                 .query_buffer_range(buf as usize, index, count)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -991,18 +1004,23 @@ impl OscDispatcher {
     }
 
     /// `/g_queryTree <group> [flag]` (`dump=false`) / `/g_dumpTree` (`dump=true`).
-    fn g_query_tree(&mut self, args: &[OscType], dump: bool) -> Result<(), OscError> {
+    fn g_query_tree(
+        &mut self,
+        controller: &mut Controller,
+        args: &[OscType],
+        dump: bool,
+    ) -> Result<(), OscError> {
         let group = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("queryTree expects a group"))?,
         )?;
         let flag = matches!(args.get(1), Some(OscType::Int(f)) if *f != 0);
         if dump {
-            self.controller
+            controller
                 .dump_tree(group, flag)
                 .map_err(|_| OscError::QueueFull)?;
         } else {
-            self.controller
+            controller
                 .query_tree(group, flag)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -1018,7 +1036,12 @@ impl OscDispatcher {
 
     /// Reassemble one query [`Reply`] into `pending`, returning whether `pending` is now complete
     /// (its OSC message emitted / dump routed).
-    fn apply_reply(&mut self, pending: &mut PendingQuery, reply: Reply) -> bool {
+    fn apply_reply(
+        &mut self,
+        controller: &Controller,
+        pending: &mut PendingQuery,
+        reply: Reply,
+    ) -> bool {
         match pending {
             PendingQuery::Sync => {
                 if let Reply::Synced { id } = reply {
@@ -1207,7 +1230,7 @@ impl OscDispatcher {
                 Reply::QueryTreeControl { index, value } => {
                     let token = last_def
                         .as_deref()
-                        .and_then(|d| self.controller.synthdef(d))
+                        .and_then(|d| controller.synthdef(d))
                         .and_then(|def| def.params.get(index as usize))
                         .map(|p| OscType::String(p.name.clone()))
                         .unwrap_or(OscType::Int(index));
@@ -1231,21 +1254,21 @@ impl OscDispatcher {
         }
     }
 
-    fn c_set(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn c_set(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         if args.is_empty() || !args.len().is_multiple_of(2) {
             return Err(OscError::BadArguments("c_set expects bus/value pairs"));
         }
         for pair in args.chunks_exact(2) {
             let bus = bus_index(&pair[0])?;
             let value = float_arg(&pair[1])?;
-            self.controller
+            controller
                 .set_control_bus(bus, value)
                 .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }
 
-    fn c_setn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn c_setn(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let mut i = 0;
         while i < args.len() {
             let start = bus_index(&args[i])?;
@@ -1257,7 +1280,7 @@ impl OscDispatcher {
                 ));
             }
             for (j, arg) in args[i..i + count].iter().enumerate() {
-                self.controller
+                controller
                     .set_control_bus(start + j as u32, float_arg(arg)?)
                     .map_err(|_| OscError::QueueFull)?;
             }
@@ -1267,7 +1290,7 @@ impl OscDispatcher {
     }
 
     /// `/c_fill (bus, count, value)...`: set each contiguous range of control buses to `value`.
-    fn c_fill(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn c_fill(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         if args.is_empty() || !args.len().is_multiple_of(3) {
             return Err(OscError::BadArguments(
                 "c_fill expects bus/count/value triples",
@@ -1278,7 +1301,7 @@ impl OscDispatcher {
             let count = count_arg(Some(&triple[1]))?;
             let value = float_arg(&triple[2])?;
             for j in 0..count {
-                self.controller
+                controller
                     .set_control_bus(start + j as u32, value)
                     .map_err(|_| OscError::QueueFull)?;
             }
@@ -1286,7 +1309,7 @@ impl OscDispatcher {
         Ok(())
     }
 
-    fn n_map(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_map(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("n_map expects a node"))?,
@@ -1296,16 +1319,16 @@ impl OscDispatcher {
             return Err(OscError::BadArguments("n_map expects control/bus pairs"));
         }
         for pair in rest.chunks_exact(2) {
-            let control = self.control_index(node, &pair[0])?;
+            let control = self.control_index(controller, node, &pair[0])?;
             let bus = map_bus(&pair[1])?;
-            self.controller
+            controller
                 .map_control(node, control, bus)
                 .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }
 
-    fn n_mapn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_mapn(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("n_mapn expects a node"))?,
@@ -1317,17 +1340,17 @@ impl OscDispatcher {
             ));
         }
         for triple in rest.chunks_exact(3) {
-            let control = self.control_index(node, &triple[0])?;
+            let control = self.control_index(controller, node, &triple[0])?;
             let bus = map_bus(&triple[1])?;
             let count = count_arg(Some(&triple[2]))?;
-            self.controller
+            controller
                 .map_control_n(node, control, bus, count)
                 .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }
 
-    fn n_mapa(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_mapa(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("n_mapa expects a node"))?,
@@ -1337,16 +1360,16 @@ impl OscDispatcher {
             return Err(OscError::BadArguments("n_mapa expects control/bus pairs"));
         }
         for pair in rest.chunks_exact(2) {
-            let control = self.control_index(node, &pair[0])?;
+            let control = self.control_index(controller, node, &pair[0])?;
             let bus = map_bus(&pair[1])?;
-            self.controller
+            controller
                 .map_control_audio(node, control, bus)
                 .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }
 
-    fn n_mapan(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn n_mapan(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let node = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("n_mapan expects a node"))?,
@@ -1358,17 +1381,17 @@ impl OscDispatcher {
             ));
         }
         for triple in rest.chunks_exact(3) {
-            let control = self.control_index(node, &triple[0])?;
+            let control = self.control_index(controller, node, &triple[0])?;
             let bus = map_bus(&triple[1])?;
             let count = count_arg(Some(&triple[2]))?;
-            self.controller
+            controller
                 .map_control_audio_n(node, control, bus, count)
                 .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }
 
-    fn b_alloc(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_alloc(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_alloc expects a bufnum"))?,
@@ -1378,8 +1401,8 @@ impl OscDispatcher {
             Some(OscType::Int(c)) => (*c).max(1) as usize,
             _ => 1,
         };
-        let sample_rate = self.controller.sample_rate();
-        self.controller
+        let sample_rate = controller.sample_rate();
+        controller
             .buffer_alloc(bufnum as usize, num_frames, num_channels, sample_rate)
             .map_err(|_| OscError::QueueFull)?;
         self.buffers.insert(
@@ -1390,26 +1413,26 @@ impl OscDispatcher {
                 sample_rate,
             },
         );
-        self.run_completion_bytes(last_blob(args));
+        self.run_completion_bytes(controller, last_blob(args));
         self.done("/b_alloc", bufnum);
         Ok(())
     }
 
-    fn b_free(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_free(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_free expects a bufnum"))?,
         )?;
-        self.controller
+        controller
             .buffer_free(bufnum as usize)
             .map_err(|_| OscError::QueueFull)?;
         self.buffers.remove(&bufnum);
-        self.run_completion_bytes(last_blob(args));
+        self.run_completion_bytes(controller, last_blob(args));
         self.done("/b_free", bufnum);
         Ok(())
     }
 
-    fn b_zero(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_zero(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_zero expects a bufnum"))?,
@@ -1418,7 +1441,7 @@ impl OscDispatcher {
         // dropped off the audio thread, the same as `/b_alloc`.
         match self.buffers.get(&bufnum).copied() {
             Some(info) => {
-                self.controller
+                controller
                     .buffer_alloc(
                         bufnum as usize,
                         info.num_frames,
@@ -1426,7 +1449,7 @@ impl OscDispatcher {
                         info.sample_rate,
                     )
                     .map_err(|_| OscError::QueueFull)?;
-                self.run_completion_bytes(last_blob(args));
+                self.run_completion_bytes(controller, last_blob(args));
                 self.done("/b_zero", bufnum);
             }
             None => self.fail("/b_zero", "unknown buffer"),
@@ -1456,7 +1479,7 @@ impl OscDispatcher {
     }
 
     /// `/b_set bufID (sampleIndex, value)...`: overwrite individual buffer samples (flat indices).
-    fn b_set(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_set(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_set expects a bufnum"))?,
@@ -1468,7 +1491,7 @@ impl OscDispatcher {
         for pair in rest.chunks_exact(2) {
             let sample = index_arg(&pair[0])?;
             let value = float_arg(&pair[1])?;
-            self.controller
+            controller
                 .buffer_set_sample(bufnum as usize, sample, value)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -1476,7 +1499,7 @@ impl OscDispatcher {
     }
 
     /// `/b_setn bufID (start, count, value...)...`: overwrite contiguous ranges of buffer samples.
-    fn b_setn(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_setn(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_setn expects a bufnum"))?,
@@ -1493,7 +1516,7 @@ impl OscDispatcher {
                 ));
             }
             for (j, arg) in rest[i..i + count].iter().enumerate() {
-                self.controller
+                controller
                     .buffer_set_sample(bufnum as usize, start + j, float_arg(arg)?)
                     .map_err(|_| OscError::QueueFull)?;
             }
@@ -1503,7 +1526,7 @@ impl OscDispatcher {
     }
 
     /// `/b_fill bufID (start, count, value)...`: fill contiguous ranges of buffer samples.
-    fn b_fill(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_fill(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_fill expects a bufnum"))?,
@@ -1518,7 +1541,7 @@ impl OscDispatcher {
             let start = index_arg(&triple[0])?;
             let count = count_arg(Some(&triple[1]))?;
             let value = float_arg(&triple[2])?;
-            self.controller
+            controller
                 .buffer_fill(bufnum as usize, start, count, value)
                 .map_err(|_| OscError::QueueFull)?;
         }
@@ -1526,7 +1549,11 @@ impl OscDispatcher {
     }
 
     /// `/b_setSampleRate bufID rate`: overwrite a buffer's sample-rate metadata.
-    fn b_set_sample_rate(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_set_sample_rate(
+        &mut self,
+        controller: &mut Controller,
+        args: &[OscType],
+    ) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_setSampleRate expects a bufnum"))?,
@@ -1535,7 +1562,7 @@ impl OscDispatcher {
             args.get(1)
                 .ok_or(OscError::BadArguments("b_setSampleRate expects a rate"))?,
         )? as f64;
-        self.controller
+        controller
             .buffer_set_sample_rate(bufnum as usize, rate)
             .map_err(|_| OscError::QueueFull)?;
         // Keep the control-side mirror in step, so `/b_query` reports the new rate.
@@ -1553,7 +1580,7 @@ impl OscDispatcher {
     /// `wavetable`(2) rejected (the consuming `Osc` UGen is unimplemented); `clear`(4) is implicit -
     /// the dispatcher has no copy of the current samples, so it always generates fresh (a documented
     /// deviation from scsynth's accumulate-when-unset). Non-mono buffers are rejected.
-    fn b_gen(&mut self, args: &[OscType]) -> Result<(), OscError> {
+    fn b_gen(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("b_gen expects a bufnum"))?,
@@ -1586,7 +1613,7 @@ impl OscDispatcher {
         };
 
         if gen_name == "copy" {
-            return self.b_gen_copy(bufnum, gen_args, completion);
+            return self.b_gen_copy(controller, bufnum, gen_args, completion);
         }
         if info.num_channels != 1 {
             self.fail("/b_gen", "b_gen requires a mono buffer");
@@ -1608,10 +1635,10 @@ impl OscDispatcher {
             bgen::normalize(&mut samples);
         }
         let buffer = Box::new(Buffer::from_interleaved(samples, 1, info.sample_rate));
-        self.controller
+        controller
             .buffer_set(bufnum as usize, buffer)
             .map_err(|_| OscError::QueueFull)?;
-        self.run_completion_bytes(completion);
+        self.run_completion_bytes(controller, completion);
         self.done("/b_gen", bufnum);
         Ok(())
     }
@@ -1620,6 +1647,7 @@ impl OscDispatcher {
     /// source buffer into the destination, on the audio thread.
     fn b_gen_copy(
         &mut self,
+        controller: &mut Controller,
         bufnum: i32,
         gen_args: &[OscType],
         completion: Option<&[u8]>,
@@ -1629,10 +1657,10 @@ impl OscDispatcher {
         let src = int_arg(gen_args.get(1).ok_or_else(bad)?)? as usize;
         let src_start = index_arg(gen_args.get(2).ok_or_else(bad)?)?;
         let count = index_arg(gen_args.get(3).ok_or_else(bad)?)?;
-        self.controller
+        controller
             .buffer_copy_region(bufnum as usize, dst_start, src, src_start, count)
             .map_err(|_| OscError::QueueFull)?;
-        self.run_completion_bytes(completion);
+        self.run_completion_bytes(controller, completion);
         self.done("/b_gen", bufnum);
         Ok(())
     }
@@ -1681,11 +1709,11 @@ impl OscDispatcher {
     }
 
     /// Apply an embedded OSC completion message (the trailing blob of an async command), if present.
-    fn run_completion_bytes(&mut self, bytes: Option<&[u8]>) {
+    fn run_completion_bytes(&mut self, controller: &mut Controller, bytes: Option<&[u8]>) {
         if let Some(bytes) = bytes
             && let Ok((_, packet)) = rosc::decoder::decode_udp(bytes)
         {
-            let _ = self.apply(&packet);
+            let _ = self.apply(controller, &packet);
         }
     }
 
@@ -1756,12 +1784,17 @@ impl OscDispatcher {
     }
 
     /// Resolve a control argument (an `int` index or a `string` name) to a parameter index.
-    fn control_index(&self, node: i32, arg: &OscType) -> Result<usize, OscError> {
+    fn control_index(
+        &self,
+        controller: &Controller,
+        node: i32,
+        arg: &OscType,
+    ) -> Result<usize, OscError> {
         match arg {
             OscType::Int(idx) => {
                 usize::try_from(*idx).map_err(|_| OscError::BadArguments("negative control index"))
             }
-            OscType::String(name) => self.resolve_param(node, None, name),
+            OscType::String(name) => self.resolve_param(controller, node, None, name),
             _ => Err(OscError::BadArguments("control must be an int or string")),
         }
     }
@@ -1770,6 +1803,7 @@ impl OscDispatcher {
     /// name resolved against the node's SynthDef (`def_name` when known, else the tracked one).
     fn apply_controls(
         &mut self,
+        controller: &mut Controller,
         node: i32,
         def_name: Option<&str>,
         args: &[OscType],
@@ -1779,11 +1813,11 @@ impl OscDispatcher {
             let index = match &args[i] {
                 OscType::Int(idx) => usize::try_from(*idx)
                     .map_err(|_| OscError::BadArguments("negative control index"))?,
-                OscType::String(name) => self.resolve_param(node, def_name, name)?,
+                OscType::String(name) => self.resolve_param(controller, node, def_name, name)?,
                 _ => return Err(OscError::BadArguments("control must be an int or string")),
             };
             let value = float_arg(&args[i + 1])?;
-            self.controller
+            controller
                 .set_control(node, index, value)
                 .map_err(|_| OscError::QueueFull)?;
             i += 2;
@@ -1793,6 +1827,7 @@ impl OscDispatcher {
 
     fn resolve_param(
         &self,
+        controller: &Controller,
         node: i32,
         def_name: Option<&str>,
         name: &str,
@@ -1805,8 +1840,7 @@ impl OscDispatcher {
                 .map(String::as_str)
                 .ok_or(OscError::UnknownNode(node))?,
         };
-        let def = self
-            .controller
+        let def = controller
             .synthdef(def_name)
             .ok_or(OscError::UnknownNode(node))?;
         def.param_index(name)
@@ -1832,6 +1866,7 @@ pub type InputBlockFn<'a> = &'a mut dyn FnMut(&mut [f32]);
 pub fn render_osc_score(
     render: &mut Render,
     dispatcher: &mut OscDispatcher,
+    controller: &mut Controller,
     score: &[ScoreEntry],
     mut input: Option<InputBlockFn<'_>>,
     mut sink: impl FnMut(&[f32]),
@@ -1844,7 +1879,7 @@ pub fn render_osc_score(
     while render.block_start() <= end_time {
         let cutoff = render.block_end();
         while next < score.len() && score[next].osc_time <= cutoff {
-            dispatcher.apply(&score[next].packet)?;
+            dispatcher.apply(controller, &score[next].packet)?;
             next += 1;
         }
         let block = match input.as_deref_mut() {
@@ -1860,7 +1895,7 @@ pub fn render_osc_score(
             dispatcher.notify(event);
         }
         while let Some(reply) = render.poll_reply() {
-            dispatcher.reply(reply);
+            dispatcher.reply(controller, reply);
         }
     }
     render.finish();
@@ -2083,7 +2118,7 @@ mod render_tests {
         };
         let (mut controller, nrt, world) = engine(opts);
         controller.add_synthdef(click_def());
-        let mut dispatcher = OscDispatcher::new(controller);
+        let mut dispatcher = OscDispatcher::new();
         let mut render = Render::new(world, nrt, &opts);
 
         let packets: Vec<OscPacket> = order
@@ -2097,6 +2132,7 @@ mod render_tests {
         render_osc_score(
             &mut render,
             &mut dispatcher,
+            &mut controller,
             &score,
             None,
             |block| out.extend_from_slice(block),
@@ -2132,13 +2168,14 @@ mod render_tests {
         };
         let (mut controller, nrt, world) = engine(opts);
         controller.add_synthdef(click_def());
-        let mut dispatcher = OscDispatcher::new(controller);
+        let mut dispatcher = OscDispatcher::new();
         let mut render = Render::new(world, nrt, &opts);
         let blob = encode_score(&[click_bundle(time_for_sample(600), 1000)]);
         let (score, _) = parse_score(&blob).expect("parse");
         render_osc_score(
             &mut render,
             &mut dispatcher,
+            &mut controller,
             &score,
             None,
             |_| {},
@@ -2168,7 +2205,7 @@ mod render_tests {
         };
         let (mut controller, nrt, world) = engine(opts);
         controller.add_synthdef(click_def());
-        let mut dispatcher = OscDispatcher::new(controller);
+        let mut dispatcher = OscDispatcher::new();
         let mut render = Render::new(world, nrt, &opts);
 
         // Schedule a click for sample 2000, plus a buffer alloc whose `Box` exercises the
@@ -2191,13 +2228,18 @@ mod render_tests {
                 }),
             ],
         });
-        dispatcher.apply(&scheduled).expect("schedule");
+        dispatcher
+            .apply(&mut controller, &scheduled)
+            .expect("schedule");
         // ...then clear the scheduler before any of it is due.
         dispatcher
-            .apply(&OscPacket::Message(OscMessage {
-                addr: "/clearSched".into(),
-                args: vec![],
-            }))
+            .apply(
+                &mut controller,
+                &OscPacket::Message(OscMessage {
+                    addr: "/clearSched".into(),
+                    args: vec![],
+                }),
+            )
             .expect("/clearSched");
 
         let mut out = Vec::new();

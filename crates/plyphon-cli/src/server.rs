@@ -1,10 +1,11 @@
 //! `plyphon server` - the real-time OSC server, behaving like `scsynth`.
 //!
 //! The engine's `World` plays on the audio thread (a cpal output stream). This control thread owns
-//! the [`OscDispatcher`] (wrapping the `Controller`) and the [`Nrt`], and pumps a single channel fed
-//! by the UDP/TCP listener threads (see [`crate::transport`]). Each loop it: applies received OSC,
-//! sends each command's replies back to its sender, surfaces node-lifecycle [`plyphon::Event`]s as
-//! `/n_go`/`/n_end`/... to clients that registered via `/notify`, and services queued buffer loads.
+//! the `Controller`, the [`OscDispatcher`] (lent the `Controller` per call), and the [`Nrt`], and
+//! pumps a single channel fed by the UDP/TCP listener threads (see [`crate::transport`]). Each loop
+//! it: applies received OSC, sends each command's replies back to its sender, surfaces node-lifecycle
+//! [`plyphon::Event`]s as `/n_go`/`/n_end`/... to clients that registered via `/notify`, and services
+//! queued buffer loads.
 //!
 //! `scsynth` splits "server commands" from "engine commands"; so do we - `/notify`, `/dumpOSC`,
 //! `/version`, and `/quit` (the ones that concern the connection/process, not the engine) are handled
@@ -21,7 +22,7 @@ use std::net::{TcpStream, UdpSocket};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use plyphon::{Nrt, engine};
+use plyphon::{Controller, Nrt, engine};
 use plyphon_osc::{OscDispatcher, ReplyTarget};
 use rosc::{OscMessage, OscPacket, OscType};
 
@@ -38,6 +39,7 @@ const TICK: Duration = Duration::from_millis(5);
 /// The server's control-side state, owned and ticked by the single control thread.
 struct Server {
     dispatcher: OscDispatcher,
+    controller: Controller,
     nrt: Nrt,
     /// Cloned UDP socket used to send replies/notifications to UDP clients.
     udp: UdpSocket,
@@ -69,7 +71,7 @@ pub fn run(args: ServerArgs) -> Result<(), String> {
         let count = load_dir(&mut controller, dir)?;
         eprintln!("loaded {count} synthdef(s) from {}", dir.display());
     }
-    let dispatcher = OscDispatcher::with_buffer_source(controller, Box::new(FsSource));
+    let dispatcher = OscDispatcher::with_source(Box::new(FsSource));
 
     // The World plays on the audio thread (output-only for v1); keep the stream alive for the run.
     let mut world = world;
@@ -93,6 +95,7 @@ pub fn run(args: ServerArgs) -> Result<(), String> {
 
     let mut server = Server {
         dispatcher,
+        controller,
         nrt,
         udp,
         tcp_writers: HashMap::new(),
@@ -181,7 +184,7 @@ fn handle_packet(server: &mut Server, client: Client, bytes: &[u8]) -> bool {
     server
         .dispatcher
         .set_reply_target(ReplyTarget::Requester(token));
-    if let Err(err) = server.dispatcher.apply(&packet) {
+    if let Err(err) = server.dispatcher.apply(&mut server.controller, &packet) {
         reply(
             server,
             client,
@@ -220,10 +223,10 @@ fn service(server: &mut Server) {
         server.dispatcher.notify_node_msg(msg);
     }
     while let Some(reply) = server.nrt.poll_reply() {
-        server.dispatcher.reply(reply);
+        server.dispatcher.reply(&server.controller, reply);
     }
     // Buffer loads queued by `apply` (`/b_allocRead`/`/b_read`); the fs source is ready at once.
-    block_on(server.dispatcher.run_pending());
+    block_on(server.dispatcher.run_pending(&mut server.controller));
 
     flush_replies(server);
 }
@@ -439,7 +442,7 @@ mod tests {
         };
         let (mut controller, nrt, mut world) = plyphon::engine(options);
         controller.add_synthdef(note_def());
-        let dispatcher = OscDispatcher::with_buffer_source(controller, Box::new(FsSource));
+        let dispatcher = OscDispatcher::with_source(Box::new(FsSource));
 
         // Drive the World on a background thread, standing in for the audio callback.
         let stop = Arc::new(AtomicBool::new(false));
@@ -460,6 +463,7 @@ mod tests {
         let server_addr = udp.local_addr().unwrap();
         let mut server = Server {
             dispatcher,
+            controller,
             nrt,
             udp,
             tcp_writers: HashMap::new(),
@@ -529,13 +533,14 @@ mod tests {
             ..Options::default()
         };
         let (controller, nrt, _world) = plyphon::engine(options);
-        let dispatcher = OscDispatcher::with_buffer_source(controller, Box::new(FsSource));
+        let dispatcher = OscDispatcher::with_source(Box::new(FsSource));
 
         let Transport { events, udp } =
             transport::start("127.0.0.1".parse().unwrap(), 0, None).unwrap();
         let server_addr = udp.local_addr().unwrap();
         let mut server = Server {
             dispatcher,
+            controller,
             nrt,
             udp,
             tcp_writers: HashMap::new(),
@@ -591,7 +596,7 @@ mod tests {
         };
         let (mut controller, nrt, mut world) = plyphon::engine(options);
         controller.add_synthdef(note_def());
-        let dispatcher = OscDispatcher::with_buffer_source(controller, Box::new(FsSource));
+        let dispatcher = OscDispatcher::with_source(Box::new(FsSource));
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_driver = stop.clone();
@@ -608,6 +613,7 @@ mod tests {
         let server_addr = udp.local_addr().unwrap();
         let server = Server {
             dispatcher,
+            controller,
             nrt,
             udp,
             tcp_writers: HashMap::new(),

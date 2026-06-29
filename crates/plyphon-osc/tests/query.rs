@@ -6,7 +6,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use plyphon::{
-    InputRef, Nrt, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
+    Controller, InputRef, Nrt, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
+    engine,
 };
 use plyphon_osc::OscDispatcher;
 use rosc::{OscMessage, OscPacket, OscType};
@@ -46,13 +47,13 @@ fn osc(addr: &str, args: Vec<OscType>) -> Vec<u8> {
     .expect("encode OSC")
 }
 
-fn engine_1ch() -> (OscDispatcher, Nrt, World) {
+fn engine_1ch() -> (OscDispatcher, Controller, Nrt, World) {
     let (controller, nrt, world) = engine(Options {
         sample_rate: SR,
         output_channels: 1,
         ..Options::default()
     });
-    (OscDispatcher::new(controller), nrt, world)
+    (OscDispatcher::new(), controller, nrt, world)
 }
 
 /// Render a couple of control blocks, so any queued query is processed and its reply pushed.
@@ -65,10 +66,14 @@ fn render(world: &mut World, blocks: usize) {
 
 /// Forward the engine's queued query answers into the dispatcher, then take the resulting OSC
 /// messages (the way a host loop would after `poll_reply`).
-fn drain_replies(dispatcher: &mut OscDispatcher, nrt: &mut Nrt) -> Vec<OscMessage> {
+fn drain_replies(
+    dispatcher: &mut OscDispatcher,
+    controller: &mut Controller,
+    nrt: &mut Nrt,
+) -> Vec<OscMessage> {
     nrt.process();
     while let Some(reply) = nrt.poll_reply() {
-        dispatcher.reply(reply);
+        dispatcher.reply(controller, reply);
     }
     dispatcher
         .take_replies()
@@ -83,13 +88,16 @@ fn drain_replies(dispatcher: &mut OscDispatcher, nrt: &mut Nrt) -> Vec<OscMessag
 /// Apply one OSC message, render, and drain the replies.
 fn query(
     dispatcher: &mut OscDispatcher,
+    controller: &mut Controller,
     nrt: &mut Nrt,
     world: &mut World,
     bytes: &[u8],
 ) -> Vec<OscMessage> {
-    dispatcher.apply_bytes(bytes).expect("apply getter");
+    dispatcher
+        .apply_bytes(controller, bytes)
+        .expect("apply getter");
     render(world, 2);
-    drain_replies(dispatcher, nrt)
+    drain_replies(dispatcher, controller, nrt)
 }
 
 fn find<'a>(msgs: &'a [OscMessage], addr: &str) -> Option<&'a OscMessage> {
@@ -98,9 +106,10 @@ fn find<'a>(msgs: &'a [OscMessage], addr: &str) -> Option<&'a OscMessage> {
 
 #[test]
 fn sync_replies_with_synced() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/sync", vec![OscType::Int(42)]),
@@ -111,30 +120,42 @@ fn sync_replies_with_synced() {
 
 #[test]
 fn status_reports_counts() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
-    d.controller().add_synthdef(sine_def());
-    d.apply_bytes(&osc(
-        "/g_new",
-        vec![
-            OscType::Int(2000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
-    .expect("/g_new");
-    for id in [1000, 1001] {
-        d.apply_bytes(&osc(
-            "/s_new",
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    controller.add_synthdef(sine_def());
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/g_new",
             vec![
-                OscType::String("sine".to_string()),
-                OscType::Int(id),
+                OscType::Int(2000),
                 OscType::Int(1),
                 OscType::Int(ROOT_GROUP_ID),
             ],
-        ))
+        ),
+    )
+    .expect("/g_new");
+    for id in [1000, 1001] {
+        d.apply_bytes(
+            &mut controller,
+            &osc(
+                "/s_new",
+                vec![
+                    OscType::String("sine".to_string()),
+                    OscType::Int(id),
+                    OscType::Int(1),
+                    OscType::Int(ROOT_GROUP_ID),
+                ],
+            ),
+        )
         .expect("/s_new");
     }
-    let replies = query(&mut d, &mut nrt, &mut world, &osc("/status", vec![]));
+    let replies = query(
+        &mut d,
+        &mut controller,
+        &mut nrt,
+        &mut world,
+        &osc("/status", vec![]),
+    );
     let status = find(&replies, "/status.reply").expect("/status.reply");
     // 1 reserved, ugens (2 synths * 2 units), synths, groups (root + new), synthdefs, 2x cpu, 2x sr.
     assert_eq!(
@@ -155,9 +176,10 @@ fn status_reports_counts() {
 
 #[test]
 fn rt_memory_status_is_consistent() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/rtMemoryStatus", vec![]),
@@ -173,31 +195,38 @@ fn rt_memory_status_is_consistent() {
 
 #[test]
 fn n_query_describes_node_and_group() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
-    d.controller().add_synthdef(sine_def());
-    d.apply_bytes(&osc(
-        "/g_new",
-        vec![
-            OscType::Int(2000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    controller.add_synthdef(sine_def());
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/g_new",
+            vec![
+                OscType::Int(2000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/g_new");
-    d.apply_bytes(&osc(
-        "/s_new",
-        vec![
-            OscType::String("sine".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(2000),
-        ],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(2000),
+            ],
+        ),
+    )
     .expect("/s_new");
 
     // The synth: parent 2000, no siblings, isGroup 0.
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/n_query", vec![OscType::Int(1000)]),
@@ -217,6 +246,7 @@ fn n_query_describes_node_and_group() {
     // The group: parent root, head==tail==1000, isGroup 1.
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/n_query", vec![OscType::Int(2000)]),
@@ -239,6 +269,7 @@ fn n_query_describes_node_and_group() {
     // requester (not a broadcast `/n_info`).
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/n_query", vec![OscType::Int(7777)]),
@@ -256,21 +287,25 @@ fn n_query_describes_node_and_group() {
 
 #[test]
 fn c_get_and_getn_read_buses() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
-    d.apply_bytes(&osc(
-        "/c_setn",
-        vec![
-            OscType::Int(4),
-            OscType::Int(3),
-            OscType::Float(0.25),
-            OscType::Float(0.5),
-            OscType::Float(0.75),
-        ],
-    ))
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/c_setn",
+            vec![
+                OscType::Int(4),
+                OscType::Int(3),
+                OscType::Float(0.25),
+                OscType::Float(0.5),
+                OscType::Float(0.75),
+            ],
+        ),
+    )
     .expect("/c_setn");
 
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/c_get", vec![OscType::Int(4), OscType::Int(6)]),
@@ -288,6 +323,7 @@ fn c_get_and_getn_read_buses() {
 
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/c_getn", vec![OscType::Int(4), OscType::Int(3)]),
@@ -307,31 +343,38 @@ fn c_get_and_getn_read_buses() {
 
 #[test]
 fn s_get_echoes_control_token() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
-    d.controller().add_synthdef(sine_def());
-    d.apply_bytes(&osc(
-        "/s_new",
-        vec![
-            OscType::String("sine".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    controller.add_synthdef(sine_def());
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/s_new");
-    d.apply_bytes(&osc(
-        "/n_set",
-        vec![
-            OscType::Int(1000),
-            OscType::String("freq".to_string()),
-            OscType::Float(330.0),
-        ],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/n_set",
+            vec![
+                OscType::Int(1000),
+                OscType::String("freq".to_string()),
+                OscType::Float(330.0),
+            ],
+        ),
+    )
     .expect("/n_set");
 
     // By name: the reply echoes the string token.
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc(
@@ -352,6 +395,7 @@ fn s_get_echoes_control_token() {
     // By index: the reply echoes the int token.
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/s_get", vec![OscType::Int(1000), OscType::Int(0)]),
@@ -365,6 +409,7 @@ fn s_get_echoes_control_token() {
     // Unknown node -> /fail.
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/s_get", vec![OscType::Int(9999), OscType::Int(0)]),
@@ -377,27 +422,34 @@ fn s_get_echoes_control_token() {
 
 #[test]
 fn b_get_and_getn_read_samples() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
-    d.apply_bytes(&osc(
-        "/b_alloc",
-        vec![OscType::Int(0), OscType::Int(8), OscType::Int(1)],
-    ))
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/b_alloc",
+            vec![OscType::Int(0), OscType::Int(8), OscType::Int(1)],
+        ),
+    )
     .expect("/b_alloc");
-    d.apply_bytes(&osc(
-        "/b_setn",
-        vec![
-            OscType::Int(0),
-            OscType::Int(0),
-            OscType::Int(3),
-            OscType::Float(0.1),
-            OscType::Float(0.2),
-            OscType::Float(0.3),
-        ],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/b_setn",
+            vec![
+                OscType::Int(0),
+                OscType::Int(0),
+                OscType::Int(3),
+                OscType::Float(0.1),
+                OscType::Float(0.2),
+                OscType::Float(0.3),
+            ],
+        ),
+    )
     .expect("/b_setn");
 
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc(
@@ -419,6 +471,7 @@ fn b_get_and_getn_read_samples() {
 
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc(
@@ -442,31 +495,38 @@ fn b_get_and_getn_read_samples() {
 
 #[test]
 fn g_query_tree_streams_the_subtree() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
-    d.controller().add_synthdef(sine_def());
-    d.apply_bytes(&osc(
-        "/g_new",
-        vec![
-            OscType::Int(2000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    controller.add_synthdef(sine_def());
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/g_new",
+            vec![
+                OscType::Int(2000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/g_new");
-    d.apply_bytes(&osc(
-        "/s_new",
-        vec![
-            OscType::String("sine".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(2000),
-        ],
-    ))
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(2000),
+            ],
+        ),
+    )
     .expect("/s_new");
 
     // flag 0: structure only (root -> group 2000 -> synth 1000).
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc(
@@ -492,6 +552,7 @@ fn g_query_tree_streams_the_subtree() {
     // flag 1: include the synth's control (freq = 440 default).
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc("/g_queryTree", vec![OscType::Int(2000), OscType::Int(1)]),
@@ -515,17 +576,20 @@ fn g_query_tree_streams_the_subtree() {
 
 #[test]
 fn g_dump_tree_feeds_the_sink_not_osc() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
-    d.controller().add_synthdef(sine_def());
-    d.apply_bytes(&osc(
-        "/s_new",
-        vec![
-            OscType::String("sine".to_string()),
-            OscType::Int(1000),
-            OscType::Int(1),
-            OscType::Int(ROOT_GROUP_ID),
-        ],
-    ))
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    controller.add_synthdef(sine_def());
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
     .expect("/s_new");
 
     let captured = Rc::new(RefCell::new(String::new()));
@@ -534,6 +598,7 @@ fn g_dump_tree_feeds_the_sink_not_osc() {
 
     let replies = query(
         &mut d,
+        &mut controller,
         &mut nrt,
         &mut world,
         &osc(
@@ -558,19 +623,22 @@ fn g_dump_tree_feeds_the_sink_not_osc() {
 
 #[test]
 fn replies_keep_fifo_order() {
-    let (mut d, mut nrt, mut world) = engine_1ch();
-    d.apply_bytes(&osc("/c_set", vec![OscType::Int(0), OscType::Float(1.5)]))
-        .expect("/c_set");
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    d.apply_bytes(
+        &mut controller,
+        &osc("/c_set", vec![OscType::Int(0), OscType::Float(1.5)]),
+    )
+    .expect("/c_set");
 
     // Three getters in one burst: /c_get, /sync, /c_get. Their replies must come back in order.
-    d.apply_bytes(&osc("/c_get", vec![OscType::Int(0)]))
+    d.apply_bytes(&mut controller, &osc("/c_get", vec![OscType::Int(0)]))
         .expect("/c_get 1");
-    d.apply_bytes(&osc("/sync", vec![OscType::Int(7)]))
+    d.apply_bytes(&mut controller, &osc("/sync", vec![OscType::Int(7)]))
         .expect("/sync");
-    d.apply_bytes(&osc("/c_get", vec![OscType::Int(0)]))
+    d.apply_bytes(&mut controller, &osc("/c_get", vec![OscType::Int(0)]))
         .expect("/c_get 2");
     render(&mut world, 2);
-    let replies = drain_replies(&mut d, &mut nrt);
+    let replies = drain_replies(&mut d, &mut controller, &mut nrt);
     let addrs: Vec<&str> = replies.iter().map(|m| m.addr.as_str()).collect();
     assert_eq!(
         addrs,

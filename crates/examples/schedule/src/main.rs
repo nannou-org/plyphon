@@ -16,7 +16,8 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use plyphon::{
-    InputRef, Nrt, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
+    Controller, InputRef, Nrt, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
+    engine,
 };
 use plyphon_osc::OscDispatcher;
 use rosc::{OscBundle, OscMessage, OscPacket, OscTime, OscType};
@@ -34,9 +35,11 @@ const LEAD_SECS: f64 = 0.3;
 /// Peak amplitude of each blip.
 const AMP: f32 = 0.3;
 
-/// The control side: the OSC front-end that schedules the phrase, and the NRT cleanup.
+/// The control side: the OSC front-end that schedules the phrase, the `Controller` it applies to
+/// (owned here, lent per call), and the NRT cleanup.
 struct Sched {
     dispatcher: OscDispatcher,
+    controller: Controller,
     nrt: Nrt,
 }
 
@@ -111,7 +114,8 @@ fn build(sample_rate: f64, channels: usize) -> (Sched, World) {
     controller.add_synthdef(blip_def(channels));
     (
         Sched {
-            dispatcher: OscDispatcher::new(controller),
+            dispatcher: OscDispatcher::new(),
+            controller,
             nrt,
         },
         world,
@@ -151,9 +155,10 @@ fn schedule_phrase(sched: &mut Sched, base: u64) {
     for k in (0..NUM_BEATS).rev() {
         let time = base + k as u64 * beat_units;
         let freq = SCALE[k % SCALE.len()];
-        let _ = sched
-            .dispatcher
-            .apply(&beat_bundle(time, 1000 + k as i32, freq));
+        let _ = sched.dispatcher.apply(
+            &mut sched.controller,
+            &beat_bundle(time, 1000 + k as i32, freq),
+        );
     }
 }
 
@@ -342,10 +347,12 @@ mod tests {
             ..Options::default()
         });
         controller.add_synthdef(click_def());
-        let mut dispatcher = OscDispatcher::new(controller);
+        let mut dispatcher = OscDispatcher::new();
         for &i in order {
             let bundle = click_bundle(time_for_sample(targets[i]), 1000 + i as i32);
-            dispatcher.apply(&bundle).expect("schedule a click");
+            dispatcher
+                .apply(&mut controller, &bundle)
+                .expect("schedule a click");
         }
         world
     }
