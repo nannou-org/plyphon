@@ -66,6 +66,9 @@ pub fn encode_trigger(trigger: Trigger) -> OscPacket {
 
 /// A `SendReply` [`NodeMsg`] as `/<label> [nodeID, replyID, values...]`; `None` for a kind that has
 /// no OSC form. (A non-UTF-8 label degrades to an empty path, as scsynth-style hosts tolerate.)
+///
+/// [`NodeMsgKind::Poll`] has no OSC form - a `Poll`/`Dpoll` value is posted to the host's console by
+/// the server layer (which owns I/O), not emitted - so it returns `None`.
 pub fn encode_node_msg(msg: NodeMsg) -> Option<OscPacket> {
     match msg.kind {
         NodeMsgKind::Reply => {
@@ -78,6 +81,7 @@ pub fn encode_node_msg(msg: NodeMsg) -> Option<OscPacket> {
             }
             Some(message(path, args))
         }
+        NodeMsgKind::Poll => None,
     }
 }
 

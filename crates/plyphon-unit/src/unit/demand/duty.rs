@@ -3,7 +3,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::unit::demand::{DemandAccess, demand_next, demand_reset};
+use crate::unit::demand::{DemandAccess, DemandWorld, demand_next, demand_reset};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
@@ -38,22 +38,23 @@ impl Duty {
     const DONE: usize = 3;
 
     /// Demand the next duration (in frames) and level when the count elapses. Returns the done action
-    /// to apply if the duration source is exhausted. Takes `ins`/`demand` as disjoint borrows so the
-    /// caller can hold its output scratch at the same time (audio rate writes per sample).
+    /// to apply if the duration source is exhausted. Takes `ins`/`demand`/`world` as disjoint borrows
+    /// so the caller can hold its output scratch at the same time (audio rate writes per sample).
     fn refill(
         &mut self,
         ins: &Inputs<'_>,
         demand: &mut DemandAccess<'_>,
+        world: &mut DemandWorld<'_, '_>,
         frame_rate: f64,
     ) -> DoneAction {
         let mut done = DoneAction::Nothing;
-        let dur = demand_next(ins, demand, Self::DUR);
+        let dur = demand_next(ins, demand, world, Self::DUR);
         if dur.is_nan() {
             done = DoneAction::from_code(ins.control(Self::DONE));
         } else {
             self.count += dur as f64 * frame_rate;
         }
-        let level = demand_next(ins, demand, Self::LEVEL);
+        let level = demand_next(ins, demand, world, Self::LEVEL);
         if !level.is_nan() {
             self.level = level;
         }
@@ -64,12 +65,20 @@ impl Duty {
 impl Unit for Duty {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let mut done = DoneAction::Nothing;
+        // The demand sources' world reach, built once from disjoint `ctx` fields (buffers/node_msgs);
+        // the per-sample output borrow (`ctx.outs`) and the pull borrows (`ctx.ins`/`ctx.demand`) are
+        // all separate fields, so they coexist.
+        let mut world = DemandWorld {
+            buffers: &mut *ctx.buffers,
+            node_id: ctx.node_id,
+            node_msgs: &mut ctx.node_msgs,
+        };
 
         // A rising reset restarts the count and resets the demand sources.
         let reset = ctx.ins.control(Self::RESET);
         if reset > 0.0 && self.prev_reset <= 0.0 {
-            demand_reset(&ctx.ins, &mut ctx.demand, Self::LEVEL);
-            demand_reset(&ctx.ins, &mut ctx.demand, Self::DUR);
+            demand_reset(&ctx.ins, &mut ctx.demand, &mut world, Self::LEVEL);
+            demand_reset(&ctx.ins, &mut ctx.demand, &mut world, Self::DUR);
             self.count = 0.0;
         }
         self.prev_reset = reset;
@@ -79,7 +88,7 @@ impl Unit for Duty {
             let out = ctx.outs.audio(0);
             for o in out.iter_mut() {
                 if self.count <= 0.0 {
-                    done = done.max(self.refill(&ctx.ins, &mut ctx.demand, frame_rate));
+                    done = done.max(self.refill(&ctx.ins, &mut ctx.demand, &mut world, frame_rate));
                 }
                 *o = self.level;
                 self.count -= 1.0;
@@ -88,7 +97,7 @@ impl Unit for Duty {
             // Control rate: one value per block, counting down in control frames.
             let frame_rate = ctx.control.sample_rate;
             if self.count <= 0.0 {
-                done = done.max(self.refill(&ctx.ins, &mut ctx.demand, frame_rate));
+                done = done.max(self.refill(&ctx.ins, &mut ctx.demand, &mut world, frame_rate));
             }
             *ctx.outs.control(0) = self.level;
             self.count -= 1.0;

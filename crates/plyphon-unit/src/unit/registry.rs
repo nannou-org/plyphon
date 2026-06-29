@@ -15,7 +15,10 @@ use crate::unit::binary_op::BinaryOpCtor;
 use crate::unit::buf_wr::BufWrCtor;
 use crate::unit::delay::DelayNCtor;
 use crate::unit::demand::BuiltDemandUnit;
+use crate::unit::demand::dbufrd::DbufrdCtor;
+use crate::unit::demand::dbufwr::DbufwrCtor;
 use crate::unit::demand::demand_ugen::DemandCtor;
+use crate::unit::demand::dpoll::DpollCtor;
 use crate::unit::demand::dseq::DseqCtor;
 use crate::unit::demand::dseries::DseriesCtor;
 use crate::unit::demand::duty::DutyCtor;
@@ -209,6 +212,9 @@ impl UnitRegistry {
         registry.register_demand("Dseq", Box::new(DseqCtor));
         registry.register_demand("Dseries", Box::new(DseriesCtor));
         registry.register_demand("Dwhite", Box::new(DwhiteCtor));
+        registry.register_demand("Dbufrd", Box::new(DbufrdCtor));
+        registry.register_demand("Dbufwr", Box::new(DbufwrCtor));
+        registry.register_demand("Dpoll", Box::new(DpollCtor));
         registry
     }
 

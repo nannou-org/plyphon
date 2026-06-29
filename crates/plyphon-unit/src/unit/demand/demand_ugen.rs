@@ -3,7 +3,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::unit::demand::{demand_next, demand_reset};
+use crate::unit::demand::{DemandWorld, demand_next, demand_reset};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
@@ -50,16 +50,36 @@ impl Demand {
 
     /// Reset every demand source (rising `reset`).
     fn reset_sources(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let mut world = DemandWorld {
+            buffers: &mut *ctx.buffers,
+            node_id: ctx.node_id,
+            node_msgs: &mut ctx.node_msgs,
+        };
         for k in 0..self.num_outputs as usize {
-            demand_reset(&ctx.ins, &mut ctx.demand, Self::FIRST_SOURCE + k);
+            demand_reset(
+                &ctx.ins,
+                &mut ctx.demand,
+                &mut world,
+                Self::FIRST_SOURCE + k,
+            );
         }
     }
 
     /// Demand the next value from each source into `prev_out` (rising `trig`). An exhausted source
     /// (`NaN`) keeps its previous value.
     fn pull_all(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let mut world = DemandWorld {
+            buffers: &mut *ctx.buffers,
+            node_id: ctx.node_id,
+            node_msgs: &mut ctx.node_msgs,
+        };
         for k in 0..self.num_outputs as usize {
-            let x = demand_next(&ctx.ins, &mut ctx.demand, Self::FIRST_SOURCE + k);
+            let x = demand_next(
+                &ctx.ins,
+                &mut ctx.demand,
+                &mut world,
+                Self::FIRST_SOURCE + k,
+            );
             if !x.is_nan() {
                 self.prev_out[k] = x;
             }

@@ -137,8 +137,8 @@ pub use binary_op::BinaryOp;
 pub use buf_wr::BufWr;
 pub use delay::DelayN;
 pub use demand::{
-    Demand, DemandAccess, DemandCtx, DemandUnit, DemandVtbl, Dseq, Dseries, Duty, Dwhite,
-    demand_next, demand_reset,
+    Dbufrd, Dbufwr, Demand, DemandAccess, DemandCtx, DemandUnit, DemandVtbl, DemandWorld, Dpoll,
+    Dseq, Dseries, Duty, Dwhite, demand_next, demand_reset,
 };
 pub use disk_in::DiskIn;
 pub use disk_out::DiskOut;
@@ -214,6 +214,9 @@ pub const MAX_VALUES: usize = 32;
 pub enum NodeMsgKind {
     /// `SendReply`: emit an OSC message `/<label> [node, reply_id, values...]`.
     Reply,
+    /// `Poll`/`Dpoll`: post `label: value` to the host's console (no OSC form). `reply_id` carries the
+    /// optional trigger id (scsynth's `trigid`); the polled value is `values[0]`.
+    Poll,
 }
 
 /// A message a unit emits from the audio thread for the host - `SendReply`'s analogue of [`Trigger`],
@@ -257,6 +260,15 @@ impl<'a> NodeMsgSink<'a> {
     pub fn push(&mut self, msg: NodeMsg) {
         if self.buf.len() < self.capacity {
             self.buf.push(msg);
+        }
+    }
+
+    /// A shorter-lived view over the same buffer, so the sink can be threaded through a nested borrow
+    /// (e.g. into a demand pull, via [`DemandCtx`](crate::unit::demand::DemandCtx)) without moving it.
+    pub fn reborrow(&mut self) -> NodeMsgSink<'_> {
+        NodeMsgSink {
+            buf: &mut *self.buf,
+            capacity: self.capacity,
         }
     }
 }

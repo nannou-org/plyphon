@@ -20,7 +20,10 @@
 //!   SynthDef that would exceed either is rejected at compile time (off-RT), keeping the audio thread
 //!   bounded and `unsafe`-free.
 
+pub mod dbufrd;
+pub mod dbufwr;
 pub mod demand_ugen;
+pub mod dpoll;
 pub mod dseq;
 pub mod dseries;
 pub mod duty;
@@ -29,10 +32,17 @@ pub mod dwhite;
 use alloc::boxed::Box;
 
 use bytemuck::Pod;
+use plyphon_dsp::buffer::{Buffer, BufferTable};
 
-use crate::unit::{InputSource, Inputs, ReseedFn};
+use crate::unit::{
+    InputSource, Inputs, MAX_LABEL, MAX_VALUES, NodeMsg, NodeMsgKind, NodeMsgSink, ReseedFn,
+    buffer_at, buffer_at_mut,
+};
 
+pub use dbufrd::Dbufrd;
+pub use dbufwr::Dbufwr;
 pub use demand_ugen::Demand;
+pub use dpoll::Dpoll;
 pub use dseq::Dseq;
 pub use dseries::Dseries;
 pub use duty::Duty;
@@ -149,9 +159,28 @@ pub fn demand_unit_spec<T: DemandUnit>(state: T) -> BuiltDemandUnit {
     }
 }
 
+/// The shared-world reach a demand-rate unit needs while producing - the pull-side analogue of the
+/// world fields on [`ProcessCtx`](super::ProcessCtx). A consumer (`Demand`/`Duty`) builds this from
+/// its own disjoint `ctx` fields and threads it into the pull; most demand sources ignore it, but
+/// `Dbufrd`/`Dbufwr` reach the buffer table through it and `Dpoll` posts through it. Bundled (rather
+/// than threaded as loose args) so a later addition - e.g. a trigger sink - is a one-field change.
+///
+/// Two lifetimes because the message sink itself borrows the World's `Vec`: `'w` is how long the
+/// consumer lends its `ctx` fields for the pull, `'s` the lifetime of that inner borrow.
+pub struct DemandWorld<'w, 's> {
+    /// The World's shared buffer table (`Dbufrd`/`Dbufwr`), reached via [`DemandCtx::buffer`] /
+    /// [`DemandCtx::buffer_mut`].
+    pub buffers: &'w mut BufferTable,
+    /// The enclosing synth's node id (`Dpoll` tags its post with it).
+    pub node_id: i32,
+    /// Sink for host messages (`Dpoll` posts here, via [`DemandCtx::post`]).
+    pub node_msgs: &'w mut NodeMsgSink<'s>,
+}
+
 /// What a demand unit touches while producing or resetting - the pull-side analogue of
 /// [`ProcessCtx`](super::ProcessCtx). It exposes the unit's own inputs and, crucially, lets it pull
-/// the *next value* of (or *reset*) any input that is itself a demand unit, recursing the pull.
+/// the *next value* of (or *reset*) any input that is itself a demand unit, recursing the pull. It
+/// also carries the [`DemandWorld`] reach so a source can read/write a buffer or post a value.
 pub struct DemandCtx<'a> {
     plan: &'a [DemandVtbl],
     arena: &'a mut [u8],
@@ -159,6 +188,9 @@ pub struct DemandCtx<'a> {
     audio_wires: &'a [f32],
     control_wires: &'a [f32],
     block_size: usize,
+    buffers: &'a mut BufferTable,
+    node_id: i32,
+    node_msgs: NodeMsgSink<'a>,
 }
 
 impl DemandCtx<'_> {
@@ -177,12 +209,20 @@ impl DemandCtx<'_> {
     /// recursively; a constant or wire input just returns its current value.
     pub fn demand(&mut self, k: usize) -> f32 {
         match self.inputs[k] {
+            // The recursive pull threads a fresh `DemandWorld` built from this ctx's own disjoint
+            // fields (arena, buffers, node_msgs are separate borrows), so a nested source still reaches
+            // the world.
             InputSource::Demand(d) => pull(
                 self.plan,
                 &mut *self.arena,
                 self.audio_wires,
                 self.control_wires,
                 self.block_size,
+                &mut DemandWorld {
+                    buffers: &mut *self.buffers,
+                    node_id: self.node_id,
+                    node_msgs: &mut self.node_msgs,
+                },
                 d as usize,
                 Op::Produce,
             ),
@@ -202,10 +242,48 @@ impl DemandCtx<'_> {
                 self.audio_wires,
                 self.control_wires,
                 self.block_size,
+                &mut DemandWorld {
+                    buffers: &mut *self.buffers,
+                    node_id: self.node_id,
+                    node_msgs: &mut self.node_msgs,
+                },
                 d as usize,
                 Op::Reset,
             );
         }
+    }
+
+    /// The flat buffer at `index`, if one is installed - for a demand-rate reader (`Dbufrd`).
+    /// RT-safe (no panic; a stream/empty/out-of-range slot yields `None`).
+    pub fn buffer(&self, index: usize) -> Option<&Buffer> {
+        buffer_at(self.buffers, index)
+    }
+
+    /// The flat buffer at `index`, mutably - for a demand-rate writer (`Dbufwr`). RT-safe (no panic).
+    pub fn buffer_mut(&mut self, index: usize) -> Option<&mut Buffer> {
+        buffer_at_mut(self.buffers, index)
+    }
+
+    /// The enclosing synth's node id, for a source that tags an emitted message (`Dpoll`).
+    pub fn node_id(&self) -> i32 {
+        self.node_id
+    }
+
+    /// Post one polled `value` to the host (`Dpoll`): a [`NodeMsg`] of kind [`NodeMsgKind::Poll`]
+    /// carrying the baked `label` and the optional `trigid` (echoed as `reply_id`). Best-effort - it
+    /// is dropped if the block's message capacity is reached, like every other node message.
+    pub fn post(&mut self, label: &[u8; MAX_LABEL], label_len: u32, trigid: i32, value: f32) {
+        let mut values = [0.0f32; MAX_VALUES];
+        values[0] = value;
+        self.node_msgs.push(NodeMsg {
+            node: self.node_id,
+            reply_id: trigid,
+            kind: NodeMsgKind::Poll,
+            label: *label,
+            label_len,
+            values,
+            num_values: 1,
+        });
     }
 }
 
@@ -217,12 +295,16 @@ impl DemandCtx<'_> {
 /// recursive [`DemandCtx::demand`] can reborrow the arena and descend into a *different* slot - and
 /// the graph is a DAG, so a unit never targets its own slot. Allocation-free; the buffer is fixed at
 /// [`MAX_DEMAND_STATE`] and compilation guarantees `state_size <= MAX_DEMAND_STATE`.
+// The argument list (plan, arena, the two wire arrays, block size, world, unit, op) is the genuine set
+// this recursive core threads; bundling it would only obscure the reborrow at each call.
+#[allow(clippy::too_many_arguments)]
 fn pull(
     plan: &[DemandVtbl],
     arena: &mut [u8],
     audio_wires: &[f32],
     control_wires: &[f32],
     block_size: usize,
+    world: &mut DemandWorld<'_, '_>,
     unit: usize,
     op: Op,
 ) -> f32 {
@@ -243,6 +325,11 @@ fn pull(
             audio_wires,
             control_wires,
             block_size,
+            // Reborrow the world for this level; the inner `node_msgs` sink is reborrowed by value so
+            // `DemandCtx` keeps a single lifetime while still being able to recurse.
+            buffers: &mut *world.buffers,
+            node_id: world.node_id,
+            node_msgs: world.node_msgs.reborrow(),
         };
         match op {
             Op::Produce => (v.produce)(&mut buf.0[..size], &mut ctx),
@@ -290,27 +377,29 @@ impl<'a> DemandAccess<'a> {
         }
     }
 
-    /// Pull the next value of demand unit `unit`.
-    pub fn produce(&mut self, unit: usize) -> f32 {
+    /// Pull the next value of demand unit `unit`, threading the consumer's [`DemandWorld`] reach.
+    pub fn produce(&mut self, world: &mut DemandWorld<'_, '_>, unit: usize) -> f32 {
         pull(
             self.plan,
             &mut *self.state,
             self.audio_wires,
             self.control_wires,
             self.block_size,
+            world,
             unit,
             Op::Produce,
         )
     }
 
-    /// Reset demand unit `unit`.
-    pub fn reset(&mut self, unit: usize) {
+    /// Reset demand unit `unit`, threading the consumer's [`DemandWorld`] reach.
+    pub fn reset(&mut self, world: &mut DemandWorld<'_, '_>, unit: usize) {
         pull(
             self.plan,
             &mut *self.state,
             self.audio_wires,
             self.control_wires,
             self.block_size,
+            world,
             unit,
             Op::Reset,
         );
@@ -322,20 +411,30 @@ impl<'a> DemandAccess<'a> {
 /// value is returned (a constant or wire behaves like a source that yields that value forever).
 /// Returns [`f32::NAN`] when a pulled source is exhausted.
 ///
-/// Takes the [`Inputs`] and [`DemandAccess`] as separate borrows (the `io`-style free-fn convention)
-/// so a consumer can pull while it holds a `&mut` borrow of its output scratch - they are disjoint
-/// fields of [`ProcessCtx`](super::ProcessCtx).
-pub fn demand_next(ins: &Inputs<'_>, demand: &mut DemandAccess<'_>, input: usize) -> f32 {
+/// Takes the [`Inputs`], [`DemandAccess`] and [`DemandWorld`] as separate borrows (the `io`-style
+/// free-fn convention) so a consumer can pull while it holds a `&mut` borrow of its output scratch -
+/// these are all disjoint fields of [`ProcessCtx`](super::ProcessCtx).
+pub fn demand_next(
+    ins: &Inputs<'_>,
+    demand: &mut DemandAccess<'_>,
+    world: &mut DemandWorld<'_, '_>,
+    input: usize,
+) -> f32 {
     match ins.source(input) {
-        InputSource::Demand(d) => demand.produce(d as usize),
+        InputSource::Demand(d) => demand.produce(world, d as usize),
         _ => ins.control(input),
     }
 }
 
 /// Reset a consumer's input `input` - scsynth's `RESETINPUT`. A demand-source input is reset
 /// (recursing); a constant or wire input is a no-op.
-pub fn demand_reset(ins: &Inputs<'_>, demand: &mut DemandAccess<'_>, input: usize) {
+pub fn demand_reset(
+    ins: &Inputs<'_>,
+    demand: &mut DemandAccess<'_>,
+    world: &mut DemandWorld<'_, '_>,
+    input: usize,
+) {
     if let InputSource::Demand(d) = ins.source(input) {
-        demand.reset(d as usize);
+        demand.reset(world, d as usize);
     }
 }

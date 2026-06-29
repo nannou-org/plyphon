@@ -22,7 +22,7 @@ use std::net::{TcpStream, UdpSocket};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use plyphon::{Controller, Nrt, engine};
+use plyphon::{Controller, NodeMsg, NodeMsgKind, Nrt, engine};
 use plyphon_osc::{OscDispatcher, ReplyTarget};
 use rosc::{OscMessage, OscPacket, OscType};
 
@@ -209,6 +209,14 @@ fn token_for(server: &mut Server, client: Client) -> u64 {
     token
 }
 
+/// Post a `Poll`/`Dpoll` value to the console. A polled value has no OSC form (see
+/// [`encode_node_msg`](plyphon_osc) returning `None` for [`NodeMsgKind::Poll`]); the server owns I/O,
+/// so it prints `label: value`, mirroring scsynth's post-window output.
+fn post_poll(msg: &NodeMsg) {
+    let label = std::str::from_utf8(&msg.label[..msg.label_len as usize]).unwrap_or("");
+    println!("{label}: {}", msg.values[0]);
+}
+
 /// Run NRT cleanup, surface node notifications and async query/load answers, then route every queued
 /// reply by its tag (see [`flush_replies`]).
 fn service(server: &mut Server) {
@@ -220,7 +228,11 @@ fn service(server: &mut Server) {
         server.dispatcher.notify_trigger(trigger);
     }
     while let Some(msg) = server.nrt.poll_node_msg() {
-        server.dispatcher.notify_node_msg(msg);
+        match msg.kind {
+            // `Poll`/`Dpoll` posts to the console; the server owns I/O, so it prints rather than emit.
+            NodeMsgKind::Poll => post_poll(&msg),
+            _ => server.dispatcher.notify_node_msg(msg),
+        }
     }
     while let Some(reply) = server.nrt.poll_reply() {
         server.dispatcher.reply(&server.controller, reply);
