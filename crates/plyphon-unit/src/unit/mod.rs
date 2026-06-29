@@ -20,6 +20,8 @@ pub mod demand;
 pub mod disk_in;
 pub mod disk_out;
 pub mod env;
+#[cfg(feature = "fft")]
+pub mod fft;
 pub mod filter;
 pub mod info;
 pub mod input;
@@ -144,6 +146,8 @@ pub use demand::{
 pub use disk_in::DiskIn;
 pub use disk_out::DiskOut;
 pub use env::EnvGen;
+#[cfg(feature = "fft")]
+pub use fft::{Fft, Ifft};
 pub use filter::Butter;
 pub use info::{BufInfo, BufInfoKind, Info, InfoKind};
 pub use input::In;

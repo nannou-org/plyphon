@@ -98,4 +98,11 @@ pub enum BuildError {
         /// The `MAX_VALUES` limit.
         limit: usize,
     },
+    /// An `FFT`/`IFFT` unit was given an unsupported FFT size. The size (its constant `winsize` input)
+    /// must be a power of two the engine has a plan for - `[64, 16384]`.
+    #[error("unsupported FFT size {size}: must be a power of two in [64, 16384]")]
+    UnsupportedFftSize {
+        /// The requested FFT size.
+        size: usize,
+    },
 }

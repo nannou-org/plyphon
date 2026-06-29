@@ -26,6 +26,8 @@ use crate::unit::demand::dwhite::DwhiteCtor;
 use crate::unit::disk_in::DiskInCtor;
 use crate::unit::disk_out::DiskOutCtor;
 use crate::unit::env::EnvGenCtor;
+#[cfg(feature = "fft")]
+use crate::unit::fft::{FftCtor, IfftCtor};
 use crate::unit::filter::{ButterCtor, Kind};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
 use crate::unit::input::InCtor;
@@ -215,6 +217,12 @@ impl UnitRegistry {
         registry.register_demand("Dbufrd", Box::new(DbufrdCtor));
         registry.register_demand("Dbufwr", Box::new(DbufwrCtor));
         registry.register_demand("Dpoll", Box::new(DpollCtor));
+        // FFT / spectral - only when built with the `fft` feature.
+        #[cfg(feature = "fft")]
+        {
+            registry.register("FFT", Box::new(FftCtor));
+            registry.register("IFFT", Box::new(IfftCtor));
+        }
         registry
     }
 
