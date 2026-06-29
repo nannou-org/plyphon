@@ -30,7 +30,7 @@ use alloc::vec::Vec;
 use core::future::Future;
 use core::pin::Pin;
 
-use plyphon::{Buffer, StreamProducer};
+use plyphon::{Buffer, StreamConsumer, StreamProducer};
 use thiserror::Error;
 
 /// A boxed future returned by a [`BufferSource`]/[`BufferStream`].
@@ -184,5 +184,81 @@ impl StreamFeeder {
             }
         }
         Ok(pushed)
+    }
+}
+
+/// An error storing sample data - the write-side mirror of [`LoadError`]. Variants carry a
+/// description string so callers can match on the kind or display the message directly.
+#[derive(Debug, Error)]
+pub enum SaveError {
+    /// The bytes could not be encoded into the target format.
+    #[error("encode failed: {0}")]
+    Encode(String),
+    /// The underlying storage or transport failed.
+    #[error("i/o error: {0}")]
+    Io(String),
+    /// The sink does not support the requested operation.
+    #[error("unsupported: {0}")]
+    Unsupported(String),
+}
+
+/// A destination for streamed sample data, implemented by the application over its chosen storage -
+/// the write-side mirror of [`BufferSource`]. `key` identifies the resource (a path, a store key, a
+/// URL). [`open_write`](BufferSink::open_write) starts a sequential write stream (backing `DiskOut`);
+/// the header `info` (channel count, sample rate) is given up front because a write target usually
+/// needs it before the first sample (unlike a read stream, which discovers it from the file).
+pub trait BufferSink {
+    /// Open `key` for sequential streamed writing.
+    fn open_write<'a>(
+        &'a self,
+        key: &'a str,
+        info: StreamInfo,
+    ) -> BufFuture<'a, Result<Box<dyn BufferSinkStream>, SaveError>>;
+}
+
+/// A sequential stream of sample frames being written out - the write-side mirror of [`BufferStream`].
+pub trait BufferSinkStream {
+    /// The stream's channel count and sample rate (`total_frames` is `None` - unknown while writing).
+    fn info(&self) -> StreamInfo;
+
+    /// Append `samples` (interleaved), returning the number of frames written.
+    fn write<'a>(&'a mut self, samples: &'a [f32]) -> BufFuture<'a, Result<usize, SaveError>>;
+
+    /// Flush and finalize the stream (e.g. write the header length and close the file).
+    fn close<'a>(&'a mut self) -> BufFuture<'a, Result<(), SaveError>>;
+}
+
+/// Drains a plyphon recording stream into a [`BufferSinkStream`] - the write-side mirror of
+/// [`StreamFeeder`].
+///
+/// Wrap the [`StreamConsumer`] returned by `Controller::buffer_cue_write`, then call
+/// [`drain`](StreamDrainer::drain) on your executor (a background thread natively, `spawn_local` on
+/// the web) to pull recorded chunks from the audio thread and write them to the sink.
+pub struct StreamDrainer {
+    consumer: StreamConsumer,
+}
+
+impl StreamDrainer {
+    /// Wrap the consumer side of a recording stream.
+    pub fn new(consumer: StreamConsumer) -> Self {
+        StreamDrainer { consumer }
+    }
+
+    /// Write every chunk the recorder has filled into `sink`, recycling each emptied chunk back to
+    /// the audio thread. Returns the number of frames written this call (0 if none were ready). Call
+    /// it repeatedly to keep up with `DiskOut`.
+    pub async fn drain(&mut self, sink: &mut dyn BufferSinkStream) -> Result<usize, SaveError> {
+        let mut written = 0;
+        while let Some(chunk) = self.consumer.pop_filled() {
+            written += sink.write(chunk.filled_samples()).await?;
+            self.consumer.recycle(chunk);
+        }
+        Ok(written)
+    }
+
+    /// Drain whatever remains, then close the sink (call once recording has stopped).
+    pub async fn finish(&mut self, sink: &mut dyn BufferSinkStream) -> Result<(), SaveError> {
+        self.drain(sink).await?;
+        sink.close().await
     }
 }

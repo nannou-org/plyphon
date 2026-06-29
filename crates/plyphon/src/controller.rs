@@ -29,7 +29,7 @@ use thiserror::Error;
 use crate::synthdef::{SynthDef, SynthDefLibrary};
 use plyphon_dsp::buffer::Buffer;
 use plyphon_dsp::rate::RateInfo;
-use plyphon_dsp::stream::{StreamProducer, cue};
+use plyphon_dsp::stream::{StreamConsumer, StreamProducer, cue, cue_recording};
 use plyphon_rt::Options;
 use plyphon_rt::command::{Command, CommandTime, TimedCommand};
 use plyphon_rt::tree::AddAction;
@@ -541,6 +541,24 @@ impl Controller {
         let (playback, producer) = cue(channels, sample_rate, chunk_frames, num_chunks);
         self.send(Command::CueStream { index, playback })?;
         Ok(producer)
+    }
+
+    /// Cue a disk-streaming *recording* buffer at `index`, for `DiskOut`.
+    ///
+    /// Allocates a queue of `num_chunks` chunks of `chunk_frames` frames each (off the audio thread)
+    /// and installs the RT-side recording endpoint. Returns the [`StreamConsumer`] for a drainer to
+    /// write to a sink; `DiskOut.ar(index, channels)` fills it.
+    pub fn buffer_cue_write(
+        &mut self,
+        index: usize,
+        channels: usize,
+        sample_rate: f64,
+        chunk_frames: usize,
+        num_chunks: usize,
+    ) -> Result<StreamConsumer, QueueFull> {
+        let (recording, consumer) = cue_recording(channels, sample_rate, chunk_frames, num_chunks);
+        self.send(Command::CueRecording { index, recording })?;
+        Ok(consumer)
     }
 
     // --- Queries (getters). Each pushes a query the World answers over the reply ring, drained on the

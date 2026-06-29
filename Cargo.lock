@@ -557,6 +557,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-record-to-disk"
+version = "0.1.0"
+dependencies = [
+ "example-audio",
+ "hound",
+ "plyphon",
+ "plyphon-buffers",
+]
+
+[[package]]
 name = "example-render"
 version = "0.1.0"
 dependencies = [

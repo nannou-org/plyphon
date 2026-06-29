@@ -12,7 +12,7 @@
 
 use plyphon_dsp::buffer::{Buffer, BufferTable};
 use plyphon_dsp::bus::Buses;
-use plyphon_dsp::stream::StreamPlayback;
+use plyphon_dsp::stream::{StreamPlayback, StreamRecording};
 
 use crate::unit::LocalBus;
 
@@ -97,4 +97,9 @@ pub fn buffer_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut Buf
 /// The streaming endpoint at `index`, mutably (to pull chunks), for `DiskIn`.
 pub fn stream_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut StreamPlayback> {
     buffers.stream_mut(index)
+}
+
+/// The recording endpoint at `index`, mutably (to push chunks), for `DiskOut`.
+pub fn recording_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut StreamRecording> {
+    buffers.recording_mut(index)
 }

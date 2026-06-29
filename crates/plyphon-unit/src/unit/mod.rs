@@ -18,6 +18,7 @@ pub mod buf_wr;
 pub mod delay;
 pub mod demand;
 pub mod disk_in;
+pub mod disk_out;
 pub mod env;
 pub mod filter;
 pub mod info;
@@ -140,6 +141,7 @@ pub use demand::{
     demand_next, demand_reset,
 };
 pub use disk_in::DiskIn;
+pub use disk_out::DiskOut;
 pub use env::EnvGen;
 pub use filter::Butter;
 pub use info::{BufInfo, BufInfoKind, Info, InfoKind};
@@ -147,7 +149,7 @@ pub use input::In;
 pub use io::{
     audio_in, audio_out, buffer_at, buffer_at_mut, control_in, control_out, local_in, local_out,
     num_audio_buses, num_buffers, num_control_buses, num_input_buses, num_output_buses,
-    stream_at_mut,
+    recording_at_mut, stream_at_mut,
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;

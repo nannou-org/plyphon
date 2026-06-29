@@ -30,4 +30,4 @@ pub mod wavetable;
 
 pub use buffer::Buffer;
 pub use rate::{Rate, RateInfo};
-pub use stream::{Chunk, StreamProducer};
+pub use stream::{Chunk, StreamConsumer, StreamProducer, StreamRecording, cue_recording};

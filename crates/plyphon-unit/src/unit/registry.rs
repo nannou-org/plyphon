@@ -21,6 +21,7 @@ use crate::unit::demand::dseries::DseriesCtor;
 use crate::unit::demand::duty::DutyCtor;
 use crate::unit::demand::dwhite::DwhiteCtor;
 use crate::unit::disk_in::DiskInCtor;
+use crate::unit::disk_out::DiskOutCtor;
 use crate::unit::env::EnvGenCtor;
 use crate::unit::filter::{ButterCtor, Kind};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
@@ -137,6 +138,7 @@ impl UnitRegistry {
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
+        registry.register("DiskOut", Box::new(DiskOutCtor));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
         registry.register("BufWr", Box::new(BufWrCtor));
         registry.register("LFSaw", Box::new(LFSawCtor));

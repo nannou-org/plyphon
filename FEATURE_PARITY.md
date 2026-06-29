@@ -22,7 +22,7 @@ partial items stay unchecked and spell out what is missing.
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
-## UGens (63 of scsynth's ~250, grouped by category)
+## UGens (64 of scsynth's ~250, grouped by category)
 
 - [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`); missing ReplaceOut, XOut, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
@@ -32,7 +32,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **Panning** - have Pan2; missing LinPan2, Pan4, Balance2, Rotate2, XFade2, LinXFade2, PanAz, Splay
 - [ ] **Dynamics** - have Amplitude; missing Compander, Limiter, Normalizer, DetectSilence
 - [ ] **Math / multichannel** - have BinaryOpUGen, UnaryOpUGen, MulAdd; missing Sum3/Sum4, Select, Index, Clip/Wrap/Fold, LinLin/LinExp
-- [ ] **Buffer playback / recording** - have PlayBuf, DiskIn, RecordBuf (record into a buffer with overdub/run/loop/doneAction), BufWr (write channels at a phase index); missing BufRd, DiskOut, VDiskIn, TGrains, GrainBuf, Dbufwr
+- [ ] **Buffer playback / recording** - have PlayBuf, DiskIn, RecordBuf (record into a buffer with overdub/run/loop/doneAction), BufWr (write channels at a phase index), DiskOut (stream channels out to a cued recording buffer, drained off the audio thread to a sink); missing BufRd, VDiskIn, TGrains, GrainBuf, Dbufwr
 - [ ] **Triggers / timing** - have SendTrig (fires `/tr` on a rising edge, at control or audio rate), SendReply (emits a custom OSC path with a bounded number of values, over a dedicated node-message ring), FreeSelf, PauseSelf, Done, FreeSelfWhenDone, PauseSelfWhenDone, Free, Pause; missing Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, Poll
 - [ ] **Info** - have SampleRate, SampleDur, RadiansPerSample, ControlRate, ControlDur, NumOutputBuses, NumInputBuses, NumAudioBuses, NumControlBuses, NumRunningSynths, NumBuffers, BufFrames, BufChannels, BufSamples, BufSampleRate, BufRateScale, BufDur; missing SubsampleOffset
 - [ ] **Delays / reverb** - have DelayN (the first UGen on per-instance aux memory); missing DelayL/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
@@ -174,7 +174,7 @@ model; the intent is to surface them as typed higher-level actions for the embed
 
 - [x] SCgf binary SynthDefs load via `/d_recv` (and the [`scgf`](crates/scgf) crate also encodes them); named parameters are folded from SC's `Control` UGens
 - [x] Control family beyond plain `Control`: `AudioControl` (an audio-rate parameter, lifted to an audio wire each block and mappable with `/n_mapa`), `TrigControl` (a `/n_set` is seen for one block then resets to 0), and `LagControl` (a control-rate one-pole de-zipper, lag times from the folded UGen's inputs)
-- [x] Buffers: allocate, free, zero, query, `b_gen` (sine/cheby/copy) fills, `b_get`/`b_set` element access, and asynchronous loading through an app-provided [`BufferSource`](crates/plyphon-buffers) (the I/O seam), plus chunk-streaming playback with `DiskIn`
-- [ ] Writing/recording buffers to disk and `b_gen` wavetable fills (no `Osc` UGen to consume them yet)
+- [x] Buffers: allocate, free, zero, query, `b_gen` (sine/cheby/copy) fills, `b_get`/`b_set` element access, and asynchronous loading through an app-provided [`BufferSource`](crates/plyphon-buffers) (the I/O seam), plus chunk-streaming playback with `DiskIn` and chunk-streaming recording with `DiskOut` (drained off the audio thread through the mirror [`BufferSink`] write seam)
+- [ ] OSC `/b_write`/`/b_close` and non-streaming whole-buffer saves to disk (`DiskOut` covers streaming recording; the OSC surface and a one-shot buffer snapshot remain), and `b_gen` wavetable fills (no `Osc` UGen to consume them yet)
 
 [scsynth]: https://github.com/supercollider/supercollider

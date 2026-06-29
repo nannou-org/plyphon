@@ -12,7 +12,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use crate::stream::StreamPlayback;
+use crate::stream::{StreamPlayback, StreamRecording};
 
 /// A bank of interleaved audio samples (scsynth's `SndBuf`).
 ///
@@ -136,14 +136,17 @@ impl Buffer {
     }
 }
 
-/// One slot in the [`BufferTable`]: empty, a flat in-memory buffer, or a disk-streaming endpoint.
+/// One slot in the [`BufferTable`]: empty, a flat in-memory buffer, a disk-streaming playback
+/// endpoint, or a disk-streaming recording endpoint.
 pub enum BufferSlot {
     /// No buffer installed.
     Empty,
     /// An in-memory buffer (read by `PlayBuf`).
     Loaded(Box<Buffer>),
-    /// A streaming buffer endpoint (read by `DiskIn`).
+    /// A streaming playback endpoint (read by `DiskIn`).
     Stream(Box<StreamPlayback>),
+    /// A streaming recording endpoint (written by `DiskOut`).
+    Recording(Box<StreamRecording>),
 }
 
 /// The engine's fixed-capacity table of buffers, indexed by buffer number.
@@ -231,6 +234,15 @@ impl BufferTable {
         }
     }
 
+    /// The recording endpoint at `index`, mutably (for `DiskOut` to push chunks), or `None` if the
+    /// slot is empty, a flat buffer, a playback stream, or out of range. RT-safe (no panic).
+    pub fn recording_mut(&mut self, index: usize) -> Option<&mut StreamRecording> {
+        match self.slots.get_mut(index) {
+            Some(BufferSlot::Recording(recording)) => Some(recording),
+            _ => None,
+        }
+    }
+
     /// Install flat `buffer` at `index`, returning the slot it replaced (or `buffer` itself if
     /// `index` is out of range) so the caller can drop it off the audio thread.
     pub fn set(&mut self, index: usize, buffer: Box<Buffer>) -> Option<BufferSlot> {
@@ -241,6 +253,16 @@ impl BufferTable {
     /// replaced slot for off-audio-thread dropping.
     pub fn cue(&mut self, index: usize, stream: Box<StreamPlayback>) -> Option<BufferSlot> {
         self.replace(index, BufferSlot::Stream(stream))
+    }
+
+    /// Install a recording endpoint at `index` (for `DiskOut`), returning the replaced slot for
+    /// off-audio-thread dropping.
+    pub fn cue_recording(
+        &mut self,
+        index: usize,
+        recording: Box<StreamRecording>,
+    ) -> Option<BufferSlot> {
+        self.replace(index, BufferSlot::Recording(recording))
     }
 
     /// Empty `index`, returning the slot it held (if any) for off-audio-thread dropping.

@@ -484,6 +484,10 @@ impl World {
                 let old = self.buffers.cue(index, playback);
                 self.trash_slot(old);
             }
+            Command::CueRecording { index, recording } => {
+                let old = self.buffers.cue_recording(index, recording);
+                self.trash_slot(old);
+            }
             Command::FreeBuffer { index } => {
                 let old = self.buffers.free(index);
                 self.trash_slot(old);
@@ -864,6 +868,7 @@ impl World {
         match command {
             Command::SetBuffer { buffer, .. } => self.trash(Trash::Buffer(buffer)),
             Command::CueStream { playback, .. } => self.trash(Trash::Stream(playback)),
+            Command::CueRecording { recording, .. } => self.trash(Trash::Recording(recording)),
             _ => {}
         }
     }
@@ -873,6 +878,7 @@ impl World {
         match slot {
             Some(BufferSlot::Loaded(buffer)) => self.trash(Trash::Buffer(buffer)),
             Some(BufferSlot::Stream(stream)) => self.trash(Trash::Stream(stream)),
+            Some(BufferSlot::Recording(recording)) => self.trash(Trash::Recording(recording)),
             Some(BufferSlot::Empty) | None => {}
         }
     }

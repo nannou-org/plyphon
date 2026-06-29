@@ -1,0 +1,16 @@
+[package]
+name = "example-record-to-disk"
+version = "0.1.0"
+publish = false
+description = "A plyphon example: record live audio to a WAV with DiskOut, drained off the audio thread."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+example-audio.workspace = true
+plyphon.workspace = true
+plyphon-buffers.workspace = true
+hound = "3"

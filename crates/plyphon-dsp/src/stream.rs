@@ -44,6 +44,16 @@ impl Chunk {
         &mut self.data
     }
 
+    /// Valid frames currently held.
+    pub fn frames(&self) -> usize {
+        self.frames
+    }
+
+    /// The filled prefix (`frames * channels` interleaved samples), for a drainer to write out.
+    pub fn filled_samples(&self) -> &[f32] {
+        &self.data[..self.frames * self.channels]
+    }
+
     /// Record how many frames the feeder filled (clamped to capacity).
     pub fn set_frames(&mut self, frames: usize) {
         self.frames = frames.min(self.capacity());
@@ -189,4 +199,208 @@ pub fn cue(
         channels,
     };
     (playback, producer)
+}
+
+/// The RT-side producer of a recording stream: lives in the buffer table, filled by `DiskOut`. The
+/// exact inverse of [`StreamPlayback`] - the audio thread copies its block into a [`Chunk`] and hands
+/// ownership of whole chunks to the off-RT [`StreamConsumer`] over a lock-free ring, so no buffer
+/// memory is ever shared mutably across threads (scsynth instead shares a raw `float*`, which is only
+/// race-free while the disk thread keeps up).
+pub struct StreamRecording {
+    /// Filled chunks sent off-RT.
+    filled: Producer<Chunk>,
+    /// Emptied chunks returning from the consumer.
+    recycle: Consumer<Chunk>,
+    current: Option<Chunk>,
+    cursor: usize,
+    channels: usize,
+    sample_rate: f64,
+}
+
+impl StreamRecording {
+    /// The stream's channel count.
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+
+    /// The stream's sample rate in Hz.
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    /// Write `frames` frames, calling `sample(frame, channel)` for each channel of each frame, and
+    /// return how many frames were recorded (fewer on overrun). RT-safe (no allocation or blocking):
+    /// an empty chunk is taken from the recycle ring; if none is available, or the filled ring is
+    /// full, the surplus audio is dropped (a bounded overrun) - never blocking, allocating, or
+    /// dropping a `Chunk` (a `Box` free on the audio thread is forbidden).
+    pub fn write(
+        &mut self,
+        frames: usize,
+        in_channels: usize,
+        mut sample: impl FnMut(usize, usize) -> f32,
+    ) -> usize {
+        let channels = self.channels;
+        let mut recorded = 0;
+        while recorded < frames {
+            // Ensure a chunk with room to write into.
+            if self.current.is_none() {
+                match self.recycle.pop() {
+                    Ok(mut chunk) => {
+                        chunk.frames = 0;
+                        self.current = Some(chunk);
+                        self.cursor = 0;
+                    }
+                    Err(_) => break, // overrun: no empty chunk; drop the rest of this block
+                }
+            }
+            let cursor = self.cursor;
+            let cap = {
+                let chunk = self.current.as_mut().unwrap();
+                let cap = chunk.data.len() / channels;
+                let base = cursor * channels;
+                for c in 0..channels {
+                    chunk.data[base + c] = if c < in_channels {
+                        sample(recorded, c)
+                    } else {
+                        0.0
+                    };
+                }
+                cap
+            };
+            self.cursor += 1;
+            recorded += 1;
+            if self.cursor >= cap {
+                let mut chunk = self.current.take().unwrap();
+                chunk.frames = cap;
+                if let Err(PushError::Full(chunk)) = self.filled.push(chunk) {
+                    // The consumer is behind: keep the full chunk and overwrite it next round (its
+                    // audio is lost - a bounded overrun). Never drop it (no `Box` free on the RT
+                    // thread) and never block.
+                    self.current = Some(chunk);
+                    self.cursor = 0;
+                }
+            }
+        }
+        recorded
+    }
+}
+
+/// The off-RT consumer side of a recording stream, drained by a sink. The inverse of
+/// [`StreamProducer`].
+pub struct StreamConsumer {
+    /// Filled chunks arriving from the RT side.
+    filled: Consumer<Chunk>,
+    /// Emptied chunks returned to the RT side.
+    recycle: Producer<Chunk>,
+    channels: usize,
+    sample_rate: f64,
+}
+
+impl StreamConsumer {
+    /// The stream's channel count.
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+
+    /// The stream's sample rate in Hz.
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    /// Pop the next filled chunk, if any (`None` when the recorder has not filled one yet).
+    pub fn pop_filled(&mut self) -> Option<Chunk> {
+        self.filled.pop().ok()
+    }
+
+    /// Return a drained chunk to the RT side as an empty (dropped if the ring is momentarily full).
+    pub fn recycle(&mut self, mut chunk: Chunk) {
+        chunk.frames = 0;
+        let _ = self.recycle.push(chunk);
+    }
+}
+
+/// Create a recording stream: the RT [`StreamRecording`] (to install in the buffer table) and the
+/// off-RT [`StreamConsumer`] (handed to a drainer). Allocates `num_chunks` chunks of `chunk_frames`
+/// frames and pre-loads them onto the recycle ring so the recorder can fill them immediately.
+pub fn cue_recording(
+    channels: usize,
+    sample_rate: f64,
+    chunk_frames: usize,
+    num_chunks: usize,
+) -> (Box<StreamRecording>, StreamConsumer) {
+    let channels = channels.max(1);
+    let capacity = chunk_frames.max(1);
+    let count = num_chunks.max(2);
+    let (filled_tx, filled_rx) = RingBuffer::<Chunk>::new(count + 1);
+    let (mut recycle_tx, recycle_rx) = RingBuffer::<Chunk>::new(count + 1);
+    // The whole pool starts as empties on the recycle ring (RT-reachable), the inverse of `cue`
+    // handing the spare pool to the off-RT feeder.
+    for _ in 0..count {
+        let _ = recycle_tx.push(Chunk::new(capacity, channels));
+    }
+    let recording = Box::new(StreamRecording {
+        filled: filled_tx,
+        recycle: recycle_rx,
+        current: None,
+        cursor: 0,
+        channels,
+        sample_rate,
+    });
+    let consumer = StreamConsumer {
+        filled: filled_rx,
+        recycle: recycle_tx,
+        channels,
+        sample_rate,
+    };
+    (recording, consumer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Chunk, cue_recording};
+
+    /// Collect every filled chunk the consumer can pop into a flat interleaved `Vec`, recycling each.
+    fn drain(consumer: &mut super::StreamConsumer) -> Vec<f32> {
+        let mut out = Vec::new();
+        while let Some(chunk) = consumer.pop_filled() {
+            out.extend_from_slice(chunk.filled_samples());
+            consumer.recycle(chunk);
+        }
+        out
+    }
+
+    #[test]
+    fn recording_round_trips_a_ramp() {
+        let (mut rec, mut consumer) = cue_recording(2, 48_000.0, 4, 3);
+        // 8 frames of a known ramp: sample(frame, ch) = frame*10 + ch.
+        let recorded = rec.write(8, 2, |frame, ch| (frame * 10 + ch) as f32);
+        assert_eq!(recorded, 8);
+        let got = drain(&mut consumer);
+        let expected: Vec<f32> = (0..8)
+            .flat_map(|frame| (0..2).map(move |ch| (frame * 10 + ch) as f32))
+            .collect();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn recording_overruns_without_panic_and_recovers() {
+        // Two chunks of 4 frames, never drained: the recorder fills both, then drops further audio.
+        let (mut rec, mut consumer) = cue_recording(1, 48_000.0, 4, 2);
+        assert_eq!(rec.write(4, 1, |_, _| 1.0), 4); // fills chunk 1, pushed
+        assert_eq!(rec.write(4, 1, |_, _| 2.0), 4); // fills chunk 2, pushed
+        // Both chunks are now in flight and none recycled: no empty available -> overrun, drop.
+        assert_eq!(rec.write(4, 1, |_, _| 3.0), 0);
+        // Drain one chunk back to the recorder; recording can proceed again (pool size is constant).
+        let chunk = consumer.pop_filled().expect("a filled chunk");
+        consumer.recycle(chunk);
+        assert_eq!(rec.write(4, 1, |_, _| 4.0), 4);
+    }
+
+    #[test]
+    fn filled_samples_reflects_partial_frames() {
+        let mut chunk = Chunk::new(8, 1);
+        chunk.samples_mut()[..3].copy_from_slice(&[1.0, 2.0, 3.0]);
+        chunk.set_frames(3);
+        assert_eq!(chunk.filled_samples(), &[1.0, 2.0, 3.0]);
+    }
 }

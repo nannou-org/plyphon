@@ -32,7 +32,7 @@ pub mod engine;
 pub mod render;
 pub mod synthdef;
 
-pub use plyphon_dsp::{Buffer, Chunk, Rate, RateInfo, StreamProducer};
+pub use plyphon_dsp::{Buffer, Chunk, Rate, RateInfo, StreamConsumer, StreamProducer};
 pub use plyphon_rt::{
     AddAction, CommandTime, Event, Graph, NodeMsg, NodeMsgKind, Nrt, Options, ROOT_GROUP_ID, Reply,
     Trigger, World,

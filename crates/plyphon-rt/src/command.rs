@@ -13,7 +13,7 @@ use alloc::sync::Arc;
 
 use crate::tree::AddAction;
 use plyphon_dsp::buffer::Buffer;
-use plyphon_dsp::stream::StreamPlayback;
+use plyphon_dsp::stream::{StreamPlayback, StreamRecording};
 use plyphon_unit::graphdef::GraphDef;
 
 /// A command from the `Controller` to the
@@ -141,6 +141,14 @@ pub enum Command {
         index: usize,
         /// The pre-built RT-side stream endpoint (its rings allocated off the audio thread).
         playback: Box<StreamPlayback>,
+    },
+    /// Install (or replace) a disk-streaming *recording* endpoint at buffer `index` (for `DiskOut`).
+    /// Any slot previously at `index` is routed to the trash ring.
+    CueRecording {
+        /// Buffer table index.
+        index: usize,
+        /// The pre-built RT-side recording endpoint (its rings allocated off the audio thread).
+        recording: Box<StreamRecording>,
     },
     /// Free the buffer at `index` (scsynth's `/b_free`), routing any slot to the trash ring.
     FreeBuffer {
@@ -310,8 +318,10 @@ pub struct TimedCommand {
 pub enum Trash {
     /// A freed or replaced buffer.
     Buffer(Box<Buffer>),
-    /// A freed or replaced streaming endpoint (its rings drop off the audio thread).
+    /// A freed or replaced streaming-playback endpoint (its rings drop off the audio thread).
     Stream(Box<StreamPlayback>),
+    /// A freed or replaced streaming-recording endpoint (its rings drop off the audio thread).
+    Recording(Box<StreamRecording>),
 }
 
 /// A notification flowing RT-side -> NRT-side, surfaced to the consumer by the
