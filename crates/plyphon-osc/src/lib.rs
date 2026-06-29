@@ -5,7 +5,7 @@
 //! the `Controller` alongside its `Nrt`/`World`, and passes `&mut Controller`/`&Controller` into each
 //! [`apply`](OscDispatcher::apply)/[`reply`](OscDispatcher::reply)). The commands handled:
 //!
-//! - **SynthDefs:** `/d_recv`, `/d_free`, `/d_freeAll`.
+//! - **SynthDefs:** `/d_recv`, `/d_load`, `/d_loadDir`, `/d_free`, `/d_freeAll`.
 //! - **Synths & nodes:** `/s_new`, `/s_noid`, `/n_set`, `/n_setn`, `/n_fill`, `/n_free`, `/n_run`,
 //!   the control mappers `/n_map`/`/n_mapn`.
 //! - **Groups & node tree:** `/g_new`, `/p_new`, `/g_head`/`/g_tail`/`/n_before`/`/n_after`/
@@ -14,6 +14,7 @@
 //! - **Buffers:** `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_free`, `/b_zero`, `/b_query`, `/b_set`,
 //!   `/b_setn`, `/b_fill`, `/b_setSampleRate`, `/b_gen`.
 //! - **Server admin:** `/clearSched`, `/error`.
+//! - **Host commands** (deferred to the host - see below): `/cmd`, `/u_cmd`.
 //! - **Getters** (engine state reads; answered asynchronously - see below): `/sync`, `/status`,
 //!   `/rtMemoryStatus`, `/n_query`, `/c_get`/`/c_getn`, `/s_get`/`/s_getn`, `/b_get`/`/b_getn`,
 //!   `/g_queryTree`, `/g_dumpTree`.
@@ -165,6 +166,20 @@ struct PendingDef {
     target: ReplyTarget,
 }
 
+/// A queued plugin/unit command (`/cmd`, `/u_cmd`), run by [`OscDispatcher::run_pending`] through the
+/// host's [`CommandHost`].
+struct PendingCommand {
+    command: &'static str,
+    /// What the command addresses (a plugin, or a unit within a node).
+    cmd_target: CmdTarget,
+    /// The command name the host's registry resolves.
+    name: String,
+    /// The command's trailing arguments (everything after its addressing/name fields).
+    args: Vec<OscType>,
+    /// The client this command answers to; replayed in `run_pending` so any reply routes back to it.
+    target: ReplyTarget,
+}
+
 /// One outstanding getter, in the FIFO order queries were issued. As [`Reply`] items arrive (in that
 /// same order), the matching entry accumulates them and, when complete, emits exactly one OSC reply
 /// message - so a getter that issued several per-element queries answers with one grouped message.
@@ -235,13 +250,14 @@ pub enum ReplyTarget {
     Requester(u64),
 }
 
-/// The target of a host command (`/cmd`/`/n_cmd`/`/u_cmd`).
+/// The target of a host command (`/cmd`/`/u_cmd`).
+///
+/// (scsynth's `/n_cmd` is unimplemented - commented out in its command table, `SC_MiscCmds.cpp` - so
+/// there is no `Node` target; plyphon matches the live surface.)
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CmdTarget {
     /// `/cmd`: a plugin command, by name (scsynth dispatches to a loaded `.scx`; plyphon to the host).
     Plugin,
-    /// `/n_cmd`: a command addressed to a node.
-    Node(i32),
     /// `/u_cmd`: a command addressed to a specific unit within a node.
     Unit {
         /// The enclosing node id.
@@ -251,13 +267,15 @@ pub enum CmdTarget {
     },
 }
 
-/// A host handler for plugin/node/unit commands (`/cmd`/`/n_cmd`/`/u_cmd`). plyphon has no built-in
-/// command plugins, so an embedding app supplies this to interpret app-specific commands (a command
-/// registry); an absent handler makes those commands fail. It mirrors how [`BufferSource`] defers
-/// buffer I/O - the dispatcher only routes, never interprets.
+/// A host handler for plugin/unit commands (`/cmd`/`/u_cmd`). plyphon has no built-in command
+/// plugins, so an embedding app supplies this to interpret app-specific commands (a command registry);
+/// an absent handler makes those commands fail. It mirrors how [`BufferSource`] defers buffer I/O - the
+/// dispatcher only routes, never interprets.
 pub trait CommandHost {
     /// Run command `name` against `target` with `args`, optionally returning a reply packet to send to
-    /// the requester. `Err` becomes a `/fail`.
+    /// the requester. scsynth's `PlugIn_DoCmd`/`Unit_DoCmd` leave any reply entirely to the command
+    /// function (no automatic `/done`), so the returned packet *is* the command's reply. `Err` becomes a
+    /// `/fail`.
     fn command<'a>(
         &'a self,
         target: CmdTarget,
@@ -284,7 +302,7 @@ pub trait Host {
     fn def_source(&self) -> Option<&dyn DefSource> {
         None
     }
-    /// The handler for `/cmd`/`/n_cmd`/`/u_cmd` plugin/node/unit commands.
+    /// The handler for `/cmd`/`/u_cmd` plugin/unit commands.
     fn commands(&self) -> Option<&dyn CommandHost> {
         None
     }
@@ -301,6 +319,8 @@ pub struct OscDispatcher {
     pending: Vec<PendingLoad>,
     /// SynthDef loads (`/d_load`/`/d_loadDir`) queued by `apply`, awaiting `run_pending`.
     pending_defs: Vec<PendingDef>,
+    /// Plugin/unit commands (`/cmd`/`/u_cmd`) queued by `apply`, awaiting `run_pending`.
+    pending_commands: Vec<PendingCommand>,
     /// Outbound replies, each tagged with its destination, drained by
     /// [`take_replies`](OscDispatcher::take_replies)/[`take_replies_targeted`](OscDispatcher::take_replies_targeted).
     replies: Vec<(ReplyTarget, OscPacket)>,
@@ -333,6 +353,7 @@ impl OscDispatcher {
             buffers: HashMap::new(),
             pending: Vec::new(),
             pending_defs: Vec::new(),
+            pending_commands: Vec::new(),
             replies: Vec::new(),
             current_target: ReplyTarget::Broadcast,
             error_perm: true,
@@ -511,6 +532,26 @@ impl OscDispatcher {
                 }
             }
         }
+
+        // Plugin/unit commands (`/cmd`/`/u_cmd`): the host's `CommandHost` interprets each (plyphon has
+        // no built-in command plugins) and owns any reply - scsynth's `PlugIn_DoCmd`/`Unit_DoCmd` send no
+        // automatic `/done`, so the returned packet *is* the command's reply. An absent handler fails.
+        let commands = host.and_then(|h| h.commands());
+        for command in core::mem::take(&mut self.pending_commands) {
+            self.current_target = command.target;
+            let Some(handler) = commands else {
+                self.fail(command.command, "no command host configured");
+                continue;
+            };
+            match handler
+                .command(command.cmd_target, &command.name, &command.args)
+                .await
+            {
+                Ok(Some(packet)) => self.reply_packet(packet),
+                Ok(None) => {}
+                Err(err) => self.fail(command.command, &err),
+            }
+        }
     }
 
     /// Decode and apply a single OSC packet from raw bytes.
@@ -566,6 +607,8 @@ impl OscDispatcher {
             "/d_recv" => self.d_recv(controller, &message.args),
             "/d_load" => self.d_load(&message.args),
             "/d_loadDir" => self.d_load_dir(&message.args),
+            "/cmd" => self.cmd(&message.args),
+            "/u_cmd" => self.u_cmd(&message.args),
             "/d_free" => self.d_free(controller, &message.args),
             "/d_freeAll" => self.d_free_all(controller),
             "/s_new" => self.s_new(controller, &message.args),
@@ -1814,6 +1857,59 @@ impl OscDispatcher {
             target: self.current_target,
         });
         Ok(())
+    }
+
+    /// `/cmd <name> [args...]`: a plugin command. plyphon has no built-in command plugins, so the host's
+    /// [`CommandHost`] interprets it in [`run_pending`](Self::run_pending) (an absent handler fails the
+    /// command). Mirrors scsynth's `PlugIn_DoCmd` (`SC_UnitDef.cpp`): the command name leads, the rest is
+    /// the command's payload.
+    fn cmd(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let name = str_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("/cmd expects a command name"))?,
+        )?
+        .to_string();
+        self.queue_command("/cmd", CmdTarget::Plugin, name, &args[1..]);
+        Ok(())
+    }
+
+    /// `/u_cmd <node> <unit-index> <name> [args...]`: a unit command addressed to one unit within a
+    /// node's def. Mirrors scsynth's `Unit_DoCmd` (`SC_UnitDef.cpp`): node id, unit index, command name,
+    /// then the command's payload. (scsynth's `/n_cmd` is unimplemented, so plyphon omits it.)
+    fn u_cmd(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let node = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("/u_cmd expects a node id"))?,
+        )?;
+        let index = int_arg(
+            args.get(1)
+                .ok_or(OscError::BadArguments("/u_cmd expects a unit index"))?,
+        )?;
+        let name = str_arg(
+            args.get(2)
+                .ok_or(OscError::BadArguments("/u_cmd expects a command name"))?,
+        )?
+        .to_string();
+        self.queue_command("/u_cmd", CmdTarget::Unit { node, index }, name, &args[3..]);
+        Ok(())
+    }
+
+    /// Queue an asynchronous plugin/unit command, run later by [`Self::run_pending`] through the host's
+    /// [`CommandHost`].
+    fn queue_command(
+        &mut self,
+        command: &'static str,
+        cmd_target: CmdTarget,
+        name: String,
+        args: &[OscType],
+    ) {
+        self.pending_commands.push(PendingCommand {
+            command,
+            cmd_target,
+            name,
+            args: args.to_vec(),
+            target: self.current_target,
+        });
     }
 
     /// Queue an asynchronous load of `path` into `bufnum`, run later by [`Self::run_pending`].
