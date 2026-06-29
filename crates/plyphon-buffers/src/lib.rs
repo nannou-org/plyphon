@@ -135,6 +135,21 @@ pub trait BufferSource {
     }
 }
 
+/// A source of SynthDef (SCgf) bytes - the def-loading analogue of [`BufferSource`], backing
+/// `/d_load`/`/d_loadDir`. The dispatcher parses the bytes; this only fetches them (a filesystem read
+/// natively, a fetch on the web). `key` names a single `.scsyndef` file, or a directory of them for
+/// [`read_def_dir`](DefSource::read_def_dir).
+pub trait DefSource {
+    /// Read the SCgf bytes of the def file at `key`.
+    fn read_def<'a>(&'a self, key: &'a str) -> BufFuture<'a, Result<Vec<u8>, LoadError>>;
+
+    /// Read every def file under directory `key`, returning each one's SCgf bytes. Defaults to
+    /// unsupported, for sources that can fetch a named file but cannot enumerate a directory.
+    fn read_def_dir<'a>(&'a self, _key: &'a str) -> BufFuture<'a, Result<Vec<Vec<u8>>, LoadError>> {
+        Box::pin(async { Err(LoadError::Unsupported("directory def loading".to_string())) })
+    }
+}
+
 /// A sequential, seekable stream of sample frames, for disk-streaming playback (`DiskIn`).
 pub trait BufferStream {
     /// The stream's channel count, sample rate, and (if known) total length.

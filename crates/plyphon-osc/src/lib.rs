@@ -92,7 +92,7 @@ use plyphon::synthdef::read::ReadError;
 use plyphon::{
     AddAction, CommandTime, Controller, Event, NodeMsg, Render, RenderUntil, Reply, Trigger,
 };
-use plyphon_buffers::{BufferSource, ReadRegion};
+use plyphon_buffers::{BufFuture, BufferSink, BufferSource, DefSource, ReadRegion};
 use plyphon_dsp::buffer::Buffer;
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
 use thiserror::Error;
@@ -222,6 +222,61 @@ pub enum ReplyTarget {
     Broadcast,
     /// Deliver to the one client identified by this opaque host-assigned handle.
     Requester(u64),
+}
+
+/// The target of a host command (`/cmd`/`/n_cmd`/`/u_cmd`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CmdTarget {
+    /// `/cmd`: a plugin command, by name (scsynth dispatches to a loaded `.scx`; plyphon to the host).
+    Plugin,
+    /// `/n_cmd`: a command addressed to a node.
+    Node(i32),
+    /// `/u_cmd`: a command addressed to a specific unit within a node.
+    Unit {
+        /// The enclosing node id.
+        node: i32,
+        /// The unit's index within the node's def.
+        index: i32,
+    },
+}
+
+/// A host handler for plugin/node/unit commands (`/cmd`/`/n_cmd`/`/u_cmd`). plyphon has no built-in
+/// command plugins, so an embedding app supplies this to interpret app-specific commands (a command
+/// registry); an absent handler makes those commands fail. It mirrors how [`BufferSource`] defers
+/// buffer I/O - the dispatcher only routes, never interprets.
+pub trait CommandHost {
+    /// Run command `name` against `target` with `args`, optionally returning a reply packet to send to
+    /// the requester. `Err` becomes a `/fail`.
+    fn command<'a>(
+        &'a self,
+        target: CmdTarget,
+        name: &'a str,
+        args: &'a [OscType],
+    ) -> BufFuture<'a, Result<Option<OscPacket>, String>>;
+}
+
+/// The bundle of deferred host capabilities the dispatcher drives through
+/// [`run_pending`](OscDispatcher::run_pending) - plyphon's seam for surfacing host-owned I/O (sound
+/// files, def files, plugin commands, buffer extraction) upward to the embedding app. Each accessor
+/// defaults to "unsupported"; a host returns `Some` for what it provides, and the dispatcher fails any
+/// action whose capability is absent.
+pub trait Host {
+    /// The source for `/b_allocRead`/`/b_read` sound-file loads.
+    fn buffer_source(&self) -> Option<&dyn BufferSource> {
+        None
+    }
+    /// The sink for `/b_write` buffer saves.
+    fn buffer_sink(&self) -> Option<&dyn BufferSink> {
+        None
+    }
+    /// The source for `/d_load`/`/d_loadDir` SynthDef-file loads.
+    fn def_source(&self) -> Option<&dyn DefSource> {
+        None
+    }
+    /// The handler for `/cmd`/`/n_cmd`/`/u_cmd` plugin/node/unit commands.
+    fn commands(&self) -> Option<&dyn CommandHost> {
+        None
+    }
 }
 
 /// Applies SuperCollider OSC commands to a plyphon [`Controller`] lent per call by the host.
@@ -358,17 +413,16 @@ impl OscDispatcher {
         }
     }
 
-    /// Run the buffer loads queued by `apply` (`/b_allocRead`, `/b_read`), in order.
+    /// Run the host actions queued by `apply`, in order, driving each through the [`Host`] the caller
+    /// lends (the dispatcher owns no I/O).
     ///
-    /// For each: load through `source`, install the buffer, run the command's completion message, and
-    /// queue `/done` - or queue `/fail` if `source` is `None` or the load errors. Drive this on
-    /// whatever executor suits the host (a background thread natively, `spawn_local` on the web); it
-    /// never touches the audio thread.
-    pub async fn run_pending(
-        &mut self,
-        controller: &mut Controller,
-        source: Option<&dyn BufferSource>,
-    ) {
+    /// Buffer loads (`/b_allocRead`, `/b_read`): load through `host.buffer_source()`, install the
+    /// buffer, run the command's completion message, and queue `/done` - or `/fail` if the capability
+    /// is absent or the load errors. (Later actions - `/d_load`, `/cmd`, `/b_write` - drain here too.)
+    /// Drive this on whatever executor suits the host (a background thread natively, `spawn_local` on
+    /// the web); it never touches the audio thread.
+    pub async fn run_pending(&mut self, controller: &mut Controller, host: Option<&dyn Host>) {
+        let source = host.and_then(|h| h.buffer_source());
         for load in core::mem::take(&mut self.pending) {
             // Answer this load (its `/done`/`/fail`, and anything its completion message emits) back to
             // the client that issued it - exactly as scsynth stamps completion packets with the

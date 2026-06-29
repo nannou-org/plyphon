@@ -27,7 +27,7 @@ use plyphon_osc::{OscDispatcher, ReplyTarget};
 use rosc::{OscMessage, OscPacket, OscType};
 
 use crate::audio;
-use crate::bufsource::{FsSource, block_on};
+use crate::bufsource::{CliHost, block_on};
 use crate::cli::ServerArgs;
 use crate::defs::load_dir;
 use crate::options::engine_options;
@@ -237,11 +237,11 @@ fn service(server: &mut Server) {
     while let Some(reply) = server.nrt.poll_reply() {
         server.dispatcher.reply(&server.controller, reply);
     }
-    // Buffer loads queued by `apply` (`/b_allocRead`/`/b_read`); the fs source is ready at once.
+    // Host actions queued by `apply` (`/b_allocRead`/`/b_read`, ...); the fs host is ready at once.
     block_on(
         server
             .dispatcher
-            .run_pending(&mut server.controller, Some(&FsSource)),
+            .run_pending(&mut server.controller, Some(&CliHost)),
     );
 
     flush_replies(server);

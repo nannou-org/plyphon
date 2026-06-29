@@ -9,7 +9,7 @@ use plyphon::{
     Controller, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 use plyphon_buffers::{BufFuture, BufferData, BufferSource, LoadError, ReadRegion};
-use plyphon_osc::{OscDispatcher, ReplyTarget};
+use plyphon_osc::{Host, OscDispatcher, ReplyTarget};
 use rosc::{OscMessage, OscPacket, OscType};
 
 const SR: f32 = 48_000.0;
@@ -36,6 +36,12 @@ impl BufferSource for ToneSource {
             Err(LoadError::NotFound(key.to_string()))
         };
         Box::pin(async move { result })
+    }
+}
+
+impl Host for ToneSource {
+    fn buffer_source(&self) -> Option<&dyn BufferSource> {
+        Some(self)
     }
 }
 

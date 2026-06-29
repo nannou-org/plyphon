@@ -10,8 +10,19 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use plyphon_buffers::{BufFuture, BufferData, BufferSource, LoadError, ReadRegion};
+use plyphon_osc::Host;
 
 use crate::wav;
+
+/// The server's [`Host`]: bundles the filesystem-backed capabilities the dispatcher drives through
+/// `run_pending` (sound-file loads today; def-file loads and buffer saves as they land).
+pub struct CliHost;
+
+impl Host for CliHost {
+    fn buffer_source(&self) -> Option<&dyn BufferSource> {
+        Some(&FsSource)
+    }
+}
 
 /// A [`BufferSource`] that reads `/b_allocRead`/`/b_read` keys as WAV file paths.
 pub struct FsSource;
