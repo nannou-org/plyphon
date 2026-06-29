@@ -203,3 +203,115 @@ fn unsupported_fft_size_is_rejected_at_build() {
         "an unsupported FFT size should be rejected"
     );
 }
+
+#[test]
+fn pv_magmul_filters_a_tone_through_the_chain() {
+    // `FFT(sine) -> PV_MagMul(A, B) -> IFFT`, where B (buffer 1) is a flat magnitude mask. PV_MagMul
+    // reads B while rewriting A in place (the two-buffer `buffer_pair_mut` seam), so the chain still
+    // resynthesizes the tone. Proves the cross-buffer PV pattern end to end.
+    let bin = SR as f32 / FFT_SIZE as f32;
+    let freq = 16.0 * bin;
+    let def = SynthDef {
+        name: "pv-chain".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new(
+                "SinOsc",
+                Rate::Audio,
+                vec![InputRef::Constant(freq), InputRef::Constant(0.0)],
+                1,
+            ),
+            UnitSpec {
+                name: "BinaryOpUGen".to_string(),
+                rate: Rate::Audio,
+                inputs: vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Constant(0.5),
+                ],
+                num_outputs: 1,
+                special_index: 2,
+            },
+            // 2: FFT into buffer 0 (A).
+            UnitSpec::new(
+                "FFT",
+                Rate::Control,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Constant(0.5),
+                    InputRef::Constant(0.0),
+                    InputRef::Constant(1.0),
+                    InputRef::Constant(FFT_SIZE as f32),
+                ],
+                1,
+            ),
+            // 3: PV_MagMul(A = fbufnum from FFT, B = buffer 1, a static mask).
+            UnitSpec::new(
+                "PV_MagMul",
+                Rate::Control,
+                vec![
+                    InputRef::Unit { unit: 2, output: 0 },
+                    InputRef::Constant(1.0),
+                ],
+                1,
+            ),
+            // 4: IFFT of the filtered buffer.
+            UnitSpec::new(
+                "IFFT",
+                Rate::Audio,
+                vec![
+                    InputRef::Unit { unit: 3, output: 0 },
+                    InputRef::Constant(0.0),
+                    InputRef::Constant(FFT_SIZE as f32),
+                ],
+                1,
+            ),
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 4, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    };
+
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR,
+        output_channels: 1,
+        ..Options::default()
+    });
+    // A: the live FFT chain buffer; B: a flat magnitude mask (all ones) at buffer 1.
+    controller
+        .buffer_set(
+            0,
+            Box::new(Buffer::from_interleaved(vec![0.0; FFT_SIZE], 1, SR)),
+        )
+        .unwrap();
+    controller
+        .buffer_set(
+            1,
+            Box::new(Buffer::from_interleaved(vec![1.0; FFT_SIZE], 1, SR)),
+        )
+        .unwrap();
+    controller.add_synthdef(def);
+    controller
+        .synth_new("pv-chain", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+
+    let out = render(&mut world, 12_288);
+    let tail = &out[8_192..];
+    assert!(tail.iter().any(|s| s.abs() > 0.01), "PV chain was silent");
+    assert!(
+        tail.iter().all(|s| s.abs() <= 4.0),
+        "PV chain output ran away"
+    );
+    let at = goertzel(tail, freq);
+    let off = goertzel(tail, freq * 3.0);
+    assert!(
+        at > 8.0 * off,
+        "PV_MagMul chain should still sound {freq} Hz (at={at:.4}, off={off:.4})"
+    );
+}

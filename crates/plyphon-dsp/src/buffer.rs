@@ -225,6 +225,30 @@ impl BufferTable {
         }
     }
 
+    /// Buffer `a` mutably and buffer `b` immutably, as disjoint borrows - for a two-buffer spectral op
+    /// (e.g. `PV_MagMul` reading `b` while rewriting `a`). `None` unless `a != b` and both are loaded,
+    /// in-range buffers. RT-safe (no panic); like [`copy_region`](Self::copy_region) it uses
+    /// `split_at_mut` to hand out the two slots without `unsafe`.
+    pub fn pair_mut(&mut self, a: usize, b: usize) -> Option<(&mut Buffer, &Buffer)> {
+        if a == b {
+            return None;
+        }
+        let hi = a.max(b);
+        if hi >= self.slots.len() {
+            return None;
+        }
+        let (left, right) = self.slots.split_at_mut(hi);
+        let (a_slot, b_slot): (&mut BufferSlot, &BufferSlot) = if a < b {
+            (&mut left[a], &right[0])
+        } else {
+            (&mut right[0], &left[b])
+        };
+        match (a_slot, b_slot) {
+            (BufferSlot::Loaded(a_buf), BufferSlot::Loaded(b_buf)) => Some((a_buf, b_buf)),
+            _ => None,
+        }
+    }
+
     /// Copy `count` samples from buffer `src` (flat `src_start`) into buffer `dst` (flat `dst_start`),
     /// overlap-safe when `dst == src` (`/b_gen "copy"`). No-op for empty/stream/out-of-range slots.
     /// RT-safe.

@@ -94,6 +94,16 @@ pub fn buffer_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut Buf
     buffers.get_mut(index)
 }
 
+/// Buffer `a` mutably and buffer `b` immutably as disjoint borrows, for a two-buffer spectral op (a
+/// `PV_*` unit reading `b` while rewriting `a`). `None` unless `a != b` and both are loaded buffers.
+pub fn buffer_pair_mut(
+    buffers: &mut BufferTable,
+    a: usize,
+    b: usize,
+) -> Option<(&mut Buffer, &Buffer)> {
+    buffers.pair_mut(a, b)
+}
+
 /// The streaming endpoint at `index`, mutably (to pull chunks), for `DiskIn`.
 pub fn stream_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut StreamPlayback> {
     buffers.stream_mut(index)

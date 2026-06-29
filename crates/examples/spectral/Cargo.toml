@@ -1,0 +1,24 @@
+[package]
+name = "example-spectral"
+version = "0.1.0"
+publish = false
+description = "A plyphon example: a spectral low-pass effect built from the FFT -> PV_MagMul -> IFFT chain (a sawtooth filtered against a magnitude mask in the frequency domain)."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+example-audio.workspace = true
+# The spectral units live behind plyphon's `fft` feature (realfft, std-only).
+plyphon = { workspace = true, features = ["fft"] }
+
+# Web-only: the wasm panic hook for readable console errors.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook.workspace = true
+
+[features]
+# Build the web demo on cpal's AudioWorklet backend (which has `std` via `-Z build-std`, as `fft`
+# requires). See pkgs/plyphon-website.nix.
+audioworklet = ["example-audio/audioworklet"]

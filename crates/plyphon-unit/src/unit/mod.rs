@@ -34,6 +34,8 @@ pub mod noise;
 pub mod out;
 pub mod pan;
 pub mod play_buf;
+#[cfg(feature = "fft")]
+pub mod pv_mag_mul;
 pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
@@ -152,9 +154,9 @@ pub use filter::Butter;
 pub use info::{BufInfo, BufInfoKind, Info, InfoKind};
 pub use input::In;
 pub use io::{
-    audio_in, audio_out, buffer_at, buffer_at_mut, control_in, control_out, local_in, local_out,
-    num_audio_buses, num_buffers, num_control_buses, num_input_buses, num_output_buses,
-    recording_at_mut, stream_at_mut,
+    audio_in, audio_out, buffer_at, buffer_at_mut, buffer_pair_mut, control_in, control_out,
+    local_in, local_out, num_audio_buses, num_buffers, num_control_buses, num_input_buses,
+    num_output_buses, recording_at_mut, stream_at_mut,
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
@@ -164,6 +166,8 @@ pub use noise::WhiteNoise;
 pub use out::{OffsetOut, Out};
 pub use pan::Pan2;
 pub use play_buf::PlayBuf;
+#[cfg(feature = "fft")]
+pub use pv_mag_mul::PvMagMul;
 pub use rate_conv::{A2K, Dc, K2A, T2A};
 pub use record_buf::RecordBuf;
 pub use registry::{BuildContext, DemandUnitDef, UnitDef, UnitRegistry};
