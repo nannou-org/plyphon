@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
-use plyphon_dsp::math;
+use plyphon_dsp::buffer::sc_loop;
 use plyphon_dsp::rate::Rate;
 
 /// `BufWr.ar(inputArray, bufnum, phase, loop)`: writes its input channels into buffer `bufnum` at the
@@ -70,32 +70,6 @@ impl Unit for BufWr {
         }
         DoneAction::Nothing
     }
-}
-
-/// Wrap/clamp a phase into `[0, hi]`, scsynth's `sc_loop`. Returns the resolved phase and whether an
-/// end was hit with looping off (which marks the unit done). When looping, wraps; when not, clamps to
-/// `hi` (high) or `0` (low).
-fn sc_loop(mut x: f64, hi: f64, looping: bool) -> (f64, bool) {
-    if x >= hi {
-        if !looping {
-            return (hi, true);
-        }
-        x -= hi;
-        if x < hi {
-            return (x, false);
-        }
-    } else if x < 0.0 {
-        if !looping {
-            return (0.0, true);
-        }
-        x += hi;
-        if x >= 0.0 {
-            return (x, false);
-        }
-    } else {
-        return (x, false);
-    }
-    (x - hi * math::floor(x / hi), false)
 }
 
 /// Sample channel input `i` at within-block index `k` (per sample at audio rate; the single value

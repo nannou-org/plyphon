@@ -136,6 +136,33 @@ impl Buffer {
     }
 }
 
+/// Wrap or clamp a phase into `[0, hi]` - scsynth's `sc_loop`. Returns the resolved phase and whether
+/// an end was hit with looping off (which a calc-rate buffer unit uses to mark itself done). When
+/// looping, the phase wraps modulo `hi`; when not, it clamps to `hi` (high) or `0` (low). Shared by
+/// the buffer units (`BufWr`, `Dbufrd`, `Dbufwr`); demand-rate callers ignore the returned flag.
+pub fn sc_loop(mut x: f64, hi: f64, looping: bool) -> (f64, bool) {
+    if x >= hi {
+        if !looping {
+            return (hi, true);
+        }
+        x -= hi;
+        if x < hi {
+            return (x, false);
+        }
+    } else if x < 0.0 {
+        if !looping {
+            return (0.0, true);
+        }
+        x += hi;
+        if x >= 0.0 {
+            return (x, false);
+        }
+    } else {
+        return (x, false);
+    }
+    (x - hi * crate::math::floor(x / hi), false)
+}
+
 /// One slot in the [`BufferTable`]: empty, a flat in-memory buffer, a disk-streaming playback
 /// endpoint, or a disk-streaming recording endpoint.
 pub enum BufferSlot {
