@@ -14,7 +14,8 @@ name = "plyphon"
 path = "src/main.rs"
 
 [dependencies]
-plyphon.workspace = true
+# Enable `fft` so the server registers the FFT/IFFT/PV_* units (it pulls `std` too).
+plyphon = { workspace = true, features = ["fft"] }
 plyphon-osc.workspace = true
 plyphon-buffers.workspace = true
 scgf.workspace = true
