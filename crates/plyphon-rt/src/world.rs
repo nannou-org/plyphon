@@ -602,6 +602,16 @@ impl World {
                 let old = self.buffers.free(index);
                 self.trash_slot(old);
             }
+            Command::CloseRecording { index } => {
+                // Flush the final partial chunk to the consumer (scsynth's `DiskOut_Dtor`), then free
+                // the slot - the trashed recording's drop abandons the consumer, so the host's drain
+                // sees the flushed tail and then completion. Best-effort flush, like the scsynth Dtor.
+                if let Some(recording) = self.buffers.recording_mut(index) {
+                    recording.flush();
+                }
+                let old = self.buffers.free(index);
+                self.trash_slot(old);
+            }
             Command::WriteBuffer { index, recording } => {
                 // Begin a copy-out without disturbing the slot: `drive_writes` copies the buffer's
                 // samples into `recording` over the following blocks (the buffer keeps serving RT

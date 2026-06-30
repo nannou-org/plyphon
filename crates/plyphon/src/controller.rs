@@ -561,6 +561,14 @@ impl Controller {
         Ok(consumer)
     }
 
+    /// Close a left-open `DiskOut` recording at `index` (`/b_close`): flush its final partial chunk to
+    /// the consumer (mirroring scsynth's `DiskOut_Dtor`), then free the slot. The dropped recording
+    /// abandons the consumer, so a drainer reaches [`StreamConsumer::is_finished`](plyphon_dsp::stream::StreamConsumer::is_finished)
+    /// once the flushed tail is drained. Immediate (`send_now`): a host action, never time-tagged.
+    pub fn close_recording(&mut self, index: usize) -> Result<(), QueueFull> {
+        self.send_now(Command::CloseRecording { index })
+    }
+
     /// Snapshot the in-memory buffer at `index` to a host sink (scsynth's `/b_write`, `leaveOpen=0`).
     ///
     /// Unlike [`buffer_cue_write`](Self::buffer_cue_write) - which installs a *recording* slot for

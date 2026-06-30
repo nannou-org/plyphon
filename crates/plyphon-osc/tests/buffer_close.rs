@@ -157,10 +157,10 @@ fn b_write_leave_open_streams_diskout_then_b_close() {
 
     // Stream for a while: each tick the engine writes a block and the dispatcher drains it to the sink.
     // `DiskOut` pushes a chunk only once it fills (WRITE_CHUNK_FRAMES = 4096 frames = 64 blocks), so
-    // render past a few chunk boundaries to exercise the continuous drain.
+    // render past a chunk boundary - the sink receives whole chunks (a multiple of 4096) so far.
     let mut blk = [0.0f32; 64];
     let mut got_write_done = false;
-    for _ in 0..200 {
+    for _ in 0..100 {
         world.fill(&mut blk, 1);
         nrt.process();
         block_on(osc.run_pending(&mut controller, Some(&host)));
@@ -168,29 +168,41 @@ fn b_write_leave_open_streams_diskout_then_b_close() {
         got_write_done |= find(&replies, "/done", "/b_write").is_some();
     }
     assert!(got_write_done, "/b_write leaveOpen=1 should reply /done");
-    assert!(
-        !host.samples.borrow().is_empty(),
-        "the open stream should have drained DiskOut audio to the sink"
-    );
+    {
+        let drained = host.samples.borrow().len();
+        assert!(
+            drained >= 4096 && drained.is_multiple_of(4096),
+            "before close, only whole 4096-frame chunks have drained, got {drained}"
+        );
+    }
 
-    // Close it: a final drain + close, then /done /b_close, and the recording slot is freed.
+    // Close it: the engine flushes the final partial chunk (scsynth's DiskOut_Dtor) and frees the
+    // slot, the dispatcher drains that tail, closes the sink, and replies /done /b_close.
     osc.apply(&mut controller, &msg("/b_close", vec![OscType::Int(0)]))
         .expect("/b_close");
-    world.fill(&mut blk, 1);
-    nrt.process();
-    block_on(osc.run_pending(&mut controller, Some(&host)));
-    let replies = osc.take_replies();
-    let done = find(&replies, "/done", "/b_close").expect("/done /b_close");
-    assert_eq!(done.args[1], OscType::Int(0));
+    let mut closed = false;
+    for _ in 0..10 {
+        world.fill(&mut blk, 1);
+        nrt.process();
+        block_on(osc.run_pending(&mut controller, Some(&host)));
+        if let Some(done) = find(&osc.take_replies(), "/done", "/b_close") {
+            assert_eq!(done.args[1], OscType::Int(0));
+            closed = true;
+            break;
+        }
+    }
+    assert!(closed, "/b_close should reply /done");
 
     let samples = host.samples.borrow();
     assert!(
         samples.iter().all(|&s| (s - 0.5).abs() < 1e-6),
         "DiskOut wrote a constant 0.5 to the stream"
     );
+    // The flushed tail makes the total *not* chunk-aligned - impossible without the partial-chunk
+    // flush (which would leave only whole 4096-frame chunks). This is the tail scsynth preserves too.
     assert!(
-        samples.len() >= 4096,
-        "expected at least one full chunk of recorded audio, got {}",
+        samples.len() > 4096 && !samples.len().is_multiple_of(4096),
+        "the final partial chunk was flushed (count {} is past a chunk boundary)",
         samples.len()
     );
 }

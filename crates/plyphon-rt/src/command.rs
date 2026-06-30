@@ -167,6 +167,14 @@ pub enum Command {
         /// Buffer table index.
         index: usize,
     },
+    /// Close a left-open `DiskOut` recording at `index` (`/b_close`): flush its final partial chunk to
+    /// the consumer (mirroring scsynth's `DiskOut_Dtor`, so the last sub-chunk frames are not lost),
+    /// then free the slot - routing the recording to the trash ring, whose drop abandons the host's
+    /// consumer, signalling the drain is complete.
+    CloseRecording {
+        /// Buffer table index of the recording slot to flush and free.
+        index: usize,
+    },
     /// Overwrite one sample of the buffer at `index`, in place (scsynth's `/b_set`/`/b_setn`).
     /// `sample` is a flat interleaved index (`frame * num_channels + channel`).
     SetBufferSample {

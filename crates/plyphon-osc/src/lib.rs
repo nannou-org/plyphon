@@ -268,9 +268,21 @@ struct OpenWrite {
     sink: Box<dyn BufferSinkStream>,
     /// The client a mid-stream `/fail` routes to (the opener of the stream).
     target: ReplyTarget,
+    /// `Some` once `/b_close` is requested: the engine has been told to flush the final partial chunk
+    /// and free the slot, so this drains to completion ([`StreamDrainer::is_done`]) then closes the sink
+    /// and replies `/done /b_close`. `None` while still streaming.
+    closing: Option<CloseInfo>,
 }
 
-/// A queued `/b_close`, run by [`OscDispatcher::run_pending`] (its final drain + close is async).
+/// A `/b_close` in progress: the engine flushes + frees the recording, the dispatcher drains the
+/// flushed tail before closing the sink and replying.
+struct CloseInfo {
+    completion: Option<Vec<u8>>,
+    target: ReplyTarget,
+}
+
+/// A queued `/b_close`, run by [`OscDispatcher::run_pending`] once its stream is open (the final
+/// flush-drain-close is async).
 struct PendingClose {
     bufnum: i32,
     completion: Option<Vec<u8>>,
@@ -840,6 +852,7 @@ impl OscDispatcher {
                         drainer: write.drainer,
                         sink,
                         target: write.target,
+                        closing: None,
                     },
                 );
                 continue;
@@ -875,41 +888,85 @@ impl OscDispatcher {
             }
         }
 
-        // Keep each `leaveOpen=1` stream flowing: drain whatever its `DiskOut` produced this tick. A
-        // drain error ends the stream (and fails it to its opener); `/b_close` ends it cleanly below.
-        let mut drain_errors: Vec<(i32, String)> = Vec::new();
-        for (bufnum, open) in self.open_writes.iter_mut() {
-            if let Err(err) = open.drainer.drain(open.sink.as_mut()).await {
-                drain_errors.push((*bufnum, err.to_string()));
-            }
-        }
-        for (bufnum, err) in drain_errors {
-            if let Some(open) = self.open_writes.remove(&bufnum) {
-                self.current_target = open.target;
-                self.fail("/b_write", &err);
-                let _ = controller.buffer_free(bufnum as usize);
-                self.buffers.remove(&bufnum);
+        // Initiate each queued `/b_close`: tell the engine to flush the recording's final partial chunk
+        // and free the slot (`close_recording`, mirroring scsynth's `DiskOut_Dtor`), and mark the stream
+        // `closing` so the drain below finishes it once the flushed tail arrives. A `/b_close` whose
+        // sink is still opening waits a tick; one that was never opened fails.
+        for close in core::mem::take(&mut self.pending_closes) {
+            match self.open_writes.get(&close.bufnum) {
+                Some(open) if open.closing.is_some() => {} // a duplicate `/b_close`; ignore.
+                Some(_) => {
+                    if controller.close_recording(close.bufnum as usize).is_ok() {
+                        let open = self
+                            .open_writes
+                            .get_mut(&close.bufnum)
+                            .expect("present above");
+                        open.closing = Some(CloseInfo {
+                            completion: close.completion,
+                            target: close.target,
+                        });
+                    } else {
+                        self.current_target = close.target;
+                        self.fail("/b_close", "command queue full");
+                    }
+                }
+                // The `leaveOpen=1` write's sink has not opened yet: retry on the next tick.
+                None if self
+                    .writes_in_progress
+                    .iter()
+                    .any(|w| w.leave_open && w.bufnum == close.bufnum) =>
+                {
+                    self.pending_closes.push(close);
+                }
+                None => {
+                    self.current_target = close.target;
+                    self.fail("/b_close", "buffer not open for writing");
+                }
             }
         }
 
-        // `/b_close`: final-drain and close each left-open stream, free its recording slot, reply
-        // `/done /b_close <bufnum>` (an unopened bufnum fails). The close is async, hence the queue.
-        for close in core::mem::take(&mut self.pending_closes) {
-            self.current_target = close.target;
-            let Some(mut open) = self.open_writes.remove(&close.bufnum) else {
-                self.fail("/b_close", "buffer not open for writing");
-                continue;
-            };
-            let result = open.drainer.finish(open.sink.as_mut()).await;
-            // The recording slot is the streaming ring (no flat data), so drop it on close.
-            let _ = controller.buffer_free(close.bufnum as usize);
-            self.buffers.remove(&close.bufnum);
-            match result {
-                Ok(()) => {
-                    self.run_completion_bytes(controller, close.completion.as_deref());
-                    self.done("/b_close", close.bufnum);
+        // Drain each open stream into its sink (keeping `DiskOut`'s audio flowing). A drain error ends
+        // the stream; a `closing` stream that has drained its flushed tail (the engine dropped the
+        // recording, so the consumer is finished) is complete.
+        let mut drain_errors: Vec<(i32, String)> = Vec::new();
+        let mut finished: Vec<i32> = Vec::new();
+        for (bufnum, open) in self.open_writes.iter_mut() {
+            if let Err(err) = open.drainer.drain(open.sink.as_mut()).await {
+                drain_errors.push((*bufnum, err.to_string()));
+            } else if open.closing.is_some() && open.drainer.is_done() {
+                finished.push(*bufnum);
+            }
+        }
+
+        // Finish each completed `/b_close`: close the sink (the slot was already freed by the engine),
+        // run the completion message, reply `/done /b_close <bufnum>`.
+        for bufnum in finished {
+            if let Some(mut open) = self.open_writes.remove(&bufnum) {
+                let close = open.closing.take().expect("finished implies closing");
+                self.current_target = close.target;
+                self.buffers.remove(&bufnum);
+                match open.sink.close().await {
+                    Ok(()) => {
+                        self.run_completion_bytes(controller, close.completion.as_deref());
+                        self.done("/b_close", bufnum);
+                    }
+                    Err(err) => self.fail("/b_close", &err.to_string()),
                 }
-                Err(err) => self.fail("/b_close", &err.to_string()),
+            }
+        }
+
+        // A drain error drops the stream and fails it to its opener (`/b_close` would `/fail` too).
+        for (bufnum, err) in drain_errors {
+            if let Some(open) = self.open_writes.remove(&bufnum) {
+                self.current_target = open.closing.as_ref().map_or(open.target, |c| c.target);
+                let command = if open.closing.is_some() {
+                    "/b_close"
+                } else {
+                    "/b_write"
+                };
+                self.fail(command, &err);
+                let _ = controller.buffer_free(bufnum as usize);
+                self.buffers.remove(&bufnum);
             }
         }
     }
@@ -2289,10 +2346,11 @@ impl OscDispatcher {
     }
 
     /// `/b_close bufnum` [completion]: close a file left open by `/b_write leaveOpen=1`, ending its
-    /// stream and freeing the recording slot. Queued; `run_pending` does the final drain + close
-    /// (async) and replies `/done /b_close <bufnum>` - an unopened bufnum fails. Mirrors scsynth's
-    /// `BufCloseCmd`, except the recording slot is freed (it holds no flat data) and `DiskOut`'s final
-    /// sub-chunk tail may be dropped, the same bounded tail loss continuous `DiskOut` recording has.
+    /// stream and freeing the recording slot. Queued; `run_pending` tells the engine to flush the
+    /// recording's final partial chunk and free the slot (mirroring scsynth's `DiskOut_Dtor`, so every
+    /// frame is written), drains that flushed tail, then closes the sink and replies `/done /b_close
+    /// <bufnum>` - an unopened bufnum fails. Mirrors scsynth's `BufCloseCmd`, except the recording slot
+    /// is freed afterwards (it holds no flat data, unlike scsynth's `SndBuf`).
     fn b_close(&mut self, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()

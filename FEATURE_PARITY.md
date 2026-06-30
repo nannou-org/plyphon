@@ -148,7 +148,7 @@ the whole buffer) and UGen breadth.
 - [x] /b_allocRead
 - [x] /b_read
 - [x] /b_write - `leaveOpen=0` writes a whole-buffer snapshot (the engine streams the buffer's samples out race-free to an app-provided [`BufferSink`] - no shared buffer memory - driven across `run_pending` ticks); `leaveOpen=1` installs a `DiskOut` recording slot and leaves the sink open for streaming. Replies `/done /b_write <bufnum>`. Partial `numFrames`/`startFrame` ranges are deferred; header/sample formats are the sink's choice (the path)
-- [x] /b_close - closes a `leaveOpen=1` stream (final drain + close), freeing the recording slot; replies `/done /b_close <bufnum>`. The slot is freed (it holds no flat data) and `DiskOut`'s final sub-chunk tail may drop - the same bounded tail loss continuous `DiskOut` recording has
+- [x] /b_close - closes a `leaveOpen=1` stream: the engine flushes `DiskOut`'s final partial chunk (mirroring scsynth's `DiskOut_Dtor`, so every frame is written) and frees the recording slot, then the sink is closed and `/done /b_close <bufnum>` replied. The slot is freed afterwards (it holds no flat data, unlike scsynth's `SndBuf`)
 - [x] /b_free
 - [x] /b_zero
 - [x] /b_query
