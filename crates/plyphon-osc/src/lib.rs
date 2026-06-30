@@ -95,8 +95,8 @@ use plyphon::{
     AddAction, CommandTime, Controller, Event, NodeMsg, Rate, Render, RenderUntil, Reply, Trigger,
 };
 use plyphon_buffers::{
-    BufFuture, BufferData, BufferSink, BufferSinkStream, BufferSource, DefSource, ReadRegion,
-    StreamDrainer, StreamInfo,
+    BufFuture, BufferData, BufferSink, BufferSinkStream, BufferSource, BufferStream, DefSource,
+    ReadRegion, StreamDrainer, StreamFeeder, StreamInfo,
 };
 use plyphon_dsp::buffer::Buffer;
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
@@ -190,6 +190,11 @@ fn buf_start_frame(args: &[OscType]) -> u64 {
         Some(OscType::Int(f)) => (*f).max(0) as u64,
         _ => 0,
     }
+}
+
+/// Whether the `leaveOpen` flag at `args[idx]` is set (a nonzero `Int`); default off.
+fn leave_open(args: &[OscType], idx: usize) -> bool {
+    matches!(args.get(idx), Some(OscType::Int(v)) if *v != 0)
 }
 
 /// The `i32` of an `OscType::Int` (else `0`) - for reading the `/n_trace` dump's flat records.
@@ -299,6 +304,40 @@ struct CloseInfo {
 struct PendingClose {
     bufnum: i32,
     completion: Option<Vec<u8>>,
+    target: ReplyTarget,
+}
+
+/// Chunk size (frames) and pool depth for a `/b_read leaveOpen=1` playback stream - the read mirror of
+/// [`WRITE_CHUNK_FRAMES`]/[`WRITE_CHUNKS`]. 4 x 4096 frames is ~340 ms of look-ahead at 48 kHz (a
+/// playback stream wants modest look-ahead, unlike the write's deep pool for draining a copy-out fast).
+const READ_CHUNK_FRAMES: usize = 4096;
+const READ_CHUNKS: usize = 4;
+
+/// A queued `/b_read leaveOpen=1`: the streaming-cue counterpart to a `leave_open` [`PendingWrite`].
+/// The file open is async, so the handler defers it to [`OscDispatcher::run_pending`] (which lends the
+/// [`BufferSource`]).
+struct PendingRead {
+    command: &'static str,
+    bufnum: i32,
+    /// The file path to open for streaming.
+    key: String,
+    /// `fileStartFrame`: seek the stream here before priming if nonzero.
+    file_start: u64,
+    completion: Option<Vec<u8>>,
+    target: ReplyTarget,
+}
+
+/// A `/b_read leaveOpen=1` stream the host left open for `DiskIn` to read: fed each
+/// [`OscDispatcher::run_pending`] tick ([`StreamFeeder::fill`]) until `/b_close` or `/b_free`. The
+/// engine's `StreamPlayback` slot at this bufnum is the sink of the fed chunks. The read mirror of
+/// [`OpenWrite`], but with no `closing` half-state - closing a read needs no flush/drain, just freeing
+/// the slot.
+struct OpenRead {
+    /// Pushes decoded chunks into the engine's playback slot.
+    feeder: StreamFeeder,
+    /// The open file stream the chunks are read from.
+    stream: Box<dyn BufferStream>,
+    /// The client a mid-stream `/fail` routes to (the opener of the stream).
     target: ReplyTarget,
 }
 
@@ -463,6 +502,12 @@ pub struct OscDispatcher {
     /// `/b_write leaveOpen=1` streams left open for `DiskOut`, keyed by bufnum, drained each tick and
     /// closed by `/b_close`.
     open_writes: HashMap<i32, OpenWrite>,
+    /// `/b_read leaveOpen=1` streaming cues queued by `apply`, awaiting their async file-open in
+    /// `run_pending`.
+    pending_reads: Vec<PendingRead>,
+    /// `/b_read leaveOpen=1` streams left open for `DiskIn`, keyed by bufnum, fed each tick and freed
+    /// by `/b_close` or `/b_free`.
+    open_reads: HashMap<i32, OpenRead>,
     /// `/b_close` requests awaiting their async final-drain-and-close in `run_pending`.
     pending_closes: Vec<PendingClose>,
     /// Outbound replies, each tagged with its destination, drained by
@@ -513,6 +558,8 @@ impl OscDispatcher {
             pending_commands: Vec::new(),
             writes_in_progress: Vec::new(),
             open_writes: HashMap::new(),
+            pending_reads: Vec::new(),
+            open_reads: HashMap::new(),
             pending_closes: Vec::new(),
             replies: Vec::new(),
             current_target: ReplyTarget::Broadcast,
@@ -771,6 +818,71 @@ impl OscDispatcher {
             }
         }
 
+        // `/b_read leaveOpen=1` streaming cues: open the file, install a `DiskIn` playback slot, prime
+        // its queue, and register it as fed each tick below. The slot is *replaced* by a `Stream`
+        // endpoint (no in-memory splice), exactly as `/b_write leaveOpen=1` replaces it with a recorder.
+        for read in core::mem::take(&mut self.pending_reads) {
+            self.current_target = read.target;
+            // Validate the buffer first (no I/O) - the file's channels must match it.
+            let Some(info) = self.buffers.get(&read.bufnum).copied() else {
+                self.fail(read.command, "buffer not allocated");
+                continue;
+            };
+            let Some(source) = source else {
+                self.fail(read.command, "no buffer source configured");
+                continue;
+            };
+            let mut stream = match source.open(&read.key).await {
+                Ok(stream) => stream,
+                Err(err) => {
+                    self.fail(read.command, &err.to_string());
+                    continue;
+                }
+            };
+            let stream_info = stream.info();
+            if stream_info.num_channels != info.num_channels {
+                self.fail(read.command, "channel mismatch");
+                continue;
+            }
+            if read.file_start != 0
+                && let Err(err) = stream.seek(read.file_start).await
+            {
+                self.fail(read.command, &err.to_string());
+                continue;
+            }
+            // Replace the slot with a `DiskIn` playback stream (the displaced slot is trashed off-thread).
+            let producer = match controller.buffer_cue(
+                read.bufnum as usize,
+                stream_info.num_channels,
+                stream_info.sample_rate,
+                READ_CHUNK_FRAMES,
+                READ_CHUNKS,
+            ) {
+                Ok(producer) => producer,
+                Err(_) => {
+                    self.fail(read.command, "command queue full");
+                    continue;
+                }
+            };
+            let mut feeder = StreamFeeder::new(producer);
+            if let Err(err) = feeder.fill(&mut *stream).await {
+                // Prime failed: tear the just-cued slot back down so it does not linger silent.
+                self.fail(read.command, &err.to_string());
+                let _ = controller.buffer_free(read.bufnum as usize);
+                continue;
+            }
+            self.run_completion_bytes(controller, read.completion.as_deref());
+            self.done(read.command, read.bufnum);
+            self.open_reads.insert(
+                read.bufnum,
+                OpenRead {
+                    feeder,
+                    stream,
+                    target: read.target,
+                },
+            );
+        }
+
         // SynthDef loads (`/d_load`/`/d_loadDir`): read the SCgf bytes through the host's `DefSource`,
         // parse and register each def, run the completion message, and reply `/done /<command>`.
         let def_source = host.and_then(|h| h.def_source());
@@ -917,6 +1029,18 @@ impl OscDispatcher {
         // `closing` so the drain below finishes it once the flushed tail arrives. A `/b_close` whose
         // sink is still opening waits a tick; one that was never opened fails.
         for close in core::mem::take(&mut self.pending_closes) {
+            // Closing a `/b_read leaveOpen=1` stream is synchronous: free the slot (which stops the
+            // feed), no flush/drain. A read and a write never share a bufnum (the slot is one or other).
+            if self.open_reads.remove(&close.bufnum).is_some() {
+                self.current_target = close.target;
+                if controller.buffer_free(close.bufnum as usize).is_ok() {
+                    self.run_completion_bytes(controller, close.completion.as_deref());
+                    self.done("/b_close", close.bufnum);
+                } else {
+                    self.fail("/b_close", "command queue full");
+                }
+                continue;
+            }
             match self.open_writes.get(&close.bufnum) {
                 Some(open) if open.closing.is_some() => {} // a duplicate `/b_close`; ignore.
                 Some(_) => {
@@ -944,7 +1068,7 @@ impl OscDispatcher {
                 }
                 None => {
                     self.current_target = close.target;
-                    self.fail("/b_close", "buffer not open for writing");
+                    self.fail("/b_close", "buffer not open");
                 }
             }
         }
@@ -991,6 +1115,23 @@ impl OscDispatcher {
                 self.fail(command, &err);
                 let _ = controller.buffer_free(bufnum as usize);
                 self.buffers.remove(&bufnum);
+            }
+        }
+
+        // Feed each open `/b_read leaveOpen=1` stream, keeping `DiskIn`'s queue topped up. A read error
+        // drops the entry + frees the slot; a non-looping stream returning 0 at EOF just stops topping
+        // up (DiskIn underruns to silence) - the entry stays until `/b_close`/`/b_free`.
+        let mut read_errors: Vec<(i32, String)> = Vec::new();
+        for (bufnum, open) in self.open_reads.iter_mut() {
+            if let Err(err) = open.feeder.fill(&mut *open.stream).await {
+                read_errors.push((*bufnum, err.to_string()));
+            }
+        }
+        for (bufnum, err) in read_errors {
+            if let Some(open) = self.open_reads.remove(&bufnum) {
+                self.current_target = open.target;
+                self.fail("/b_read", &err);
+                let _ = controller.buffer_free(bufnum as usize);
             }
         }
     }
@@ -2035,6 +2176,10 @@ impl OscDispatcher {
             .buffer_free(bufnum as usize)
             .map_err(|_| OscError::QueueFull)?;
         self.buffers.remove(&bufnum);
+        // Stop feeding/draining a freed buffer: drop any left-open read or write stream on it. (For a
+        // freed left-open write this also avoids a dangling `OpenWrite` emitting a spurious `/fail`.)
+        self.open_reads.remove(&bufnum);
+        self.open_writes.remove(&bufnum);
         self.run_completion_bytes(controller, last_blob(args));
         self.done("/b_free", bufnum);
         Ok(())
@@ -2280,9 +2425,12 @@ impl OscDispatcher {
     /// `/b_read bufnum path [fileStartFrame numFrames bufStartFrame leaveOpen]` [completion]: read a
     /// file region into the *already-allocated* buffer at `bufStartFrame`, keeping its dimensions
     /// (scsynth's `BufReadCmd` - not a whole-buffer replace, which is `/b_allocRead`). The file's
-    /// channel count must match the buffer's. `leaveOpen=1` (keep the file open as a `DiskIn` stream)
-    /// is deferred - the splice still runs.
+    /// channel count must match the buffer's. `leaveOpen=1` instead keeps the file open and streams it
+    /// off disk into a `DiskIn` (the read counterpart to `/b_write leaveOpen=1`), ended by `/b_close`.
     fn b_read(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        if leave_open(args, 5) {
+            return self.queue_read_stream("/b_read", args);
+        }
         let dst_frame = buf_start_frame(args);
         self.queue_load("/b_read", args, None, Some(dst_frame))
     }
@@ -2298,11 +2446,50 @@ impl OscDispatcher {
     /// `/b_readChannel bufnum path [fileStartFrame numFrames bufStartFrame leaveOpen] channels...`: read
     /// only the selected file channels into the already-allocated buffer at `bufStartFrame` (scsynth's
     /// `BufReadChannelCmd`). The channel indices (the trailing `Int` args at `args[6..]`) select to a
-    /// width that must match the buffer. `leaveOpen=1` is deferred - the splice still runs.
+    /// width that must match the buffer. `leaveOpen=1` (channel-subset streaming) is deferred - it would
+    /// need a deinterleaving `BufferStream` wrapper - so it fails.
     fn b_read_channel(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        if leave_open(args, 5) {
+            self.fail(
+                "/b_readChannel",
+                "leaveOpen=1 streaming with a channel subset is not supported",
+            );
+            return Ok(());
+        }
         let dst_frame = buf_start_frame(args);
         let channels = channel_list(args, 6);
         self.queue_load("/b_readChannel", args, Some(channels), Some(dst_frame))
+    }
+
+    /// Queue a `/b_read leaveOpen=1` streaming cue, opened + cued by [`Self::run_pending`]. Parses
+    /// bufnum/path/`fileStartFrame`; the file then streams off disk into a `DiskIn`.
+    fn queue_read_stream(
+        &mut self,
+        command: &'static str,
+        args: &[OscType],
+    ) -> Result<(), OscError> {
+        let bufnum = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_read expects a bufnum"))?,
+        )?;
+        let key = str_arg(
+            args.get(1)
+                .ok_or(OscError::BadArguments("b_read expects a path"))?,
+        )?
+        .to_string();
+        let file_start = match args.get(2) {
+            Some(OscType::Int(s)) => (*s).max(0) as u64,
+            _ => 0,
+        };
+        self.pending_reads.push(PendingRead {
+            command,
+            bufnum,
+            key,
+            file_start,
+            completion: last_blob(args).map(|bytes| bytes.to_vec()),
+            target: self.current_target,
+        });
+        Ok(())
     }
 
     /// `/b_write bufnum path [header] [sample] [numFrames] [startFrame] [leaveOpen]` [completion]:
