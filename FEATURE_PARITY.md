@@ -68,9 +68,11 @@ exactly as `/b_allocRead` already defers I/O to an app-provided `BufferSource`: 
 the engine streaming the buffer out race-free - a whole-buffer snapshot, or `leaveOpen=1` left open
 for `DiskOut`). The OSC surface is now complete; the one command that touches the audio thread,
 `/n_trace`, streams each calc unit's I/O over the reply ring to a host text sink. (scsynth's `/n_cmd`
-is unimplemented - commented out in its command table - so plyphon omits it too.) The remaining gaps
-are non-OSC: reading a region into an *existing* buffer (today's `/b_read`/`/b_readChannel` replace
-the whole buffer) and UGen breadth.
+is unimplemented - commented out in its command table - so plyphon omits it too.) `/b_read`/
+`/b_readChannel` now splice a file region into an existing buffer at `bufStartFrame` (scsynth's
+`BufReadCmd`), not a whole-buffer replace. The remaining gaps are: `/b_read`/`/b_readChannel`'s
+`leaveOpen=1` streaming form (the read counterpart to `/b_write leaveOpen=1` - a `DiskIn` cue) and
+UGen breadth.
 
 **Server / top-level** (10/10)
 
@@ -146,7 +148,7 @@ the whole buffer) and UGen breadth.
 
 - [x] /b_alloc
 - [x] /b_allocRead
-- [x] /b_read
+- [x] /b_read - reads a file region into the already-allocated buffer at `bufStartFrame`, keeping its dimensions (scsynth's `BufReadCmd` - a region splice via a `WriteBufferRegion` command, not a whole-buffer replace); the file's channel count must match. `leaveOpen=1` (keep the file open as a `DiskIn` stream) is deferred
 - [x] /b_write - `leaveOpen=0` writes a whole-buffer snapshot (the engine streams the buffer's samples out race-free to an app-provided [`BufferSink`] - no shared buffer memory - driven across `run_pending` ticks); `leaveOpen=1` installs a `DiskOut` recording slot and leaves the sink open for streaming. Replies `/done /b_write <bufnum>`. Partial `numFrames`/`startFrame` ranges are deferred; header/sample formats are the sink's choice (the path)
 - [x] /b_close - closes a `leaveOpen=1` stream: the engine flushes `DiskOut`'s final partial chunk (mirroring scsynth's `DiskOut_Dtor`, so every frame is written) and frees the recording slot, then the sink is closed and `/done /b_close <bufnum>` replied. The slot is freed afterwards (it holds no flat data, unlike scsynth's `SndBuf`)
 - [x] /b_free
@@ -160,7 +162,7 @@ the whole buffer) and UGen breadth.
 - [x] /b_get - getter
 - [x] /b_getn - getter
 - [x] /b_allocReadChannel - reads only the selected file channels into a fresh buffer (control-side `CopyChannels` deinterleave; out-of-range channel reads as silence)
-- [x] /b_readChannel - the channel-subset form of `/b_read` (same deinterleave; like `/b_read` it replaces the whole buffer)
+- [x] /b_readChannel - the channel-subset form of `/b_read`: deinterleaves the selected channels (to a width that must match the buffer) and splices them into the existing buffer at `bufStartFrame`
 - [x] /b_setSampleRate
 
 ## Replies, notifications & done actions
