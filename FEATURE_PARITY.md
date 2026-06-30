@@ -101,7 +101,9 @@ The remaining gap is non-OSC: **UGen breadth**.
 
 **Synth** (4/4)
 
-- [x] /s_new
+- [x] /s_new - all five add actions, including `addReplace` (4): the new synth takes the target
+  node's exact slot and the target (with its subtree) is freed, the replaced node's `/n_end` firing
+  before the new node's `/n_go` (scsynth's `Node_Replace`)
 - [x] /s_get - getter; reply echoes the as-given control token (index or name)
 - [x] /s_getn
 - [x] /s_noid - partial: detaches control-name resolution; the node keeps running and stays reachable
@@ -127,7 +129,9 @@ The remaining gap is non-OSC: **UGen breadth**.
 
 **Group** (8/8)
 
-- [x] /g_new
+- [x] /g_new - all five add actions, including `addReplace` (4): a fresh empty group takes the target
+  node's slot and the target subtree is freed; the root group cannot be replaced (a no-op, as scsynth
+  guards with `kSCErr_ReplaceRootGroup`)
 - [x] /g_head
 - [x] /g_tail
 - [x] /g_freeAll

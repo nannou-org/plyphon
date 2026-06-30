@@ -118,7 +118,8 @@ pub enum OscError {
     /// The arguments did not match the command.
     #[error("bad OSC arguments: {0}")]
     BadArguments(&'static str),
-    /// The `addAction` code is not one plyphon supports (only head/tail for now).
+    /// The `addAction` code is out of range (0-4), or `addReplace` (4) was used on a command that
+    /// does not create a node (e.g. `/n_order`).
     #[error("unsupported addAction: {0}")]
     UnsupportedAddAction(i32),
     /// A `/d_recv` payload failed to load as a SynthDef.
@@ -1565,6 +1566,10 @@ impl OscDispatcher {
         }
         let mut anchor = int_arg(&args[1])?;
         let mut action = add_action(int_arg(&args[0])?)?;
+        // `/n_order` reorders existing nodes; addReplace (4) only makes sense for node creation.
+        if action == AddAction::Replace {
+            return Err(OscError::UnsupportedAddAction(4));
+        }
         for arg in &args[2..] {
             let node = int_arg(arg)?;
             controller
@@ -3076,14 +3081,15 @@ fn bundle_command_time(timetag: OscTime) -> CommandTime {
     }
 }
 
-/// Map a SuperCollider `addAction` code to a plyphon [`AddAction`] (only head/tail supported).
+/// Map a SuperCollider `addAction` code to a plyphon [`AddAction`]. Code 4 (`addReplace`) is valid
+/// only for the node-*creating* commands `/s_new` and `/g_new`; the move/order commands reject it.
 fn add_action(code: i32) -> Result<AddAction, OscError> {
     match code {
         0 => Ok(AddAction::Head),
         1 => Ok(AddAction::Tail),
         2 => Ok(AddAction::Before),
         3 => Ok(AddAction::After),
-        // 4 is addReplace, not yet supported.
+        4 => Ok(AddAction::Replace),
         other => Err(OscError::UnsupportedAddAction(other)),
     }
 }

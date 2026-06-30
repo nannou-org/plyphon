@@ -834,3 +834,85 @@ fn d_free_removes_a_def() {
     )
     .expect("/s_new after re-recv");
 }
+
+#[test]
+fn s_new_addreplace_swaps_a_running_synth_over_osc() {
+    let (mut d, mut controller, mut nrt, mut world) = engine_1ch();
+    start_sine(&mut d, &mut controller); // node 1000 at the root's tail
+    let _ = render(&mut world, 1024);
+    let _ = drain_notifications(&mut d, &mut nrt);
+
+    // /s_new sine 2000 4 1000 - addAction 4 (addReplace) replaces node 1000 with node 2000.
+    d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/s_new",
+            vec![
+                OscType::String("sine".to_string()),
+                OscType::Int(2000),
+                OscType::Int(4),
+                OscType::Int(1000),
+            ],
+        ),
+    )
+    .expect("/s_new addReplace");
+    let _ = render(&mut world, 1024);
+    let msgs = drain_notifications(&mut d, &mut nrt);
+
+    // The replaced node's /n_end (with -1 links, scsynth's Node_Replace) precedes the new /n_go.
+    let end_idx = msgs
+        .iter()
+        .position(|m| m.addr == "/n_end" && m.args.first() == Some(&OscType::Int(1000)))
+        .expect("expected /n_end for the replaced node 1000");
+    let go_idx = msgs
+        .iter()
+        .position(|m| m.addr == "/n_go" && m.args.first() == Some(&OscType::Int(2000)))
+        .expect("expected /n_go for the new node 2000");
+    assert!(
+        end_idx < go_idx,
+        "/n_end(1000) must precede /n_go(2000): {msgs:?}"
+    );
+    assert_eq!(
+        msgs[end_idx].args,
+        vec![
+            OscType::Int(1000),
+            OscType::Int(-1),
+            OscType::Int(-1),
+            OscType::Int(-1),
+            OscType::Int(0),
+        ],
+        "the replaced node reports -1 links"
+    );
+    // The new synth lands in the root group (node 1000's old slot).
+    assert_eq!(
+        msgs[go_idx].args,
+        vec![
+            OscType::Int(2000),
+            OscType::Int(ROOT_GROUP_ID),
+            OscType::Int(-1),
+            OscType::Int(-1),
+            OscType::Int(0),
+        ],
+    );
+}
+
+#[test]
+fn n_order_rejects_addreplace() {
+    let (mut d, mut controller, _nrt, _world) = engine_1ch();
+    // addReplace (4) only makes sense for node creation; /n_order must reject it.
+    let err = d.apply_bytes(
+        &mut controller,
+        &osc(
+            "/n_order",
+            vec![
+                OscType::Int(4),
+                OscType::Int(ROOT_GROUP_ID),
+                OscType::Int(1),
+            ],
+        ),
+    );
+    assert!(
+        matches!(err, Err(plyphon_osc::OscError::UnsupportedAddAction(4))),
+        "n_order with addAction 4 should be rejected, got {err:?}"
+    );
+}

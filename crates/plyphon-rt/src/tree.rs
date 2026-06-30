@@ -31,6 +31,10 @@ pub enum AddAction {
     Before,
     /// Immediately after the target *node*, among its siblings (`addAfter`, code 3).
     After,
+    /// Replace the target *node*: the new node takes its exact slot, and the target - with its whole
+    /// subtree - is freed (`addReplace`, code 4). Unlike the others this is not a plain placement: it
+    /// frees a node, so it runs through the dedicated replace path, not `resolve_placement`.
+    Replace,
 }
 
 /// A resolved placement: where a node is to be linked, by slot index.
@@ -189,6 +193,86 @@ impl NodeTree {
         self.id_map.insert(id, idx);
         self.link_at(idx, placement);
         true
+    }
+
+    /// Replace `target` with the freshly built synth `graph` (scsynth's `/s_new` `addReplace`): the
+    /// new synth `id` takes `target`'s exact slot, and `target` (with its subtree) is freed into
+    /// `sink`. The new node keeps its own `id`. On failure (target unknown, target is the root, or the
+    /// tree is full) the graph is returned for reclamation and nothing is freed.
+    pub(crate) fn replace_with_synth(
+        &mut self,
+        id: i32,
+        graph: Graph,
+        target: i32,
+        sink: &mut Vec<FreedNode>,
+    ) -> Result<(), Graph> {
+        let Some((idx, group, prev, next)) = self.vacate_for_replace(target, sink) else {
+            return Err(graph);
+        };
+        self.slots[idx as usize] = Slot::Node(Node {
+            id,
+            parent: None,
+            prev: None,
+            next: None,
+            paused: false,
+            kind: NodeKind::Synth(graph),
+        });
+        self.id_map.insert(id, idx);
+        self.insert(idx, group, prev, next);
+        self.synth_count += 1;
+        Ok(())
+    }
+
+    /// Replace `target` with a fresh empty group `id` (scsynth's `/g_new` `addReplace`): the new group
+    /// takes `target`'s slot, and `target` (with its subtree) is freed into `sink`. Returns `false`
+    /// if `target` is unknown, is the root, or the tree is full (in which case nothing is freed).
+    pub fn replace_with_group(&mut self, id: i32, target: i32, sink: &mut Vec<FreedNode>) -> bool {
+        let Some((idx, group, prev, next)) = self.vacate_for_replace(target, sink) else {
+            return false;
+        };
+        self.slots[idx as usize] = Slot::Node(Node {
+            id,
+            parent: None,
+            prev: None,
+            next: None,
+            paused: false,
+            kind: NodeKind::Group {
+                head: None,
+                tail: None,
+            },
+        });
+        self.id_map.insert(id, idx);
+        self.insert(idx, group, prev, next);
+        true
+    }
+
+    /// Free `target` (and its subtree) and reserve a free slot for a replacement to take its place,
+    /// returning `(new slot, parent group, prev sibling, next sibling)` - the position `target`
+    /// vacated. `None` if `target` is unknown, is the root, or the tree is full; nothing is freed in
+    /// that case (the slot is reserved *before* the free, mirroring scsynth's `Graph_New`-then-
+    /// `Node_Replace`, so a full tree fails the replace rather than half-applying it). The replaced
+    /// node's `/n_end` reports `-1` links: `target` is unlinked before it is destroyed, just as
+    /// scsynth's `Node_Replace` nulls the links before deleting the node.
+    fn vacate_for_replace(
+        &mut self,
+        target: i32,
+        sink: &mut Vec<FreedNode>,
+    ) -> Option<(u32, u32, Option<u32>, Option<u32>)> {
+        let target_idx = match self.id_map.get(&target) {
+            Some(&i) if i != self.root_index => i,
+            _ => return None,
+        };
+        let idx = self.free.pop()?;
+        let group = self
+            .node_parent(target_idx)
+            .expect("a non-root node always has a parent group");
+        let prev = self.node_prev(target_idx);
+        let next = self.node_next(target_idx);
+        // Free the replaced node first - unlinked (so its `/n_end` reports `-1`, scsynth's
+        // `Node_Replace`), which also releases its id, so the replacement may even reuse it.
+        self.unlink(target_idx);
+        self.destroy(target_idx, sink);
+        Some((idx, group, prev, next))
     }
 
     /// Move an existing node to `target`/`action` (scsynth's `/g_head`/`/g_tail`/`/n_before`/
@@ -605,6 +689,9 @@ impl NodeTree {
                 group,
                 node: target_idx,
             }),
+            // Replace is not a plain placement (it frees the target); see `replace_with_synth` /
+            // `replace_with_group`. A move command that is handed Replace thus resolves to nothing.
+            AddAction::Replace => None,
         }
     }
 

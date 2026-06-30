@@ -556,7 +556,16 @@ impl World {
                 action,
             } => self.add_synth(id, def_id, target, action),
             Command::AddGroup { id, target, action } => {
-                if self.tree.add_group(id, target, action) {
+                if action == AddAction::Replace {
+                    let mut sink = core::mem::take(&mut self.freed_nodes);
+                    sink.clear();
+                    if self.tree.replace_with_group(id, target, &mut sink) {
+                        // scsynth order: the replaced node's `/n_end` before the new group's `/n_go`.
+                        self.drain_freed(&mut sink);
+                        self.emit_started(id);
+                    }
+                    self.freed_nodes = sink;
+                } else if self.tree.add_group(id, target, action) {
                     self.emit_started(id);
                 }
             }
@@ -894,6 +903,20 @@ impl World {
             self.emit(Event::SynthFailed { id });
             return;
         };
+        if action == AddAction::Replace {
+            let mut sink = core::mem::take(&mut self.freed_nodes);
+            sink.clear();
+            match self.tree.replace_with_synth(id, graph, target, &mut sink) {
+                // scsynth order: the replaced node's `/n_end` before the new node's `/n_go`.
+                Ok(()) => {
+                    self.drain_freed(&mut sink);
+                    self.emit_started(id);
+                }
+                Err(returned) => self.pool.dealloc(returned.into_block()),
+            }
+            self.freed_nodes = sink;
+            return;
+        }
         match self.tree.add_synth(id, graph, target, action) {
             Ok(()) => self.emit_started(id),
             Err(returned) => self.pool.dealloc(returned.into_block()),
