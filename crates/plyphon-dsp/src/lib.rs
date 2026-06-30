@@ -24,6 +24,7 @@ pub mod buffer;
 pub mod bus;
 pub mod fft;
 pub mod math;
+pub mod ops;
 pub mod rate;
 pub mod rng;
 pub mod stream;

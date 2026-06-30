@@ -138,6 +138,120 @@ fn unary_op_abs_rectifies() {
 }
 
 #[test]
+fn unary_op_midicps_converts_constant() {
+    // UnaryOpUGen special index 17 = midicps, applied to the constant MIDI note 69 -> 440 Hz. With a
+    // constant (scalar) input the op evaluates once and fills the block, so `Out.ar` emits a steady
+    // 440.0 DC signal.
+    let def = SynthDef {
+        name: "mc".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec {
+                name: "UnaryOpUGen".to_string(),
+                rate: Rate::Audio,
+                inputs: vec![InputRef::Constant(69.0)],
+                num_outputs: 1,
+                special_index: 17,
+            },
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 0, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    };
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    controller.add_synthdef(def);
+    controller
+        .synth_new("mc", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("synth_new");
+
+    let out = render(&mut world, 512);
+    assert!(
+        out.iter().all(|&x| (x - 440.0).abs() < 1e-2),
+        "midicps(69) should emit a steady 440.0, got e.g. {}",
+        out[0]
+    );
+}
+
+#[test]
+fn binary_op_clip2_bounds_a_loud_sine() {
+    // SinOsc.ar(440) * 2 clipped to ±0.5 via BinaryOpUGen special index 42 (clip2). The audio-rate
+    // signal against a constant bound must clip cleanly without panicking.
+    let def = SynthDef {
+        name: "clipped".to_string(),
+        params: vec![Param::control("freq", 440.0)],
+        units: vec![
+            UnitSpec::new(
+                "SinOsc",
+                Rate::Audio,
+                vec![InputRef::Param(0), InputRef::Constant(0.0)],
+                1,
+            ),
+            UnitSpec {
+                name: "BinaryOpUGen".to_string(),
+                rate: Rate::Audio,
+                inputs: vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Constant(2.0),
+                ],
+                num_outputs: 1,
+                special_index: 2, // multiply -> amplitude 2.0
+            },
+            UnitSpec {
+                name: "BinaryOpUGen".to_string(),
+                rate: Rate::Audio,
+                inputs: vec![
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Constant(0.5),
+                ],
+                num_outputs: 1,
+                special_index: 42, // clip2 -> ±0.5
+            },
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 2, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    };
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    controller.add_synthdef(def);
+    controller
+        .synth_new("clipped", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("synth_new");
+
+    let out = render(&mut world, SR as usize / 8);
+    assert!(
+        out.iter().all(|&x| x.abs() <= 0.5 + 1e-6),
+        "clip2 must bound the signal to ±0.5, peak {}",
+        peak(&out)
+    );
+    // The 2x sine overshoots ±0.5 most of the time, so the bound is actually exercised.
+    assert!(
+        (peak(&out) - 0.5).abs() < 1e-3,
+        "clipping should reach the ±0.5 bound, peak {}",
+        peak(&out)
+    );
+}
+
+#[test]
 fn unsupported_op_is_rejected() {
     let def = SynthDef {
         name: "bad".to_string(),

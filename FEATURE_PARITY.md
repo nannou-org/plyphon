@@ -23,15 +23,13 @@ Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are 
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
 The **shared-memory / internal-server** surface is also intentionally out of scope, for the same
-reason plyphon shares no memory with its clients: scsynth's **shm scope ring** (the transport behind
-`ScopeOut2`, mapped and polled by the GUI), **shared controls** (the mmap'd shared control-bus region),
-the `/late` lateness reply (a late bundle is resolved to the soonest sample, never reported), and the
-legacy **binary integer OSC command form** (`inData[0] == 0` selecting `gCmdArray[int]`; plyphon
-dispatches string addresses only). A host that wants scope/metering uses plyphon's own **`ScopeOut`**
-instead (implemented - see the I/O category below), which streams every input sample over the RT-safe
-chunk ring rather than shared memory. `LocalBuf` (SynthDef-side local buffers, e.g. for an FFT chain)
-is **deferred**, not excluded - a chain buffer is `/b_alloc`'d instead, so it does not block the `PV_*`
-family.
+reason plyphon shares no memory with its clients: **scope buffers** (`ScopeOut` + the shm scope ring),
+**shared controls** (the mmap'd shared control-bus region), the `/late` lateness reply (a late bundle
+is resolved to the soonest sample, never reported), and the legacy **binary integer OSC command
+form** (`inData[0] == 0` selecting `gCmdArray[int]`; plyphon dispatches string addresses only). A host
+that wants scope/metering builds it on plyphon's own ring transport, not scsynth's shm. `LocalBuf`
+(SynthDef-side local buffers, e.g. for an FFT chain) is **deferred**, not excluded - a chain buffer is
+`/b_alloc`'d instead, so it does not block the `PV_*` family.
 
 Intra-graph **reblock and resample** (scsynth's `kGraph_Reblock` / `kGraph_Resample`, per-SynthDef
 `Reblock(n)` / `Resample(n)`) are **done**: a def can run its graph at a smaller power-of-two control
@@ -58,19 +56,24 @@ the programmatic API. The **control-driven** forms (`blockSize -1` / `resampleFa
 value comes from a synth control at instantiation) are unsupported - plyphon bakes the graph block into
 the per-synth layout at compile - and fall back to no reblock/resample.
 
-## UGens (67 of scsynth's ~250, grouped by category)
+## UGens (65 of scsynth's ~382 standard DSP UGens, grouped by category)
 
-- [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`), and ScopeOut - a live monitoring/analysis tap that streams every sample of its (multichannel) input off the audio thread to the app, the shared-memory-free equivalent of scsynth's `ScopeOut2`. It reuses `DiskOut`'s bounded lock-free chunk-ring transport (`Controller::cue_scope` returns the `StreamConsumer` the app drains); scsynth's `ScopeOut` (an interleaved plain-`SndBuf` read only by the in-process internal server) and `ScopeOut2` (a shm ring) are both replaced by this one no-shm streaming path. Several `ScopeOut` units on distinct bufnums tap several graph points at once. Missing: ReplaceOut, XOut, SoundIn
+The remaining gap to full scsynth compatibility is UGen breadth; the engine seams these need (aux
+memory, per-unit RNG, the demand vtable, the FFT/PV bin seam, trailing-input spec arrays) are all in
+place, so most are pure per-unit ports. Note the two operator *shells* below (`BinaryOpUGen` /
+`UnaryOpUGen`) each cover dozens of `special_index` operators, so their breadth far exceeds one UGen.
+
+- [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`); missing ReplaceOut, XOut, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
 - [ ] **Noise** - have WhiteNoise; missing PinkNoise, BrownNoise, GrayNoise, ClipNoise, Dust/Dust2, LFNoise0/1/2, LFDNoise*, Crackle
 - [ ] **Filters** - have LPF, HPF, Lag; missing BPF, BRF, RLPF, RHPF, Resonz, Ringz, OnePole/OneZero, TwoPole/TwoZero, Integrator, LeakDC, Slew, Decay/Decay2, Formlet, MoogFF, MidEQ
 - [ ] **Envelopes** - have EnvGen, Line; missing XLine, Linen, IEnvGen, DemandEnvGen
 - [ ] **Panning** - have Pan2; missing LinPan2, Pan4, Balance2, Rotate2, XFade2, LinXFade2, PanAz, Splay
 - [ ] **Dynamics** - have Amplitude; missing Compander, Limiter, Normalizer, DetectSilence
-- [ ] **Math / multichannel** - have BinaryOpUGen, UnaryOpUGen, MulAdd; missing Sum3/Sum4, Select, Index, Clip/Wrap/Fold, LinLin/LinExp
+- [ ] **Math / multichannel** - BinaryOpUGen and UnaryOpUGen now implement scsynth's **full audio-rate operator set** - every pure binary op (add/sub/mul/div/idiv/mod, the comparisons, min/max, the bit/shift ops, lcm/gcd, round/roundUp/trunc, atan2/hypot/hypotx, pow, the ring/sqr/dif family, thresh/amclip/scaleneg/clip2/excess/fold2/wrap2/firstArg) and every pure unary op (neg/not/bitNot/abs, ceil/floor/frac/sign, squared/cubed, signed-sqrt, exp/recip, the midicps/cpsmidi/octcps/dbamp/... conversions, log/log2/log10, the full trig/hyperbolic set, distort/softclip, the rect/han/welch/tri windows, ramp/scurve). Kernels live in `plyphon_dsp::ops` (mirroring scsynth's `SC_Inline*Op.h`) and are shared with the upcoming Clip/Wrap/Fold/LinExp units. Deferred: the graph-RNG ops (rand/rand2/linrand/coin/rrand/exprand - they ride the noise UGens' per-unit RNG) and non-signal ops (isNil/asFloat/...). Have MulAdd; missing the helper UGens Sum3/Sum4, Select, Index, Clip/Wrap/Fold, LinLin/LinExp
 - [ ] **Buffer playback / recording** - have PlayBuf, DiskIn, RecordBuf (record into a buffer with overdub/run/loop/doneAction), BufWr (write channels at a phase index), DiskOut (stream channels out to a cued recording buffer, drained off the audio thread to a sink); missing BufRd, VDiskIn, TGrains, GrainBuf
 - [ ] **Triggers / timing** - have SendTrig (fires `/tr` on a rising edge, at control or audio rate), SendReply (emits a custom OSC path with a bounded number of values, over a dedicated node-message ring), FreeSelf, PauseSelf, Done, FreeSelfWhenDone, PauseSelfWhenDone, Free, Pause; missing Trig/Trig1, TDelay, Latch, Gate, Phasor, Sweep, Timer, PulseCount, PulseDivider, Stepper, ToggleFF, Poll
-- [ ] **Info** - have SampleRate, SampleDur, RadiansPerSample, ControlRate, ControlDur, NumOutputBuses, NumInputBuses, NumAudioBuses, NumControlBuses, NumRunningSynths, NumBuffers, BufFrames, BufChannels, BufSamples, BufSampleRate, BufRateScale, BufDur, and SubsampleOffset. `SubsampleOffset` needed a real engine feature: the scheduler now retains the *fractional* (sub-sample) part of a scheduled event's within-block position (scsynth's `mSubsampleOffset`) instead of flooring it away. `Clock::block_offset` returns the integer sample offset (clamped, round-to-nearest as before) alongside the unclamped fractional remainder in `[0, 1)`; it is threaded World -> Graph -> `ProcessCtx::subsample_offset` exactly parallel to the existing integer `sample_offset`, and the `SubsampleOffset` UGen snapshots it once on its first block (like `OffsetOut` captures the integer offset). `OffsetOut` is unchanged - scsynth's `OffsetOut` honours only the integer offset.
+- [ ] **Info** - have SampleRate, SampleDur, RadiansPerSample, ControlRate, ControlDur, NumOutputBuses, NumInputBuses, NumAudioBuses, NumControlBuses, NumRunningSynths, NumBuffers, BufFrames, BufChannels, BufSamples, BufSampleRate, BufRateScale, BufDur; missing SubsampleOffset
 - [ ] **Delays / reverb** - have DelayN (the first UGen on per-instance aux memory); missing DelayL/C, CombN/L/C, AllpassN/L/C, FreeVerb, GVerb, Pluck, PitchShift
 - [ ] **Demand-rate** - have Demand, Duty, Dseq, Dseries, Dwhite, Dbufrd/Dbufwr (demand-rate buffer read/write, via the buffer reach threaded into the demand pull), Dpoll (post a demanded value to the host); missing TDuty, Dser, Drand, Dxrand, Dwrand, Dgeom, Dbrown/Dibrown, Diwhite, Dswitch/Dswitch1, Dstutter, Dconst, Dreset
 - [ ] **FFT / spectral** (behind the default-on `fft` feature; realfft, std-only) - have FFT, IFFT (short-time analysis/resynthesis over a packed-spectrum chain buffer, via the shared `FftTables`), PV_MagMul, PV_MagSquared. The bin-level seam is complete: buffers track a `coord` (Complex/Polar, scsynth's `SndBuf::coord`), `pv::to_polar`/`to_complex` convert in place idempotently (the `ToPolarApx`/`ToComplexApx` analogue, using exact `hypot`/`atan2`), `pv::pv_frame` is the `PV_GET_BUF` preamble, and `pv::Spectrum`/`Bin` are the typed `SCPolarBuf`/`SCComplexBuf` views - so the rest of the Cartesian and polar `PV_*` family is now a per-unit port. Missing: the remaining `PV_*` units, Pitch, Onsets, BeatTrack, and `LocalBuf` (SynthDef-side local FFT buffers; not needed - a chain buffer is `/b_alloc`'d)

@@ -5,8 +5,8 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
-use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
+use plyphon_dsp::{math, ops};
 
 /// `<op>(a)`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
 /// unary operator indices). The input may be audio- or control-rate; the output is audio-rate.
@@ -55,34 +55,55 @@ impl UnitDef for UnaryOpCtor {
     }
 }
 
-/// Map a SuperCollider unary operator index to its function (see SC's `opNeg`/`opAbs`/... enum).
+/// Map a SuperCollider unary operator index to its function (see SC's `opNeg`/`opAbs`/... enum in
+/// `SpecialSelectorsOperatorsAndClasses.h`; kernels match the calc functions in
+/// `UnaryOpUGens.cpp`). The RNG-driven ops (`opRand`/`opRand2`/`opLinRand`/`opBiLinRand`/
+/// `opSum3Rand`/`opCoin`) and the non-signal ops (`opIsNil`/`opAsFloat`/...) are absent.
 fn unary_op(index: i16) -> Option<fn(f32) -> f32> {
     Some(match index {
-        0 => |a| -a,
-        5 => |a| a.abs(),
-        8 => |a| math::ceil(a),
-        9 => |a| math::floor(a),
-        10 => |a| a - math::floor(a), // frac
-        11 => |a| {
-            if a > 0.0 {
-                1.0
-            } else if a < 0.0 {
-                -1.0
-            } else {
-                0.0
-            }
-        }, // sign
-        12 => |a| a * a,              // squared
-        13 => |a| a * a * a,          // cubed
-        14 => |a| math::sqrt(a),
-        15 => |a| math::exp(a),
-        16 => |a| 1.0 / a,     // reciprocal
-        25 => |a| math::ln(a), // log (natural)
-        28 => |a| math::sin(a),
-        29 => |a| math::cos(a),
-        30 => |a| math::tan(a),
-        36 => |a| math::tanh(a),
-        42 => |a| a / (1.0 + a.abs()), // distort
+        0 => |a| -a,                    // opNeg
+        1 => ops::not,                  // opNot
+        4 => ops::bit_not,              // opBitNot
+        5 => |a| a.abs(),               // opAbs
+        8 => math::ceil,                // opCeil
+        9 => math::floor,               // opFloor
+        10 => |a| a - math::floor(a),   // opFrac
+        11 => ops::sign,                // opSign
+        12 => |a| a * a,                // opSquared
+        13 => |a| a * a * a,            // opCubed
+        14 => ops::signed_sqrt,         // opSqrt
+        15 => math::exp,                // opExp
+        16 => |a| 1.0 / a,              // opRecip
+        17 => ops::midicps,             // opMIDICPS
+        18 => ops::cpsmidi,             // opCPSMIDI
+        19 => ops::midiratio,           // opMIDIRatio
+        20 => ops::ratiomidi,           // opRatioMIDI
+        21 => ops::dbamp,               // opDbAmp
+        22 => ops::ampdb,               // opAmpDb
+        23 => ops::octcps,              // opOctCPS
+        24 => ops::cpsoct,              // opCPSOct
+        25 => math::ln,                 // opLog (natural)
+        26 => math::log2,               // opLog2
+        27 => |a| math::log10(a.abs()), // opLog10
+        28 => math::sin,                // opSin
+        29 => math::cos,                // opCos
+        30 => math::tan,                // opTan
+        31 => math::asin,               // opArcSin
+        32 => math::acos,               // opArcCos
+        33 => math::atan,               // opArcTan
+        34 => math::sinh,               // opSinH
+        35 => math::cosh,               // opCosH
+        36 => math::tanh,               // opTanH
+        42 => ops::distort,             // opDistort
+        43 => ops::softclip,            // opSoftClip
+        46 => |_| 0.0,                  // opSilence
+        47 => |a| a,                    // opThru
+        48 => ops::rect_window,         // opRectWindow
+        49 => ops::han_window,          // opHanWindow
+        50 => ops::wel_window,          // opWelchWindow
+        51 => ops::tri_window,          // opTriWindow
+        52 => ops::ramp,                // opRamp
+        53 => ops::scurve,              // opSCurve
         _ => return None,
     })
 }
