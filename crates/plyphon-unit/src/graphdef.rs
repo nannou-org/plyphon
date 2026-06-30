@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use crate::unit::demand::DemandVtbl;
 use crate::unit::{InitFn, InputSource, ProcessFn, ReseedFn};
-use plyphon_dsp::rate::Rate;
+use plyphon_dsp::rate::{Rate, RateInfo};
 
 /// Where a unit output is published: an audio wire (a full block in the World's shared wire scratch)
 /// or a control wire (one value in the per-graph control wires).
@@ -171,8 +171,13 @@ pub struct GraphDef {
     lag_params: Box<[LagParam]>,
     /// Number of control parameters.
     num_params: usize,
-    /// Samples per control block.
-    block_size: usize,
+    /// The graph's audio-rate timing. The World's rate for an ordinary def; for a reblocked/resampled
+    /// def, a smaller block (and/or higher sample rate). The units were built with this rate and
+    /// process at it - the engine hands it to each `ProcessCtx` (scsynth's per-`Graph` `mFullRate`).
+    audio: RateInfo,
+    /// The graph's control-rate timing (block size 1; its sample rate is the graph's audio rate over
+    /// the graph block size - smaller for a reblocked def, the finer control granularity).
+    control: RateInfo,
 }
 
 impl GraphDef {
@@ -192,7 +197,8 @@ impl GraphDef {
         trig_params: Box<[u32]>,
         lag_params: Box<[LagParam]>,
         num_params: usize,
-        block_size: usize,
+        audio: RateInfo,
+        control: RateInfo,
     ) -> Self {
         GraphDef {
             units,
@@ -206,7 +212,8 @@ impl GraphDef {
             trig_params,
             lag_params,
             num_params,
-            block_size,
+            audio,
+            control,
         }
     }
 
@@ -266,9 +273,19 @@ impl GraphDef {
         self.num_params
     }
 
-    /// Samples per control block.
+    /// Samples per control block (the graph's audio block size).
     pub fn block_size(&self) -> usize {
-        self.block_size
+        self.audio.block_size
+    }
+
+    /// The graph's audio-rate timing (the rate its units were built with and process at).
+    pub fn audio_rate(&self) -> &RateInfo {
+        &self.audio
+    }
+
+    /// The graph's control-rate timing.
+    pub fn control_rate(&self) -> &RateInfo {
+        &self.control
     }
 }
 

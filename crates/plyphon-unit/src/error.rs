@@ -105,4 +105,13 @@ pub enum BuildError {
         /// The requested FFT size.
         size: usize,
     },
+    /// A reblocked def (scsynth's `Reblock(n)`) requested a block size that is not a power of two, is
+    /// zero, or exceeds the World block - none of which scsynth's reblocking allows.
+    #[error("invalid reblock block size {block_size}: must be a power of two in [1, {world}]")]
+    InvalidReblock {
+        /// The requested graph block size.
+        block_size: usize,
+        /// The World control block size it must divide.
+        world: usize,
+    },
 }

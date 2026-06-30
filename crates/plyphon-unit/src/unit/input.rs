@@ -30,9 +30,13 @@ impl Unit for In {
         if self.audio != 0 {
             for o in 0..num_channels {
                 let dst = ctx.outs.audio(o);
+                // This sub-block tick reads its own slice of the World-block-wide bus channel - the
+                // whole channel for an ordinary (non-reblocked) graph, where `tick` is 0 and the wire
+                // is the full World block.
+                let offset = ctx.tick * dst.len();
                 let chan = unit::audio_in(ctx.buses, base + o);
-                if chan.len() == dst.len() {
-                    dst.copy_from_slice(chan);
+                if chan.len() >= offset + dst.len() {
+                    dst.copy_from_slice(&chan[offset..offset + dst.len()]);
                 } else {
                     dst.fill(0.0);
                 }

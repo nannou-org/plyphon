@@ -62,7 +62,6 @@ struct BufferWriteOut {
 /// The real-time engine half.
 pub struct World {
     audio: RateInfo,
-    control: RateInfo,
     wavetables: Wavetables,
     fft: FftTables,
     buses: Buses,
@@ -144,7 +143,6 @@ impl World {
     pub fn new(
         options: &Options,
         audio: RateInfo,
-        control: RateInfo,
         rx: Consumer<TimedCommand>,
         trash_tx: Producer<Trash>,
         events_tx: Producer<Event>,
@@ -164,7 +162,6 @@ impl World {
         let tree_capacity = capacity.saturating_mul(4).max(MAX_QUERY_RANGE + 2);
         World {
             audio,
-            control,
             wavetables: Wavetables::new(),
             fft: FftTables::new(),
             buses: Buses::new(
@@ -323,7 +320,6 @@ impl World {
         // through the tree to each graph.
         let mut block = Block {
             audio: &self.audio,
-            control: &self.control,
             wavetables: &self.wavetables,
             fft: &self.fft,
             buses: &mut self.buses,

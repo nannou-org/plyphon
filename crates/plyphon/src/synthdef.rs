@@ -195,8 +195,31 @@ impl SynthDef {
         control: &RateInfo,
         max_wire_bufs: usize,
         max_unit_outputs: usize,
+        reblock: Option<usize>,
     ) -> Result<GraphDef, BuildError> {
-        let block_size = audio.block_size;
+        // The graph's control block: the World block, or a smaller power-of-two reblock (scsynth's
+        // `Reblock(n)`) that divides it. The graph's units run at this finer rate.
+        let block_size = match reblock {
+            Some(b) if b >= 1 && b.is_power_of_two() && b <= audio.block_size => b,
+            Some(b) => {
+                return Err(BuildError::InvalidReblock {
+                    block_size: b,
+                    world: audio.block_size,
+                });
+            }
+            None => audio.block_size,
+        };
+        // The graph's own rate pair, baked into the units and handed to each `ProcessCtx`. An ordinary
+        // def reuses the World's rates verbatim (so its output is unchanged); a reblocked def derives a
+        // smaller-block / higher-control-rate pair.
+        let (graph_audio, graph_control) = if block_size == audio.block_size {
+            (*audio, *control)
+        } else {
+            (
+                RateInfo::new(audio.sample_rate, block_size),
+                RateInfo::new(audio.sample_rate / block_size as f64, 1),
+            )
+        };
 
         // Parameters occupy the first control wires.
         let num_params = self.params.len();
@@ -405,8 +428,8 @@ impl SynthDef {
                 input_rates: &input_rates,
                 input_units: &input_units,
                 input_sources: &sources,
-                audio,
-                control,
+                audio: &graph_audio,
+                control: &graph_control,
                 rate: spec.rate,
                 num_outputs: spec.num_outputs,
                 special_index: spec.special_index,
@@ -551,7 +574,8 @@ impl SynthDef {
             trig_params.into_boxed_slice(),
             lag_params.into_boxed_slice(),
             num_params,
-            block_size,
+            graph_audio,
+            graph_control,
         ))
     }
 }

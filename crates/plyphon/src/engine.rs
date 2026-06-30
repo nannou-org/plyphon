@@ -39,7 +39,6 @@ pub fn engine(options: Options) -> (Controller, Nrt, World) {
     let world = World::new(
         &options,
         audio,
-        control,
         cmd_rx,
         trash_tx,
         events_tx,

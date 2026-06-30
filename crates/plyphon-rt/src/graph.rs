@@ -42,10 +42,10 @@ pub(crate) type Pool = RtPool<Box<[Align64]>>;
 /// through the node tree. Its fields are disjoint, so a [`Graph`] can borrow the pool, the shared
 /// scratch, and the buses at once.
 pub(crate) struct Block<'a> {
-    /// Audio-rate constants.
+    /// The World's audio-rate timing - in particular its block size, which the graph divides by its
+    /// own (possibly smaller) block to get the reblock tick count. Each unit's own rate comes from
+    /// its [`GraphDef`], not here.
     pub audio: &'a RateInfo,
-    /// Control-rate constants.
-    pub control: &'a RateInfo,
     /// Shared wavetables.
     pub wavetables: &'a Wavetables,
     /// Shared FFT plans + windows (empty without the `fft` feature).
@@ -183,170 +183,185 @@ impl Graph {
         let audio = &mut *block.wire_scratch;
         let scratch = &mut *block.unit_scratch;
 
-        // Apply control-bus mappings (`/n_map`): a mapped parameter takes the bus's current value.
-        for (p, &bus) in pmaps.iter().enumerate() {
-            if bus != u32::MAX {
-                ctrl[def.param_wires()[p] as usize] = unit::control_in(block.buses, bus as usize);
-            }
-        }
-        // Fill each audio-rate param's (`AudioControl`) audio wire: from a mapped audio bus
-        // (`/n_mapa`) if set, otherwise from its value slot (a control wire, possibly just updated by
-        // `/n_map`). Either way audio-rate consumers read the param as a block.
-        for ap in def.audio_params() {
-            let dst = ap.wire as usize * bs;
-            let bus = amaps[ap.param as usize];
-            if bus != u32::MAX {
-                let chan = unit::audio_in(block.buses, bus as usize);
-                if chan.len() == bs {
-                    audio[dst..dst + bs].copy_from_slice(chan);
-                } else {
-                    audio[dst..dst + bs].fill(0.0);
-                }
-            } else {
-                audio[dst..dst + bs].fill(ctrl[ap.value_slot as usize]);
-            }
-        }
-        // De-zipper each lagged param (`LagControl`): one one-pole step per block from its value slot
-        // (possibly just `/n_map`'d) into its lagged output wire. The state was seeded to the default
-        // at build, so the first block holds steady.
-        for (li, lp) in def.lag_params().iter().enumerate() {
-            let x = ctrl[lp.value_slot as usize];
-            let y = x + lp.b1 * (lag_state[li] - x);
-            lag_state[li] = y;
-            ctrl[lp.wire as usize] = y;
-        }
-
-        // On the first block only, run each unit's one-time `init` seeding pass (in topo order, just
-        // before its first `process`), so state is seeded from now-live inputs.
-        let first = !self.initialized;
+        // World block vs this graph's (possibly smaller) block. A reblocked def runs the whole calc
+        // list `num_ticks` times per World control block, each tick a shorter `bs`-sample slice; an
+        // ordinary def has `num_ticks == 1` (`bs == world_bs`), one pass. Interior wires pack at `bs`
+        // and are reused each tick, so interior DSP units are unaware of reblocking; only the bus
+        // boundary (`In`/`Out`/`AudioControl`) spans the full World block, sliced per tick.
+        let world_bs = block.audio.block_size;
+        let num_ticks = (world_bs / bs).max(1);
+        // The first-block init pass runs on the very first tick only; tracked across ticks.
+        let first_block = !self.initialized;
         self.initialized = true;
-        // The node's creation offset applies only to its first block (`OffsetOut` delays the onset
-        // by it, then runs flush); later blocks start at the block boundary.
-        let sample_offset = if first { self.sample_offset } else { 0 };
         let mut done = DoneAction::Nothing;
-        if tracing {
-            push_trace(
-                block.trace,
-                block.trace_cap,
-                Reply::TraceHeader { node: node_id },
-            );
-        }
-        for (i, v) in def.units().iter().enumerate() {
-            let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
-            // This unit's private aux memory (a delay line), a disjoint sub-slice of the aux arena;
-            // empty (`&mut []`) for units that declared none. Persists across blocks like `state`.
-            let aux = &mut aux_arena[v.aux_offset..v.aux_offset + v.aux_size];
-            // This unit's done flag, carried in from last block; written back after `process` so
-            // done-ness persists. A watcher reads earlier units' flags (already written this block).
-            let mut done_flag = done_flags[i];
-            let ins = Inputs::new(&v.inputs, &*audio, &*ctrl, bs);
-            // `/n_trace`: dump this unit's index and its inputs' first samples (scsynth's `ZIN0`) before
-            // it runs; its outputs' first samples (`ZOUT0`) follow after `process`, below.
-            if tracing {
+
+        for tick in 0..num_ticks {
+            // On the first block's first tick, run each unit's one-time `init` seeding pass (in topo
+            // order, just before its first `process`), so state is seeded from now-live inputs.
+            let first = first_block && tick == 0;
+            // The node's creation offset applies only to that very first tick (`OffsetOut` delays the
+            // onset by it); later ticks/blocks start at the boundary.
+            let sample_offset = if first { self.sample_offset } else { 0 };
+
+            // Apply control-bus mappings (`/n_map`): a mapped parameter takes the bus's current value.
+            for (p, &bus) in pmaps.iter().enumerate() {
+                if bus != u32::MAX {
+                    ctrl[def.param_wires()[p] as usize] =
+                        unit::control_in(block.buses, bus as usize);
+                }
+            }
+            // Fill each audio-rate param's (`AudioControl`) audio wire: from this tick's slice of a
+            // mapped audio bus (`/n_mapa`) if set, otherwise from its value slot (a control wire,
+            // possibly just updated by `/n_map`). Audio-rate consumers read the param as a block.
+            for ap in def.audio_params() {
+                let dst = ap.wire as usize * bs;
+                let bus = amaps[ap.param as usize];
+                if bus != u32::MAX {
+                    let chan = unit::audio_in(block.buses, bus as usize);
+                    if chan.len() == world_bs {
+                        audio[dst..dst + bs].copy_from_slice(&chan[tick * bs..tick * bs + bs]);
+                    } else {
+                        audio[dst..dst + bs].fill(0.0);
+                    }
+                } else {
+                    audio[dst..dst + bs].fill(ctrl[ap.value_slot as usize]);
+                }
+            }
+            // De-zipper each lagged param (`LagControl`): one one-pole step per control tick from its
+            // value slot (possibly just `/n_map`'d) into its lagged output wire. The state was seeded
+            // to the default at build, so the first tick holds steady.
+            for (li, lp) in def.lag_params().iter().enumerate() {
+                let x = ctrl[lp.value_slot as usize];
+                let y = x + lp.b1 * (lag_state[li] - x);
+                lag_state[li] = y;
+                ctrl[lp.wire as usize] = y;
+            }
+
+            if tracing && tick == 0 {
                 push_trace(
                     block.trace,
                     block.trace_cap,
-                    Reply::TraceUnit {
-                        index: i as i32,
-                        num_inputs: v.inputs.len() as i32,
-                        num_outputs: v.outputs.len() as i32,
-                    },
+                    Reply::TraceHeader { node: node_id },
                 );
-                for j in 0..ins.len() {
+            }
+            for (i, v) in def.units().iter().enumerate() {
+                let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
+                // This unit's private aux memory (a delay line), a disjoint sub-slice of the aux arena;
+                // empty (`&mut []`) for units that declared none. Persists across blocks like `state`.
+                let aux = &mut aux_arena[v.aux_offset..v.aux_offset + v.aux_size];
+                // This unit's done flag, carried in from last block; written back after `process` so
+                // done-ness persists. A watcher reads earlier units' flags (already written this block).
+                let mut done_flag = done_flags[i];
+                let ins = Inputs::new(&v.inputs, &*audio, &*ctrl, bs);
+                // `/n_trace`: dump this unit's index and its inputs' first samples (scsynth's `ZIN0`) before
+                // it runs; its outputs' first samples (`ZOUT0`) follow after `process`, below.
+                if tracing {
                     push_trace(
                         block.trace,
                         block.trace_cap,
-                        Reply::TraceValue {
-                            value: input_first(&ins, j),
+                        Reply::TraceUnit {
+                            index: i as i32,
+                            num_inputs: v.inputs.len() as i32,
+                            num_outputs: v.outputs.len() as i32,
                         },
                     );
-                }
-            }
-            if first {
-                let init_ctx = InitCtx {
-                    audio: block.audio,
-                    control: block.control,
-                    wavetables: block.wavetables,
-                    fft: block.fft,
-                    ins,
-                    buses: &*block.buses,
-                    buffers: &*block.buffers,
-                    buf_counter: block.buf_counter,
-                };
-                (v.init)(state, &init_ctx);
-            }
-            // Scoped so the context's borrows of the scratch/buses/demand arena end before we publish.
-            done = done.max({
-                let mut ctx = ProcessCtx {
-                    audio: block.audio,
-                    control: block.control,
-                    wavetables: block.wavetables,
-                    fft: block.fft,
-                    ins,
-                    outs: Outputs::new(&mut scratch[..], bs),
-                    buses: &mut *block.buses,
-                    buffers: &mut *block.buffers,
-                    buf_counter: block.buf_counter,
-                    sample_offset,
-                    // A consumer pulls demand sources through this; non-demand units ignore it. The
-                    // demand arena is disjoint from this unit's `state` slot above.
-                    demand: DemandAccess::new(
-                        def.demand_units(),
-                        &mut *demand_state,
-                        &*audio,
-                        &*ctrl,
-                        bs,
-                    ),
-                    node_id,
-                    triggers: TriggerSink::new(&mut *block.triggers, block.trigger_cap),
-                    node_msgs: NodeMsgSink::new(&mut *block.node_msgs, block.node_msg_cap),
-                    running_synths: block.running_synths,
-                    done: DoneState::new(&*done_flags, &mut done_flag),
-                    node_ops: NodeOpSink::new(&mut *block.node_ops, block.node_op_cap),
-                    local: LocalBus::new(&mut *local, bs),
-                    aux: Aux::new(aux),
-                };
-                (v.process)(state, &mut ctx)
-            });
-            // Persist this unit's done flag for next block / for later units to read this block.
-            done_flags[i] = done_flag;
-            // `/n_trace`: dump this unit's outputs' first samples (scsynth's `ZOUT0`), read from the
-            // scratch the unit just wrote, before it is published into the wires below.
-            if tracing {
-                for k in 0..v.outputs.len() {
-                    push_trace(
-                        block.trace,
-                        block.trace_cap,
-                        Reply::TraceValue {
-                            value: scratch[k * bs],
-                        },
-                    );
-                }
-            }
-            // Publish this unit's scratch outputs into the wires.
-            for (k, ow) in v.outputs.iter().enumerate() {
-                let src = k * bs;
-                match ow.rate {
-                    Rate::Audio => {
-                        let dst = ow.wire as usize * bs;
-                        audio[dst..dst + bs].copy_from_slice(&scratch[src..src + bs]);
+                    for j in 0..ins.len() {
+                        push_trace(
+                            block.trace,
+                            block.trace_cap,
+                            Reply::TraceValue {
+                                value: input_first(&ins, j),
+                            },
+                        );
                     }
-                    Rate::Control | Rate::Scalar => {
-                        ctrl[ow.wire as usize] = scratch[src];
+                }
+                if first {
+                    let init_ctx = InitCtx {
+                        audio: def.audio_rate(),
+                        control: def.control_rate(),
+                        wavetables: block.wavetables,
+                        fft: block.fft,
+                        ins,
+                        buses: &*block.buses,
+                        buffers: &*block.buffers,
+                        buf_counter: block.buf_counter,
+                    };
+                    (v.init)(state, &init_ctx);
+                }
+                // Scoped so the context's borrows of the scratch/buses/demand arena end before we publish.
+                done = done.max({
+                    let mut ctx = ProcessCtx {
+                        audio: def.audio_rate(),
+                        control: def.control_rate(),
+                        wavetables: block.wavetables,
+                        fft: block.fft,
+                        ins,
+                        outs: Outputs::new(&mut scratch[..], bs),
+                        buses: &mut *block.buses,
+                        buffers: &mut *block.buffers,
+                        buf_counter: block.buf_counter,
+                        tick,
+                        sample_offset,
+                        // A consumer pulls demand sources through this; non-demand units ignore it. The
+                        // demand arena is disjoint from this unit's `state` slot above.
+                        demand: DemandAccess::new(
+                            def.demand_units(),
+                            &mut *demand_state,
+                            &*audio,
+                            &*ctrl,
+                            bs,
+                        ),
+                        node_id,
+                        triggers: TriggerSink::new(&mut *block.triggers, block.trigger_cap),
+                        node_msgs: NodeMsgSink::new(&mut *block.node_msgs, block.node_msg_cap),
+                        running_synths: block.running_synths,
+                        done: DoneState::new(&*done_flags, &mut done_flag),
+                        node_ops: NodeOpSink::new(&mut *block.node_ops, block.node_op_cap),
+                        local: LocalBus::new(&mut *local, bs),
+                        aux: Aux::new(aux),
+                    };
+                    (v.process)(state, &mut ctx)
+                });
+                // Persist this unit's done flag for next block / for later units to read this block.
+                done_flags[i] = done_flag;
+                // `/n_trace`: dump this unit's outputs' first samples (scsynth's `ZOUT0`), read from the
+                // scratch the unit just wrote, before it is published into the wires below.
+                if tracing {
+                    for k in 0..v.outputs.len() {
+                        push_trace(
+                            block.trace,
+                            block.trace_cap,
+                            Reply::TraceValue {
+                                value: scratch[k * bs],
+                            },
+                        );
                     }
-                    // Calc units never publish a demand-rate output (demand units are not in this loop).
-                    Rate::Demand => {}
+                }
+                // Publish this unit's scratch outputs into the wires.
+                for (k, ow) in v.outputs.iter().enumerate() {
+                    let src = k * bs;
+                    match ow.rate {
+                        Rate::Audio => {
+                            let dst = ow.wire as usize * bs;
+                            audio[dst..dst + bs].copy_from_slice(&scratch[src..src + bs]);
+                        }
+                        Rate::Control | Rate::Scalar => {
+                            ctrl[ow.wire as usize] = scratch[src];
+                        }
+                        // Calc units never publish a demand-rate output (demand units are not in this loop).
+                        Rate::Demand => {}
+                    }
                 }
             }
-        }
-        if tracing {
-            push_trace(block.trace, block.trace_cap, Reply::TraceEnd);
-        }
-        // `TrigControl`: now that the units have read them, zero each trigger param's value slot, so a
-        // `/n_set` is seen for exactly the block it lands in and reads `0` after (scsynth's
-        // "output then zero the control").
-        for &slot in def.trig_params() {
-            ctrl[slot as usize] = 0.0;
+            if tracing && tick == 0 {
+                push_trace(block.trace, block.trace_cap, Reply::TraceEnd);
+            }
+            // `TrigControl`: now that the units have read them, zero each trigger param's value slot,
+            // so a `/n_set` is seen for exactly the control tick it lands in and reads `0` after
+            // (scsynth's "output then zero the control").
+            for &slot in def.trig_params() {
+                ctrl[slot as usize] = 0.0;
+            }
         }
         done
     }

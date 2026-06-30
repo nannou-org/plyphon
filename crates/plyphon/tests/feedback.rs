@@ -112,7 +112,7 @@ fn feedback_comb_decays_by_coef() {
 /// Compile `def` with the built-in registry, returning the result so a test can assert the error.
 fn try_compile(def: &SynthDef) -> Result<(), BuildError> {
     let rate = RateInfo::new(SR, BLOCK);
-    def.compile(&UnitRegistry::with_builtins(), &rate, &rate, 64, 32)
+    def.compile(&UnitRegistry::with_builtins(), &rate, &rate, 64, 32, None)
         .map(|_| ())
 }
 

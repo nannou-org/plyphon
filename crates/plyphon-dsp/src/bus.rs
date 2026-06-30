@@ -70,23 +70,33 @@ impl AudioBus {
     /// and marks the channel touched. `src` shorter than a block leaves the remainder zeroed on a
     /// fresh write, mirroring scsynth's `Out` semantics.
     pub fn write_accumulate(&mut self, ch: usize, buf_counter: u64, src: &[f32]) {
+        self.write_accumulate_at(ch, buf_counter, 0, src);
+    }
+
+    /// Write `src` into channel `ch` at sample `offset` for block `buf_counter` - the reblock form,
+    /// where a graph running at a smaller block writes each sub-block tick into its own slice of the
+    /// World-block-wide channel (scsynth's `Out_next_a_reblock`, which zeroes the channel on tick 0).
+    ///
+    /// The first writer of the channel this block clears the **whole** channel and marks it touched,
+    /// so every later tick (and every other synth) then accumulates into its own slice over a clean
+    /// zero (or a co-writer's signal). `offset == 0` with a full-block `src` reduces to
+    /// [`write_accumulate`](Self::write_accumulate).
+    pub fn write_accumulate_at(&mut self, ch: usize, buf_counter: u64, offset: usize, src: &[f32]) {
         if ch >= self.num_channels {
             return;
         }
         let bs = self.block_size;
+        // Read/clear `touched` before borrowing `data` (disjoint fields, sequenced).
+        let first = self.touched[ch] != buf_counter;
+        self.touched[ch] = buf_counter;
         let start = ch * bs;
         let dst = &mut self.data[start..start + bs];
-        if self.touched[ch] == buf_counter {
-            for (d, &s) in dst.iter_mut().zip(src) {
-                *d += s;
-            }
-        } else {
-            let n = dst.len().min(src.len());
-            dst[..n].copy_from_slice(&src[..n]);
-            for d in dst[n..].iter_mut() {
-                *d = 0.0;
-            }
-            self.touched[ch] = buf_counter;
+        if first {
+            dst.fill(0.0);
+        }
+        let n = src.len().min(bs.saturating_sub(offset));
+        for (d, &s) in dst[offset..offset + n].iter_mut().zip(&src[..n]) {
+            *d += s;
         }
     }
 
