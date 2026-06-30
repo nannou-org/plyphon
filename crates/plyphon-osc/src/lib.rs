@@ -12,8 +12,8 @@
 //!   `/n_order`/`/g_freeAll`/`/g_deepFree`.
 //! - **Control buses:** `/c_set`/`/c_setn`/`/c_fill`.
 //! - **Buffers:** `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_allocReadChannel`, `/b_readChannel`,
-//!   `/b_write`, `/b_free`, `/b_zero`, `/b_query`, `/b_set`, `/b_setn`, `/b_fill`, `/b_setSampleRate`,
-//!   `/b_gen`.
+//!   `/b_write`, `/b_close`, `/b_free`, `/b_zero`, `/b_query`, `/b_set`, `/b_setn`, `/b_fill`,
+//!   `/b_setSampleRate`, `/b_gen`.
 //! - **Server admin:** `/clearSched`, `/error`.
 //! - **Host commands** (deferred to the host - see below): `/cmd`, `/u_cmd`.
 //! - **Getters** (engine state reads; answered asynchronously - see below): `/sync`, `/status`,
@@ -235,6 +235,28 @@ struct PendingWrite {
     drainer: StreamDrainer,
     /// The opened sink, or `None` until the first drive opens it.
     sink: Option<Box<dyn BufferSinkStream>>,
+    /// `true` for `/b_write leaveOpen=1`: once the sink opens, hand the stream to [`OpenWrite`] (a
+    /// `DiskOut` keeps filling it) instead of draining the buffer snapshot to completion.
+    leave_open: bool,
+    completion: Option<Vec<u8>>,
+    target: ReplyTarget,
+}
+
+/// A `/b_write leaveOpen=1` stream the host left open for `DiskOut` to fill: drained each
+/// [`OscDispatcher::run_pending`] tick until a `/b_close` (or a drain error) ends it. The engine's
+/// `DiskOut` recording slot at this bufnum is the source.
+struct OpenWrite {
+    /// Pulls recorded chunks from the engine's recording slot.
+    drainer: StreamDrainer,
+    /// The open sink the chunks are written to.
+    sink: Box<dyn BufferSinkStream>,
+    /// The client a mid-stream `/fail` routes to (the opener of the stream).
+    target: ReplyTarget,
+}
+
+/// A queued `/b_close`, run by [`OscDispatcher::run_pending`] (its final drain + close is async).
+struct PendingClose {
+    bufnum: i32,
     completion: Option<Vec<u8>>,
     target: ReplyTarget,
 }
@@ -397,6 +419,11 @@ pub struct OscDispatcher {
     /// `/b_write` buffer copy-outs in progress, advanced each `run_pending` tick until the engine
     /// finishes streaming the buffer out (see [`PendingWrite`]).
     writes_in_progress: Vec<PendingWrite>,
+    /// `/b_write leaveOpen=1` streams left open for `DiskOut`, keyed by bufnum, drained each tick and
+    /// closed by `/b_close`.
+    open_writes: HashMap<i32, OpenWrite>,
+    /// `/b_close` requests awaiting their async final-drain-and-close in `run_pending`.
+    pending_closes: Vec<PendingClose>,
     /// Outbound replies, each tagged with its destination, drained by
     /// [`take_replies`](OscDispatcher::take_replies)/[`take_replies_targeted`](OscDispatcher::take_replies_targeted).
     replies: Vec<(ReplyTarget, OscPacket)>,
@@ -431,6 +458,8 @@ impl OscDispatcher {
             pending_defs: Vec::new(),
             pending_commands: Vec::new(),
             writes_in_progress: Vec::new(),
+            open_writes: HashMap::new(),
+            pending_closes: Vec::new(),
             replies: Vec::new(),
             current_target: ReplyTarget::Broadcast,
             error_perm: true,
@@ -666,6 +695,23 @@ impl OscDispatcher {
                     }
                 }
             }
+            // A `leaveOpen=1` write hands off to the `open_writes` registry once its sink is open: the
+            // engine's `DiskOut` recording slot keeps filling, drained each tick below until `/b_close`.
+            if self.writes_in_progress[i].leave_open {
+                let write = self.writes_in_progress.swap_remove(i);
+                let sink = write.sink.expect("sink opened above");
+                self.run_completion_bytes(controller, write.completion.as_deref());
+                self.done(write.command, write.bufnum);
+                self.open_writes.insert(
+                    write.bufnum,
+                    OpenWrite {
+                        drainer: write.drainer,
+                        sink,
+                        target: write.target,
+                    },
+                );
+                continue;
+            }
             // Drain whatever the engine produced since the last tick; a write error fails the copy.
             let drained = {
                 let write = &mut self.writes_in_progress[i];
@@ -694,6 +740,44 @@ impl OscDispatcher {
                     self.done(write.command, write.bufnum);
                 }
                 Err(err) => self.fail(write.command, &err.to_string()),
+            }
+        }
+
+        // Keep each `leaveOpen=1` stream flowing: drain whatever its `DiskOut` produced this tick. A
+        // drain error ends the stream (and fails it to its opener); `/b_close` ends it cleanly below.
+        let mut drain_errors: Vec<(i32, String)> = Vec::new();
+        for (bufnum, open) in self.open_writes.iter_mut() {
+            if let Err(err) = open.drainer.drain(open.sink.as_mut()).await {
+                drain_errors.push((*bufnum, err.to_string()));
+            }
+        }
+        for (bufnum, err) in drain_errors {
+            if let Some(open) = self.open_writes.remove(&bufnum) {
+                self.current_target = open.target;
+                self.fail("/b_write", &err);
+                let _ = controller.buffer_free(bufnum as usize);
+                self.buffers.remove(&bufnum);
+            }
+        }
+
+        // `/b_close`: final-drain and close each left-open stream, free its recording slot, reply
+        // `/done /b_close <bufnum>` (an unopened bufnum fails). The close is async, hence the queue.
+        for close in core::mem::take(&mut self.pending_closes) {
+            self.current_target = close.target;
+            let Some(mut open) = self.open_writes.remove(&close.bufnum) else {
+                self.fail("/b_close", "buffer not open for writing");
+                continue;
+            };
+            let result = open.drainer.finish(open.sink.as_mut()).await;
+            // The recording slot is the streaming ring (no flat data), so drop it on close.
+            let _ = controller.buffer_free(close.bufnum as usize);
+            self.buffers.remove(&close.bufnum);
+            match result {
+                Ok(()) => {
+                    self.run_completion_bytes(controller, close.completion.as_deref());
+                    self.done("/b_close", close.bufnum);
+                }
+                Err(err) => self.fail("/b_close", &err.to_string()),
             }
         }
     }
@@ -786,6 +870,7 @@ impl OscDispatcher {
             "/b_allocReadChannel" => self.b_alloc_read_channel(&message.args),
             "/b_readChannel" => self.b_read_channel(&message.args),
             "/b_write" => self.b_write(controller, &message.args),
+            "/b_close" => self.b_close(&message.args),
             "/g_head" => self.group_moves(controller, &message.args, AddAction::Head),
             "/g_tail" => self.group_moves(controller, &message.args, AddAction::Tail),
             "/n_before" => self.node_moves(controller, &message.args, AddAction::Before),
@@ -1996,8 +2081,10 @@ impl OscDispatcher {
     /// host's [`BufferSink`] rather than libsndfile - so the header/sample formats are the sink's
     /// choice (`path`'s extension), not these arguments.
     ///
-    /// Only the whole-buffer snapshot (`leaveOpen = 0`) is supported: `leaveOpen = 1` (leave the file
-    /// open for `DiskOut` to stream into) and partial `numFrames`/`startFrame` ranges are deferred.
+    /// `leaveOpen = 0` writes the whole-buffer snapshot; `leaveOpen = 1` leaves the file open for a
+    /// `DiskOut.ar(bufnum)` to stream into (installing a recording slot at `bufnum`, the streaming ring,
+    /// so any flat data there is replaced - which is why the snapshot is the separate `leaveOpen = 0`
+    /// path), closed later by `/b_close`. Partial `numFrames`/`startFrame` ranges remain deferred.
     fn b_write(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
@@ -2010,30 +2097,32 @@ impl OscDispatcher {
         .to_string();
         // `leaveOpen` follows the two format strings and the numFrames/startFrame ints (scsynth's
         // positional layout); default 0. A non-zero value selects the open-for-streaming form.
-        let leave_open = match args.get(6) {
-            Some(OscType::Int(v)) => *v,
-            _ => 0,
-        };
-        if leave_open != 0 {
-            self.fail(
-                "/b_write",
-                "leaveOpen=1 (leave open for DiskOut streaming) not yet supported",
-            );
-            return Ok(());
-        }
+        let leave_open = matches!(args.get(6), Some(OscType::Int(v)) if *v != 0);
         let Some(info) = self.buffers.get(&bufnum).copied() else {
             self.fail("/b_write", "buffer not allocated");
             return Ok(());
         };
-        let consumer = controller
-            .buffer_write_out(
+        let consumer = if leave_open {
+            // Install a `DiskOut` recording slot at `bufnum` (the slot becomes the streaming ring), to
+            // be drained continuously until `/b_close`.
+            controller.buffer_cue_write(
                 bufnum as usize,
                 info.num_channels,
                 info.sample_rate,
                 WRITE_CHUNK_FRAMES,
                 WRITE_CHUNKS,
             )
-            .map_err(|_| OscError::QueueFull)?;
+        } else {
+            // Snapshot: copy the buffer out race-free without disturbing the slot.
+            controller.buffer_write_out(
+                bufnum as usize,
+                info.num_channels,
+                info.sample_rate,
+                WRITE_CHUNK_FRAMES,
+                WRITE_CHUNKS,
+            )
+        }
+        .map_err(|_| OscError::QueueFull)?;
         self.writes_in_progress.push(PendingWrite {
             command: "/b_write",
             bufnum,
@@ -2041,10 +2130,30 @@ impl OscDispatcher {
             info: StreamInfo {
                 num_channels: info.num_channels,
                 sample_rate: info.sample_rate,
-                total_frames: Some(info.num_frames as u64),
+                // A left-open stream's total is unknown; a snapshot's is the buffer's frame count.
+                total_frames: (!leave_open).then_some(info.num_frames as u64),
             },
             drainer: StreamDrainer::new(consumer),
             sink: None,
+            leave_open,
+            completion: last_blob(args).map(|bytes| bytes.to_vec()),
+            target: self.current_target,
+        });
+        Ok(())
+    }
+
+    /// `/b_close bufnum` [completion]: close a file left open by `/b_write leaveOpen=1`, ending its
+    /// stream and freeing the recording slot. Queued; `run_pending` does the final drain + close
+    /// (async) and replies `/done /b_close <bufnum>` - an unopened bufnum fails. Mirrors scsynth's
+    /// `BufCloseCmd`, except the recording slot is freed (it holds no flat data) and `DiskOut`'s final
+    /// sub-chunk tail may be dropped, the same bounded tail loss continuous `DiskOut` recording has.
+    fn b_close(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let bufnum = int_arg(
+            args.first()
+                .ok_or(OscError::BadArguments("b_close expects a bufnum"))?,
+        )?;
+        self.pending_closes.push(PendingClose {
+            bufnum,
             completion: last_blob(args).map(|bytes| bytes.to_vec()),
             target: self.current_target,
         });
