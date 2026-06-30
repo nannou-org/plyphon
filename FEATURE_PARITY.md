@@ -22,7 +22,25 @@ partial items stay unchecked and spell out what is missing.
 Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are compiled into the
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
-## UGens (64 of scsynth's ~250, grouped by category)
+The **shared-memory / internal-server** surface is also intentionally out of scope, for the same
+reason plyphon shares no memory with its clients: **scope buffers** (`ScopeOut` + the shm scope ring),
+**shared controls** (the mmap'd shared control-bus region), the `/late` lateness reply (a late bundle
+is resolved to the soonest sample, never reported), and the legacy **binary integer OSC command
+form** (`inData[0] == 0` selecting `gCmdArray[int]`; plyphon dispatches string addresses only). A host
+that wants scope/metering builds it on plyphon's own ring transport, not scsynth's shm. `LocalBuf`
+(SynthDef-side local buffers, e.g. for an FFT chain) is **deferred**, not excluded - a chain buffer is
+`/b_alloc`'d instead, so it does not block the `PV_*` family.
+
+**On the roadmap (a close follow-up, not yet done):** intra-graph **reblock / resample** (scsynth's
+`kGraph_Reblock` / `kGraph_Resample`) - a per-SynthDef `Reblock(n)` / `Resample(2)` that runs a graph
+at a smaller control block (tighter envelope/trigger timing, lower-latency `LocalIn`/`LocalOut`
+feedback) or an oversampled rate (anti-aliasing for nonlinear UGens). It is opt-in, orthogonal, and
+zero-cost for the common case (every non-reblocking def runs exactly as today); it needs a per-graph
+`Rate` pair, a sub-block calc loop (`num_ticks`), the v3-def reblock/resample fields parsed in `scgf`,
+and `_reblock` variants of the boundary I/O UGens (`In`/`Out`/`XOut`/`OffsetOut`/`LocalIn`/`LocalOut`/
+`AudioControl`/...). Interior DSP UGens need no changes.
+
+## UGens (65 of scsynth's ~250, grouped by category)
 
 - [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`); missing ReplaceOut, XOut, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
