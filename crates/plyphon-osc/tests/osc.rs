@@ -50,6 +50,7 @@ fn sine_scgf() -> Vec<u8> {
                 },
             ],
             variants: vec![],
+            ..Default::default()
         }],
     };
     scgf::encode(&file).expect("encode SCgf")
@@ -114,6 +115,7 @@ fn dual_sine_scgf() -> Vec<u8> {
                 out(2),
             ],
             variants: vec![],
+            ..Default::default()
         }],
     };
     scgf::encode(&file).expect("encode SCgf")

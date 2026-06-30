@@ -52,6 +52,7 @@ fn sine_scgf() -> Vec<u8> {
                 },
             ],
             variants: vec![],
+            ..Default::default()
         }],
     };
     scgf::encode(&file).expect("encode SCgf")

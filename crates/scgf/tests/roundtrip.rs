@@ -47,6 +47,7 @@ fn sample_file() -> SynthDefFile {
                 name: "loud".to_string(),
                 values: vec![880.0],
             }],
+            ..Default::default()
         }],
     }
 }
@@ -56,6 +57,45 @@ fn round_trips() {
     let file = sample_file();
     let bytes = encode(&file).expect("encode");
     let parsed = parse(&bytes).expect("parse");
+    assert_eq!(parsed, file);
+}
+
+/// A two-def file exercising the version-3 framing: one reblocked def, one resampled def, so encode
+/// must emit version 3 with the per-def size prefix and the trailing reblock/resample fields.
+fn reblock_resample_file() -> SynthDefFile {
+    let ugen = || Ugen {
+        name: "Out".to_string(),
+        rate: Rate::Audio,
+        special_index: 0,
+        inputs: vec![],
+        outputs: vec![],
+    };
+    SynthDefFile {
+        version: 3,
+        defs: vec![
+            SynthDef {
+                name: "reblocked".to_string(),
+                ugens: vec![ugen()],
+                block_size: 16,
+                ..Default::default()
+            },
+            SynthDef {
+                name: "resampled".to_string(),
+                ugens: vec![ugen()],
+                resample_factor: 2.0,
+                ..Default::default()
+            },
+        ],
+    }
+}
+
+#[test]
+fn round_trips_v3_reblock_resample() {
+    let file = reblock_resample_file();
+    let bytes = encode(&file).expect("encode v3");
+    // A non-default reblock/resample forces version 3 (the version word follows the 4-byte magic).
+    assert_eq!(bytes[4..8], 3i32.to_be_bytes());
+    let parsed = parse(&bytes).expect("parse v3");
     assert_eq!(parsed, file);
 }
 

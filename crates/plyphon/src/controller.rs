@@ -164,8 +164,7 @@ impl Controller {
     /// uses it (so it can surface a [`BuildError`]); redefining a name retires any current compiled
     /// form (see [`reap_retired_defs`](Self::reap_retired_defs)) and forces a recompile on next use.
     pub fn add_synthdef(&mut self, def: SynthDef) {
-        self.graph_rate.remove(&def.name);
-        self.insert_def(def);
+        self.add_synthdef_rate(def, None, 1);
     }
 
     /// Add (or replace) a synth definition that runs *reblocked* - its graph at a smaller control
@@ -175,9 +174,7 @@ impl Controller {
     /// of a SynthDef carrying a `Reblock`, for callers that author defs in memory rather than parsing
     /// scsynth's binary v3 format.
     pub fn add_synthdef_reblocked(&mut self, def: SynthDef, block_size: usize) {
-        self.graph_rate
-            .insert(def.name.clone(), (Some(block_size), 1));
-        self.insert_def(def);
+        self.add_synthdef_rate(def, Some(block_size), 1);
     }
 
     /// Add (or replace) a synth definition that runs *oversampled* by `factor` (scsynth's
@@ -185,11 +182,24 @@ impl Controller {
     /// nonlinear units. `factor` must be a power of two, else the deferred compile fails with
     /// [`BuildError::InvalidResample`].
     pub fn add_synthdef_resampled(&mut self, def: SynthDef, factor: usize) {
-        self.graph_rate.insert(def.name.clone(), (None, factor));
+        self.add_synthdef_rate(def, None, factor);
+    }
+
+    /// Add (or replace) a synth definition with explicit `reblock`/`resample` graph-rate overrides -
+    /// the canonical entry the binary-def parser uses (a v3 `.scsyndef`'s `Reblock`/`Resample`). The
+    /// three `add_synthdef`/`add_synthdef_reblocked`/`add_synthdef_resampled` helpers delegate here.
+    /// An ordinary def (`None`/`1`) stores no override, so the deferred compile uses the World rate.
+    pub fn add_synthdef_rate(&mut self, def: SynthDef, reblock: Option<usize>, resample: usize) {
+        if reblock.is_none() && resample == 1 {
+            self.graph_rate.remove(&def.name);
+        } else {
+            self.graph_rate
+                .insert(def.name.clone(), (reblock, resample));
+        }
         self.insert_def(def);
     }
 
-    /// Shared body of [`add_synthdef`]/[`add_synthdef_reblocked`]: retire any compiled form and store.
+    /// Shared body of the `add_synthdef*` methods: retire any compiled form and store.
     fn insert_def(&mut self, def: SynthDef) {
         if let Some(old) = self.compiled.remove(&def.name) {
             self.retiring.push(old);

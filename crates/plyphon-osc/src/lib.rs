@@ -1000,8 +1000,8 @@ impl OscDispatcher {
                     for blob in &blobs {
                         match plyphon::synthdef::read::parse(blob) {
                             Ok(defs) => {
-                                for def in defs {
-                                    controller.add_synthdef(def);
+                                for (def, reblock, resample) in defs {
+                                    controller.add_synthdef_rate(def, reblock, resample);
                                 }
                             }
                             Err(err) => {
@@ -1353,8 +1353,8 @@ impl OscDispatcher {
             _ => return Err(OscError::BadArguments("d_recv expects a blob")),
         };
         let defs = plyphon::synthdef::read::parse(blob).map_err(OscError::SynthDef)?;
-        for def in defs {
-            controller.add_synthdef(def);
+        for (def, reblock, resample) in defs {
+            controller.add_synthdef_rate(def, reblock, resample);
         }
         Ok(())
     }

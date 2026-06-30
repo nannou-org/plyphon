@@ -61,13 +61,19 @@ impl Rate {
 /// A parsed SCgf file: a format version and the definitions it contains.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SynthDefFile {
-    /// File format version (1 or 2).
+    /// File format version (1, 2, or 3).
     pub version: i32,
     /// The synth definitions in the file.
     pub defs: Vec<SynthDef>,
 }
 
 /// A single synth definition.
+///
+/// The reblock/resample fields are the raw version-3 trailing values (defaulting to "no reblock, no
+/// oversample" for v1/v2). `block_size` is `0` for no reblock, `N > 0` for a fixed control block, or
+/// `-1` for a control-driven block size (the value in `block_size_index`); `resample_factor` is `1.0`
+/// (or `0.0`) for no oversample, `> 1.0` for a fixed factor, or `-1.0` for a control-driven factor
+/// (`resample_index`). Interpreting these into an engine setting is the consumer's job.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SynthDef {
     /// Definition name.
@@ -82,6 +88,34 @@ pub struct SynthDef {
     pub ugens: Vec<Ugen>,
     /// Variants (named alternative parameter sets).
     pub variants: Vec<Variant>,
+    /// Reblock control block (scsynth's `Reblock`): `0` none, `N` fixed, `-1` control-driven.
+    pub block_size: i32,
+    /// Synth-control index for a control-driven `block_size` (`-1`); else `0`.
+    pub block_size_index: u32,
+    /// Resample factor (scsynth's `Resample`): `1.0`/`0.0` none, `> 1.0` fixed, `-1.0` control-driven.
+    pub resample_factor: f32,
+    /// Synth-control index for a control-driven `resample_factor` (`-1.0`); else `0`.
+    pub resample_index: u32,
+}
+
+impl Default for SynthDef {
+    /// An empty def with the "ordinary" rate fields - no reblock, no oversample (`resample_factor`
+    /// `1.0`). Lets a caller build a def by literal and fill the reblock/resample tail with
+    /// `..Default::default()`.
+    fn default() -> Self {
+        SynthDef {
+            name: String::new(),
+            constants: Vec::new(),
+            param_values: Vec::new(),
+            param_names: Vec::new(),
+            ugens: Vec::new(),
+            variants: Vec::new(),
+            block_size: 0,
+            block_size_index: 0,
+            resample_factor: 1.0,
+            resample_index: 0,
+        }
+    }
 }
 
 /// A named parameter: a name and its index into [`SynthDef::param_values`].
@@ -143,7 +177,7 @@ pub enum Error {
     /// The buffer does not start with the `SCgf` magic.
     #[error("not an SCgf buffer (bad magic)")]
     BadMagic,
-    /// The format version is neither 1 nor 2.
+    /// The format version is not one of 1, 2, or 3.
     #[error("unsupported SCgf version: {0}")]
     UnsupportedVersion(i32),
     /// A calculation-rate byte was out of range.

@@ -27,10 +27,33 @@ pub enum ReadError {
     BadInputRef,
 }
 
-/// Parse SCgf bytes into plyphon [`SynthDef`]s (a file may contain several).
-pub fn parse(data: &[u8]) -> Result<Vec<SynthDef>, ReadError> {
+/// Parse SCgf bytes into plyphon [`SynthDef`]s (a file may contain several), each with its
+/// `(reblock, resample)` graph-rate overrides (scsynth's `Reblock`/`Resample`, version-3 fields).
+/// The authored `SynthDef` has no rate field, so the overrides ride alongside, for the caller to
+/// hand to [`Controller::add_synthdef_rate`](crate::Controller::add_synthdef_rate).
+pub fn parse(data: &[u8]) -> Result<Vec<(SynthDef, Option<usize>, usize)>, ReadError> {
     let file = scgf::parse(data)?;
-    file.defs.iter().map(convert).collect()
+    file.defs
+        .iter()
+        .map(|def| Ok((convert(def)?, reblock_of(def), resample_of(def))))
+        .collect()
+}
+
+/// The reblock block size a parsed def requests (scsynth's `Reblock`): `0` -> none, `N > 0` -> a fixed
+/// block. A control-driven block size (`-1`) is unsupported - plyphon bakes the graph block at compile
+/// - so it falls back to none.
+fn reblock_of(def: &scgf::SynthDef) -> Option<usize> {
+    usize::try_from(def.block_size).ok().filter(|&b| b > 0)
+}
+
+/// The oversample factor a parsed def requests (scsynth's `Resample`): `<= 1.0` -> 1 (none), `> 1.0`
+/// -> the rounded factor. A control-driven factor (`-1.0`) likewise falls back to 1.
+fn resample_of(def: &scgf::SynthDef) -> usize {
+    if def.resample_factor > 1.0 {
+        def.resample_factor.round() as usize
+    } else {
+        1
+    }
 }
 
 /// Whether `name` is a parameter UGen that plyphon folds into [`Param`]s. `AudioControl` produces

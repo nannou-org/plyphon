@@ -50,6 +50,7 @@ fn sine_scgf() -> Vec<u8> {
                 },
             ],
             variants: vec![],
+            ..Default::default()
         }],
     };
     encode(&file).expect("encode SCgf")
@@ -90,7 +91,9 @@ fn scgf_folds_control_into_param_and_plays() {
     let bytes = sine_scgf();
     let defs = parse(&bytes).expect("load SCgf");
     assert_eq!(defs.len(), 1);
-    let def = &defs[0];
+    // `parse` yields `(def, reblock, resample)`; this ordinary v2 def has no overrides.
+    assert_eq!((defs[0].1, defs[0].2), (None, 1));
+    let def = &defs[0].0;
 
     // The Control UGen folded into a `freq` parameter; only SinOsc and Out survive.
     assert_eq!(def.name, "sine");

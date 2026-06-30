@@ -21,8 +21,8 @@ pub fn load_dir(controller: &mut Controller, dir: &Path) -> Result<usize, String
         }
         let bytes = std::fs::read(&path).map_err(|e| format!("reading {}: {e}", path.display()))?;
         let defs = parse(&bytes).map_err(|e| format!("parsing {}: {e}", path.display()))?;
-        for def in defs {
-            controller.add_synthdef(def);
+        for (def, reblock, resample) in defs {
+            controller.add_synthdef_rate(def, reblock, resample);
             count += 1;
         }
     }

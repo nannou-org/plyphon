@@ -12,13 +12,26 @@ pub fn parse(data: &[u8]) -> Result<SynthDefFile, Error> {
         return Err(Error::BadMagic);
     }
     let version = reader.i32()?;
-    if version != 1 && version != 2 {
+    if !(1..=3).contains(&version) {
         return Err(Error::UnsupportedVersion(version));
     }
     let num_defs = reader.i16()? as usize;
     let mut defs = Vec::with_capacity(num_defs);
     for _ in 0..num_defs {
-        defs.push(parse_def(&mut reader, version)?);
+        if version >= 3 {
+            // Version 3 prefixes each def with an int32 byte size (including the 4-byte size field
+            // itself); the reader advances by it, tolerating any trailing bytes the def may carry.
+            let start = reader.pos;
+            let size = reader.i32()?;
+            let def = parse_def(&mut reader, version)?;
+            let end = start
+                .checked_add(usize::try_from(size).map_err(|_| Error::Truncated)?)
+                .ok_or(Error::Truncated)?;
+            reader.seek(end)?;
+            defs.push(def);
+        } else {
+            defs.push(parse_def(&mut reader, version)?);
+        }
     }
     Ok(SynthDefFile { version, defs })
 }
@@ -63,6 +76,23 @@ fn parse_def(reader: &mut Reader<'_>, version: i32) -> Result<SynthDef, Error> {
         variants.push(Variant { name, values });
     }
 
+    // Version 3 appends the reblock/resample fields; older versions default to "no reblock, no
+    // oversample". The index fields are stored unsigned (scsynth reads them with a signed int32 read).
+    let (block_size, block_size_index, resample_factor, resample_index) = if version >= 3 {
+        let block_size = reader.i32()?;
+        let block_size_index = reader.i32()? as u32;
+        let resample_factor = reader.f32()?;
+        let resample_index = reader.i32()? as u32;
+        (
+            block_size,
+            block_size_index,
+            resample_factor,
+            resample_index,
+        )
+    } else {
+        (0, 0, 1.0, 0)
+    };
+
     Ok(SynthDef {
         name,
         constants,
@@ -70,6 +100,10 @@ fn parse_def(reader: &mut Reader<'_>, version: i32) -> Result<SynthDef, Error> {
         param_names,
         ugens,
         variants,
+        block_size,
+        block_size_index,
+        resample_factor,
+        resample_index,
     })
 }
 
@@ -126,6 +160,16 @@ impl<'a> Reader<'a> {
         let slice = self.data.get(self.pos..end).ok_or(Error::Truncated)?;
         self.pos = end;
         Ok(slice)
+    }
+
+    /// Advance the cursor to `pos` (used to skip to a v3 def's declared end). Errors if `pos` is
+    /// before the current cursor - which means the def overran its declared size - or past the buffer.
+    fn seek(&mut self, pos: usize) -> Result<(), Error> {
+        if pos < self.pos || pos > self.data.len() {
+            return Err(Error::Truncated);
+        }
+        self.pos = pos;
+        Ok(())
     }
 
     fn u8(&mut self) -> Result<u8, Error> {

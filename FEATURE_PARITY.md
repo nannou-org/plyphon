@@ -48,9 +48,13 @@ to within oscillator phase drift. (`LocalIn`/`LocalOut` need no decimate/ZOH - t
 and already graph-rate - and `OffsetOut`'s onset offset, World-block-relative, coarsens to per-tick, a
 documented edge.)
 
-**Still on the roadmap (a small follow-up):** parsing the **scsynth v3 binary-def** reblock/resample
-fields in `scgf` (today both are set programmatically through the `Controller`, not from a parsed
-`.scsyndef`).
+Reblock/resample also load from a **scsynth version-3 binary def**: `scgf` parses the v3 framing (a
+per-def `int32` size prefix and the trailing `blockSize`/`resampleFactor` fields), and
+`plyphon::synthdef::read::parse` hands each def's setting to `Controller::add_synthdef_rate`, so a
+`.scsyndef` compiled with `Reblock`/`Resample` is honoured on `/d_recv` and `/d_load` - not only via
+the programmatic API. The **control-driven** forms (`blockSize -1` / `resampleFactor -1.0`, where the
+value comes from a synth control at instantiation) are unsupported - plyphon bakes the graph block into
+the per-synth layout at compile - and fall back to no reblock/resample.
 
 ## UGens (65 of scsynth's ~250, grouped by category)
 

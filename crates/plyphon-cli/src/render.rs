@@ -146,6 +146,7 @@ mod tests {
                     },
                 ],
                 variants: vec![],
+                ..Default::default()
             }],
         };
         scgf::encode(&file).expect("encode SCgf")

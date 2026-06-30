@@ -88,6 +88,7 @@ fn synthdef_scgf() -> Vec<u8> {
                 },
             ],
             variants: vec![],
+            ..Default::default()
         }],
     };
     scgf::encode(&file).expect("encode SCgf")
@@ -104,8 +105,8 @@ fn build(sample_rate: f32, channels: usize) -> World {
 
     // Parse the compiled bytes exactly as a `/d_recv` would, then start the synth.
     let defs = plyphon::synthdef::read::parse(&synthdef_scgf()).expect("parse SCgf");
-    for def in defs {
-        controller.add_synthdef(def);
+    for (def, reblock, resample) in defs {
+        controller.add_synthdef_rate(def, reblock, resample);
     }
     let _ = controller.synth_new("loaded", ROOT_GROUP_ID, AddAction::Tail);
 
