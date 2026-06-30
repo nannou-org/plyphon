@@ -203,10 +203,9 @@ impl Graph {
         let world_bs = block.audio.block_size;
         // The oversample factor (scsynth's `Resample(n)`): the graph's sample rate over the World's,
         // an exact power of two (1 for an ordinary def). The graph ticks `factor`x more often, and the
-        // boundary I/O decimates/zero-order-holds by it.
-        // `round()` is not available in `no_std` (the wasm target), so round-half-up with `floor`
-        // (the ratio is always positive).
-        let resample = math::floor(def.audio_rate().sample_rate / block.audio.sample_rate + 0.5)
+        // boundary I/O decimates/zero-order-holds by it. `round()` is std-only (unavailable on the
+        // wasm target), so route through `math::round`.
+        let resample = math::round(def.audio_rate().sample_rate / block.audio.sample_rate)
             .max(1.0) as usize;
         let num_ticks = (world_bs / bs).max(1) * resample;
         // The first-block init pass runs on the very first tick only; tracked across ticks.

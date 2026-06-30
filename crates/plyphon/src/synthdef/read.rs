@@ -51,9 +51,8 @@ fn reblock_of(def: &scgf::SynthDef) -> Option<usize> {
 /// -> the rounded factor. A control-driven factor (`-1.0`) likewise falls back to 1.
 fn resample_of(def: &scgf::SynthDef) -> usize {
     if def.resample_factor > 1.0 {
-        // `round()` is not available in `no_std` (the wasm target); round-half-up with `floor`
-        // (the factor is `> 1.0` here).
-        math::floor(def.resample_factor + 0.5) as usize
+        // `round()` is std-only (unavailable on the wasm target); route through `math::round`.
+        math::round(def.resample_factor) as usize
     } else {
         1
     }
