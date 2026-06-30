@@ -26,12 +26,22 @@ impl Unit for Out {
         // Input 0 is the starting bus channel; the rest are signals to write.
         let base = ctx.ins.control(0) as usize;
         if self.audio != 0 {
+            let factor = ctx.resample_factor;
             for k in 1..ctx.ins.len() {
                 let signal = ctx.ins.audio(k);
-                // A reblocked graph writes each sub-block tick into its own slice of the World-block
-                // channel; `tick` is 0 (offset 0) for an ordinary def, so this is a plain `Out`.
-                let offset = ctx.tick * signal.len();
-                unit::audio_out_at(ctx.buses, ctx.buf_counter, base + (k - 1), offset, signal);
+                // A reblocked/resampled graph writes each sub-block tick into its own slice of the
+                // World-block channel, decimating its `factor`x-oversampled samples down to the World
+                // rate. `tick` 0, `factor` 1 makes this a plain `Out`.
+                let out_samples = signal.len() / factor;
+                let offset = ctx.tick * out_samples;
+                unit::audio_out_decimated(
+                    ctx.buses,
+                    ctx.buf_counter,
+                    base + (k - 1),
+                    offset,
+                    signal,
+                    factor,
+                );
             }
         } else {
             for k in 1..ctx.ins.len() {
@@ -122,17 +132,20 @@ impl Unit for OffsetOut {
             // This channel's `offset`-sample carry within its `stride`-wide region of `aux`.
             let carry = &mut carries[channel * stride..channel * stride + offset.min(stride)];
             // Stage the delayed block in channel-0 scratch, then accumulate it onto this tick's slice
-            // of the bus channel (offset 0 for an ordinary def). Under reblock the onset offset spans
-            // the World block while the carry runs per tick - a documented coarsening, see the type doc.
-            let bus_offset = ctx.tick * bs;
+            // of the bus channel, decimated to the World rate (offset 0, factor 1 for an ordinary
+            // def). Under reblock/resample the onset offset spans the World block while the carry runs
+            // per tick - a documented coarsening, see the type doc.
+            let factor = ctx.resample_factor;
+            let bus_offset = ctx.tick * (bs / factor);
             let staged = ctx.outs.audio(0);
             shift_and_carry(&mut staged[..bs], signal, carry, offset, first);
-            unit::audio_out_at(
+            unit::audio_out_decimated(
                 ctx.buses,
                 ctx.buf_counter,
                 base + channel,
                 bus_offset,
                 &staged[..bs],
+                factor,
             );
         }
         self.warmed = 1;

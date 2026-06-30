@@ -63,10 +63,11 @@ pub enum SynthNewError {
 pub struct Controller {
     registry: UnitRegistry,
     defs: SynthDefLibrary,
-    /// Per-def reblock block size (scsynth's `Reblock(n)`), keyed by def name; absent for an ordinary
-    /// def. The authored `SynthDef` carries no reblock field (it is constructed by literal in many
-    /// places), so the setting rides alongside here and is threaded into `compile`.
-    reblocks: HashMap<String, usize>,
+    /// Per-def graph-rate overrides keyed by def name, absent for an ordinary def: `(reblock block
+    /// size, oversample factor)` - scsynth's `Reblock(n)` / `Resample(n)`. The authored `SynthDef`
+    /// carries no such field (it is constructed by literal in many places), so the setting rides
+    /// alongside here and is threaded into `compile`.
+    graph_rate: HashMap<String, (Option<usize>, usize)>,
     /// Current compiled def per name (also the controller's retained `Arc` for it).
     compiled: HashMap<String, Arc<GraphDef>>,
     /// Stable name -> `def_id`, assigned on first compile and reused across recompiles.
@@ -97,7 +98,7 @@ impl Controller {
         Controller {
             registry: UnitRegistry::with_builtins(),
             defs: SynthDefLibrary::new(),
-            reblocks: HashMap::new(),
+            graph_rate: HashMap::new(),
             compiled: HashMap::new(),
             def_ids: HashMap::new(),
             retiring: Vec::new(),
@@ -163,7 +164,7 @@ impl Controller {
     /// uses it (so it can surface a [`BuildError`]); redefining a name retires any current compiled
     /// form (see [`reap_retired_defs`](Self::reap_retired_defs)) and forces a recompile on next use.
     pub fn add_synthdef(&mut self, def: SynthDef) {
-        self.reblocks.remove(&def.name);
+        self.graph_rate.remove(&def.name);
         self.insert_def(def);
     }
 
@@ -174,7 +175,17 @@ impl Controller {
     /// of a SynthDef carrying a `Reblock`, for callers that author defs in memory rather than parsing
     /// scsynth's binary v3 format.
     pub fn add_synthdef_reblocked(&mut self, def: SynthDef, block_size: usize) {
-        self.reblocks.insert(def.name.clone(), block_size);
+        self.graph_rate
+            .insert(def.name.clone(), (Some(block_size), 1));
+        self.insert_def(def);
+    }
+
+    /// Add (or replace) a synth definition that runs *oversampled* by `factor` (scsynth's
+    /// `Resample(n)`): its graph runs at `factor`x the World sample rate, reducing aliasing in
+    /// nonlinear units. `factor` must be a power of two, else the deferred compile fails with
+    /// [`BuildError::InvalidResample`].
+    pub fn add_synthdef_resampled(&mut self, def: SynthDef, factor: usize) {
+        self.graph_rate.insert(def.name.clone(), (None, factor));
         self.insert_def(def);
     }
 
@@ -213,7 +224,7 @@ impl Controller {
             self.retiring.push(old);
         }
         self.defs.remove(name);
-        self.reblocks.remove(name);
+        self.graph_rate.remove(name);
         self.reap_retired_defs();
         Ok(true)
     }
@@ -295,7 +306,7 @@ impl Controller {
             return Ok(self.def_ids[def_name]);
         }
         // Compile the authored def (the only place unit construction / allocation happens).
-        let reblock = self.reblocks.get(def_name).copied();
+        let (reblock, resample) = self.graph_rate.get(def_name).copied().unwrap_or((None, 1));
         let graphdef = {
             let authored = self
                 .defs
@@ -308,6 +319,7 @@ impl Controller {
                 self.max_wire_bufs,
                 self.max_unit_outputs,
                 reblock,
+                resample,
             )?
         };
         // Assign a stable def_id (reused if this name was compiled before).

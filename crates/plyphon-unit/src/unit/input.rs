@@ -28,15 +28,19 @@ impl Unit for In {
         let base = ctx.ins.control(Self::BUS) as usize;
         let num_channels = self.num_channels as usize;
         if self.audio != 0 {
+            let factor = ctx.resample_factor;
             for o in 0..num_channels {
                 let dst = ctx.outs.audio(o);
-                // This sub-block tick reads its own slice of the World-block-wide bus channel - the
-                // whole channel for an ordinary (non-reblocked) graph, where `tick` is 0 and the wire
-                // is the full World block.
-                let offset = ctx.tick * dst.len();
+                // This sub-block tick reads its `dst.len() / factor` World-rate samples of the
+                // World-block-wide bus channel and zero-order-holds them up to the wire's full length.
+                // For an ordinary graph (`tick` 0, `factor` 1) this is a straight copy of the channel.
+                let world_samples = dst.len() / factor;
+                let offset = ctx.tick * world_samples;
                 let chan = unit::audio_in(ctx.buses, base + o);
-                if chan.len() >= offset + dst.len() {
-                    dst.copy_from_slice(&chan[offset..offset + dst.len()]);
+                if chan.len() >= offset + world_samples {
+                    for (j, slot) in dst.iter_mut().enumerate() {
+                        *slot = chan[offset + j / factor];
+                    }
                 } else {
                     dst.fill(0.0);
                 }

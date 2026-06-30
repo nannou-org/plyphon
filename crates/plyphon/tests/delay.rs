@@ -24,7 +24,15 @@ fn opts() -> Options {
 /// Compile with the built-in registry, returning the `GraphDef` so a test can inspect its layout.
 fn compile(def: &SynthDef) -> Result<GraphDef, BuildError> {
     let rate = RateInfo::new(SR, BLOCK);
-    def.compile(&UnitRegistry::with_builtins(), &rate, &rate, 64, 32, None)
+    def.compile(
+        &UnitRegistry::with_builtins(),
+        &rate,
+        &rate,
+        64,
+        32,
+        None,
+        1,
+    )
 }
 
 /// The delay-line length (in `f32`s) `DelayN`'s `build` derives for `maxdelay` - the same

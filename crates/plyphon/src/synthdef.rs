@@ -187,7 +187,9 @@ impl SynthDef {
     /// Runs entirely off the audio thread (the analogue of scsynth's `GraphDef_Recv`): it resolves
     /// the wiring, builds each unit's vtable + initial state image, and computes the per-graph block
     /// layout. `max_wire_bufs`/`max_unit_outputs` are the engine's shared-scratch capacities; a def
-    /// exceeding either fails here rather than on the audio thread.
+    /// exceeding either fails here rather than on the audio thread. `reblock`/`resample` are the
+    /// graph's `Reblock`/`Resample` overrides (`None`/`1` for an ordinary def).
+    #[allow(clippy::too_many_arguments)]
     pub fn compile(
         &self,
         registry: &UnitRegistry,
@@ -196,6 +198,7 @@ impl SynthDef {
         max_wire_bufs: usize,
         max_unit_outputs: usize,
         reblock: Option<usize>,
+        resample: usize,
     ) -> Result<GraphDef, BuildError> {
         // The graph's control block: the World block, or a smaller power-of-two reblock (scsynth's
         // `Reblock(n)`) that divides it. The graph's units run at this finer rate.
@@ -209,15 +212,21 @@ impl SynthDef {
             }
             None => audio.block_size,
         };
+        // The oversample factor (scsynth's `Resample(n)`): the graph runs at `factor`x the World
+        // sample rate, anti-aliasing nonlinear units. Power-of-two only (no downsampling).
+        if resample == 0 || !resample.is_power_of_two() {
+            return Err(BuildError::InvalidResample { factor: resample });
+        }
         // The graph's own rate pair, baked into the units and handed to each `ProcessCtx`. An ordinary
-        // def reuses the World's rates verbatim (so its output is unchanged); a reblocked def derives a
-        // smaller-block / higher-control-rate pair.
-        let (graph_audio, graph_control) = if block_size == audio.block_size {
+        // def (World block, no oversampling) reuses the World's rates verbatim, so its output is
+        // unchanged; a reblocked/resampled def derives a smaller-block / higher-rate pair.
+        let graph_sr = audio.sample_rate * resample as f64;
+        let (graph_audio, graph_control) = if block_size == audio.block_size && resample == 1 {
             (*audio, *control)
         } else {
             (
-                RateInfo::new(audio.sample_rate, block_size),
-                RateInfo::new(audio.sample_rate / block_size as f64, 1),
+                RateInfo::new(graph_sr, block_size),
+                RateInfo::new(graph_sr / block_size as f64, 1),
             )
         };
 

@@ -31,24 +31,26 @@ that wants scope/metering builds it on plyphon's own ring transport, not scsynth
 (SynthDef-side local buffers, e.g. for an FFT chain) is **deferred**, not excluded - a chain buffer is
 `/b_alloc`'d instead, so it does not block the `PV_*` family.
 
-Intra-graph **reblock** (scsynth's `kGraph_Reblock`, a per-SynthDef `Reblock(n)`) is **done**: a def
-can run its graph at a smaller power-of-two control block than the World's - tighter envelope/trigger
-timing and lower-latency `LocalIn`/`LocalOut` feedback (the local bus shrinks to the graph block). The
-`GraphDef` carries its own `RateInfo` pair, `Graph::process` runs the calc list `num_ticks =
-world_block / block` times per World block (collapsing to one pass, zero-cost, for an ordinary def),
-and the boundary `In`/`Out`/`OffsetOut`/`AudioControl` slice the World-block-wide bus per tick
-(`audio_in`'s tick slice and `audio_out_at`, which clears the channel on the first writer then sums).
-Interior DSP units are unaware, packing their wires at the graph block. A reblocked def is authored
-with `Controller::add_synthdef_reblocked(def, block)`; a reblocked linear chain is byte-identical to
-the non-reblocked one. (`LocalIn`/`LocalOut` need no decimate/ZOH - their bus is per-synth and already
-graph-rate - and `OffsetOut`'s onset offset, World-block-relative, coarsens to per-tick under reblock,
-a documented edge.)
+Intra-graph **reblock and resample** (scsynth's `kGraph_Reblock` / `kGraph_Resample`, per-SynthDef
+`Reblock(n)` / `Resample(n)`) are **done**: a def can run its graph at a smaller power-of-two control
+block than the World's (tighter envelope/trigger timing, lower-latency `LocalIn`/`LocalOut` feedback -
+the local bus shrinks to the graph block) and/or oversampled by a power-of-two factor (anti-aliasing
+for nonlinear units). The `GraphDef` carries its own `RateInfo` pair (smaller block and/or higher
+sample rate), `Graph::process` runs the calc list `num_ticks = (world_block / block) * factor` times
+per World block (collapsing to one pass, zero-cost, for an ordinary def), and the boundary
+`In`/`Out`/`OffsetOut`/`AudioControl` cross the World-block-wide bus per tick: `In` reads its tick
+slice and zero-order-holds it up to the graph rate, `Out` decimates the oversampled interior down
+(`audio_out_decimated`, which clears the channel on the first writer then sums each tick's slice).
+Interior DSP units are unaware, packing their wires at the graph block. Authored with
+`Controller::add_synthdef_reblocked(def, block)` / `add_synthdef_resampled(def, factor)`; a reblocked
+linear chain is byte-identical to the non-reblocked one and an oversampled band-limited chain matches
+to within oscillator phase drift. (`LocalIn`/`LocalOut` need no decimate/ZOH - their bus is per-synth
+and already graph-rate - and `OffsetOut`'s onset offset, World-block-relative, coarsens to per-tick, a
+documented edge.)
 
-**Still on the roadmap (a close follow-up):** **resample** (`kGraph_Resample`, `Resample(2)`) -
-oversampling a graph to reduce aliasing in nonlinear UGens - which adds a per-graph sample-rate change
-and the decimate (`Out`) / zero-order-hold (`In`) boundary interpolation on top of the reblock
-machinery; and parsing the **scsynth v3 binary-def** reblock/resample fields in `scgf` (today reblock
-is set programmatically through the `Controller`, not from a parsed `.scsyndef`).
+**Still on the roadmap (a small follow-up):** parsing the **scsynth v3 binary-def** reblock/resample
+fields in `scgf` (today both are set programmatically through the `Controller`, not from a parsed
+`.scsyndef`).
 
 ## UGens (65 of scsynth's ~250, grouped by category)
 

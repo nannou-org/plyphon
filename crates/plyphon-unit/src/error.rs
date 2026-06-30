@@ -114,4 +114,11 @@ pub enum BuildError {
         /// The World control block size it must divide.
         world: usize,
     },
+    /// A resampled def (scsynth's `Resample(n)`) requested an oversample factor that is not a power of
+    /// two or is zero. scsynth allows only power-of-two oversampling (no downsampling).
+    #[error("invalid resample factor {factor}: must be a power of two >= 1")]
+    InvalidResample {
+        /// The requested oversample factor.
+        factor: usize,
+    },
 }

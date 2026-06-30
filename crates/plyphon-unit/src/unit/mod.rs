@@ -158,8 +158,8 @@ pub use filter::Butter;
 pub use info::{BufInfo, BufInfoKind, Info, InfoKind};
 pub use input::In;
 pub use io::{
-    audio_in, audio_out, audio_out_at, buffer_at, buffer_at_mut, buffer_pair_mut, control_in,
-    control_out, local_in, local_out, num_audio_buses, num_buffers, num_control_buses,
+    audio_in, audio_out, audio_out_decimated, buffer_at, buffer_at_mut, buffer_pair_mut,
+    control_in, control_out, local_in, local_out, num_audio_buses, num_buffers, num_control_buses,
     num_input_buses, num_output_buses, recording_at_mut, stream_at_mut,
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
@@ -465,10 +465,14 @@ pub struct ProcessCtx<'a> {
     /// The current block counter (stamps bus writes: the first writer clears, the rest sum).
     pub buf_counter: u64,
     /// Which sub-block tick this is, for a reblocked graph: `0..num_ticks`. Always `0` for an ordinary
-    /// def (one tick per World block). The boundary I/O units (`In`/`Out`) multiply it by their block
-    /// size (`audio.block_size`) to find this tick's slice of the World-block-wide bus channel; every
-    /// other unit ignores it.
+    /// def (one tick per World block). The boundary I/O units (`In`/`Out`) use it with their block
+    /// size (`audio.block_size`) and [`resample_factor`](Self::resample_factor) to find this tick's
+    /// slice of the World-block-wide bus channel; every other unit ignores it.
     pub tick: usize,
+    /// The graph's oversample factor (scsynth's `Resample(n)`): the graph runs at `factor`x the World
+    /// sample rate. `1` for an ordinary def. The boundary I/O units use it to decimate (`Out`) or
+    /// zero-order-hold (`In`) between the World-rate bus and the graph-rate wire; others ignore it.
+    pub resample_factor: usize,
     /// The sample offset within this block at which the enclosing synth was created (scsynth's
     /// `mSampleOffset`). It is non-zero only on the first block of a synth scheduled mid-block, and
     /// only `OffsetOut` acts on it - to delay the onset to that exact sample. Most units ignore it.

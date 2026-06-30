@@ -70,21 +70,31 @@ impl AudioBus {
     /// and marks the channel touched. `src` shorter than a block leaves the remainder zeroed on a
     /// fresh write, mirroring scsynth's `Out` semantics.
     pub fn write_accumulate(&mut self, ch: usize, buf_counter: u64, src: &[f32]) {
-        self.write_accumulate_at(ch, buf_counter, 0, src);
+        self.write_accumulate_decimated(ch, buf_counter, 0, src, 1);
     }
 
-    /// Write `src` into channel `ch` at sample `offset` for block `buf_counter` - the reblock form,
-    /// where a graph running at a smaller block writes each sub-block tick into its own slice of the
-    /// World-block-wide channel (scsynth's `Out_next_a_reblock`, which zeroes the channel on tick 0).
+    /// Write `src` into channel `ch` at sample `offset` for block `buf_counter`, taking every
+    /// `factor`-th sample of `src` - the reblock/resample boundary form. A graph running at a smaller
+    /// block and/or oversampled rate writes each sub-block tick into its own slice of the
+    /// World-block-wide channel, decimating its `factor`x-oversampled interior down to the World rate
+    /// (scsynth's `Out_next_a_reblock`, which zeroes the channel on the first writer).
     ///
     /// The first writer of the channel this block clears the **whole** channel and marks it touched,
     /// so every later tick (and every other synth) then accumulates into its own slice over a clean
-    /// zero (or a co-writer's signal). `offset == 0` with a full-block `src` reduces to
+    /// zero (or a co-writer's signal). `offset == 0`, `factor == 1`, full-block `src` reduces to
     /// [`write_accumulate`](Self::write_accumulate).
-    pub fn write_accumulate_at(&mut self, ch: usize, buf_counter: u64, offset: usize, src: &[f32]) {
+    pub fn write_accumulate_decimated(
+        &mut self,
+        ch: usize,
+        buf_counter: u64,
+        offset: usize,
+        src: &[f32],
+        factor: usize,
+    ) {
         if ch >= self.num_channels {
             return;
         }
+        let factor = factor.max(1);
         let bs = self.block_size;
         // Read/clear `touched` before borrowing `data` (disjoint fields, sequenced).
         let first = self.touched[ch] != buf_counter;
@@ -94,9 +104,10 @@ impl AudioBus {
         if first {
             dst.fill(0.0);
         }
-        let n = src.len().min(bs.saturating_sub(offset));
-        for (d, &s) in dst[offset..offset + n].iter_mut().zip(&src[..n]) {
-            *d += s;
+        // World-rate output samples = the decimated source length, clamped into the channel slice.
+        let count = (src.len() / factor).min(bs.saturating_sub(offset));
+        for j in 0..count {
+            dst[offset + j] += src[j * factor];
         }
     }
 

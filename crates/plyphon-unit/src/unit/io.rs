@@ -31,13 +31,21 @@ pub fn audio_out(buses: &mut Buses, buf_counter: u64, ch: usize, src: &[f32]) {
     buses.audio_mut().write_accumulate(ch, buf_counter, src);
 }
 
-/// Accumulate `src` into audio bus channel `ch` at sample `offset` (`Out.ar` from a reblocked graph:
-/// each sub-block tick writes its own slice of the World-block channel). The first writer of the
-/// block clears the whole channel; `offset == 0` reduces to [`audio_out`]. Out of range is a no-op.
-pub fn audio_out_at(buses: &mut Buses, buf_counter: u64, ch: usize, offset: usize, src: &[f32]) {
+/// Accumulate `src` into audio bus channel `ch` at sample `offset`, decimating by `factor` (`Out.ar`
+/// from a reblocked/resampled graph: each sub-block tick writes its own slice of the World-block
+/// channel, taking every `factor`-th oversampled sample). The first writer of the block clears the
+/// whole channel; `offset == 0`, `factor == 1` reduces to [`audio_out`]. Out of range is a no-op.
+pub fn audio_out_decimated(
+    buses: &mut Buses,
+    buf_counter: u64,
+    ch: usize,
+    offset: usize,
+    src: &[f32],
+    factor: usize,
+) {
     buses
         .audio_mut()
-        .write_accumulate_at(ch, buf_counter, offset, src);
+        .write_accumulate_decimated(ch, buf_counter, offset, src, factor);
 }
 
 /// Control bus channel `ch`'s current value (0.0 if out of range), for `In.kr`.

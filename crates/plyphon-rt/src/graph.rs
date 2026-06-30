@@ -189,7 +189,13 @@ impl Graph {
         // and are reused each tick, so interior DSP units are unaware of reblocking; only the bus
         // boundary (`In`/`Out`/`AudioControl`) spans the full World block, sliced per tick.
         let world_bs = block.audio.block_size;
-        let num_ticks = (world_bs / bs).max(1);
+        // The oversample factor (scsynth's `Resample(n)`): the graph's sample rate over the World's,
+        // an exact power of two (1 for an ordinary def). The graph ticks `factor`x more often, and the
+        // boundary I/O decimates/zero-order-holds by it.
+        let resample = (def.audio_rate().sample_rate / block.audio.sample_rate)
+            .round()
+            .max(1.0) as usize;
+        let num_ticks = (world_bs / bs).max(1) * resample;
         // The first-block init pass runs on the very first tick only; tracked across ticks.
         let first_block = !self.initialized;
         self.initialized = true;
@@ -217,9 +223,16 @@ impl Graph {
                 let dst = ap.wire as usize * bs;
                 let bus = amaps[ap.param as usize];
                 if bus != u32::MAX {
+                    // Read this tick's `bs / resample` World-rate samples from the bus and
+                    // zero-order-hold them up to the graph wire's `bs` samples (an identity copy when
+                    // not reblocked/resampled: `tick == 0`, `resample == 1`).
                     let chan = unit::audio_in(block.buses, bus as usize);
-                    if chan.len() == world_bs {
-                        audio[dst..dst + bs].copy_from_slice(&chan[tick * bs..tick * bs + bs]);
+                    let world_samples = bs / resample;
+                    let off = tick * world_samples;
+                    if chan.len() >= off + world_samples {
+                        for (j, slot) in audio[dst..dst + bs].iter_mut().enumerate() {
+                            *slot = chan[off + j / resample];
+                        }
                     } else {
                         audio[dst..dst + bs].fill(0.0);
                     }
@@ -301,6 +314,7 @@ impl Graph {
                         buffers: &mut *block.buffers,
                         buf_counter: block.buf_counter,
                         tick,
+                        resample_factor: resample,
                         sample_offset,
                         // A consumer pulls demand sources through this; non-demand units ignore it. The
                         // demand arena is disjoint from this unit's `state` slot above.
