@@ -40,7 +40,7 @@ engine (pure Rust, no FFI), so there is nothing to load at runtime.
 - [ ] **FFT / spectral** (behind the default-on `fft` feature; realfft, std-only) - have FFT, IFFT (short-time analysis/resynthesis over a packed-spectrum chain buffer, via the shared `FftTables`), PV_MagMul (the first `PV_*`, proving the two-buffer access); missing the rest of the `PV_*` set, Pitch, Onsets, BeatTrack
 - [ ] **Chaos / rate conversion** - have A2K, K2A, T2A, DC; missing the chaos set: Lorenz, LinCong, Henon, ...
 
-## OSC server commands (60 of ~65)
+## OSC server commands (65 of ~65)
 
 The *getters* (`/status`, `/sync`, `/rtMemoryStatus`, `/n_query`, `/c_get`/`/c_getn`, `/s_get`/`/s_getn`,
 `/b_get`/`/b_getn`, `/g_queryTree`) read live engine state over a third RT→NRT ring - a fixed-size
@@ -63,11 +63,14 @@ the dispatcher and routes each async answer back to the requester, alongside the
 
 The **host actions** need a plugin registry or filesystem the engine does not model, so they are
 surfaced upward as typed capabilities on a `Host` trait the dispatcher drives in `run_pending` -
-exactly as `/b_allocRead` already defers I/O to an app-provided `BufferSource`. Wired: `/cmd`/`/u_cmd`
-(a `CommandHost`), `/d_load`/`/d_loadDir` (a `DefSource`), and `/b_write`'s whole-buffer snapshot (a
-`BufferSink`, the engine streaming the buffer out race-free). What remains: `/n_trace` (a per-unit RT
-dump), and `/b_close` together with `/b_write`'s `leaveOpen=1` streaming form. (scsynth's `/n_cmd` is
-unimplemented - commented out in its command table - so plyphon omits it too.)
+exactly as `/b_allocRead` already defers I/O to an app-provided `BufferSource`: `/cmd`/`/u_cmd` (a
+`CommandHost`), `/d_load`/`/d_loadDir` (a `DefSource`), and `/b_write` + `/b_close` (a `BufferSink`,
+the engine streaming the buffer out race-free - a whole-buffer snapshot, or `leaveOpen=1` left open
+for `DiskOut`). The OSC surface is now complete; the one command that touches the audio thread,
+`/n_trace`, streams each calc unit's I/O over the reply ring to a host text sink. (scsynth's `/n_cmd`
+is unimplemented - commented out in its command table - so plyphon omits it too.) The remaining gaps
+are non-OSC: reading a region into an *existing* buffer (today's `/b_read`/`/b_readChannel` replace
+the whole buffer) and UGen breadth.
 
 **Server / top-level** (10/10)
 
@@ -98,7 +101,7 @@ unimplemented - commented out in its command table - so plyphon omits it too.)
 - [x] /s_noid - partial: detaches control-name resolution; the node keeps running and stays reachable
   by control index (plyphon does not reassign a hidden negative id)
 
-**Node** (13/15)
+**Node** (14/15)
 
 - [x] /n_set
 - [x] /n_free
@@ -111,7 +114,7 @@ unimplemented - commented out in its command table - so plyphon omits it too.)
 - [x] /n_fill
 - [x] /n_run
 - [x] /n_query - getter; one `/n_info` per node (parent/prev/next/isGroup, head/tail for a group)
-- [ ] /n_trace
+- [x] /n_trace - dumps each calc unit's inputs/outputs (first sample, scsynth's `ZIN0`/`ZOUT0`) for one block, streamed over the reply ring to a host text sink (headless, no OSC reply); unit names resolved control-side by calc index
 - [x] /n_mapa - maps an `AudioControl` parameter to an audio bus (its audio wire takes the bus each block); a no-op on a control-rate param
 - [x] /n_mapan - the range form of `/n_mapa`
 - [ ] /n_cmd - not applicable: unimplemented in scsynth itself (commented out in its command table), so plyphon omits it
@@ -139,16 +142,16 @@ unimplemented - commented out in its command table - so plyphon omits it too.)
 - [x] /c_get - getter
 - [x] /c_getn - getter
 
-**Buffer** (14/17)
+**Buffer** (17/17)
 
 - [x] /b_alloc
 - [x] /b_allocRead
 - [x] /b_read
+- [x] /b_write - `leaveOpen=0` writes a whole-buffer snapshot (the engine streams the buffer's samples out race-free to an app-provided [`BufferSink`] - no shared buffer memory - driven across `run_pending` ticks); `leaveOpen=1` installs a `DiskOut` recording slot and leaves the sink open for streaming. Replies `/done /b_write <bufnum>`. Partial `numFrames`/`startFrame` ranges are deferred; header/sample formats are the sink's choice (the path)
+- [x] /b_close - closes a `leaveOpen=1` stream (final drain + close), freeing the recording slot; replies `/done /b_close <bufnum>`. The slot is freed (it holds no flat data) and `DiskOut`'s final sub-chunk tail may drop - the same bounded tail loss continuous `DiskOut` recording has
 - [x] /b_free
 - [x] /b_zero
 - [x] /b_query
-- [x] /b_write - whole-buffer snapshot (`leaveOpen=0`): the engine streams the buffer's samples out race-free to an app-provided [`BufferSink`] (no shared buffer memory), driven across `run_pending` ticks; replies `/done /b_write <bufnum>`. The `leaveOpen=1` streaming form and partial `numFrames`/`startFrame` ranges are deferred; header/sample formats are the sink's choice (the path)
-- [ ] /b_close
 - [x] /b_set
 - [x] /b_setn
 - [x] /b_fill
@@ -156,8 +159,8 @@ unimplemented - commented out in its command table - so plyphon omits it too.)
   (no `Osc` UGen yet); always generates fresh (no accumulate-onto-existing)
 - [x] /b_get - getter
 - [x] /b_getn - getter
-- [ ] /b_allocReadChannel
-- [ ] /b_readChannel
+- [x] /b_allocReadChannel - reads only the selected file channels into a fresh buffer (control-side `CopyChannels` deinterleave; out-of-range channel reads as silence)
+- [x] /b_readChannel - the channel-subset form of `/b_read` (same deinterleave; like `/b_read` it replaces the whole buffer)
 - [x] /b_setSampleRate
 
 ## Replies, notifications & done actions
@@ -178,6 +181,6 @@ unimplemented - commented out in its command table - so plyphon omits it too.)
 - [x] SCgf binary SynthDefs load via `/d_recv` (and the [`scgf`](crates/scgf) crate also encodes them); named parameters are folded from SC's `Control` UGens
 - [x] Control family beyond plain `Control`: `AudioControl` (an audio-rate parameter, lifted to an audio wire each block and mappable with `/n_mapa`), `TrigControl` (a `/n_set` is seen for one block then resets to 0), and `LagControl` (a control-rate one-pole de-zipper, lag times from the folded UGen's inputs)
 - [x] Buffers: allocate, free, zero, query, `b_gen` (sine/cheby/copy) fills, `b_get`/`b_set` element access, and asynchronous loading through an app-provided [`BufferSource`](crates/plyphon-buffers) (the I/O seam), plus chunk-streaming playback with `DiskIn` and chunk-streaming recording with `DiskOut` (drained off the audio thread through the mirror [`BufferSink`] write seam)
-- [x] `/b_write` whole-buffer snapshot to disk: the engine streams a buffer's samples out race-free to an app-provided [`BufferSink`] (it shares no buffer memory with the host, unlike scsynth reading `SndBuf::data` from its NRT thread), driven across `run_pending` ticks; the CLI writes a float WAV. The `/b_write` `leaveOpen=1` streaming form, `/b_close`, and partial frame ranges remain, as do `b_gen` wavetable fills (no `Osc` UGen to consume them yet)
+- [x] `/b_write` to disk through an app-provided [`BufferSink`]: the engine streams a buffer's samples out race-free (it shares no buffer memory with the host, unlike scsynth reading `SndBuf::data` from its NRT thread), driven across `run_pending` ticks; the CLI writes a float WAV. `leaveOpen=0` snapshots the whole buffer; `leaveOpen=1` leaves the sink open for `DiskOut` streaming, ended by `/b_close`. Channel-subset reads (`/b_allocReadChannel`/`/b_readChannel`) and `/n_trace` (a per-unit I/O dump to a text sink) complete the OSC surface. Partial frame ranges and `b_gen` wavetable fills (no `Osc` UGen to consume them yet) remain
 
 [scsynth]: https://github.com/supercollider/supercollider
