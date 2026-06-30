@@ -27,6 +27,15 @@ pub trait Real: sealed::Sealed + Copy {
     fn rem_euclid(self, rhs: Self) -> Self;
     fn atan2(self, other: Self) -> Self;
     fn hypot(self, other: Self) -> Self;
+    fn log2(self) -> Self;
+    fn log10(self) -> Self;
+    fn asin(self) -> Self;
+    fn acos(self) -> Self;
+    fn atan(self) -> Self;
+    fn sinh(self) -> Self;
+    fn cosh(self) -> Self;
+    fn trunc(self) -> Self;
+    fn round(self) -> Self;
 }
 
 /// Sine of `x` (radians).
@@ -94,6 +103,51 @@ pub fn hypot<F: Real>(x: F, y: F) -> F {
     x.hypot(y)
 }
 
+/// Base-2 logarithm of `x`.
+pub fn log2<F: Real>(x: F) -> F {
+    x.log2()
+}
+
+/// Base-10 logarithm of `x`.
+pub fn log10<F: Real>(x: F) -> F {
+    x.log10()
+}
+
+/// Arcsine of `x` (radians).
+pub fn asin<F: Real>(x: F) -> F {
+    x.asin()
+}
+
+/// Arccosine of `x` (radians).
+pub fn acos<F: Real>(x: F) -> F {
+    x.acos()
+}
+
+/// Arctangent of `x` (radians).
+pub fn atan<F: Real>(x: F) -> F {
+    x.atan()
+}
+
+/// Hyperbolic sine of `x`.
+pub fn sinh<F: Real>(x: F) -> F {
+    x.sinh()
+}
+
+/// Hyperbolic cosine of `x`.
+pub fn cosh<F: Real>(x: F) -> F {
+    x.cosh()
+}
+
+/// Truncate `x` toward zero to an integer value.
+pub fn trunc<F: Real>(x: F) -> F {
+    x.trunc()
+}
+
+/// Round `x` to the nearest integer, rounding half away from zero.
+pub fn round<F: Real>(x: F) -> F {
+    x.round()
+}
+
 mod sealed {
     pub trait Sealed {}
     impl Sealed for f32 {}
@@ -146,6 +200,33 @@ mod imp {
         fn hypot(self, other: Self) -> Self {
             self.hypot(other)
         }
+        fn log2(self) -> Self {
+            self.log2()
+        }
+        fn log10(self) -> Self {
+            self.log10()
+        }
+        fn asin(self) -> Self {
+            self.asin()
+        }
+        fn acos(self) -> Self {
+            self.acos()
+        }
+        fn atan(self) -> Self {
+            self.atan()
+        }
+        fn sinh(self) -> Self {
+            self.sinh()
+        }
+        fn cosh(self) -> Self {
+            self.cosh()
+        }
+        fn trunc(self) -> Self {
+            self.trunc()
+        }
+        fn round(self) -> Self {
+            self.round()
+        }
     }
 
     impl Real for f64 {
@@ -187,6 +268,33 @@ mod imp {
         }
         fn hypot(self, other: Self) -> Self {
             self.hypot(other)
+        }
+        fn log2(self) -> Self {
+            self.log2()
+        }
+        fn log10(self) -> Self {
+            self.log10()
+        }
+        fn asin(self) -> Self {
+            self.asin()
+        }
+        fn acos(self) -> Self {
+            self.acos()
+        }
+        fn atan(self) -> Self {
+            self.atan()
+        }
+        fn sinh(self) -> Self {
+            self.sinh()
+        }
+        fn cosh(self) -> Self {
+            self.cosh()
+        }
+        fn trunc(self) -> Self {
+            self.trunc()
+        }
+        fn round(self) -> Self {
+            self.round()
         }
     }
 }
@@ -237,6 +345,33 @@ mod imp {
         fn hypot(self, other: Self) -> Self {
             libm::hypotf(self, other)
         }
+        fn log2(self) -> Self {
+            libm::log2f(self)
+        }
+        fn log10(self) -> Self {
+            libm::log10f(self)
+        }
+        fn asin(self) -> Self {
+            libm::asinf(self)
+        }
+        fn acos(self) -> Self {
+            libm::acosf(self)
+        }
+        fn atan(self) -> Self {
+            libm::atanf(self)
+        }
+        fn sinh(self) -> Self {
+            libm::sinhf(self)
+        }
+        fn cosh(self) -> Self {
+            libm::coshf(self)
+        }
+        fn trunc(self) -> Self {
+            libm::truncf(self)
+        }
+        fn round(self) -> Self {
+            libm::roundf(self)
+        }
     }
 
     impl Real for f64 {
@@ -279,6 +414,33 @@ mod imp {
         }
         fn hypot(self, other: Self) -> Self {
             libm::hypot(self, other)
+        }
+        fn log2(self) -> Self {
+            libm::log2(self)
+        }
+        fn log10(self) -> Self {
+            libm::log10(self)
+        }
+        fn asin(self) -> Self {
+            libm::asin(self)
+        }
+        fn acos(self) -> Self {
+            libm::acos(self)
+        }
+        fn atan(self) -> Self {
+            libm::atan(self)
+        }
+        fn sinh(self) -> Self {
+            libm::sinh(self)
+        }
+        fn cosh(self) -> Self {
+            libm::cosh(self)
+        }
+        fn trunc(self) -> Self {
+            libm::trunc(self)
+        }
+        fn round(self) -> Self {
+            libm::round(self)
         }
     }
 }
