@@ -8,6 +8,7 @@ mod audio;
 mod bufsource;
 mod cli;
 mod defs;
+mod duplex;
 mod options;
 mod play;
 mod render;

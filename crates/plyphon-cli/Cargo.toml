@@ -20,6 +20,7 @@ plyphon-osc.workspace = true
 plyphon-buffers.workspace = true
 scgf.workspace = true
 cpal.workspace = true
+rtrb.workspace = true
 rosc.workspace = true
 hound = "3"
 clap = { version = "4", features = ["derive", "env"] }

@@ -1,12 +1,18 @@
-//! cpal audio-device resolution, listing, and output-stream construction.
+//! cpal audio-device resolution, listing, and input/output-stream construction.
 //!
 //! Shared by `server` and `play`. Real-time output mirrors the example crates: a cpal output stream
 //! whose callback asks a fill closure (backed by the engine's `World`) for interleaved `f32`, then
-//! converts to the device sample format. v1 is output-only; capturing hardware input for `In.ar` is
-//! a follow-up (the offline `render` path already feeds `In.ar` from a WAV).
+//! converts to the device sample format. Live input ([`resolve_input`]/[`play_input`], server only)
+//! adds a separate cpal *input* stream that converts captured samples to `f32` and pushes them into an
+//! `rtrb` ring; the output side drains that ring and feeds `In.ar` via [`crate::duplex`]. cpal has no
+//! duplex stream, so the two run on independent clocks and the ring is their jitter/drift buffer.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SizedSample};
+use cpal::{FromSample, Sample, SizedSample};
+use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::cli::AudioArgs;
 
@@ -17,6 +23,15 @@ pub struct Audio {
     pub sample_format: cpal::SampleFormat,
     pub channels: usize,
     pub sample_rate: f64,
+}
+
+/// A resolved input device and the stream config to open it with (the capture twin of [`Audio`]).
+/// There is no independent sample rate: input must run at the engine/output rate (no resampling).
+pub struct AudioInput {
+    pub device: cpal::Device,
+    pub config: cpal::StreamConfig,
+    pub sample_format: cpal::SampleFormat,
+    pub channels: usize,
 }
 
 /// Resolve the output device and config from the audio flags, applying any requested overrides
@@ -105,6 +120,139 @@ where
         .map_err(|e| format!("building output stream: {e}"))
 }
 
+/// Resolve the input device and config for capturing `in_channels` at `sample_rate` (the engine rate).
+///
+/// The device is the named `--input-device` or the host default. Matching mirrors `render`'s file
+/// input: no resampling, so the device must advertise `sample_rate` - otherwise this errors, listing
+/// what it does support. The channel count is requested directly (like the output `resolve`); the
+/// captured sample format is the device's preferred input format (converted to `f32` on capture).
+pub fn resolve_input(
+    input_device: &Option<String>,
+    in_channels: usize,
+    sample_rate: f64,
+) -> Result<AudioInput, String> {
+    let host = cpal::default_host();
+    let device = match input_device {
+        None => host
+            .default_input_device()
+            .ok_or("no default input device available")?,
+        Some(name) => input_device_by_name(&host, name)?,
+    };
+
+    let default = device
+        .default_input_config()
+        .map_err(|e| format!("no default input config: {e}"))?;
+    let sample_format = default.sample_format();
+
+    // Require the engine rate (no resampling). Surface a helpful capability listing on mismatch.
+    let rate = sample_rate as u32;
+    let supports_rate = device
+        .supported_input_configs()
+        .map_err(|e| format!("querying input configs: {e}"))?
+        .any(|r| r.min_sample_rate() <= rate && rate <= r.max_sample_rate());
+    if !supports_rate {
+        let mut caps = String::new();
+        for r in device
+            .supported_input_configs()
+            .map_err(|e| format!("querying input configs: {e}"))?
+        {
+            caps.push_str(&format!(
+                "\n  {} ch, {}-{} Hz, {}",
+                r.channels(),
+                r.min_sample_rate(),
+                r.max_sample_rate(),
+                r.sample_format()
+            ));
+        }
+        return Err(format!(
+            "input device does not support {rate} Hz (the engine rate); supported:{caps}"
+        ));
+    }
+
+    let mut config: cpal::StreamConfig = default.config();
+    config.channels = in_channels as u16;
+    config.sample_rate = rate;
+    // Leave buffer_size at the device default: the ring decouples the input stream's framing.
+    Ok(AudioInput {
+        device,
+        config,
+        sample_format,
+        channels: in_channels,
+    })
+}
+
+/// Build, start, and return the capture stream plus the ring [`Consumer`] the output side drains and
+/// the overflow counter. `ring_capacity`/`prefill` are in samples (frames x channels); `prefill`
+/// silence samples set the jitter buffer's target depth so early output callbacks do not underrun.
+pub fn play_input(
+    audio_in: &AudioInput,
+    ring_capacity: usize,
+    prefill: usize,
+) -> Result<(cpal::Stream, Consumer<f32>, Arc<AtomicU64>), String> {
+    let (mut producer, consumer) = RingBuffer::<f32>::new(ring_capacity);
+    for _ in 0..prefill.min(ring_capacity) {
+        let _ = producer.push(0.0);
+    }
+    let overflow = Arc::new(AtomicU64::new(0));
+    let stream = match audio_in.sample_format {
+        cpal::SampleFormat::F32 => build_input::<f32>(
+            &audio_in.device,
+            &audio_in.config,
+            producer,
+            overflow.clone(),
+        )?,
+        cpal::SampleFormat::I16 => build_input::<i16>(
+            &audio_in.device,
+            &audio_in.config,
+            producer,
+            overflow.clone(),
+        )?,
+        cpal::SampleFormat::U16 => build_input::<u16>(
+            &audio_in.device,
+            &audio_in.config,
+            producer,
+            overflow.clone(),
+        )?,
+        other => return Err(format!("unsupported input sample format: {other}")),
+    };
+    stream
+        .play()
+        .map_err(|e| format!("starting input stream: {e}"))?;
+    Ok((stream, consumer, overflow))
+}
+
+/// Construct a typed input stream that converts captured `T` to interleaved `f32` and pushes it into
+/// `producer`. On a full ring the unwritten tail is dropped and counted in `overflow` (RT-safe: an
+/// atomic add, never a block or a log).
+fn build_input<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    mut producer: Producer<f32>,
+    overflow: Arc<AtomicU64>,
+) -> Result<cpal::Stream, String>
+where
+    T: SizedSample,
+    f32: FromSample<T>,
+{
+    // Pre-grown reused scratch so the capture callback never reallocates in steady state.
+    let mut scratch: Vec<f32> = Vec::with_capacity(config.channels as usize * 8192);
+    device
+        .build_input_stream(
+            *config,
+            move |input: &[T], _: &cpal::InputCallbackInfo| {
+                scratch.clear();
+                scratch.extend(input.iter().map(|&s| f32::from_sample(s)));
+                let (_, dropped) = producer.push_partial_slice(&scratch);
+                if !dropped.is_empty() {
+                    overflow.fetch_add(dropped.len() as u64, Ordering::Relaxed);
+                }
+            },
+            |err| eprintln!("input stream error: {err}"),
+            None,
+        )
+        .map_err(|e| format!("building input stream: {e}"))
+}
+
 /// `plyphon devices`: list the host's output and input devices, marking the defaults.
 pub fn list_devices() -> Result<(), String> {
     let host = cpal::default_host();
@@ -159,4 +307,14 @@ fn output_device_by_name(host: &cpal::Host, name: &str) -> Result<cpal::Device, 
         }
     }
     Err(format!("no output device named '{name}'"))
+}
+
+/// Find an input device by name, or error if absent (the capture twin of [`output_device_by_name`]).
+fn input_device_by_name(host: &cpal::Host, name: &str) -> Result<cpal::Device, String> {
+    for device in host.input_devices().map_err(|e| e.to_string())? {
+        if device.to_string() == name {
+            return Ok(device);
+        }
+    }
+    Err(format!("no input device named '{name}'"))
 }

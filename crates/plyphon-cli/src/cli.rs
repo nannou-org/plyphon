@@ -131,9 +131,19 @@ pub struct AudioArgs {
     /// Number of output channels (`scsynth -o`); the device default if omitted.
     #[arg(short = 'o', long)]
     pub output_channels: Option<usize>,
-    /// Number of input channels (`scsynth -i`); none if omitted.
+    /// Number of input channels (`scsynth -i`); none if omitted. A non-zero value enables live
+    /// hardware-input capture for `In.ar` (server only).
     #[arg(short = 'i', long, default_value_t = 0)]
     pub input_channels: usize,
+    /// Input audio device name; the host default input device if omitted. Used only when
+    /// `--input-channels` > 0.
+    #[arg(short = 'I', long = "input-device")]
+    pub input_device: Option<String>,
+    /// Input jitter-buffer depth in control blocks - the latency/underrun trade-off for bridging the
+    /// independent input and output clocks (cpal has no duplex stream). Used only when
+    /// `--input-channels` > 0.
+    #[arg(long = "input-latency-blocks", default_value_t = 3)]
+    pub input_latency_blocks: usize,
     /// Request a fixed hardware buffer size in frames (`scsynth -Z`).
     #[arg(short = 'Z', long)]
     pub hardware_buffer_size: Option<u32>,

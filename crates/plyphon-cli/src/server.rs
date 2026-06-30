@@ -19,6 +19,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::net::{TcpStream, UdpSocket};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
@@ -30,6 +31,7 @@ use crate::audio;
 use crate::bufsource::{CliHost, block_on};
 use crate::cli::ServerArgs;
 use crate::defs::load_dir;
+use crate::duplex;
 use crate::options::engine_options;
 use crate::transport::{self, Client, FromNet, Transport};
 
@@ -75,9 +77,33 @@ pub fn run(args: ServerArgs) -> Result<(), String> {
     // `/n_trace` is headless (no OSC reply); print each per-unit dump to stderr, like scsynth's stdout.
     dispatcher.set_trace_sink(Box::new(|text| eprint!("{text}")));
 
-    // The World plays on the audio thread (output-only for v1); keep the stream alive for the run.
+    // The World plays on the audio thread; keep the stream(s) alive for the run. Output-only unless
+    // `--input-channels` > 0, which adds a capture stream feeding `In.ar` through a jitter-buffer ring
+    // (the two streams share no clock - cpal has no duplex stream - so the ring absorbs their drift).
     let mut world = world;
-    let _stream = audio::play_output(&audio, move |out, channels| world.fill(out, channels))?;
+    let in_channels = args.audio.input_channels;
+    let (_out_stream, _in_stream, xruns) = if in_channels == 0 {
+        let stream = audio::play_output(&audio, move |out, channels| world.fill(out, channels))?;
+        (stream, None, None)
+    } else {
+        let audio_in =
+            audio::resolve_input(&args.audio.input_device, in_channels, audio.sample_rate)?;
+        let blocks = args.audio.input_latency_blocks.max(1);
+        let bs = args.engine.block_size;
+        let (in_stream, consumer, overflow) = audio::play_input(
+            &audio_in,
+            (2 * blocks + 2) * bs * in_channels, // capacity: drift headroom both ways + one block
+            blocks * bs * in_channels,           // prefill: the target jitter depth
+        )?;
+        eprintln!(
+            "audio in: {} ch @ {} Hz ({}), {blocks} blocks jitter buffer",
+            audio_in.channels, audio.sample_rate, audio_in.sample_format
+        );
+        let mut duplex = duplex::Duplex::new(world, consumer, in_channels, bs, audio.channels);
+        let underflow = duplex.underflow();
+        let out_stream = audio::play_output(&audio, move |out, _channels| duplex.fill(out))?;
+        (out_stream, Some(in_stream), Some((overflow, underflow)))
+    };
 
     let Transport { events, udp } =
         transport::start(args.net.bind, args.net.udp_port, args.net.tcp_port)?;
@@ -108,6 +134,18 @@ pub fn run(args: ServerArgs) -> Result<(), String> {
         next_token: 0,
     };
     control_loop(&mut server, &events);
+
+    // Report the cumulative input drift glitches, if any, so the user can raise --input-latency-blocks.
+    if let Some((overflow, underflow)) = xruns {
+        let dropped = overflow.load(Ordering::Relaxed);
+        let zero_filled = underflow.load(Ordering::Relaxed);
+        if dropped > 0 || zero_filled > 0 {
+            eprintln!(
+                "input xruns: {dropped} samples dropped (capture overflow), \
+                 {zero_filled} samples zero-filled (output underrun)"
+            );
+        }
+    }
     Ok(())
 }
 
