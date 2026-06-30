@@ -1,7 +1,8 @@
 //! `/b_read … leaveOpen=1` keeps the file open and streams it off disk into a `DiskIn` (scsynth's
 //! cue-for-streaming, the read counterpart to `/b_write leaveOpen=1`): the dispatcher opens a host
 //! `BufferStream`, replaces the slot with a playback endpoint, and feeds it each `run_pending` tick.
-//! `/b_close` ends it. `/b_readChannel … leaveOpen=1` (channel-subset streaming) is unsupported.
+//! `/b_close` ends it. `/b_readChannel … leaveOpen=1` streams only the selected channels, via a
+//! deinterleaving wrapper the dispatcher slips over the file stream.
 
 use std::f32::consts::TAU;
 use std::future::Future;
@@ -64,6 +65,68 @@ impl BufferStream for ToneStream {
         let mut frames = 0;
         while frames < out.len() && self.pos < TONE_FRAMES {
             out[frames] = (TAU * 440.0 * self.pos as f32 / SR).sin() * 0.5;
+            self.pos += 1;
+            frames += 1;
+        }
+        Box::pin(async move { Ok(frames) })
+    }
+
+    fn seek<'a>(&'a mut self, frame: u64) -> BufFuture<'a, Result<(), LoadError>> {
+        self.pos = frame;
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// A `BufferSource` whose `open` yields a finite 2-channel tone stream at key `"stereo"`: channel 0 is
+/// 440 Hz, channel 1 is 880 Hz - so selecting one channel is audibly distinguishable from the other.
+struct StereoSource;
+
+impl BufferSource for StereoSource {
+    fn load<'a>(
+        &'a self,
+        _key: &'a str,
+        _region: ReadRegion,
+    ) -> BufFuture<'a, Result<BufferData, LoadError>> {
+        Box::pin(async { Err(LoadError::Unsupported("load".to_string())) })
+    }
+
+    fn open<'a>(&'a self, key: &'a str) -> BufFuture<'a, Result<Box<dyn BufferStream>, LoadError>> {
+        let result = if key == "stereo" {
+            Ok(Box::new(StereoStream { pos: 0 }) as Box<dyn BufferStream>)
+        } else {
+            Err(LoadError::NotFound(key.to_string()))
+        };
+        Box::pin(async move { result })
+    }
+}
+
+impl Host for StereoSource {
+    fn buffer_source(&self) -> Option<&dyn BufferSource> {
+        Some(self)
+    }
+}
+
+/// A finite 2-channel [`BufferStream`]: channel 0 a 440 Hz tone, channel 1 an 880 Hz tone, interleaved
+/// for [`TONE_FRAMES`] frames, then `Ok(0)` forever (non-looping).
+struct StereoStream {
+    pos: u64,
+}
+
+impl BufferStream for StereoStream {
+    fn info(&self) -> StreamInfo {
+        StreamInfo {
+            num_channels: 2,
+            sample_rate: SR as f64,
+            total_frames: Some(TONE_FRAMES),
+        }
+    }
+
+    fn read<'a>(&'a mut self, out: &'a mut [f32]) -> BufFuture<'a, Result<usize, LoadError>> {
+        let mut frames = 0;
+        while (frames + 1) * 2 <= out.len() && self.pos < TONE_FRAMES {
+            let t = self.pos as f32 / SR;
+            out[frames * 2] = (TAU * 440.0 * t).sin() * 0.5;
+            out[frames * 2 + 1] = (TAU * 880.0 * t).sin() * 0.5;
             self.pos += 1;
             frames += 1;
         }
@@ -219,28 +282,105 @@ fn b_read_leave_open_streams_through_diskin_then_b_close() {
 }
 
 #[test]
-fn b_read_channel_leave_open_is_unsupported() {
-    let (mut controller, _nrt, _world) = engine(Options::default());
+fn b_read_channel_leave_open_streams_only_the_selected_channel() {
+    let (mut controller, mut nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
     let mut osc = OscDispatcher::new();
+    controller.add_synthdef(disk_in_def());
+    let host = StereoSource;
+
+    // A mono buffer: its mirror is the channel check the selected width (1) must match.
+    osc.apply(
+        &mut controller,
+        &msg(
+            "/b_alloc",
+            vec![OscType::Int(0), OscType::Int(1024), OscType::Int(1)],
+        ),
+    )
+    .expect("/b_alloc");
+    // Select channel 1 (the 880 Hz tone) of the stereo stream.
     osc.apply(
         &mut controller,
         &msg(
             "/b_readChannel",
             vec![
                 OscType::Int(0),
-                OscType::String("tone".to_string()),
+                OscType::String("stereo".to_string()),
+                OscType::Int(0),  // fileStartFrame
+                OscType::Int(-1), // numFrames
+                OscType::Int(0),  // bufStartFrame
+                OscType::Int(1),  // leaveOpen
+                OscType::Int(1),  // channel 1
+            ],
+        ),
+    )
+    .expect("/b_readChannel");
+    block_on(osc.run_pending(&mut controller, Some(&host)));
+    assert!(
+        find(&osc.take_replies(), "/done", "/b_readChannel").is_some(),
+        "/b_readChannel leaveOpen=1 should reply /done"
+    );
+
+    controller
+        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("start DiskIn");
+
+    let mut out = Vec::new();
+    let mut blk = [0.0f32; 512];
+    while out.len() < (SR * 0.2) as usize {
+        world.fill(&mut blk, 1);
+        out.extend_from_slice(&blk);
+        nrt.process();
+        block_on(osc.run_pending(&mut controller, Some(&host)));
+    }
+    assert!(out.iter().any(|s| s.abs() > 0.1), "the stream was silent");
+    assert!(
+        goertzel(&out, 880.0) > 5.0 * goertzel(&out, 440.0),
+        "DiskIn should play only the selected 880 Hz channel, not the 440 Hz one"
+    );
+}
+
+#[test]
+fn b_read_channel_leave_open_width_must_match_the_buffer() {
+    let (mut controller, _nrt, _world) = engine(Options::default());
+    let mut osc = OscDispatcher::new();
+    let host = StereoSource;
+
+    // A mono buffer, but the selection below is two channels wide - a mismatch.
+    osc.apply(
+        &mut controller,
+        &msg(
+            "/b_alloc",
+            vec![OscType::Int(0), OscType::Int(1024), OscType::Int(1)],
+        ),
+    )
+    .expect("/b_alloc");
+    osc.apply(
+        &mut controller,
+        &msg(
+            "/b_readChannel",
+            vec![
+                OscType::Int(0),
+                OscType::String("stereo".to_string()),
                 OscType::Int(0),
                 OscType::Int(-1),
                 OscType::Int(0),
                 OscType::Int(1), // leaveOpen
                 OscType::Int(0), // channel 0
+                OscType::Int(1), // channel 1 -> width 2, into a mono buffer
             ],
         ),
     )
     .expect("/b_readChannel");
-    assert!(
-        find(&osc.take_replies(), "/fail", "/b_readChannel").is_some(),
-        "channel-subset streaming should fail"
+    block_on(osc.run_pending(&mut controller, Some(&host)));
+    let replies = osc.take_replies();
+    let fail = find(&replies, "/fail", "/b_readChannel").expect("/fail /b_readChannel");
+    assert_eq!(
+        fail.args[1],
+        OscType::String("channel mismatch".to_string())
     );
 }
 

@@ -96,7 +96,7 @@ use plyphon::{
 };
 use plyphon_buffers::{
     BufFuture, BufferData, BufferSink, BufferSinkStream, BufferSource, BufferStream, DefSource,
-    ReadRegion, StreamDrainer, StreamFeeder, StreamInfo,
+    LoadError, ReadRegion, StreamDrainer, StreamFeeder, StreamInfo,
 };
 use plyphon_dsp::buffer::Buffer;
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
@@ -146,26 +146,108 @@ struct BufferInfo {
     sample_rate: f64,
 }
 
-/// Deinterleave `data`, keeping only `channels` (in order) - scsynth's `CopyChannels` for
-/// `/b_allocReadChannel`/`/b_readChannel`. A channel index `< 0` or `>= data.num_channels` yields
-/// silence. The result is `channels.len()` wide.
+/// Deinterleave `frames` of `src` (interleaved, `in_channels` wide), writing the selected `channels`
+/// (in order) into `dst` (`channels.len()` wide) - scsynth's `CopyChannels`. A channel index `< 0` or
+/// `>= in_channels` writes silence, so every cell of the first `frames * channels.len()` of `dst` is
+/// set (no reliance on `dst` being pre-zeroed). Shared by the in-memory [`select_channels`] splice and
+/// the streaming [`ChannelSelectStream`].
+fn deinterleave_select(
+    src: &[f32],
+    in_channels: usize,
+    channels: &[i32],
+    frames: usize,
+    dst: &mut [f32],
+) {
+    let in_channels = in_channels.max(1);
+    let out_channels = channels.len();
+    for frame in 0..frames {
+        for (ci, &c) in channels.iter().enumerate() {
+            dst[frame * out_channels + ci] = if c >= 0 && (c as usize) < in_channels {
+                src[frame * in_channels + c as usize]
+            } else {
+                0.0
+            };
+        }
+    }
+}
+
+/// Deinterleave `data`, keeping only `channels` (in order) - the in-memory form of
+/// [`deinterleave_select`] for `/b_allocReadChannel`/`/b_readChannel`. A channel index `< 0` or
+/// `>= data.num_channels` yields silence. The result is `channels.len()` wide.
 fn select_channels(data: &BufferData, channels: &[i32]) -> BufferData {
     let src_channels = data.num_channels.max(1);
     let frames = data.samples.len() / src_channels;
     let out_channels = channels.len();
     let mut samples = vec![0.0f32; frames * out_channels];
-    for frame in 0..frames {
-        for (ci, &c) in channels.iter().enumerate() {
-            if c >= 0 && (c as usize) < src_channels {
-                samples[frame * out_channels + ci] =
-                    data.samples[frame * src_channels + c as usize];
-            }
-        }
-    }
+    deinterleave_select(&data.samples, src_channels, channels, frames, &mut samples);
     BufferData {
         samples,
         num_channels: out_channels,
         sample_rate: data.sample_rate,
+    }
+}
+
+/// A [`BufferStream`] wrapper that selects a channel subset per chunk - the streaming analogue of
+/// [`select_channels`] (scsynth's `CopyChannels`), backing `/b_readChannel leaveOpen=1`. The dispatcher
+/// slips it over the raw file stream so `DiskIn` reads only the requested channels. Each [`read`](
+/// BufferStream::read) pulls the same frame count from `inner` into a reused scratch, then
+/// deinterleaves the selection into the output - pure control-thread work ([`StreamFeeder::fill`] runs
+/// it off the audio thread).
+struct ChannelSelectStream {
+    /// The raw file stream, read in full-width interleaved frames.
+    inner: Box<dyn BufferStream>,
+    /// Selected source channels, in output order; an index `< 0` or `>= in_channels` is silence.
+    channels: Vec<i32>,
+    /// The inner stream's channel count.
+    in_channels: usize,
+    /// Reused inner-read scratch (`frames * in_channels`), grown to the largest chunk seen.
+    scratch: Vec<f32>,
+}
+
+impl ChannelSelectStream {
+    /// Wrap `inner`, selecting `channels` (must be non-empty - the dispatcher skips the wrap for the
+    /// "all channels" empty selection).
+    fn new(inner: Box<dyn BufferStream>, channels: Vec<i32>) -> Self {
+        let in_channels = inner.info().num_channels;
+        ChannelSelectStream {
+            inner,
+            channels,
+            in_channels,
+            scratch: Vec::new(),
+        }
+    }
+}
+
+impl BufferStream for ChannelSelectStream {
+    fn info(&self) -> StreamInfo {
+        let inner = self.inner.info();
+        StreamInfo {
+            num_channels: self.channels.len(),
+            sample_rate: inner.sample_rate,
+            total_frames: inner.total_frames,
+        }
+    }
+
+    fn read<'a>(&'a mut self, out: &'a mut [f32]) -> BufFuture<'a, Result<usize, LoadError>> {
+        Box::pin(async move {
+            let out_channels = self.channels.len().max(1);
+            let frames = out.len() / out_channels;
+            self.scratch.clear();
+            self.scratch.resize(frames * self.in_channels, 0.0);
+            let read_frames = self.inner.read(&mut self.scratch).await?;
+            deinterleave_select(
+                &self.scratch,
+                self.in_channels,
+                &self.channels,
+                read_frames,
+                out,
+            );
+            Ok(read_frames)
+        })
+    }
+
+    fn seek<'a>(&'a mut self, frame: u64) -> BufFuture<'a, Result<(), LoadError>> {
+        self.inner.seek(frame)
     }
 }
 
@@ -323,6 +405,9 @@ struct PendingRead {
     key: String,
     /// `fileStartFrame`: seek the stream here before priming if nonzero.
     file_start: u64,
+    /// The channel subset to stream (`/b_readChannel`); `None` (or empty) streams every file channel
+    /// (`/b_read`). A non-empty selection wraps the opened stream in a [`ChannelSelectStream`].
+    channels: Option<Vec<i32>>,
     completion: Option<Vec<u8>>,
     target: ReplyTarget,
 }
@@ -821,7 +906,7 @@ impl OscDispatcher {
         // `/b_read leaveOpen=1` streaming cues: open the file, install a `DiskIn` playback slot, prime
         // its queue, and register it as fed each tick below. The slot is *replaced* by a `Stream`
         // endpoint (no in-memory splice), exactly as `/b_write leaveOpen=1` replaces it with a recorder.
-        for read in core::mem::take(&mut self.pending_reads) {
+        for mut read in core::mem::take(&mut self.pending_reads) {
             self.current_target = read.target;
             // Validate the buffer first (no I/O) - the file's channels must match it.
             let Some(info) = self.buffers.get(&read.bufnum).copied() else {
@@ -839,6 +924,11 @@ impl OscDispatcher {
                     continue;
                 }
             };
+            // `/b_readChannel leaveOpen=1`: slip a deinterleaving wrapper over the raw file stream so
+            // it presents only the selected channels (an empty selection means "all" - no wrap).
+            if let Some(channels) = read.channels.take().filter(|c| !c.is_empty()) {
+                stream = Box::new(ChannelSelectStream::new(stream, channels));
+            }
             let stream_info = stream.info();
             if stream_info.num_channels != info.num_channels {
                 self.fail(read.command, "channel mismatch");
@@ -2429,7 +2519,7 @@ impl OscDispatcher {
     /// off disk into a `DiskIn` (the read counterpart to `/b_write leaveOpen=1`), ended by `/b_close`.
     fn b_read(&mut self, args: &[OscType]) -> Result<(), OscError> {
         if leave_open(args, 5) {
-            return self.queue_read_stream("/b_read", args);
+            return self.queue_read_stream("/b_read", args, None);
         }
         let dst_frame = buf_start_frame(args);
         self.queue_load("/b_read", args, None, Some(dst_frame))
@@ -2446,27 +2536,26 @@ impl OscDispatcher {
     /// `/b_readChannel bufnum path [fileStartFrame numFrames bufStartFrame leaveOpen] channels...`: read
     /// only the selected file channels into the already-allocated buffer at `bufStartFrame` (scsynth's
     /// `BufReadChannelCmd`). The channel indices (the trailing `Int` args at `args[6..]`) select to a
-    /// width that must match the buffer. `leaveOpen=1` (channel-subset streaming) is deferred - it would
-    /// need a deinterleaving `BufferStream` wrapper - so it fails.
+    /// width that must match the buffer. `leaveOpen=1` instead streams the selected channels off disk
+    /// into a `DiskIn`, via a [`ChannelSelectStream`] deinterleaving wrapper over the file stream.
     fn b_read_channel(&mut self, args: &[OscType]) -> Result<(), OscError> {
         if leave_open(args, 5) {
-            self.fail(
-                "/b_readChannel",
-                "leaveOpen=1 streaming with a channel subset is not supported",
-            );
-            return Ok(());
+            let channels = channel_list(args, 6);
+            return self.queue_read_stream("/b_readChannel", args, Some(channels));
         }
         let dst_frame = buf_start_frame(args);
         let channels = channel_list(args, 6);
         self.queue_load("/b_readChannel", args, Some(channels), Some(dst_frame))
     }
 
-    /// Queue a `/b_read leaveOpen=1` streaming cue, opened + cued by [`Self::run_pending`]. Parses
-    /// bufnum/path/`fileStartFrame`; the file then streams off disk into a `DiskIn`.
+    /// Queue a `/b_read`/`/b_readChannel` `leaveOpen=1` streaming cue, opened + cued by
+    /// [`Self::run_pending`]. Parses bufnum/path/`fileStartFrame`; the file then streams off disk into a
+    /// `DiskIn`. A non-empty `channels` selection wraps the opened stream in a [`ChannelSelectStream`].
     fn queue_read_stream(
         &mut self,
         command: &'static str,
         args: &[OscType],
+        channels: Option<Vec<i32>>,
     ) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
@@ -2486,6 +2575,7 @@ impl OscDispatcher {
             bufnum,
             key,
             file_start,
+            channels,
             completion: last_blob(args).map(|bytes| bytes.to_vec()),
             target: self.current_target,
         });
