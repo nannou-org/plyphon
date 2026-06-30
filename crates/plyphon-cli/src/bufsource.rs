@@ -1,19 +1,21 @@
-//! A filesystem [`BufferSource`] for the server's `/b_allocRead`/`/b_read`, and a small `block_on`.
+//! A filesystem [`BufferSource`] for the server's `/b_allocRead`/`/b_read` (whole-file loads and
+//! `/b_read leaveOpen=1` disk streaming), a [`BufferSink`] for `/b_write`, and a small `block_on`.
 //!
 //! The server keeps buffer loads off the OSC-handling path: `apply` *queues* a load and
 //! [`OscDispatcher::run_pending`](plyphon_osc::OscDispatcher::run_pending) services it. Natively a
 //! filesystem read resolves on the first poll, so a trivial [`block_on`] (the same one the
 //! `example-sampler` uses, built on the stable no-op waker - no `unsafe`) drives it.
 
+use std::fs::File;
 use std::future::Future;
-use std::io::{Seek, Write};
+use std::io::{BufReader, Seek, Write};
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
-use hound::WavWriter;
+use hound::{WavReader, WavWriter};
 use plyphon_buffers::{
-    BufFuture, BufferData, BufferSink, BufferSinkStream, BufferSource, DefSource, LoadError,
-    ReadRegion, SaveError, StreamInfo,
+    BufFuture, BufferData, BufferSink, BufferSinkStream, BufferSource, BufferStream, DefSource,
+    LoadError, ReadRegion, SaveError, StreamInfo,
 };
 use plyphon_osc::Host;
 
@@ -49,6 +51,88 @@ impl BufferSource for FsSource {
     ) -> BufFuture<'a, Result<BufferData, LoadError>> {
         let result = load_region(key, region);
         Box::pin(async move { result })
+    }
+
+    fn open<'a>(&'a self, key: &'a str) -> BufFuture<'a, Result<Box<dyn BufferStream>, LoadError>> {
+        let result = FsStream::open(key).map(|s| Box::new(s) as Box<dyn BufferStream>);
+        Box::pin(async move { result })
+    }
+}
+
+/// A non-looping [`BufferStream`] over a WAV file on disk, backing `/b_read leaveOpen=1` + `DiskIn`
+/// (the read mirror of [`WavSink`]). It streams from disk rather than slurping the whole file, and
+/// reads to EOF then returns `Ok(0)` (a one-shot stream, unlike `example-stream`'s looping `WavStream`).
+struct FsStream {
+    reader: WavReader<BufReader<File>>,
+    channels: usize,
+    sample_rate: f64,
+    /// Normalisation factor for integer samples.
+    scale: f32,
+    float: bool,
+}
+
+impl FsStream {
+    fn open(key: &str) -> Result<Self, LoadError> {
+        let file = File::open(key).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => LoadError::NotFound(key.to_string()),
+            _ => LoadError::Io(e.to_string()),
+        })?;
+        let reader =
+            WavReader::new(BufReader::new(file)).map_err(|e| LoadError::Decode(e.to_string()))?;
+        let spec = reader.spec();
+        Ok(FsStream {
+            reader,
+            channels: spec.channels.max(1) as usize,
+            sample_rate: spec.sample_rate as f64,
+            scale: 1.0 / (1i64 << (spec.bits_per_sample - 1)) as f32,
+            float: spec.sample_format == hound::SampleFormat::Float,
+        })
+    }
+}
+
+impl BufferStream for FsStream {
+    fn info(&self) -> StreamInfo {
+        StreamInfo {
+            num_channels: self.channels,
+            sample_rate: self.sample_rate,
+            total_frames: Some(self.reader.duration() as u64),
+        }
+    }
+
+    fn read<'a>(&'a mut self, out: &'a mut [f32]) -> BufFuture<'a, Result<usize, LoadError>> {
+        let (scale, float, channels) = (self.scale, self.float, self.channels);
+        Box::pin(async move {
+            let mut filled = 0;
+            if float {
+                for sample in self.reader.samples::<f32>() {
+                    out[filled] = sample.map_err(|e| LoadError::Decode(e.to_string()))?;
+                    filled += 1;
+                    if filled == out.len() {
+                        break;
+                    }
+                }
+            } else {
+                for sample in self.reader.samples::<i32>() {
+                    out[filled] =
+                        sample.map_err(|e| LoadError::Decode(e.to_string()))? as f32 * scale;
+                    filled += 1;
+                    if filled == out.len() {
+                        break;
+                    }
+                }
+            }
+            // Read to EOF then stop (return the count); the feeder treats 0 as end-of-stream.
+            Ok(filled / channels.max(1))
+        })
+    }
+
+    fn seek<'a>(&'a mut self, frame: u64) -> BufFuture<'a, Result<(), LoadError>> {
+        Box::pin(async move {
+            self.reader
+                .seek(frame as u32)
+                .map_err(|e| LoadError::Io(e.to_string()))?;
+            Ok(())
+        })
     }
 }
 
@@ -211,5 +295,39 @@ mod tests {
         let wav = wav::decode(&bytes).expect("decode the wav");
         assert_eq!(wav.channels, 1);
         assert_eq!(wav.samples, ramp, "the wav did not round-trip the ramp");
+    }
+
+    /// The server's `/b_read leaveOpen=1` source: write a ramp WAV via `FsSink`, then stream it back
+    /// through `FsSource::open` in small chunks - exercising `FsStream` and confirming it reads to EOF
+    /// then returns `Ok(0)` (a one-shot stream, not looping).
+    #[test]
+    fn fs_stream_reads_a_wav_in_chunks_then_stops_at_eof() {
+        let path = std::env::temp_dir().join(format!("plyphon-bread-{}.wav", std::process::id()));
+        let key = path.to_str().expect("temp path is valid utf-8");
+        let info = StreamInfo {
+            num_channels: 1,
+            sample_rate: 48_000.0,
+            total_frames: None,
+        };
+        let ramp: Vec<f32> = (0..200).map(|f| f as f32).collect();
+        let mut sink = block_on(FsSink.open_write(key, info)).expect("open the wav");
+        block_on(sink.write(&ramp)).expect("write the ramp");
+        block_on(sink.close()).expect("finalize the wav");
+
+        let mut stream = block_on(FsSource.open(key)).expect("open the stream");
+        assert_eq!(stream.info().num_channels, 1);
+        let mut got = Vec::new();
+        let mut chunk = [0.0f32; 64];
+        loop {
+            let frames = block_on(stream.read(&mut chunk)).expect("read a chunk");
+            if frames == 0 {
+                break; // EOF: a non-looping stream stops here.
+            }
+            got.extend_from_slice(&chunk[..frames]);
+        }
+        // A further read past EOF still returns 0 (does not loop back to the start).
+        assert_eq!(block_on(stream.read(&mut chunk)).expect("read past EOF"), 0);
+        std::fs::remove_file(&path).ok();
+        assert_eq!(got, ramp, "the stream did not round-trip the ramp");
     }
 }
