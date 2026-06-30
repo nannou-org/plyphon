@@ -11,8 +11,9 @@
 //! actual UDP/TCP transport is then just swapping `apply_bytes`/`take_replies` for socket I/O.
 //!
 //! The scripted session: load a `tone` SynthDef over `/d_recv`, start it (`/s_new`), bend its pitch
-//! (`/n_set`), allocate and query a buffer (`/b_alloc`, `/b_query`), then free the synth
-//! (`/n_free`). The `plyphon` engine driving the audio is pure Rust and identical on native and
+//! (`/n_set`), allocate and query a buffer (`/b_alloc`, `/b_query`), trace the running synth's
+//! per-unit inputs and outputs (`/n_trace`, dumped to a text sink, like scsynth's stdout), then free
+//! it (`/n_free`). The `plyphon` engine driving the audio is pure Rust and identical on native and
 //! web; only the control-plane ticking differs (a thread loop vs a timer).
 
 use plyphon::{Controller, Nrt, Options, World, engine};
@@ -22,7 +23,7 @@ use rosc::{OscMessage, OscPacket, OscType};
 /// How often to tick the control plane, in milliseconds (one scripted command per tick).
 const TICK_MS: u32 = 800;
 /// Number of commands in the scripted session.
-const SCRIPT_LEN: usize = 6;
+const SCRIPT_LEN: usize = 7;
 /// Tick once per scripted command, plus a few trailing ticks so the final `/n_end` drains.
 const TRAILING_TICKS: u32 = 4;
 /// Master gain applied in the audio callback (the `tone` def already scales by 0.2).
@@ -91,19 +92,27 @@ impl Session {
                     ],
                 ),
             ),
-            // bufnum, frames, channels.
+            // Dump the running synth's per-unit inputs/outputs to the trace sink (no OSC reply). The
+            // dump arrives a render later over the reply ring and prints below; tracing here (while the
+            // synth lives through the rest of the script) lets the dispatcher resolve unit names from
+            // its def, which it could not once the node is freed.
             3 => (
+                "/n_trace 1000".to_string(),
+                msg("/n_trace", vec![OscType::Int(1000)]),
+            ),
+            // bufnum, frames, channels.
+            4 => (
                 "/b_alloc 0 1024 1".to_string(),
                 msg(
                     "/b_alloc",
                     vec![OscType::Int(0), OscType::Int(1024), OscType::Int(1)],
                 ),
             ),
-            4 => (
+            5 => (
                 "/b_query 0".to_string(),
                 msg("/b_query", vec![OscType::Int(0)]),
             ),
-            5 => (
+            6 => (
                 "/n_free 1000".to_string(),
                 msg("/n_free", vec![OscType::Int(1000)]),
             ),
@@ -116,10 +125,14 @@ impl Session {
         }
     }
 
-    /// Turn pending engine events into OSC node notifications, then take every queued reply.
+    /// Turn pending engine events into OSC node notifications, drain the reply ring (so async answers
+    /// like the `/n_trace` dump reach their sinks), then take every queued reply.
     fn collect_reports(&mut self) -> Vec<OscMessage> {
         while let Some(event) = self.nrt.poll() {
             self.dispatcher.notify(event);
+        }
+        while let Some(reply) = self.nrt.poll_reply() {
+            self.dispatcher.reply(&self.controller, reply);
         }
         self.dispatcher
             .take_replies()
@@ -205,8 +218,16 @@ fn build(sample_rate: f32, channels: usize) -> (Session, World) {
         output_channels: channels,
         ..Options::default()
     });
+    // `/n_trace` has no OSC reply; it dumps to a host text sink (scsynth prints to stdout). Print each
+    // line in the same `<-` reply style so it reads as part of the conversation.
+    let mut dispatcher = OscDispatcher::new();
+    dispatcher.set_trace_sink(Box::new(|text| {
+        for line in text.lines() {
+            trace(&format!("  <- {line}"));
+        }
+    }));
     let session = Session {
-        dispatcher: OscDispatcher::new(),
+        dispatcher,
         controller,
         nrt,
         step: 0,
@@ -329,6 +350,16 @@ mod tests {
         let (mut session, mut world) = build(SR, 1);
         let mut reports: Vec<OscMessage> = Vec::new();
 
+        // Override the demo's printing trace sink with one that captures, so the /n_trace dump can be
+        // asserted on (the dump has no OSC reply - it only reaches the sink).
+        let traced = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        {
+            let sink = std::rc::Rc::clone(&traced);
+            session
+                .dispatcher
+                .set_trace_sink(Box::new(move |text| sink.borrow_mut().push_str(text)));
+        }
+
         // /d_recv the def, then /s_new the synth; a render lets the World link it and emit /n_go.
         session.send_step(0);
         session.send_step(1);
@@ -348,10 +379,33 @@ mod tests {
             "/n_set freq 440 should retune the tone to 440 Hz"
         );
 
-        // /b_alloc then /b_query: the dispatcher acknowledges with /done and reports /b_info.
+        // /n_trace 1000: the running synth dumps its per-unit inputs/outputs to the trace sink. The
+        // dump arrives a render later over the reply ring; collect_reports drains it into the sink. The
+        // unit names resolve from the (still-live) node's def.
         session.send_step(3);
+        let _ = render(&mut world, 4096);
         reports.extend(session.collect_reports());
+        {
+            let trace_text = traced.borrow();
+            assert!(
+                trace_text.contains("TRACE node 1000 (tone)"),
+                "/n_trace should dump the node's units, got {trace_text:?}"
+            );
+            assert!(
+                trace_text.contains("SinOsc") && trace_text.contains("Out"),
+                "the trace should name the synth's units, got {trace_text:?}"
+            );
+            // SinOsc reads freq 440 (the /n_set value flowing through the folded Control param).
+            assert!(
+                trace_text.contains("SinOsc  in: [440"),
+                "the trace should show 440 Hz flowing into SinOsc, got {trace_text:?}"
+            );
+        }
+
+        // /b_alloc then /b_query: the dispatcher acknowledges with /done and reports /b_info.
         session.send_step(4);
+        reports.extend(session.collect_reports());
+        session.send_step(5);
         reports.extend(session.collect_reports());
         assert!(
             reports.iter().any(|m| m.addr == "/done"
@@ -374,7 +428,7 @@ mod tests {
         );
 
         // /n_free the synth; a render lets the World free it and emit /n_end, then it falls silent.
-        session.send_step(5);
+        session.send_step(6);
         let _ = render(&mut world, 4096);
         reports.extend(session.collect_reports());
         assert!(
