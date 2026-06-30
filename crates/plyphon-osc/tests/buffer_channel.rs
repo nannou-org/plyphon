@@ -154,10 +154,21 @@ fn alloc_read_channel_selects_one_channel() {
     assert_eq!(got, vec![20.0, 21.0, 22.0, 23.0], "channel 1 only");
 }
 
-/// `/b_readChannel 0 "stereo" 0 -1 0 0 1 0` selects channels `[1, 0]` (a swap), 2-wide.
+/// `/b_readChannel 0 "stereo" 0 -1 0 0 1 0` selects channels `[1, 0]` (a swap), 2-wide, splicing into
+/// a pre-allocated 2-channel buffer (`/b_readChannel` reads into an existing buffer, like `/b_read`).
 #[test]
 fn read_channel_reorders_channels() {
     let (mut osc, mut controller, mut nrt, mut world) = engine_with_dispatcher();
+    // The selection is 2-wide, so allocate a matching 2-channel buffer to read into.
+    osc.apply(
+        &mut controller,
+        &msg(
+            "/b_alloc",
+            vec![OscType::Int(0), OscType::Int(4), OscType::Int(2)],
+        ),
+    )
+    .expect("/b_alloc");
+    let _ = osc.take_replies();
     osc.apply(
         &mut controller,
         &msg(
@@ -167,8 +178,8 @@ fn read_channel_reorders_channels() {
                 OscType::String("stereo".to_string()),
                 OscType::Int(0),  // fileStartFrame
                 OscType::Int(-1), // numFrames (all)
-                OscType::Int(0),  // bufOffset (ignored)
-                OscType::Int(0),  // leaveOpen (ignored)
+                OscType::Int(0),  // bufStartFrame
+                OscType::Int(0),  // leaveOpen
                 OscType::Int(1),  // channel 1
                 OscType::Int(0),  // channel 0
             ],

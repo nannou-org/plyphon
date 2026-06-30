@@ -183,6 +183,15 @@ fn channel_list(args: &[OscType], start: usize) -> Vec<i32> {
         .collect()
 }
 
+/// The `bufStartFrame` of a `/b_read`/`/b_readChannel` (`args[4]`, scsynth's `mBufOffset`): the
+/// destination frame in the already-allocated buffer. Default 0; a negative value clamps to 0.
+fn buf_start_frame(args: &[OscType]) -> u64 {
+    match args.get(4) {
+        Some(OscType::Int(f)) => (*f).max(0) as u64,
+        _ => 0,
+    }
+}
+
 /// The `i32` of an `OscType::Int` (else `0`) - for reading the `/n_trace` dump's flat records.
 fn int_field(arg: &OscType) -> i32 {
     match arg {
@@ -210,6 +219,10 @@ struct PendingLoad {
     /// or `>= the file's channel count` reads as silence (scsynth's `CopyChannels`). `None` for the
     /// plain loads, and an empty list means "all channels" (the `*Channel` command with no selection).
     channels: Option<Vec<i32>>,
+    /// The destination frame for an in-place region splice (`/b_read`/`/b_readChannel` into an
+    /// already-allocated buffer): `Some(bufStartFrame)` writes at that frame and keeps the buffer's
+    /// dimensions; `None` is the alloc-read replace (`/b_allocRead`/`/b_allocReadChannel`).
+    dst_frame: Option<u64>,
     /// The raw OSC completion message to run once the load finishes, if any.
     completion: Option<Vec<u8>>,
     /// The client this load answers to; replayed in `run_pending` so `/done`/`/fail` and any reply the
@@ -728,19 +741,30 @@ impl OscDispatcher {
                         _ => data,
                     };
                     let num_channels = data.num_channels.max(1);
-                    let info = BufferInfo {
-                        num_frames: data.samples.len() / num_channels,
-                        num_channels,
-                        sample_rate: data.sample_rate,
+                    let installed = match load.dst_frame {
+                        // Alloc-read: replace the whole buffer with the decoded file.
+                        None => {
+                            let info = BufferInfo {
+                                num_frames: data.samples.len() / num_channels,
+                                num_channels,
+                                sample_rate: data.sample_rate,
+                            };
+                            if controller
+                                .buffer_set(load.bufnum as usize, Box::new(data.into()))
+                                .is_ok()
+                            {
+                                self.buffers.insert(load.bufnum, info);
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        // Read: splice the file region into the already-allocated buffer.
+                        Some(_) => self.splice_region(controller, &load, data, num_channels),
                     };
-                    if controller
-                        .buffer_set(load.bufnum as usize, Box::new(data.into()))
-                        .is_err()
-                    {
-                        self.fail(load.command, "command queue full");
-                        continue;
+                    if !installed {
+                        continue; // already failed (queue full / unallocated / channel mismatch)
                     }
-                    self.buffers.insert(load.bufnum, info);
                     self.run_completion_bytes(controller, load.completion.as_deref());
                     self.done(load.command, load.bufnum);
                 }
@@ -2250,13 +2274,17 @@ impl OscDispatcher {
     }
 
     fn b_alloc_read(&mut self, args: &[OscType]) -> Result<(), OscError> {
-        self.queue_load("/b_allocRead", args, None)
+        self.queue_load("/b_allocRead", args, None, None)
     }
 
+    /// `/b_read bufnum path [fileStartFrame numFrames bufStartFrame leaveOpen]` [completion]: read a
+    /// file region into the *already-allocated* buffer at `bufStartFrame`, keeping its dimensions
+    /// (scsynth's `BufReadCmd` - not a whole-buffer replace, which is `/b_allocRead`). The file's
+    /// channel count must match the buffer's. `leaveOpen=1` (keep the file open as a `DiskIn` stream)
+    /// is deferred - the splice still runs.
     fn b_read(&mut self, args: &[OscType]) -> Result<(), OscError> {
-        // Simplified: reads the file region and replaces the buffer (the `bufStartFrame`/`leaveOpen`
-        // arguments are ignored for now).
-        self.queue_load("/b_read", args, None)
+        let dst_frame = buf_start_frame(args);
+        self.queue_load("/b_read", args, None, Some(dst_frame))
     }
 
     /// `/b_allocReadChannel bufnum path [startFrame numFrames] channels...`: allocate a buffer and read
@@ -2264,16 +2292,17 @@ impl OscDispatcher {
     /// indices are the trailing `Int` args after `startFrame`/`numFrames` (at `args[4..]`).
     fn b_alloc_read_channel(&mut self, args: &[OscType]) -> Result<(), OscError> {
         let channels = channel_list(args, 4);
-        self.queue_load("/b_allocReadChannel", args, Some(channels))
+        self.queue_load("/b_allocReadChannel", args, Some(channels), None)
     }
 
-    /// `/b_readChannel bufnum path [startFrame numFrames bufOffset leaveOpen] channels...`: read only the
-    /// selected file channels into the buffer (scsynth's `BufReadChannelCmd`). Like `/b_read`, plyphon
-    /// replaces the whole buffer (`bufOffset`/`leaveOpen` ignored), so the channels are the trailing
-    /// `Int` args at `args[6..]`.
+    /// `/b_readChannel bufnum path [fileStartFrame numFrames bufStartFrame leaveOpen] channels...`: read
+    /// only the selected file channels into the already-allocated buffer at `bufStartFrame` (scsynth's
+    /// `BufReadChannelCmd`). The channel indices (the trailing `Int` args at `args[6..]`) select to a
+    /// width that must match the buffer. `leaveOpen=1` is deferred - the splice still runs.
     fn b_read_channel(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let dst_frame = buf_start_frame(args);
         let channels = channel_list(args, 6);
-        self.queue_load("/b_readChannel", args, Some(channels))
+        self.queue_load("/b_readChannel", args, Some(channels), Some(dst_frame))
     }
 
     /// `/b_write bufnum path [header] [sample] [numFrames] [startFrame] [leaveOpen]` [completion]:
@@ -2454,11 +2483,14 @@ impl OscDispatcher {
 
     /// Queue an asynchronous load of `path` into `bufnum`, run later by [`Self::run_pending`].
     /// `channels` selects a subset of the file's channels (`*Channel` forms; `None` reads all).
+    /// `dst_frame` is `Some(bufStartFrame)` for an in-place region splice (the reads) or `None` for a
+    /// whole-buffer replace (the alloc-reads).
     fn queue_load(
         &mut self,
         command: &'static str,
         args: &[OscType],
         channels: Option<Vec<i32>>,
+        dst_frame: Option<u64>,
     ) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
@@ -2486,10 +2518,62 @@ impl OscDispatcher {
                 num_frames,
             },
             channels,
+            dst_frame,
             completion: last_blob(args).map(|bytes| bytes.to_vec()),
             target: self.current_target,
         });
         Ok(())
+    }
+
+    /// Splice a `/b_read`/`/b_readChannel` region (`data`, already channel-selected, `num_channels`
+    /// wide) into the already-allocated buffer at `load.dst_frame`. Returns `true` if the splice was
+    /// queued (proceed to completion + `/done`), `false` after a failure (buffer not allocated, channel
+    /// mismatch, or queue full). The buffer's dimensions are unchanged; scsynth's `framesToEnd` clamp
+    /// is handled by [`Buffer::copy_from`] on the RT side.
+    fn splice_region(
+        &mut self,
+        controller: &mut Controller,
+        load: &PendingLoad,
+        data: BufferData,
+        num_channels: usize,
+    ) -> bool {
+        let dst_frame = load.dst_frame.unwrap_or(0);
+        let Some(info) = self.buffers.get(&load.bufnum).copied() else {
+            self.fail(load.command, "buffer not allocated");
+            return false;
+        };
+        // scsynth requires the (post-channel-selection) width to match the buffer.
+        if num_channels != info.num_channels {
+            self.fail(load.command, "channel mismatch");
+            return false;
+        }
+        let dst_start = dst_frame as usize * info.num_channels;
+        let sample_rate = data.sample_rate;
+        if controller
+            .buffer_write_region(load.bufnum as usize, dst_start, Box::new(data.into()))
+            .is_err()
+        {
+            self.fail(load.command, "command queue full");
+            return false;
+        }
+        // scsynth's Stage3 sets the buffer's sample rate to the file's; mirror it and tell the RT.
+        if info.sample_rate != sample_rate {
+            if controller
+                .buffer_set_sample_rate(load.bufnum as usize, sample_rate)
+                .is_err()
+            {
+                self.fail(load.command, "command queue full");
+                return false;
+            }
+            self.buffers.insert(
+                load.bufnum,
+                BufferInfo {
+                    sample_rate,
+                    ..info
+                },
+            );
+        }
+        true
     }
 
     /// Apply an embedded OSC completion message (the trailing blob of an async command), if present.
