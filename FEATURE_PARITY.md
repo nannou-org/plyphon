@@ -71,10 +71,10 @@ for `DiskOut`). The OSC surface is now complete; the one command that touches th
 is unimplemented - commented out in its command table - so plyphon omits it too.) `/b_read` splices a
 file region into an existing buffer at `bufStartFrame` (scsynth's `BufReadCmd`), and with `leaveOpen=1`
 keeps the file open and streams it off disk into a `DiskIn` (the read counterpart to `/b_write
-leaveOpen=1`). The **buffer OSC surface is now complete**; the remaining gaps are non-OSC: per-channel
-*streaming* (`/b_readChannel leaveOpen=1`, which would need a deinterleaving stream wrapper), UGen
-breadth, and the CLI server's live hardware-input capture (`In.ar` reads silence live; offline `render`
-feeds it via `-i`).
+leaveOpen=1`); `/b_readChannel leaveOpen=1` streams only the selected channels through a deinterleaving
+stream wrapper. The **buffer surface is now complete with no deferrals**; the remaining gaps are
+non-OSC: UGen breadth, and the CLI server's live hardware-input capture (`In.ar` reads silence live;
+offline `render` feeds it via `-i`).
 
 **Server / top-level** (10/10)
 
@@ -164,7 +164,7 @@ feeds it via `-i`).
 - [x] /b_get - getter
 - [x] /b_getn - getter
 - [x] /b_allocReadChannel - reads only the selected file channels into a fresh buffer (control-side `CopyChannels` deinterleave; out-of-range channel reads as silence)
-- [x] /b_readChannel - the channel-subset form of `/b_read`: deinterleaves the selected channels (to a width that must match the buffer) and splices them into the existing buffer at `bufStartFrame`. `leaveOpen=1` (channel-subset *streaming*) fails - it would need a deinterleaving stream wrapper - deferred
+- [x] /b_readChannel - the channel-subset form of `/b_read`: deinterleaves the selected channels (to a width that must match the buffer) and splices them into the existing buffer at `bufStartFrame`. `leaveOpen=1` streams only the selected channels off disk into a `DiskIn`, via a `ChannelSelectStream` wrapper that deinterleaves the selection per chunk (the streaming analogue of the in-memory splice)
 - [x] /b_setSampleRate
 
 ## Replies, notifications & done actions
