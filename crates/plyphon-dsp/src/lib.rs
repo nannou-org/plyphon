@@ -29,7 +29,7 @@ pub mod rng;
 pub mod stream;
 pub mod wavetable;
 
-pub use buffer::Buffer;
+pub use buffer::{Buffer, SpectrumCoord};
 pub use fft::{FftTables, WindowType};
 pub use rate::{Rate, RateInfo};
 pub use stream::{Chunk, StreamConsumer, StreamProducer, StreamRecording, cue_recording};

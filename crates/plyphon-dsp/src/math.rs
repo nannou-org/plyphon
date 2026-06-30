@@ -25,6 +25,8 @@ pub trait Real: sealed::Sealed + Copy {
     fn ceil(self) -> Self;
     fn powf(self, n: Self) -> Self;
     fn rem_euclid(self, rhs: Self) -> Self;
+    fn atan2(self, other: Self) -> Self;
+    fn hypot(self, other: Self) -> Self;
 }
 
 /// Sine of `x` (radians).
@@ -82,6 +84,16 @@ pub fn rem_euclid<F: Real>(x: F, rhs: F) -> F {
     x.rem_euclid(rhs)
 }
 
+/// Four-quadrant arctangent of `y / x` (radians), the angle of the point `(x, y)`.
+pub fn atan2<F: Real>(y: F, x: F) -> F {
+    y.atan2(x)
+}
+
+/// Length of the hypotenuse `sqrt(x*x + y*y)`, guarding against overflow.
+pub fn hypot<F: Real>(x: F, y: F) -> F {
+    x.hypot(y)
+}
+
 mod sealed {
     pub trait Sealed {}
     impl Sealed for f32 {}
@@ -128,6 +140,12 @@ mod imp {
         fn rem_euclid(self, rhs: Self) -> Self {
             self.rem_euclid(rhs)
         }
+        fn atan2(self, other: Self) -> Self {
+            self.atan2(other)
+        }
+        fn hypot(self, other: Self) -> Self {
+            self.hypot(other)
+        }
     }
 
     impl Real for f64 {
@@ -163,6 +181,12 @@ mod imp {
         }
         fn rem_euclid(self, rhs: Self) -> Self {
             self.rem_euclid(rhs)
+        }
+        fn atan2(self, other: Self) -> Self {
+            self.atan2(other)
+        }
+        fn hypot(self, other: Self) -> Self {
+            self.hypot(other)
         }
     }
 }
@@ -207,6 +231,12 @@ mod imp {
             let r = self % rhs;
             if r < 0.0 { r + rhs.abs() } else { r }
         }
+        fn atan2(self, other: Self) -> Self {
+            libm::atan2f(self, other)
+        }
+        fn hypot(self, other: Self) -> Self {
+            libm::hypotf(self, other)
+        }
     }
 
     impl Real for f64 {
@@ -243,6 +273,12 @@ mod imp {
         fn rem_euclid(self, rhs: Self) -> Self {
             let r = self % rhs;
             if r < 0.0 { r + rhs.abs() } else { r }
+        }
+        fn atan2(self, other: Self) -> Self {
+            libm::atan2(self, other)
+        }
+        fn hypot(self, other: Self) -> Self {
+            libm::hypot(self, other)
         }
     }
 }

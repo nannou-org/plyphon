@@ -35,7 +35,11 @@ pub mod out;
 pub mod pan;
 pub mod play_buf;
 #[cfg(feature = "fft")]
+pub mod pv;
+#[cfg(feature = "fft")]
 pub mod pv_mag_mul;
+#[cfg(feature = "fft")]
+pub mod pv_mag_squared;
 pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
@@ -168,6 +172,8 @@ pub use pan::Pan2;
 pub use play_buf::PlayBuf;
 #[cfg(feature = "fft")]
 pub use pv_mag_mul::PvMagMul;
+#[cfg(feature = "fft")]
+pub use pv_mag_squared::PvMagSquared;
 pub use rate_conv::{A2K, Dc, K2A, T2A};
 pub use record_buf::RecordBuf;
 pub use registry::{BuildContext, DemandUnitDef, UnitDef, UnitRegistry};

@@ -44,6 +44,8 @@ use crate::unit::pan::Pan2Ctor;
 use crate::unit::play_buf::PlayBufCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_mag_mul::PvMagMulCtor;
+#[cfg(feature = "fft")]
+use crate::unit::pv_mag_squared::PvMagSquaredCtor;
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::send_reply::SendReplyCtor;
@@ -225,6 +227,7 @@ impl UnitRegistry {
             registry.register("FFT", Box::new(FftCtor));
             registry.register("IFFT", Box::new(IfftCtor));
             registry.register("PV_MagMul", Box::new(PvMagMulCtor));
+            registry.register("PV_MagSquared", Box::new(PvMagSquaredCtor));
         }
         registry
     }

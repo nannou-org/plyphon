@@ -14,6 +14,19 @@ use alloc::vec::Vec;
 
 use crate::stream::{StreamPlayback, StreamRecording};
 
+/// How a buffer holding an FFT-chain frame interprets its packed bins: Cartesian (`Complex`, re/im
+/// pairs) or polar (`Polar`, mag/phase pairs). scsynth's `SndBuf::coord`. Tracked so chained `PV_*`
+/// units convert idempotently (a polar op only converts a complex frame once, and vice versa). It is
+/// irrelevant for an ordinary sample buffer, which is left at the default [`Complex`](Self::Complex).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SpectrumCoord {
+    /// Cartesian bins: `[dc, nyq, re0, im0, re1, im1, ...]`. The form an `FFT` writes.
+    #[default]
+    Complex,
+    /// Polar bins: `[dc, nyq, mag0, phase0, mag1, phase1, ...]`.
+    Polar,
+}
+
 /// A bank of interleaved audio samples (scsynth's `SndBuf`).
 ///
 /// Samples are stored frame-major: frame `f`'s channels occupy `data[f*ch .. (f+1)*ch]`.
@@ -24,6 +37,8 @@ pub struct Buffer {
     num_frames: usize,
     num_channels: usize,
     sample_rate: f64,
+    /// The bin interpretation when this buffer carries an FFT-chain frame (default for sample data).
+    coord: SpectrumCoord,
 }
 
 impl Buffer {
@@ -34,6 +49,7 @@ impl Buffer {
             num_frames,
             num_channels,
             sample_rate,
+            coord: SpectrumCoord::Complex,
         }
     }
 
@@ -50,6 +66,7 @@ impl Buffer {
             num_frames,
             num_channels: channels,
             sample_rate,
+            coord: SpectrumCoord::Complex,
         }
     }
 
@@ -77,6 +94,16 @@ impl Buffer {
     /// the audio thread (e.g. `FFT` writing a packed spectrum). RT-safe (no reallocation).
     pub fn data_mut(&mut self) -> &mut [f32] {
         &mut self.data
+    }
+
+    /// The bin interpretation when this buffer holds an FFT-chain frame (scsynth's `SndBuf::coord`).
+    pub fn coord(&self) -> SpectrumCoord {
+        self.coord
+    }
+
+    /// Record this buffer's bin interpretation (an `FFT` write or a `PV_*` conversion sets it).
+    pub fn set_coord(&mut self, coord: SpectrumCoord) {
+        self.coord = coord;
     }
 
     /// Sample at `frame`, `channel`. Returns 0.0 for an out-of-range index, so RT readers never panic.

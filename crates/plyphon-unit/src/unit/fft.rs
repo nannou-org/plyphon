@@ -18,7 +18,8 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{self, BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec_aux};
+use crate::unit::{self, BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, pv, unit_spec_aux};
+use plyphon_dsp::buffer::SpectrumCoord;
 use plyphon_dsp::fft::{WindowType, is_supported_size};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
@@ -91,6 +92,9 @@ impl Unit for Fft {
                     unit::buffer_at_mut(ctx.buffers, bufnum).filter(|b| b.num_frames() == n)
                     && ctx.fft.forward(n, windowed, buffer.data_mut())
                 {
+                    // The forward transform writes the Cartesian packed spectrum (scsynth sets
+                    // `coord_Complex`); a downstream polar `PV_*` will flip it as needed.
+                    buffer.set_coord(SpectrumCoord::Complex);
                     out_val = bufnum as f32;
                 }
             }
@@ -172,11 +176,15 @@ impl Unit for Ifft {
         if fbufnum >= 0.0 {
             let bufnum = fbufnum as usize;
             if let Some(buffer) =
-                unit::buffer_at(ctx.buffers, bufnum).filter(|b| b.num_frames() == n)
-                && ctx.fft.inverse(n, &buffer.data()[..n], temp)
+                unit::buffer_at_mut(ctx.buffers, bufnum).filter(|b| b.num_frames() == n)
             {
-                for (j, w) in win.iter().enumerate().take(n) {
-                    ola[(self.pos as usize + j) % n] += temp[j] * w;
+                // A polar `PV_*` unit may have left the frame in polar form; restore Cartesian
+                // before the inverse transform (scsynth's `ToComplexApx` in `IFFT_next`).
+                pv::to_complex(buffer);
+                if ctx.fft.inverse(n, &buffer.data()[..n], temp) {
+                    for (j, w) in win.iter().enumerate().take(n) {
+                        ola[(self.pos as usize + j) % n] += temp[j] * w;
+                    }
                 }
             }
         }
