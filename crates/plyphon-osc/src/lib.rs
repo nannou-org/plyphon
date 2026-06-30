@@ -7,7 +7,7 @@
 //!
 //! - **SynthDefs:** `/d_recv`, `/d_load`, `/d_loadDir`, `/d_free`, `/d_freeAll`.
 //! - **Synths & nodes:** `/s_new`, `/s_noid`, `/n_set`, `/n_setn`, `/n_fill`, `/n_free`, `/n_run`,
-//!   the control mappers `/n_map`/`/n_mapn`.
+//!   `/n_trace` (a per-unit I/O dump to a text sink), the control mappers `/n_map`/`/n_mapn`.
 //! - **Groups & node tree:** `/g_new`, `/p_new`, `/g_head`/`/g_tail`/`/n_before`/`/n_after`/
 //!   `/n_order`/`/g_freeAll`/`/g_deepFree`.
 //! - **Control buses:** `/c_set`/`/c_setn`/`/c_fill`.
@@ -92,7 +92,7 @@ use hashbrown::HashMap;
 use plyphon::controller::SynthNewError;
 use plyphon::synthdef::read::ReadError;
 use plyphon::{
-    AddAction, CommandTime, Controller, Event, NodeMsg, Render, RenderUntil, Reply, Trigger,
+    AddAction, CommandTime, Controller, Event, NodeMsg, Rate, Render, RenderUntil, Reply, Trigger,
 };
 use plyphon_buffers::{
     BufFuture, BufferData, BufferSink, BufferSinkStream, BufferSource, DefSource, ReadRegion,
@@ -181,6 +181,22 @@ fn channel_list(args: &[OscType], start: usize) -> Vec<i32> {
             _ => None,
         })
         .collect()
+}
+
+/// The `i32` of an `OscType::Int` (else `0`) - for reading the `/n_trace` dump's flat records.
+fn int_field(arg: &OscType) -> i32 {
+    match arg {
+        OscType::Int(v) => *v,
+        _ => 0,
+    }
+}
+
+/// The `f32` of an `OscType::Float` (else `0.0`) - for reading the `/n_trace` dump's flat records.
+fn float_field(arg: Option<&OscType>) -> f32 {
+    match arg {
+        Some(OscType::Float(v)) => *v,
+        _ => 0.0,
+    }
 }
 
 /// A queued asynchronous buffer load (`/b_allocRead`, `/b_read`, and their `*Channel` forms), run by
@@ -439,6 +455,19 @@ pub struct OscDispatcher {
     pending_queries: VecDeque<(ReplyTarget, PendingQuery)>,
     /// Optional host text sink for `/g_dumpTree` (no OSC reply); a no-op when unset.
     dump_sink: Option<DumpSink>,
+    /// Optional host text sink for `/n_trace` dumps (no OSC reply); a no-op when unset.
+    trace_sink: Option<DumpSink>,
+    /// The `/n_trace` dump currently being reassembled from the reply ring (one node at a time, between
+    /// a `TraceHeader` and its `TraceEnd`); outside the FIFO getter queue since trace records are
+    /// node-tagged and self-delimited.
+    trace_accum: Option<TraceAccum>,
+}
+
+/// A `/n_trace` dump being reassembled: the traced node and the flat `[index, nin, nout, values…]`
+/// records accumulated since its `TraceHeader`.
+struct TraceAccum {
+    node: i32,
+    records: Vec<OscType>,
 }
 
 impl Default for OscDispatcher {
@@ -466,6 +495,8 @@ impl OscDispatcher {
             error_bundle: None,
             pending_queries: VecDeque::new(),
             dump_sink: None,
+            trace_sink: None,
+            trace_accum: None,
         }
     }
 
@@ -476,11 +507,24 @@ impl OscDispatcher {
         self.dump_sink = Some(sink);
     }
 
+    /// Install a text sink for `/n_trace` dumps (scsynth prints them to stdout; plyphon is headless).
+    /// Unset by default - `/n_trace` is then a no-op. Separate from the `/g_dumpTree` sink, since a
+    /// trace consumer differs from a tree-dump consumer.
+    pub fn set_trace_sink(&mut self, sink: DumpSink) {
+        self.trace_sink = Some(sink);
+    }
+
     /// Reassemble a query [`Reply`] (drained from [`Render::poll_reply`](plyphon::Render::poll_reply)/
     /// `Nrt::poll_reply`) into its OSC reply, queued for [`take_replies`](Self::take_replies). Feed
     /// every reply in order, alongside [`notify`](Self::notify); replies arrive in the same FIFO order
     /// the getters were issued, so each is matched against the oldest outstanding query.
     pub fn reply(&mut self, controller: &Controller, reply: Reply) {
+        // `/n_trace` records are node-tagged and self-delimited, so they reassemble to the trace sink
+        // outside the FIFO getter queue (the trace is answered during the walk, not in `apply`, so it
+        // cannot ride the FIFO that assumes answer-in-`apply`).
+        if self.handle_trace_reply(controller, &reply) {
+            return;
+        }
         let Some((target, mut pending)) = self.pending_queries.pop_front() else {
             return; // a stray reply with nothing outstanding (e.g. after a reset); ignore.
         };
@@ -490,6 +534,94 @@ impl OscDispatcher {
         if !self.apply_reply(controller, &mut pending, reply) {
             self.pending_queries.push_front((target, pending));
         }
+    }
+
+    /// Reassemble a `/n_trace` dump record. Returns `true` if `reply` was a `Trace*` variant (consumed
+    /// here); `false` otherwise (a normal getter reply). On `TraceEnd` the accumulated records are
+    /// formatted - resolving each calc-unit index to its UGen name via the node's def - and fed to the
+    /// trace sink (no OSC reply).
+    fn handle_trace_reply(&mut self, controller: &Controller, reply: &Reply) -> bool {
+        match *reply {
+            Reply::TraceHeader { node } => {
+                // A fresh dump; a lingering incomplete one (truncated by an overflow) is discarded.
+                self.trace_accum = Some(TraceAccum {
+                    node,
+                    records: Vec::new(),
+                });
+                true
+            }
+            Reply::TraceUnit {
+                index,
+                num_inputs,
+                num_outputs,
+            } => {
+                if let Some(acc) = self.trace_accum.as_mut() {
+                    acc.records.push(OscType::Int(index));
+                    acc.records.push(OscType::Int(num_inputs));
+                    acc.records.push(OscType::Int(num_outputs));
+                }
+                true
+            }
+            Reply::TraceValue { value } => {
+                if let Some(acc) = self.trace_accum.as_mut() {
+                    acc.records.push(OscType::Float(value));
+                }
+                true
+            }
+            Reply::TraceEnd => {
+                if let Some(acc) = self.trace_accum.take() {
+                    let text = self.format_trace(controller, acc.node, &acc.records);
+                    if let Some(sink) = self.trace_sink.as_mut() {
+                        sink(&text);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Format one node's `/n_trace` dump as text: a header, then one line per calc unit with its name
+    /// (resolved by calc-order index from the node's def, skipping demand units - which are not in the
+    /// block walk) and its inputs'/outputs' first samples.
+    fn format_trace(&self, controller: &Controller, node: i32, records: &[OscType]) -> String {
+        let def_name = self.node_defs.get(&node);
+        // Calc-order unit names: the def's units minus the demand-rate ones (the compile splits those
+        // out of the calc list), so the calc index lines up with this filtered list.
+        let names: Vec<&str> = def_name
+            .and_then(|name| controller.synthdef(name))
+            .map(|def| {
+                def.units
+                    .iter()
+                    .filter(|u| u.rate != Rate::Demand)
+                    .map(|u| u.name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut text = alloc::format!("TRACE node {node}");
+        if let Some(name) = def_name {
+            text.push_str(&alloc::format!(" ({name})"));
+        }
+        text.push('\n');
+        let mut pos = 0;
+        while pos + 3 <= records.len() {
+            let index = int_field(&records[pos]);
+            let num_inputs = int_field(&records[pos + 1]).max(0) as usize;
+            let num_outputs = int_field(&records[pos + 2]).max(0) as usize;
+            pos += 3;
+            let ins: Vec<f32> = (0..num_inputs)
+                .map(|k| float_field(records.get(pos + k)))
+                .collect();
+            let outs: Vec<f32> = (0..num_outputs)
+                .map(|k| float_field(records.get(pos + num_inputs + k)))
+                .collect();
+            pos += num_inputs + num_outputs;
+            let name = names.get(index as usize).copied().unwrap_or("?");
+            text.push_str(&alloc::format!(
+                "  {index} {name}  in: {ins:?}  out: {outs:?}\n"
+            ));
+        }
+        text
     }
 
     /// Set the destination stamped onto replies the dispatcher produces next. The host calls this with
@@ -884,6 +1016,7 @@ impl OscDispatcher {
             "/status" => self.status(controller),
             "/rtMemoryStatus" => self.rt_memory_status(controller),
             "/n_query" => self.n_query(controller, &message.args),
+            "/n_trace" => self.n_trace(controller, &message.args),
             "/c_get" => self.c_get(controller, &message.args),
             "/c_getn" => self.c_getn(controller, &message.args),
             "/s_get" => self.s_get(controller, &message.args),
@@ -1218,6 +1351,19 @@ impl OscDispatcher {
                 .query_node(node)
                 .map_err(|_| OscError::QueueFull)?;
             self.push_query(PendingQuery::Node);
+        }
+        Ok(())
+    }
+
+    /// `/n_trace <node>...`: dump each synth's per-unit inputs/outputs for one block to the trace sink
+    /// (scsynth's `meth_n_trace`; like `/g_dumpTree` there is no OSC reply). The dump streams back over
+    /// the reply ring and is reassembled by [`handle_trace_reply`](Self::handle_trace_reply).
+    fn n_trace(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
+        for arg in args {
+            let node = int_arg(arg)?;
+            controller
+                .trace_node(node)
+                .map_err(|_| OscError::QueueFull)?;
         }
         Ok(())
     }

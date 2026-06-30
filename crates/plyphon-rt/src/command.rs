@@ -294,6 +294,13 @@ pub enum Command {
         /// Include control values.
         flag: bool,
     },
+    /// `/n_trace`: flag the synth at `node` to dump each of its calc units' inputs and outputs for one
+    /// block during the next tree walk (scsynth's `Graph_CalcTrace`). Streamed over the reply ring as
+    /// [`Reply::TraceHeader`]…[`Reply::TraceEnd`] to a host text sink. A group/unknown id is a no-op.
+    TraceNode {
+        /// The synth to trace.
+        node: i32,
+    },
 }
 
 /// When a [`Command`] should take effect on the audio thread - plyphon's port of scsynth's OSC
@@ -545,4 +552,29 @@ pub enum Reply {
     },
     /// Terminates a tree body stream.
     QueryTreeEnd,
+
+    /// Opens a `/n_trace` dump for one node (its calc units follow). Node-tagged and self-delimited
+    /// (each traced node emits its own `TraceHeader`…[`TraceEnd`](Self::TraceEnd)), so the dispatcher
+    /// reassembles it outside the FIFO getter queue and routes the text to a host trace sink.
+    TraceHeader {
+        /// The traced synth's client id.
+        node: i32,
+    },
+    /// One calc unit in a `/n_trace` dump: its calc-order index, then `num_inputs` + `num_outputs`
+    /// [`TraceValue`](Self::TraceValue) records (inputs first), each a port's first sample.
+    TraceUnit {
+        /// Calc-order unit index (the dispatcher resolves it to the UGen name via the node's def).
+        index: i32,
+        /// Number of input values that follow.
+        num_inputs: i32,
+        /// Number of output values that follow.
+        num_outputs: i32,
+    },
+    /// One port's first sample (scsynth's `ZIN0`/`ZOUT0`) in a `/n_trace` dump.
+    TraceValue {
+        /// The first sample of the input or output port.
+        value: f32,
+    },
+    /// Terminates one node's `/n_trace` dump.
+    TraceEnd,
 }

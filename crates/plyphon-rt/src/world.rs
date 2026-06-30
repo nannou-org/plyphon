@@ -97,6 +97,11 @@ pub struct World {
     pending_replies: VecDeque<Reply>,
     /// Scratch the `/g_queryTree` walk fills before draining into the reply ring (pre-allocated).
     tree_scratch: Vec<Reply>,
+    /// Scratch the per-block tree walk fills with `/n_trace` dump records (empty unless a node is being
+    /// traced), drained into the reply ring after the walk (pre-allocated; capped at `trace_cap`).
+    trace_scratch: Vec<Reply>,
+    /// Cap on `/n_trace` records per block (the `trace_scratch`'s capacity), so the walk never grows it.
+    trace_cap: usize,
     /// Scratch list of `(slot index, action)` for nodes whose units requested a done action.
     done_nodes: Vec<(u32, DoneAction)>,
     /// Scratch sink for nodes removed by a free, so freeing a whole group allocates nothing.
@@ -187,6 +192,8 @@ impl World {
             pending_events: Vec::with_capacity(capacity),
             pending_replies: VecDeque::with_capacity(tree_capacity),
             tree_scratch: Vec::with_capacity(tree_capacity),
+            trace_scratch: Vec::with_capacity(tree_capacity),
+            trace_cap: tree_capacity,
             done_nodes: Vec::with_capacity(capacity),
             freed_nodes: Vec::with_capacity(capacity),
             paused_nodes: Vec::with_capacity(capacity),
@@ -307,6 +314,7 @@ impl World {
         self.trigger_buf.clear();
         self.node_msg_buf.clear();
         self.node_op_buf.clear();
+        self.trace_scratch.clear();
         // Snapshot the synth count before the walk: a synth that frees itself this block is still
         // counted (its done action applies after the walk), matching scsynth's `mNumGraphs`.
         let running_synths = self.tree.running_synths();
@@ -330,6 +338,8 @@ impl World {
             node_msg_cap: self.node_msg_cap,
             node_ops: &mut self.node_op_buf,
             node_op_cap: self.node_op_cap,
+            trace: &mut self.trace_scratch,
+            trace_cap: self.trace_cap,
             running_synths,
         };
         self.tree.process(&mut block, &mut self.done_nodes);
@@ -338,10 +348,27 @@ impl World {
         self.drain_node_ops();
         self.drain_triggers();
         self.drain_node_msgs();
+        self.drain_trace();
         // After the tree walk, so a buffer just written this block (RecordBuf/BufWr) is snapshotted
         // with its latest samples.
         self.drive_writes();
         self.clock.advance();
+    }
+
+    /// Drain this block's `/n_trace` dump records into the reply ring (FIFO, with the `pending_replies`
+    /// backlog), if any node was traced. The records are node-tagged and self-delimited, so the
+    /// dispatcher reassembles them to a text sink outside the FIFO getter queue.
+    fn drain_trace(&mut self) {
+        if self.trace_scratch.is_empty() {
+            return;
+        }
+        // Take the buffer out so `self.reply` can borrow `self` (restored after - capacity preserved,
+        // exactly as `query_tree` drains `tree_scratch`).
+        let scratch = core::mem::take(&mut self.trace_scratch);
+        for &r in &scratch {
+            self.reply(r);
+        }
+        self.trace_scratch = scratch;
     }
 
     /// Apply this block's `Free`/`Pause`-by-id node ops to the tree (after the walk, since they
@@ -811,6 +838,12 @@ impl World {
             }
             Command::QueryTree { group, flag } => self.query_tree(group, flag, false),
             Command::DumpTree { group, flag } => self.query_tree(group, flag, true),
+            Command::TraceNode { node } => {
+                // Flag the synth for a one-block dump on the next walk (a group/unknown id is a no-op).
+                if let Some(graph) = self.tree.synth_mut(node) {
+                    graph.set_trace();
+                }
+            }
         }
     }
 

@@ -21,6 +21,8 @@ use alloc::vec::Vec;
 use bytemuck::{cast_slice, cast_slice_mut};
 use rt_alloc::{Align64, Region, RtPool};
 
+use crate::command::Reply;
+
 use plyphon_dsp::buffer::BufferTable;
 use plyphon_dsp::bus::Buses;
 use plyphon_dsp::fft::FftTables;
@@ -72,6 +74,11 @@ pub(crate) struct Block<'a> {
     pub node_ops: &'a mut Vec<NodeOp>,
     /// Cap on node ops per block; pushes past it are dropped so the audio thread never reallocates.
     pub node_op_cap: usize,
+    /// World-shared sink for `/n_trace` dump records emitted this block (empty unless a node is being
+    /// traced), drained into the reply ring after the walk.
+    pub trace: &'a mut Vec<Reply>,
+    /// Cap on trace records per block; pushes past it are dropped so the audio thread never reallocates.
+    pub trace_cap: usize,
     /// Live synth count at the start of this block, surfaced to `NumRunningSynths`.
     pub running_synths: usize,
 }
@@ -89,6 +96,9 @@ pub struct Graph {
     /// Surfaced to its units on the first block only, so `OffsetOut` onsets sample-exactly; 0 for an
     /// immediately-created synth.
     sample_offset: usize,
+    /// One-shot `/n_trace` request: when set, the next [`process`](Self::process) dumps each unit's
+    /// inputs/outputs and clears it (scsynth's one-block `Graph_CalcTrace`).
+    trace: bool,
 }
 
 impl Graph {
@@ -100,6 +110,7 @@ impl Graph {
             def,
             initialized: false,
             sample_offset,
+            trace: false,
         }
     }
 
@@ -108,10 +119,17 @@ impl Graph {
         self.block
     }
 
+    /// Request a one-block `/n_trace` dump on this synth's next [`process`](Self::process).
+    pub(crate) fn set_trace(&mut self) {
+        self.trace = true;
+    }
+
     /// Compute one control block for the synth with client id `node_id` (surfaced to side-effecting
     /// units like `SendTrig`). Returns the strongest [`DoneAction`] any of its units requested.
     #[must_use]
     pub(crate) fn process(&mut self, block: &mut Block<'_>, node_id: i32) -> DoneAction {
+        // A one-shot `/n_trace`: dump this block's per-unit I/O, then clear (scsynth's `Graph_CalcTrace`).
+        let tracing = core::mem::take(&mut self.trace);
         let def = &*self.def;
         let bs = def.block_size();
         let layout = def.layout();
@@ -206,6 +224,13 @@ impl Graph {
         // by it, then runs flush); later blocks start at the block boundary.
         let sample_offset = if first { self.sample_offset } else { 0 };
         let mut done = DoneAction::Nothing;
+        if tracing {
+            push_trace(
+                block.trace,
+                block.trace_cap,
+                Reply::TraceHeader { node: node_id },
+            );
+        }
         for (i, v) in def.units().iter().enumerate() {
             let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
             // This unit's private aux memory (a delay line), a disjoint sub-slice of the aux arena;
@@ -215,6 +240,28 @@ impl Graph {
             // done-ness persists. A watcher reads earlier units' flags (already written this block).
             let mut done_flag = done_flags[i];
             let ins = Inputs::new(&v.inputs, &*audio, &*ctrl, bs);
+            // `/n_trace`: dump this unit's index and its inputs' first samples (scsynth's `ZIN0`) before
+            // it runs; its outputs' first samples (`ZOUT0`) follow after `process`, below.
+            if tracing {
+                push_trace(
+                    block.trace,
+                    block.trace_cap,
+                    Reply::TraceUnit {
+                        index: i as i32,
+                        num_inputs: v.inputs.len() as i32,
+                        num_outputs: v.outputs.len() as i32,
+                    },
+                );
+                for j in 0..ins.len() {
+                    push_trace(
+                        block.trace,
+                        block.trace_cap,
+                        Reply::TraceValue {
+                            value: input_first(&ins, j),
+                        },
+                    );
+                }
+            }
             if first {
                 let init_ctx = InitCtx {
                     audio: block.audio,
@@ -263,6 +310,19 @@ impl Graph {
             });
             // Persist this unit's done flag for next block / for later units to read this block.
             done_flags[i] = done_flag;
+            // `/n_trace`: dump this unit's outputs' first samples (scsynth's `ZOUT0`), read from the
+            // scratch the unit just wrote, before it is published into the wires below.
+            if tracing {
+                for k in 0..v.outputs.len() {
+                    push_trace(
+                        block.trace,
+                        block.trace_cap,
+                        Reply::TraceValue {
+                            value: scratch[k * bs],
+                        },
+                    );
+                }
+            }
             // Publish this unit's scratch outputs into the wires.
             for (k, ow) in v.outputs.iter().enumerate() {
                 let src = k * bs;
@@ -278,6 +338,9 @@ impl Graph {
                     Rate::Demand => {}
                 }
             }
+        }
+        if tracing {
+            push_trace(block.trace, block.trace_cap, Reply::TraceEnd);
         }
         // `TrigControl`: now that the units have read them, zero each trigger param's value slot, so a
         // `/n_set` is seen for exactly the block it lands in and reads `0` after (scsynth's
@@ -331,5 +394,23 @@ impl Graph {
             let bytes = &mut pool.slice_mut(&self.block)[self.def.layout().amaps.range()];
             cast_slice_mut::<u8, u32>(bytes)[param] = bus.unwrap_or(u32::MAX);
         }
+    }
+}
+
+/// Push a `/n_trace` record, dropping it if the per-block trace sink is full (so the audio thread
+/// never reallocates - a truncated dump is harmless, reset by the next node's `TraceHeader`).
+fn push_trace(trace: &mut Vec<Reply>, cap: usize, record: Reply) {
+    if trace.len() < cap {
+        trace.push(record);
+    }
+}
+
+/// The first sample of input port `i` (scsynth's `ZIN0`), read at the port's rate. A demand input has
+/// no wire value, so it reads as `0.0`.
+fn input_first(ins: &Inputs, i: usize) -> f32 {
+    match ins.rate(i) {
+        Rate::Audio => ins.audio(i).first().copied().unwrap_or(0.0),
+        Rate::Control | Rate::Scalar => ins.control(i),
+        Rate::Demand => 0.0,
     }
 }

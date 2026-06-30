@@ -664,4 +664,11 @@ impl Controller {
     pub fn dump_tree(&mut self, group: i32, flag: bool) -> Result<(), QueueFull> {
         self.send_now(Command::DumpTree { group, flag })
     }
+
+    /// `/n_trace`: dump the synth at `node`'s per-unit inputs/outputs for one block (scsynth's
+    /// `Graph_CalcTrace`). The dump streams back over the reply ring as a node-tagged `Trace*` sequence
+    /// the dispatcher routes to a host text sink; a group or unknown id is a no-op.
+    pub fn trace_node(&mut self, node: i32) -> Result<(), QueueFull> {
+        self.send_now(Command::TraceNode { node })
+    }
 }

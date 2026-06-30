@@ -71,7 +71,9 @@ pub fn run(args: ServerArgs) -> Result<(), String> {
         let count = load_dir(&mut controller, dir)?;
         eprintln!("loaded {count} synthdef(s) from {}", dir.display());
     }
-    let dispatcher = OscDispatcher::new();
+    let mut dispatcher = OscDispatcher::new();
+    // `/n_trace` is headless (no OSC reply); print each per-unit dump to stderr, like scsynth's stdout.
+    dispatcher.set_trace_sink(Box::new(|text| eprint!("{text}")));
 
     // The World plays on the audio thread (output-only for v1); keep the stream alive for the run.
     let mut world = world;
