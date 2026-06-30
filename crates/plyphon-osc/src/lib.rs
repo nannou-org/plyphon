@@ -11,8 +11,9 @@
 //! - **Groups & node tree:** `/g_new`, `/p_new`, `/g_head`/`/g_tail`/`/n_before`/`/n_after`/
 //!   `/n_order`/`/g_freeAll`/`/g_deepFree`.
 //! - **Control buses:** `/c_set`/`/c_setn`/`/c_fill`.
-//! - **Buffers:** `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_write`, `/b_free`, `/b_zero`, `/b_query`,
-//!   `/b_set`, `/b_setn`, `/b_fill`, `/b_setSampleRate`, `/b_gen`.
+//! - **Buffers:** `/b_alloc`, `/b_allocRead`, `/b_read`, `/b_allocReadChannel`, `/b_readChannel`,
+//!   `/b_write`, `/b_free`, `/b_zero`, `/b_query`, `/b_set`, `/b_setn`, `/b_fill`, `/b_setSampleRate`,
+//!   `/b_gen`.
 //! - **Server admin:** `/clearSched`, `/error`.
 //! - **Host commands** (deferred to the host - see below): `/cmd`, `/u_cmd`.
 //! - **Getters** (engine state reads; answered asynchronously - see below): `/sync`, `/status`,
@@ -94,8 +95,8 @@ use plyphon::{
     AddAction, CommandTime, Controller, Event, NodeMsg, Render, RenderUntil, Reply, Trigger,
 };
 use plyphon_buffers::{
-    BufFuture, BufferSink, BufferSinkStream, BufferSource, DefSource, ReadRegion, StreamDrainer,
-    StreamInfo,
+    BufFuture, BufferData, BufferSink, BufferSinkStream, BufferSource, DefSource, ReadRegion,
+    StreamDrainer, StreamInfo,
 };
 use plyphon_dsp::buffer::Buffer;
 use rosc::{OscMessage, OscPacket, OscTime, OscType};
@@ -145,12 +146,54 @@ struct BufferInfo {
     sample_rate: f64,
 }
 
-/// A queued asynchronous buffer load (`/b_allocRead`, `/b_read`), run by [`OscDispatcher::run_pending`].
+/// Deinterleave `data`, keeping only `channels` (in order) - scsynth's `CopyChannels` for
+/// `/b_allocReadChannel`/`/b_readChannel`. A channel index `< 0` or `>= data.num_channels` yields
+/// silence. The result is `channels.len()` wide.
+fn select_channels(data: &BufferData, channels: &[i32]) -> BufferData {
+    let src_channels = data.num_channels.max(1);
+    let frames = data.samples.len() / src_channels;
+    let out_channels = channels.len();
+    let mut samples = vec![0.0f32; frames * out_channels];
+    for frame in 0..frames {
+        for (ci, &c) in channels.iter().enumerate() {
+            if c >= 0 && (c as usize) < src_channels {
+                samples[frame * out_channels + ci] =
+                    data.samples[frame * src_channels + c as usize];
+            }
+        }
+    }
+    BufferData {
+        samples,
+        num_channels: out_channels,
+        sample_rate: data.sample_rate,
+    }
+}
+
+/// The trailing channel-index list of a `*Channel` buffer command: the consecutive `Int` args from
+/// `start` (scsynth's `InitChannels`, which slurps every trailing `'i'` until a non-int - the
+/// completion blob stops it). An empty result means "all channels".
+fn channel_list(args: &[OscType], start: usize) -> Vec<i32> {
+    args.get(start..)
+        .unwrap_or(&[])
+        .iter()
+        .map_while(|a| match a {
+            OscType::Int(c) => Some(*c),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A queued asynchronous buffer load (`/b_allocRead`, `/b_read`, and their `*Channel` forms), run by
+/// [`OscDispatcher::run_pending`].
 struct PendingLoad {
     command: &'static str,
     bufnum: i32,
     key: String,
     region: ReadRegion,
+    /// Selected source channels (`/b_allocReadChannel`/`/b_readChannel`), kept in order; an index `< 0`
+    /// or `>= the file's channel count` reads as silence (scsynth's `CopyChannels`). `None` for the
+    /// plain loads, and an empty list means "all channels" (the `*Channel` command with no selection).
+    channels: Option<Vec<i32>>,
     /// The raw OSC completion message to run once the load finishes, if any.
     completion: Option<Vec<u8>>,
     /// The client this load answers to; replayed in `run_pending` so `/done`/`/fail` and any reply the
@@ -505,6 +548,12 @@ impl OscDispatcher {
                 None => self.fail(load.command, "no buffer source configured"),
                 Some(Err(err)) => self.fail(load.command, &err.to_string()),
                 Some(Ok(data)) => {
+                    // `*Channel` loads keep only the selected source channels (scsynth reads the whole
+                    // file, then `CopyChannels` deinterleaves); an empty selection means "all".
+                    let data = match &load.channels {
+                        Some(channels) if !channels.is_empty() => select_channels(&data, channels),
+                        _ => data,
+                    };
                     let num_channels = data.num_channels.max(1);
                     let info = BufferInfo {
                         num_frames: data.samples.len() / num_channels,
@@ -734,6 +783,8 @@ impl OscDispatcher {
             "/b_gen" => self.b_gen(controller, &message.args),
             "/b_allocRead" => self.b_alloc_read(&message.args),
             "/b_read" => self.b_read(&message.args),
+            "/b_allocReadChannel" => self.b_alloc_read_channel(&message.args),
+            "/b_readChannel" => self.b_read_channel(&message.args),
             "/b_write" => self.b_write(controller, &message.args),
             "/g_head" => self.group_moves(controller, &message.args, AddAction::Head),
             "/g_tail" => self.group_moves(controller, &message.args, AddAction::Tail),
@@ -1911,13 +1962,30 @@ impl OscDispatcher {
     }
 
     fn b_alloc_read(&mut self, args: &[OscType]) -> Result<(), OscError> {
-        self.queue_load("/b_allocRead", args)
+        self.queue_load("/b_allocRead", args, None)
     }
 
     fn b_read(&mut self, args: &[OscType]) -> Result<(), OscError> {
         // Simplified: reads the file region and replaces the buffer (the `bufStartFrame`/`leaveOpen`
         // arguments are ignored for now).
-        self.queue_load("/b_read", args)
+        self.queue_load("/b_read", args, None)
+    }
+
+    /// `/b_allocReadChannel bufnum path [startFrame numFrames] channels...`: allocate a buffer and read
+    /// only the selected file channels into it (scsynth's `BufAllocReadChannelCmd`). The channel
+    /// indices are the trailing `Int` args after `startFrame`/`numFrames` (at `args[4..]`).
+    fn b_alloc_read_channel(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let channels = channel_list(args, 4);
+        self.queue_load("/b_allocReadChannel", args, Some(channels))
+    }
+
+    /// `/b_readChannel bufnum path [startFrame numFrames bufOffset leaveOpen] channels...`: read only the
+    /// selected file channels into the buffer (scsynth's `BufReadChannelCmd`). Like `/b_read`, plyphon
+    /// replaces the whole buffer (`bufOffset`/`leaveOpen` ignored), so the channels are the trailing
+    /// `Int` args at `args[6..]`.
+    fn b_read_channel(&mut self, args: &[OscType]) -> Result<(), OscError> {
+        let channels = channel_list(args, 6);
+        self.queue_load("/b_readChannel", args, Some(channels))
     }
 
     /// `/b_write bufnum path [header] [sample] [numFrames] [startFrame] [leaveOpen]` [completion]:
@@ -2072,7 +2140,13 @@ impl OscDispatcher {
     }
 
     /// Queue an asynchronous load of `path` into `bufnum`, run later by [`Self::run_pending`].
-    fn queue_load(&mut self, command: &'static str, args: &[OscType]) -> Result<(), OscError> {
+    /// `channels` selects a subset of the file's channels (`*Channel` forms; `None` reads all).
+    fn queue_load(
+        &mut self,
+        command: &'static str,
+        args: &[OscType],
+        channels: Option<Vec<i32>>,
+    ) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
                 .ok_or(OscError::BadArguments("buffer read expects a bufnum"))?,
@@ -2098,6 +2172,7 @@ impl OscDispatcher {
                 start_frame,
                 num_frames,
             },
+            channels,
             completion: last_blob(args).map(|bytes| bytes.to_vec()),
             target: self.current_target,
         });
