@@ -525,6 +525,23 @@ impl Controller {
         })
     }
 
+    /// Splice `src` into the live buffer at `index`, starting at flat (interleaved) index `dst_start`,
+    /// leaving the buffer's dimensions unchanged (scsynth's `/b_read` into an already-allocated
+    /// buffer). The buffer stays in place; `src` is copied in (clamped to both buffers) then trashed
+    /// off the audio thread. Build `src` off the audio thread (the file region, already decoded).
+    pub fn buffer_write_region(
+        &mut self,
+        index: usize,
+        dst_start: usize,
+        src: Box<Buffer>,
+    ) -> Result<(), QueueFull> {
+        self.send(Command::WriteBufferRegion {
+            index,
+            dst_start,
+            src,
+        })
+    }
+
     /// Cue a disk-streaming buffer at `index` (scsynth's `Buffer.cueSoundFile`).
     ///
     /// Allocates a queue of `num_chunks` chunks of `chunk_frames` frames each (off the audio thread)

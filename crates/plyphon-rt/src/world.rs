@@ -661,6 +661,19 @@ impl World {
             } => self
                 .buffers
                 .copy_region(dst, dst_start, src, src_start, count),
+            Command::WriteBufferRegion {
+                index,
+                dst_start,
+                src,
+            } => {
+                // Splice `src` into the live buffer (clamped to both), leaving its dimensions intact.
+                if let Some(dst) = self.buffers.get_mut(index) {
+                    dst.copy_from(&src, dst_start, 0, src.data().len());
+                }
+                // Copy-then-trash: never drop the source `Box` on the audio thread, even when the slot
+                // was empty/a stream (no copy) or the copy clamped to nothing.
+                self.trash(Trash::Buffer(src));
+            }
             Command::FreeNode { node } => {
                 let mut sink = core::mem::take(&mut self.freed_nodes);
                 sink.clear();
@@ -998,15 +1011,17 @@ impl World {
     /// Route any heap a discarded scheduled command owns to the trash ring before the command is
     /// dropped, so clearing the scheduler (`/clearSched`) never frees a `Box` on the audio thread.
     /// Only the buffer-installing commands - [`SetBuffer`](Command::SetBuffer),
-    /// [`CueStream`](Command::CueStream), [`CueRecording`](Command::CueRecording), and
-    /// [`WriteBuffer`](Command::WriteBuffer) - own such a `Box`; every other command is flat or holds a
-    /// non-final `Arc` (the Controller retains its own), so letting it drop here is RT-safe.
+    /// [`CueStream`](Command::CueStream), [`CueRecording`](Command::CueRecording),
+    /// [`WriteBuffer`](Command::WriteBuffer), and [`WriteBufferRegion`](Command::WriteBufferRegion) -
+    /// own such a `Box`; every other command is flat or holds a non-final `Arc` (the Controller retains
+    /// its own), so letting it drop here is RT-safe.
     fn trash_command(&mut self, command: Command) {
         match command {
             Command::SetBuffer { buffer, .. } => self.trash(Trash::Buffer(buffer)),
             Command::CueStream { playback, .. } => self.trash(Trash::Stream(playback)),
             Command::CueRecording { recording, .. } => self.trash(Trash::Recording(recording)),
             Command::WriteBuffer { recording, .. } => self.trash(Trash::Recording(recording)),
+            Command::WriteBufferRegion { src, .. } => self.trash(Trash::Buffer(src)),
             _ => {}
         }
     }

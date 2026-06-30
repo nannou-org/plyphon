@@ -218,6 +218,19 @@ pub enum Command {
         /// Number of samples to copy.
         count: usize,
     },
+    /// Splice `src`'s samples into the live buffer at `index`, starting at flat (interleaved) index
+    /// `dst_start`, leaving the buffer's dimensions unchanged (scsynth's `/b_read` into an
+    /// already-allocated buffer). The World copies `src` into place (clamped to both buffers), then
+    /// routes `src` to the trash ring - the copy-then-trash means the `Box` is never dropped on the
+    /// audio thread, the same discipline [`SetBuffer`](Self::SetBuffer)/[`WriteBuffer`](Self::WriteBuffer) use.
+    WriteBufferRegion {
+        /// Buffer table index to splice into (left in place; not replaced).
+        index: usize,
+        /// First flat (interleaved) sample index written in the destination buffer.
+        dst_start: usize,
+        /// The pre-sliced source region (file region decoded off the audio thread), copied then trashed.
+        src: Box<Buffer>,
+    },
     /// Clear every command still pending in the World's scheduler (scsynth's `/clearSched`). Any
     /// scheduled command that owns a `Box` is routed to the trash ring rather than dropped here.
     ClearSched,
