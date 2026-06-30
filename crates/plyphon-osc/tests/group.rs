@@ -45,7 +45,7 @@ fn render(world: &mut World, frames: usize) -> Vec<f32> {
 fn drain_ended(nrt: &mut plyphon::Nrt) -> Vec<i32> {
     std::iter::from_fn(|| nrt.poll())
         .filter_map(|e| match e {
-            Event::NodeEnded { id } => Some(id),
+            Event::NodeEnded(n) => Some(n.node),
             _ => None,
         })
         .collect()

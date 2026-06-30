@@ -813,13 +813,18 @@ impl OscDispatcher {
     /// synths that free themselves via a done action - is reported back over OSC alongside the
     /// command replies. Node notifications are tagged [`ReplyTarget::Broadcast`] (scsynth fans them out
     /// to its `mUsers` set); which clients that set contains (scsynth's `/notify` subscription) is the
-    /// host/transport's job. The lifecycle events carry only the node id; `/n_move` carries the full
-    /// `/n_info`-shaped position (parent/prev/next/isGroup, plus head/tail for a group).
+    /// host/transport's job. Every lifecycle event carries the full `/n_info`-shaped position
+    /// (parent/prev/next/isGroup, plus head/tail for a group), as scsynth's notifications do.
     pub fn notify(&mut self, event: Event) {
         // The only stateful effect: reclaim def tracking for a node that never reaches `/n_free` (a
         // self-freed synth's `NodeEnded`) or never existed (a failed `/s_new`). The OSC mapping
         // itself is pure - see [`encode::encode_event`].
-        if let Event::NodeEnded { id } | Event::SynthFailed { id } = event {
+        let drop_id = match event {
+            Event::NodeEnded(n) => Some(n.node),
+            Event::SynthFailed { id } => Some(id),
+            _ => None,
+        };
+        if let Some(id) = drop_id {
             self.node_defs.remove(&id);
         }
         self.push_packet(ReplyTarget::Broadcast, encode::encode_event(event));

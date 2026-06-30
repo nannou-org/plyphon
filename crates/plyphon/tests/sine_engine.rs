@@ -117,7 +117,8 @@ fn sine_engine_plays_and_responds_to_n_set() {
     // still surfaces the node-ended notification.
     nrt.process();
     assert!(
-        std::iter::from_fn(|| nrt.poll()).any(|e| e == plyphon::Event::NodeEnded { id: node }),
+        std::iter::from_fn(|| nrt.poll())
+            .any(|e| matches!(e, plyphon::Event::NodeEnded(n) if n.node == node)),
         "expected a NodeEnded event for the freed node"
     );
 }

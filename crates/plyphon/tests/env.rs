@@ -122,7 +122,7 @@ fn perc_envelope_shapes_a_note_then_frees_it() {
     nrt.process();
     let mut ended = false;
     while let Some(event) = nrt.poll() {
-        if matches!(event, Event::NodeEnded { id } if id == node) {
+        if matches!(event, Event::NodeEnded(n) if n.node == node) {
             ended = true;
         }
     }
@@ -181,7 +181,7 @@ fn adsr_sustains_until_the_gate_falls() {
     nrt.process();
     let mut ended = false;
     while let Some(event) = nrt.poll() {
-        if matches!(event, Event::NodeEnded { id } if id == node) {
+        if matches!(event, Event::NodeEnded(n) if n.node == node) {
             ended = true;
         }
     }

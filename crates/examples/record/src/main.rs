@@ -38,7 +38,7 @@ impl Controls {
         self.nrt.process();
         let mut recorder_ended = false;
         while let Some(event) = self.nrt.poll() {
-            if event == (Event::NodeEnded { id: self.recorder }) {
+            if matches!(event, Event::NodeEnded(n) if n.node == self.recorder) {
                 recorder_ended = true;
             }
         }

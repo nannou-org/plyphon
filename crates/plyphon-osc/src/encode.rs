@@ -5,8 +5,8 @@
 //! neither the engine nor the dispatcher. The [`OscDispatcher`](crate::OscDispatcher) calls these and
 //! adds only the genuinely stateful bits (which client to route to, def-name bookkeeping, the
 //! multi-message getter reassembly that these one-shot encoders deliberately do *not* cover). A host
-//! that owns its own transport can use them directly - e.g. `encode_event(Event::NodeEnded { id })`
-//! yields `/n_end [id]` with no dispatcher in sight.
+//! that owns its own transport can use them directly - e.g. `encode_event(Event::NodeEnded(pos))`
+//! yields `/n_end [node, parent, prev, next, isGroup]` with no dispatcher in sight.
 
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -23,27 +23,23 @@ fn message(addr: &str, args: Vec<OscType>) -> OscPacket {
 }
 
 /// A node-lifecycle [`Event`] as its SuperCollider notification: `/n_go` (started), `/n_end` (freed),
-/// `/n_off` (paused), `/n_on` (resumed), `/n_move` (moved, carrying the full `/n_info`-shaped
-/// position), or `/fail` for a failed `/s_new`. Pure: the dispatcher handles the `node_defs`
-/// bookkeeping and broadcast tagging around this.
+/// `/n_off` (paused), `/n_on` (resumed), `/n_move` (moved), or `/fail` for a failed `/s_new`. Every
+/// node-lifecycle message carries the full `/n_info`-shaped position (5 ints for a synth, 7 for a
+/// group), exactly as scsynth's `Node_StateMsg` builds it. Pure: the dispatcher handles the
+/// `node_defs` bookkeeping and broadcast tagging around this.
 pub fn encode_event(event: Event) -> OscPacket {
+    let node_event = |addr, n: plyphon::NodeNotify| {
+        (
+            addr,
+            node_info_args(n.node, n.parent, n.prev, n.next, n.is_group, n.head, n.tail),
+        )
+    };
     let (addr, args) = match event {
-        Event::NodeStarted { id } => ("/n_go", vec![OscType::Int(id)]),
-        Event::NodeEnded { id } => ("/n_end", vec![OscType::Int(id)]),
-        Event::NodePaused { id } => ("/n_off", vec![OscType::Int(id)]),
-        Event::NodeResumed { id } => ("/n_on", vec![OscType::Int(id)]),
-        Event::NodeMoved {
-            node,
-            parent,
-            prev,
-            next,
-            is_group,
-            head,
-            tail,
-        } => (
-            "/n_move",
-            node_info_args(node, parent, prev, next, is_group, head, tail),
-        ),
+        Event::NodeStarted(n) => node_event("/n_go", n),
+        Event::NodeEnded(n) => node_event("/n_end", n),
+        Event::NodePaused(n) => node_event("/n_off", n),
+        Event::NodeResumed(n) => node_event("/n_on", n),
+        Event::NodeMoved(n) => node_event("/n_move", n),
         Event::SynthFailed { id } => (
             "/fail",
             vec![OscType::String("/s_new".to_string()), OscType::Int(id)],
@@ -196,37 +192,47 @@ mod tests {
         }
     }
 
-    #[test]
-    fn lifecycle_events_map_to_their_addresses() {
-        for (event, addr) in [
-            (Event::NodeStarted { id: 5 }, "/n_go"),
-            (Event::NodeEnded { id: 5 }, "/n_end"),
-            (Event::NodePaused { id: 5 }, "/n_off"),
-            (Event::NodeResumed { id: 5 }, "/n_on"),
-        ] {
-            let m = msg(encode_event(event));
-            assert_eq!(m.addr, addr);
-            assert_eq!(m.args, vec![OscType::Int(5)]);
-        }
-    }
-
-    #[test]
-    fn node_moved_carries_position_and_group_head_tail() {
-        // A non-group omits head/tail: node, parent, prev, next, isGroup.
-        let synth = msg(encode_event(Event::NodeMoved {
-            node: 10,
+    /// A synth-shaped position with parent `1` and next sibling `11`.
+    fn synth_pos(node: i32) -> plyphon::NodeNotify {
+        plyphon::NodeNotify {
+            node,
             parent: 1,
             prev: -1,
             next: 11,
             is_group: 0,
             head: -1,
             tail: -1,
-        }));
-        assert_eq!(synth.addr, "/n_move");
-        assert_eq!(synth.args.len(), 5);
+        }
+    }
 
-        // A group appends head/tail.
-        let group = msg(encode_event(Event::NodeMoved {
+    #[test]
+    fn lifecycle_events_map_to_their_addresses() {
+        for (event, addr) in [
+            (Event::NodeStarted(synth_pos(5)), "/n_go"),
+            (Event::NodeEnded(synth_pos(5)), "/n_end"),
+            (Event::NodePaused(synth_pos(5)), "/n_off"),
+            (Event::NodeResumed(synth_pos(5)), "/n_on"),
+        ] {
+            let m = msg(encode_event(event));
+            assert_eq!(m.addr, addr);
+            // Every lifecycle message carries the full synth-form position (5 ints), like scsynth.
+            assert_eq!(
+                m.args,
+                vec![
+                    OscType::Int(5),
+                    OscType::Int(1),
+                    OscType::Int(-1),
+                    OscType::Int(11),
+                    OscType::Int(0),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn lifecycle_events_carry_group_head_tail() {
+        // A group form appends head/tail to every lifecycle notification, not just `/n_move`.
+        let group = plyphon::NodeNotify {
             node: 2,
             parent: 1,
             prev: -1,
@@ -234,7 +240,38 @@ mod tests {
             is_group: 1,
             head: 3,
             tail: 4,
-        }));
+        };
+        for addr in ["/n_go", "/n_end", "/n_off", "/n_on", "/n_move"] {
+            let event = match addr {
+                "/n_go" => Event::NodeStarted(group),
+                "/n_end" => Event::NodeEnded(group),
+                "/n_off" => Event::NodePaused(group),
+                "/n_on" => Event::NodeResumed(group),
+                _ => Event::NodeMoved(group),
+            };
+            let m = msg(encode_event(event));
+            assert_eq!(m.addr, addr);
+            assert_eq!(m.args.len(), 7, "{addr} group form has head/tail");
+        }
+    }
+
+    #[test]
+    fn node_moved_carries_position_and_group_head_tail() {
+        // A non-group omits head/tail: node, parent, prev, next, isGroup.
+        let synth = msg(encode_event(Event::NodeMoved(synth_pos(10))));
+        assert_eq!(synth.addr, "/n_move");
+        assert_eq!(synth.args.len(), 5);
+
+        // A group appends head/tail.
+        let group = msg(encode_event(Event::NodeMoved(plyphon::NodeNotify {
+            node: 2,
+            parent: 1,
+            prev: -1,
+            next: -1,
+            is_group: 1,
+            head: 3,
+            tail: 4,
+        })));
         assert_eq!(group.args.len(), 7);
     }
 
@@ -308,8 +345,8 @@ mod tests {
     #[test]
     fn standalone_use_needs_no_dispatcher() {
         // The stated payoff: encode an event to OSC with nothing but this function.
-        let m = msg(encode_event(Event::NodeEnded { id: 1000 }));
+        let m = msg(encode_event(Event::NodeEnded(synth_pos(1000))));
         assert_eq!(m.addr, "/n_end");
-        assert_eq!(m.args, vec![OscType::Int(1000)]);
+        assert_eq!(m.args[0], OscType::Int(1000));
     }
 }

@@ -140,7 +140,7 @@ fn pool_exhaustion_reports_synth_failed_then_recovers() {
     let events = drain(&mut nrt);
     let started = events
         .iter()
-        .filter(|e| matches!(e, Event::NodeStarted { .. }))
+        .filter(|e| matches!(e, Event::NodeStarted(_)))
         .count();
     let failed = events
         .iter()
@@ -164,7 +164,9 @@ fn pool_exhaustion_reports_synth_failed_then_recovers() {
         .unwrap();
     render(&mut world, 256);
     assert!(
-        drain(&mut nrt).contains(&Event::NodeStarted { id: node }),
+        drain(&mut nrt)
+            .iter()
+            .any(|e| matches!(e, Event::NodeStarted(n) if n.node == node)),
         "a synth should start once the pool has room again"
     );
 }

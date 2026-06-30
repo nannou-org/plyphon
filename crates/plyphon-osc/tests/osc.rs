@@ -288,17 +288,26 @@ fn notifies_node_lifecycle_over_osc() {
         )
         .expect("/s_new");
 
-    // The World links the synth and emits a NodeStarted event; notify turns it into /n_go.
+    // The World links the synth and emits a NodeStarted event; notify turns it into /n_go carrying
+    // the full synth-form position: node, parent (the root group), prev, next, isGroup (scsynth's
+    // `Node_StateMsg`). It is the only child of the root, so prev/next are -1.
     let _ = render(&mut world, 1024);
     let started = drain_notifications(&mut dispatcher, &mut nrt);
+    let go_payload = vec![
+        OscType::Int(1000),
+        OscType::Int(ROOT_GROUP_ID),
+        OscType::Int(-1),
+        OscType::Int(-1),
+        OscType::Int(0),
+    ];
     assert!(
         started
             .iter()
-            .any(|m| m.addr == "/n_go" && m.args == vec![OscType::Int(1000)]),
-        "expected an /n_go 1000 notification, got {started:?}"
+            .any(|m| m.addr == "/n_go" && m.args == go_payload),
+        "expected an /n_go with the full synth position, got {started:?}"
     );
 
-    // Free it; the World emits NodeEnded, surfaced as /n_end.
+    // Free it; the World emits NodeEnded, surfaced as /n_end with the position it held while linked.
     dispatcher
         .apply_bytes(&mut controller, &osc("/n_free", vec![OscType::Int(1000)]))
         .expect("/n_free");
@@ -307,8 +316,8 @@ fn notifies_node_lifecycle_over_osc() {
     assert!(
         ended
             .iter()
-            .any(|m| m.addr == "/n_end" && m.args == vec![OscType::Int(1000)]),
-        "expected an /n_end 1000 notification, got {ended:?}"
+            .any(|m| m.addr == "/n_end" && m.args == go_payload),
+        "expected an /n_end with the full synth position, got {ended:?}"
     );
 }
 
@@ -502,11 +511,18 @@ fn n_run_pauses_and_resumes() {
         paused.iter().all(|s| s.abs() < 1e-6),
         "paused synth should be silent"
     );
+    // /n_off carries the full synth-form position, like scsynth (only child of the root group).
+    let pos = vec![
+        OscType::Int(1000),
+        OscType::Int(ROOT_GROUP_ID),
+        OscType::Int(-1),
+        OscType::Int(-1),
+        OscType::Int(0),
+    ];
     let msgs = drain_notifications(&mut d, &mut nrt);
     assert!(
-        msgs.iter()
-            .any(|m| m.addr == "/n_off" && m.args == vec![OscType::Int(1000)]),
-        "expected /n_off 1000, got {msgs:?}"
+        msgs.iter().any(|m| m.addr == "/n_off" && m.args == pos),
+        "expected /n_off with the full position, got {msgs:?}"
     );
 
     // Resume: the tone returns and /n_on is notified.
@@ -523,9 +539,8 @@ fn n_run_pauses_and_resumes() {
     );
     let msgs = drain_notifications(&mut d, &mut nrt);
     assert!(
-        msgs.iter()
-            .any(|m| m.addr == "/n_on" && m.args == vec![OscType::Int(1000)]),
-        "expected /n_on 1000, got {msgs:?}"
+        msgs.iter().any(|m| m.addr == "/n_on" && m.args == pos),
+        "expected /n_on with the full position, got {msgs:?}"
     );
 }
 

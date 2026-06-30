@@ -63,9 +63,9 @@ impl Controls {
         self.nrt.process();
         while let Some(event) = self.nrt.poll() {
             match event {
-                Event::NodePaused { id } => self.log(id, "/n_off: paused"),
-                Event::NodeResumed { id } => self.log(id, "/n_on : resumed"),
-                Event::NodeEnded { id } => self.log(id, "/n_end: freed by id"),
+                Event::NodePaused(n) => self.log(n.node, "/n_off: paused"),
+                Event::NodeResumed(n) => self.log(n.node, "/n_on : resumed"),
+                Event::NodeEnded(n) => self.log(n.node, "/n_end: freed by id"),
                 _ => {}
             }
         }

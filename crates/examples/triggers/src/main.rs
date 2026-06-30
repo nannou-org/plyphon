@@ -63,13 +63,12 @@ impl Controls {
         // Node notifications: the startup `/n_move`, and the `/n_end`s from done action 14.
         while let Some(event) = self.nrt.poll() {
             match event {
-                Event::NodeMoved {
-                    node, parent, next, ..
-                } => {
-                    println!("/n_move: node {node} now heads group {parent} (next sibling {next})")
-                }
-                Event::NodeEnded { id } if self.voice_groups.remove(&id) => {
-                    println!("  /n_end: voice group {id} freed by done action 14");
+                Event::NodeMoved(n) => println!(
+                    "/n_move: node {} now heads group {} (next sibling {})",
+                    n.node, n.parent, n.next
+                ),
+                Event::NodeEnded(n) if self.voice_groups.remove(&n.node) => {
+                    println!("  /n_end: voice group {} freed by done action 14", n.node);
                 }
                 _ => {}
             }

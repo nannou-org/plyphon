@@ -165,7 +165,8 @@ fn record_buf_done_action_frees_synth() {
     let _ = render(&mut world, 2048); // past the 240-frame buffer
     nrt.process();
     assert!(
-        std::iter::from_fn(|| nrt.poll()).any(|e| e == Event::NodeEnded { id: node }),
+        std::iter::from_fn(|| nrt.poll())
+            .any(|e| matches!(e, Event::NodeEnded(n) if n.node == node)),
         "expected a NodeEnded for the self-freed RecordBuf synth"
     );
 }

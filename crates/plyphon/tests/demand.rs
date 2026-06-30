@@ -214,7 +214,7 @@ fn duty_done_action_frees_synth_when_durations_run_out() {
     nrt.process();
     let mut ended = false;
     while let Some(event) = nrt.poll() {
-        if matches!(event, Event::NodeEnded { id } if id == node) {
+        if matches!(event, Event::NodeEnded(n) if n.node == node) {
             ended = true;
         }
     }

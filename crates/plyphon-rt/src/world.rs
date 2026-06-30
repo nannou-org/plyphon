@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 use bytemuck::cast_slice_mut;
 use rtrb::{Consumer, Producer, PushError};
 
-use crate::command::{Command, CommandTime, Event, Reply, TimedCommand, Trash};
+use crate::command::{Command, CommandTime, Event, NodeNotify, Reply, TimedCommand, Trash};
 use crate::graph::{Block, Graph, Pool};
 use crate::options::Options;
 use crate::sched::{Clock, Scheduler};
@@ -106,8 +106,8 @@ pub struct World {
     done_nodes: Vec<(u32, DoneAction)>,
     /// Scratch sink for nodes removed by a free, so freeing a whole group allocates nothing.
     freed_nodes: Vec<FreedNode>,
-    /// Scratch sink for node ids paused by a done action, drained into `/n_off` notifications.
-    paused_nodes: Vec<i32>,
+    /// Scratch sink for nodes paused by a done action, drained into `/n_off` notifications.
+    paused_nodes: Vec<NodeNotify>,
     /// Per-block sink for `SendTrig` triggers (pre-allocated to `trigger_cap`; never reallocates),
     /// drained into the trigger ring after the tree walk.
     trigger_buf: Vec<Trigger>,
@@ -389,12 +389,7 @@ impl World {
                 }
                 NodeOpKind::Run(run) => {
                     if let Some(id) = self.tree.set_run(op.node, run) {
-                        let event = if run {
-                            Event::NodeResumed { id }
-                        } else {
-                            Event::NodePaused { id }
-                        };
-                        self.emit(event);
+                        self.emit_run(id, run);
                     }
                 }
             }
@@ -515,8 +510,8 @@ impl World {
                 .apply_done_action(idx, action, &mut freed, &mut paused);
         }
         self.drain_freed(&mut freed);
-        for id in paused.drain(..) {
-            self.emit(Event::NodePaused { id });
+        for info in paused.drain(..) {
+            self.emit(Event::NodePaused(info));
         }
         self.freed_nodes = freed;
         self.paused_nodes = paused;
@@ -562,7 +557,7 @@ impl World {
             } => self.add_synth(id, def_id, target, action),
             Command::AddGroup { id, target, action } => {
                 if self.tree.add_group(id, target, action) {
-                    self.emit(Event::NodeStarted { id });
+                    self.emit_started(id);
                 }
             }
             Command::SetControl { node, param, value } => {
@@ -691,15 +686,7 @@ impl World {
                 if self.tree.move_node(node, target, action)
                     && let Some(info) = self.tree.node_info(node)
                 {
-                    self.emit(Event::NodeMoved {
-                        node: info.node,
-                        parent: info.parent,
-                        prev: info.prev,
-                        next: info.next,
-                        is_group: info.is_group as i32,
-                        head: info.head,
-                        tail: info.tail,
-                    });
+                    self.emit(Event::NodeMoved(info));
                 }
             }
             Command::FreeAll { group } => {
@@ -718,12 +705,7 @@ impl World {
             }
             Command::NodeRun { node, run } => {
                 if let Some(id) = self.tree.set_run(node, run) {
-                    let event = if run {
-                        Event::NodeResumed { id }
-                    } else {
-                        Event::NodePaused { id }
-                    };
-                    self.emit(event);
+                    self.emit_run(id, run);
                 }
             }
             Command::ClearSched => {
@@ -763,7 +745,7 @@ impl World {
                     parent: info.parent,
                     prev: info.prev,
                     next: info.next,
-                    is_group: info.is_group as i32,
+                    is_group: info.is_group,
                     head: info.head,
                     tail: info.tail,
                 }),
@@ -913,8 +895,27 @@ impl World {
             return;
         };
         match self.tree.add_synth(id, graph, target, action) {
-            Ok(()) => self.emit(Event::NodeStarted { id }),
+            Ok(()) => self.emit_started(id),
             Err(returned) => self.pool.dealloc(returned.into_block()),
+        }
+    }
+
+    /// Emit a `/n_go` for the freshly linked node `id`, capturing its tree position (it is linked, so
+    /// `node_info` is `Some`). A no-op id-miss can't happen on a successful add, but guarded anyway.
+    fn emit_started(&mut self, id: i32) {
+        if let Some(info) = self.tree.node_info(id) {
+            self.emit(Event::NodeStarted(info));
+        }
+    }
+
+    /// Emit `/n_on` (resumed) or `/n_off` (paused) for the still-linked node `id`, with its position.
+    fn emit_run(&mut self, id: i32, run: bool) {
+        if let Some(info) = self.tree.node_info(id) {
+            self.emit(if run {
+                Event::NodeResumed(info)
+            } else {
+                Event::NodePaused(info)
+            });
         }
     }
 
@@ -1039,11 +1040,11 @@ impl World {
     /// Reclaim each freed graph's pool block (on the audio thread) and notify each freed node
     /// (`NodeEnded`).
     fn drain_freed(&mut self, sink: &mut Vec<FreedNode>) {
-        for (id, graph) in sink.drain(..) {
+        for (info, graph) in sink.drain(..) {
             if let Some(graph) = graph {
                 self.pool.dealloc(graph.into_block());
             }
-            self.emit(Event::NodeEnded { id });
+            self.emit(Event::NodeEnded(info));
         }
     }
 

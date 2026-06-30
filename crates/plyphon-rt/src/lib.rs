@@ -31,7 +31,7 @@ mod sched;
 pub mod tree;
 pub mod world;
 
-pub use command::{Command, CommandTime, Event, Reply, TimedCommand, Trash};
+pub use command::{Command, CommandTime, Event, NodeNotify, Reply, TimedCommand, Trash};
 pub use graph::Graph;
 pub use nrt::Nrt;
 pub use options::{Options, ROOT_GROUP_ID};

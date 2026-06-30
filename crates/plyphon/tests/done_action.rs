@@ -113,14 +113,14 @@ fn poll_events(nrt: &mut Nrt) -> (HashSet<i32>, HashSet<i32>, HashSet<i32>) {
     let (mut started, mut ended, mut paused) = (HashSet::new(), HashSet::new(), HashSet::new());
     while let Some(event) = nrt.poll() {
         match event {
-            Event::NodeStarted { id } => {
-                started.insert(id);
+            Event::NodeStarted(n) => {
+                started.insert(n.node);
             }
-            Event::NodeEnded { id } => {
-                ended.insert(id);
+            Event::NodeEnded(n) => {
+                ended.insert(n.node);
             }
-            Event::NodePaused { id } => {
-                paused.insert(id);
+            Event::NodePaused(n) => {
+                paused.insert(n.node);
             }
             _ => {}
         }
@@ -156,8 +156,8 @@ fn line_done_action_frees_synth() {
     let (mut started, mut ended) = (false, false);
     while let Some(event) = nrt.poll() {
         match event {
-            Event::NodeStarted { id } if id == node => started = true,
-            Event::NodeEnded { id } if id == node => ended = true,
+            Event::NodeStarted(n) if n.node == node => started = true,
+            Event::NodeEnded(n) if n.node == node => ended = true,
             _ => {}
         }
     }

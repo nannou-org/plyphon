@@ -133,7 +133,8 @@ fn play_buf_done_action_frees_synth() {
     // notification still flows to the NRT side.
     nrt.process();
     assert!(
-        std::iter::from_fn(|| nrt.poll()).any(|e| e == Event::NodeEnded { id: node }),
+        std::iter::from_fn(|| nrt.poll())
+            .any(|e| matches!(e, Event::NodeEnded(n) if n.node == node)),
         "expected a NodeEnded for the self-freed PlayBuf synth"
     );
 }

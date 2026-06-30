@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
-use crate::command::Reply;
+use crate::command::{NodeNotify, Reply};
 use crate::graph::{Block, Graph, Pool};
 use plyphon_unit::unit::DoneAction;
 
@@ -46,22 +46,10 @@ enum Placement {
     After { group: u32, node: u32 },
 }
 
-/// A node removed by a free, handed back to the caller: its id and (for synths) the graph, whose
-/// pool block the caller reclaims via `dealloc`.
-pub(crate) type FreedNode = (i32, Option<Graph>);
-
-/// A node's tree position, answering `/n_query` (`/n_info`). Client ids throughout; `-1` for an
-/// absent parent/sibling, and `head`/`tail` are `-1` for a synth.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NodeInfoData {
-    pub node: i32,
-    pub parent: i32,
-    pub prev: i32,
-    pub next: i32,
-    pub is_group: bool,
-    pub head: i32,
-    pub tail: i32,
-}
+/// A node removed by a free, handed back to the caller: its tree position captured at the moment of
+/// removal (for `/n_end`, scsynth's `Node_StateMsg` before `Node_Remove`) and, for a synth, the
+/// graph whose pool block the caller reclaims via `dealloc`.
+pub(crate) type FreedNode = (NodeNotify, Option<Graph>);
 
 /// A slot in the node arena.
 enum Slot {
@@ -242,8 +230,7 @@ impl NodeTree {
             Some(&i) => i,
             None => return false,
         };
-        self.unlink(idx);
-        self.destroy(idx, sink);
+        self.free_at(idx, sink);
         true
     }
 
@@ -287,27 +274,35 @@ impl NodeTree {
         self.synth_ref(idx)
     }
 
-    /// Describe node `id`'s tree position (for `/n_query`). `None` if no such node.
-    pub(crate) fn node_info(&self, id: i32) -> Option<NodeInfoData> {
+    /// Describe node `id`'s tree position (for `/n_query` and the node-lifecycle notifications).
+    /// `None` if no such node.
+    pub(crate) fn node_info(&self, id: i32) -> Option<NodeNotify> {
         let idx = *self.id_map.get(&id)?;
+        Some(self.node_info_at(idx))
+    }
+
+    /// Describe the node at slot `idx` (its client id read from the slot). Sibling/parent links that
+    /// point at an already-freed (`Slot::Free`) slot read back as `-1`, which is exactly what scsynth
+    /// reports during a teardown - a removed predecessor leaves `-1` behind.
+    fn node_info_at(&self, idx: u32) -> NodeNotify {
         let parent = self.opt_id(self.node_parent(idx));
         let prev = self.opt_id(self.node_prev(idx));
         let next = self.opt_id(self.node_next(idx));
         let (is_group, head, tail) = if self.is_group(idx) {
             let (h, t) = self.group_links(idx);
-            (true, self.opt_id(h), self.opt_id(t))
+            (1, self.opt_id(h), self.opt_id(t))
         } else {
-            (false, -1, -1)
+            (0, -1, -1)
         };
-        Some(NodeInfoData {
-            node: id,
+        NodeNotify {
+            node: self.node_id(idx),
             parent,
             prev,
             next,
             is_group,
             head,
             tail,
-        })
+        }
     }
 
     /// Live `(synths, groups, ugens)` counts for `/status` (groups includes the root). A bounded scan
@@ -389,19 +384,19 @@ impl NodeTree {
         }
     }
 
-    /// Free the synth at slot `idx`, returning its client id and graph for the caller to `dealloc`
-    /// (the leaf step of [`deep_free_group`](Self::deep_free_group)). No-op for groups or empty slots.
-    fn free_by_index(&mut self, idx: u32) -> Option<(i32, Graph)> {
-        let id = match &self.slots[idx as usize] {
+    /// Free the synth at slot `idx`, returning its position (captured while still linked, the `/n_end`
+    /// payload) and graph for the caller to `dealloc` (the leaf step of
+    /// [`deep_free_group`](Self::deep_free_group)). No-op for groups or empty slots.
+    fn free_by_index(&mut self, idx: u32) -> Option<(NodeNotify, Graph)> {
+        let info = match &self.slots[idx as usize] {
             Slot::Node(Node {
-                id,
                 kind: NodeKind::Synth(_),
                 ..
-            }) => *id,
+            }) => self.node_info_at(idx),
             _ => return None,
         };
         self.unlink(idx);
-        self.id_map.remove(&id);
+        self.id_map.remove(&info.node);
         let slot = core::mem::replace(&mut self.slots[idx as usize], Slot::Free);
         self.free.push(idx);
         // The early guard above means the removed slot was a synth, so always one fewer.
@@ -410,7 +405,7 @@ impl NodeTree {
             Slot::Node(Node {
                 kind: NodeKind::Synth(graph),
                 ..
-            }) => Some((id, graph)),
+            }) => Some((info, graph)),
             _ => None,
         }
     }
@@ -426,11 +421,17 @@ impl NodeTree {
         }
     }
 
-    /// Unlink the node at slot `idx` from its parent and free it (a synth, or a group with its whole
-    /// subtree), pushing each removed node to `sink`.
+    /// Free the node at slot `idx` and its whole subtree (a synth, or a group), pushing each removed
+    /// node to `sink` with its position captured at removal. The surviving parent/siblings are
+    /// repaired *afterwards*, mirroring scsynth's `Node_Dtor` (state message, *then* `Node_Remove`):
+    /// the freed node's own `/n_end` reports its real position because it is still linked when its
+    /// position is captured.
     fn free_at(&mut self, idx: u32, sink: &mut Vec<FreedNode>) {
-        self.unlink(idx);
+        let parent = self.node_parent(idx);
+        let prev = self.node_prev(idx);
+        let next = self.node_next(idx);
         self.destroy(idx, sink);
+        self.repair_parent(parent, prev, next, idx);
     }
 
     /// Free every node in the group at slot `group_idx` (deeply), leaving the group itself empty.
@@ -455,7 +456,7 @@ impl NodeTree {
         idx: u32,
         action: DoneAction,
         freed: &mut Vec<FreedNode>,
-        paused: &mut Vec<i32>,
+        paused: &mut Vec<NodeNotify>,
     ) {
         if !matches!(
             &self.slots[idx as usize],
@@ -469,8 +470,8 @@ impl NodeTree {
         match action {
             DoneAction::Nothing => {}
             DoneAction::PauseSelf => {
-                if let Some(id) = self.pause_by_index(idx) {
-                    paused.push(id);
+                if self.pause_by_index(idx).is_some() {
+                    paused.push(self.node_info_at(idx));
                 }
             }
             DoneAction::FreeSelf => self.free_at(idx, freed),
@@ -522,17 +523,17 @@ impl NodeTree {
             }
             DoneAction::FreeSelfPausePrev => {
                 if let Some(p) = self.node_prev(idx)
-                    && let Some(id) = self.pause_by_index(p)
+                    && self.pause_by_index(p).is_some()
                 {
-                    paused.push(id);
+                    paused.push(self.node_info_at(p));
                 }
                 self.free_at(idx, freed);
             }
             DoneAction::FreeSelfPauseNext => {
                 if let Some(n) = self.node_next(idx)
-                    && let Some(id) = self.pause_by_index(n)
+                    && self.pause_by_index(n).is_some()
                 {
-                    paused.push(id);
+                    paused.push(self.node_info_at(n));
                 }
                 self.free_at(idx, freed);
             }
@@ -698,11 +699,14 @@ impl NodeTree {
             self.destroy(child, sink);
             cur = next;
         }
-        let id = match &self.slots[idx as usize] {
-            Slot::Node(node) => node.id,
+        // Capture the position now, after the children are gone (so a group reports head/tail `-1`)
+        // but before this node leaves the slot - its own parent/sibling links are still intact, the
+        // `/n_end` payload scsynth sends from `Node_Dtor` before `Node_Remove`.
+        let info = match &self.slots[idx as usize] {
+            Slot::Node(_) => self.node_info_at(idx),
             Slot::Free => return,
         };
-        self.id_map.remove(&id);
+        self.id_map.remove(&info.node);
         let slot = core::mem::replace(&mut self.slots[idx as usize], Slot::Free);
         self.free.push(idx);
         let synth = match slot {
@@ -715,7 +719,7 @@ impl NodeTree {
         if synth.is_some() {
             self.synth_count = self.synth_count.saturating_sub(1);
         }
-        sink.push((id, synth));
+        sink.push((info, synth));
     }
 
     /// Free every synth in `group_idx` and its subgroups, keeping the groups.
@@ -725,8 +729,8 @@ impl NodeTree {
             let next = self.node_next(child);
             if self.is_group(child) {
                 self.deep_free_group(child, sink);
-            } else if let Some((id, synth)) = self.free_by_index(child) {
-                sink.push((id, Some(synth)));
+            } else if let Some((info, synth)) = self.free_by_index(child) {
+                sink.push((info, Some(synth)));
             }
             cur = next;
         }
@@ -876,6 +880,25 @@ impl NodeTree {
             Some(node) => (node.parent, node.prev, node.next),
             None => return,
         };
+        self.repair_parent(parent, prev, next, node_idx);
+        if let Some(node) = self.node_mut(node_idx) {
+            node.parent = None;
+            node.prev = None;
+            node.next = None;
+        }
+    }
+
+    /// Repair a surviving parent and siblings after the node at `idx` leaves its sibling chain -
+    /// scsynth's `Node_Remove`. `idx`'s own links are deliberately *not* touched (it may already be a
+    /// freed slot, as in [`free_at`](Self::free_at)); only the live neighbours that `prev`/`next`/
+    /// `parent` point to are fixed up.
+    fn repair_parent(
+        &mut self,
+        parent: Option<u32>,
+        prev: Option<u32>,
+        next: Option<u32>,
+        idx: u32,
+    ) {
         if let Some(p) = prev
             && let Some(pn) = self.node_mut(p)
         {
@@ -888,18 +911,13 @@ impl NodeTree {
         }
         if let Some(g) = parent {
             let (mut head, mut tail) = self.group_links(g);
-            if head == Some(node_idx) {
+            if head == Some(idx) {
                 head = next;
             }
-            if tail == Some(node_idx) {
+            if tail == Some(idx) {
                 tail = prev;
             }
             self.set_group_links(g, head, tail);
-        }
-        if let Some(node) = self.node_mut(node_idx) {
-            node.parent = None;
-            node.prev = None;
-            node.next = None;
         }
     }
 }

@@ -364,48 +364,45 @@ pub enum Trash {
     Recording(Box<StreamRecording>),
 }
 
+/// A node's tree position, carried by every node-lifecycle notification so a client can mirror the
+/// tree without re-querying - the shape scsynth's `Node_StateMsg` builds (`/n_go`/`/n_end`/`/n_on`/
+/// `/n_off`/`/n_move`/`/n_info`). Client ids throughout; `-1` for an absent parent/sibling, and
+/// `head`/`tail` are `-1` for a synth (`is_group == 0`).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct NodeNotify {
+    /// The node's client id.
+    pub node: i32,
+    /// Parent group's client id, or `-1`.
+    pub parent: i32,
+    /// Previous sibling's client id, or `-1`.
+    pub prev: i32,
+    /// Next sibling's client id, or `-1`.
+    pub next: i32,
+    /// `1` if a group, else `0`.
+    pub is_group: i32,
+    /// First child's client id (groups only), or `-1`.
+    pub head: i32,
+    /// Last child's client id (groups only), or `-1`.
+    pub tail: i32,
+}
+
 /// A notification flowing RT-side -> NRT-side, surfaced to the consumer by the
-/// [`Nrt`](crate::nrt::Nrt). Each mirrors a scsynth node-notification message.
+/// [`Nrt`](crate::nrt::Nrt). Each mirrors a scsynth node-notification message; the node-lifecycle
+/// variants carry the node's full tree position ([`NodeNotify`]), as scsynth's notifications do.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Event {
     /// A node was added to the tree (`/n_go`).
-    NodeStarted {
-        /// The node's client id.
-        id: i32,
-    },
-    /// A node was freed (`/n_end`), whether explicitly or by a done action.
-    NodeEnded {
-        /// The node's client id.
-        id: i32,
-    },
+    NodeStarted(NodeNotify),
+    /// A node was freed (`/n_end`), whether explicitly or by a done action. Captured at the moment of
+    /// removal (scsynth's `Node_StateMsg` before `Node_Remove`), so the position is the one the node
+    /// held while still linked.
+    NodeEnded(NodeNotify),
     /// A node was paused (`/n_off`).
-    NodePaused {
-        /// The node's client id.
-        id: i32,
-    },
+    NodePaused(NodeNotify),
     /// A node was resumed (`/n_on`).
-    NodeResumed {
-        /// The node's client id.
-        id: i32,
-    },
-    /// A node was moved to a new tree position (`/n_move`), carrying the same fields as `/n_info`.
-    /// Neighbour/parent ids are `-1` when absent; `head`/`tail` are `-1` for a synth.
-    NodeMoved {
-        /// The moved node's client id.
-        node: i32,
-        /// Parent group's client id, or `-1`.
-        parent: i32,
-        /// Previous sibling's client id, or `-1`.
-        prev: i32,
-        /// Next sibling's client id, or `-1`.
-        next: i32,
-        /// `1` if a group, else `0`.
-        is_group: i32,
-        /// First child's client id (groups only), or `-1`.
-        head: i32,
-        /// Last child's client id (groups only), or `-1`.
-        tail: i32,
-    },
+    NodeResumed(NodeNotify),
+    /// A node was moved to a new tree position (`/n_move`).
+    NodeMoved(NodeNotify),
     /// An `s_new` could not be realised - the def-table slot was empty or the rt-pool was exhausted -
     /// so no node with this id was created.
     SynthFailed {

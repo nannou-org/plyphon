@@ -171,7 +171,11 @@ The remaining gap is non-OSC: **UGen breadth**.
 
 ## Replies, notifications & done actions
 
-- [x] Replies: /done, /fail, /b_info, and node notifications /n_go /n_end /n_off /n_on
+- [x] Replies: /done, /fail, /b_info, and node notifications /n_go /n_end /n_off /n_on - each
+  carries the full `/n_info`-shaped position (node, parent, prev, next, isGroup, plus head/tail for a
+  group), captured at the moment of the event as scsynth's `Node_StateMsg` does (for `/n_end`, before
+  the node leaves the tree, so a deep free reports each descendant with an already-removed predecessor
+  reading back as `-1`)
 - [x] Getter replies: /status.reply, /synced (the `/sync` barrier), /rtMemoryStatus.reply, /n_info
   (`/n_query`), /g_queryTree.reply, /c_set·/c_setn (`/c_get`·`/c_getn`), /n_set·/n_setn
   (`/s_get`·`/s_getn`), /b_set·/b_setn (`/b_get`·`/b_getn`)
