@@ -72,9 +72,11 @@ is unimplemented - commented out in its command table - so plyphon omits it too.
 file region into an existing buffer at `bufStartFrame` (scsynth's `BufReadCmd`), and with `leaveOpen=1`
 keeps the file open and streams it off disk into a `DiskIn` (the read counterpart to `/b_write
 leaveOpen=1`); `/b_readChannel leaveOpen=1` streams only the selected channels through a deinterleaving
-stream wrapper. The **buffer surface is now complete with no deferrals**; the remaining gaps are
-non-OSC: UGen breadth, and the CLI server's live hardware-input capture (`In.ar` reads silence live;
-offline `render` feeds it via `-i`).
+stream wrapper. The **buffer surface is now complete with no deferrals**. The CLI server now also
+captures **live hardware input** for `In.ar` (`--input-channels` > 0): cpal has no duplex stream, so a
+separate capture stream feeds an `rtrb` jitter/drift ring that the output callback drains, reblocking the
+engine to exact control blocks (a carry-FIFO) so input stays sample-faithful on any host buffer size.
+The remaining gap is non-OSC: **UGen breadth**.
 
 **Server / top-level** (10/10)
 
