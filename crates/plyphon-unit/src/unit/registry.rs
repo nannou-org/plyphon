@@ -37,7 +37,7 @@ use crate::unit::filter_simple::{
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
-use crate::unit::line::LineCtor;
+use crate::unit::line::{LineCtor, XLineCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
 use crate::unit::node_ctl::{
     DoneCtor, FreeCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseCtor, PauseSelfCtor,
@@ -60,6 +60,9 @@ use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
+use crate::unit::shape::{
+    InRangeCtor, InRectCtor, LinExpCtor, RangeKind, RangeShaperCtor, UnwrapCtor,
+};
 use crate::unit::sin_osc::SinOscCtor;
 use crate::unit::timing::{
     PhasorCtor, PulseCountCtor, PulseDividerCtor, StepperCtor, SweepCtor, TimerCtor,
@@ -159,6 +162,15 @@ impl UnitRegistry {
         registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));
         registry.register("UnaryOpUGen", Box::new(UnaryOpCtor));
         registry.register("Line", Box::new(LineCtor));
+        registry.register("XLine", Box::new(XLineCtor));
+        registry.register("Clip", Box::new(RangeShaperCtor(RangeKind::Clip)));
+        registry.register("Wrap", Box::new(RangeShaperCtor(RangeKind::Wrap)));
+        registry.register("Fold", Box::new(RangeShaperCtor(RangeKind::Fold)));
+        registry.register("ModDif", Box::new(RangeShaperCtor(RangeKind::ModDif)));
+        registry.register("InRange", Box::new(InRangeCtor));
+        registry.register("InRect", Box::new(InRectCtor));
+        registry.register("LinExp", Box::new(LinExpCtor));
+        registry.register("Unwrap", Box::new(UnwrapCtor));
         registry.register("LPF", Box::new(ButterCtor(Kind::LowPass)));
         registry.register("HPF", Box::new(ButterCtor(Kind::HighPass)));
         registry.register("OnePole", Box::new(OnePoleCtor));

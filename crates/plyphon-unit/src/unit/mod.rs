@@ -50,6 +50,7 @@ pub mod resonant;
 pub mod scope_out;
 pub mod send_reply;
 pub mod send_trig;
+pub mod shape;
 pub mod sin_osc;
 pub mod timing;
 pub mod trigger;
