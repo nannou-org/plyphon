@@ -55,6 +55,7 @@ use crate::unit::freeverb::{FreeVerb2Ctor, FreeVerbCtor};
 use crate::unit::grain::{
     GrainBufCtor, GrainFMCtor, GrainInCtor, GrainSinCtor, TGrainsCtor, Warp1Ctor,
 };
+use crate::unit::gverb::GVerbCtor;
 use crate::unit::hilbert::{FreqShiftCtor, HilbertCtor};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
 use crate::unit::input::InCtor;
@@ -368,6 +369,8 @@ impl UnitRegistry {
         // Freeverb: eight parallel damped combs into four series allpasses (mono and true-stereo).
         registry.register("FreeVerb", Box::new(FreeVerbCtor));
         registry.register("FreeVerb2", Box::new(FreeVerb2Ctor));
+        // GVerb: a large Griesinger-style FDN reverb.
+        registry.register("GVerb", Box::new(GVerbCtor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
         registry.register("GrayNoise", Box::new(GrayNoiseCtor));

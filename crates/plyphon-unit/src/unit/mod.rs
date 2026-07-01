@@ -33,6 +33,7 @@ pub mod filter_simple;
 pub mod formant;
 pub mod freeverb;
 pub mod grain;
+pub mod gverb;
 pub mod hilbert;
 pub mod info;
 pub mod input;
