@@ -157,12 +157,17 @@ impl Clock {
         self.buftime.wrapping_add(self.increment)
     }
 
-    /// The within-block sample offset for a command scheduled at OSC/NTP `time` (scsynth's
-    /// `mSampleOffset`), clamped to `[0, block_size - 1]`. A late time (before the block start)
-    /// clamps to 0.
-    pub fn sample_offset(&self, time: u64, block_size: usize) -> usize {
+    /// The within-block `(integer sample, fractional subsample)` offset for a command scheduled at
+    /// OSC/NTP `time` (scsynth's `mSampleOffset` / `mSubsampleOffset`). The integer part is
+    /// round-to-nearest (`floor(pos + 0.5)`) clamped to `[0, block_size - 1]`; the fractional part is
+    /// `diff - floor(diff)` from the *unclamped* biased position, in `[0, 1)` - matching scsynth,
+    /// which clamps only the integer and leaves the subsample as the raw remainder.
+    pub fn block_offset(&self, time: u64, block_size: usize) -> (usize, f32) {
         let diff = (time.wrapping_sub(self.buftime) as i64) as f64 * self.to_samples + 0.5;
-        math::floor(diff).clamp(0.0, (block_size - 1) as f64) as usize
+        let floor = math::floor(diff);
+        let sample = floor.clamp(0.0, (block_size - 1) as f64) as usize;
+        let subsample = (diff - floor) as f32;
+        (sample, subsample)
     }
 
     /// Advance to the next control block (scsynth's `oscTime = mOSCbuftime = nextTime`).
@@ -230,13 +235,37 @@ mod tests {
         let base = 1_000_000_000_000;
         clock.resync(base, 0);
         let ups = units_per_sample(48_000.0);
+        let offset = |t| clock.block_offset(t, 64).0;
 
         // 10 samples into the block -> offset 10.
-        assert_eq!(clock.sample_offset(base + (10.0 * ups) as u64, 64), 10);
+        assert_eq!(offset(base + (10.0 * ups) as u64), 10);
         // A time before the block start (late) clamps to 0.
-        assert_eq!(clock.sample_offset(base - 5_000, 64), 0);
+        assert_eq!(offset(base - 5_000), 0);
         // Beyond the block clamps to block_size - 1.
-        assert_eq!(clock.sample_offset(base + (100.0 * ups) as u64, 64), 63);
+        assert_eq!(offset(base + (100.0 * ups) as u64), 63);
+    }
+
+    #[test]
+    fn clock_block_offset_splits_integer_and_fraction() {
+        let mut clock = Clock::new(48_000.0, 64);
+        let base = 1_000_000_000_000;
+        clock.resync(base, 0);
+        let ups = units_per_sample(48_000.0);
+
+        // A time 10.3 samples in: scsynth's `+0.5`-biased split rounds the integer to 10 and leaves
+        // the fraction as `(10.3 + 0.5) - floor(10.8) = 0.8` (NOT the intuitive 0.3).
+        let (sample, sub) = clock.block_offset(base + (10.3 * ups) as u64, 64);
+        assert_eq!(sample, 10);
+        assert!((sub - 0.8).abs() < 1e-3, "subsample {sub} != ~0.8");
+
+        // A time exactly on a sample boundary (integer position) has a `0.5` biased fraction.
+        let (sample, sub) = clock.block_offset(base + (12.0 * ups) as u64, 64);
+        assert_eq!(sample, 12);
+        assert!((sub - 0.5).abs() < 1e-3, "subsample {sub} != ~0.5");
+
+        // The integer clamps at the block edge but the fraction is the raw (unclamped) remainder.
+        let (sample, _) = clock.block_offset(base + (100.0 * ups) as u64, 64);
+        assert_eq!(sample, 63);
     }
 
     #[test]

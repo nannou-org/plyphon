@@ -14,6 +14,7 @@ use hashbrown::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::synthdef::{InputRef, Param, SynthDef, UnitSpec};
+use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 
 /// An error loading SynthDefs from SCgf bytes.
@@ -50,7 +51,9 @@ fn reblock_of(def: &scgf::SynthDef) -> Option<usize> {
 /// -> the rounded factor. A control-driven factor (`-1.0`) likewise falls back to 1.
 fn resample_of(def: &scgf::SynthDef) -> usize {
     if def.resample_factor > 1.0 {
-        def.resample_factor.round() as usize
+        // `round()` is not available in `no_std` (the wasm target); round-half-up with `floor`
+        // (the factor is `> 1.0` here).
+        math::floor(def.resample_factor + 0.5) as usize
     } else {
         1
     }

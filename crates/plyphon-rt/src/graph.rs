@@ -26,6 +26,7 @@ use crate::command::Reply;
 use plyphon_dsp::buffer::BufferTable;
 use plyphon_dsp::bus::Buses;
 use plyphon_dsp::fft::FftTables;
+use plyphon_dsp::math;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
@@ -96,6 +97,10 @@ pub struct Graph {
     /// Surfaced to its units on the first block only, so `OffsetOut` onsets sample-exactly; 0 for an
     /// immediately-created synth.
     sample_offset: usize,
+    /// The fractional (sub-sample) part of that creation offset (scsynth's node `mSubsampleOffset`),
+    /// in `[0, 1)`; surfaced to the first block only, where a `SubsampleOffset` UGen reads it. 0 for
+    /// an immediately-created synth.
+    subsample_offset: f32,
     /// One-shot `/n_trace` request: when set, the next [`process`](Self::process) dumps each unit's
     /// inputs/outputs and clears it (scsynth's one-block `Graph_CalcTrace`).
     trace: bool,
@@ -103,13 +108,20 @@ pub struct Graph {
 
 impl Graph {
     /// Wrap a freshly allocated, initialised block and its def into a live graph, created at
-    /// `sample_offset` samples into its first control block (0 unless scheduled mid-block).
-    pub(crate) fn new(block: Region, def: Arc<GraphDef>, sample_offset: usize) -> Self {
+    /// `sample_offset` samples (plus `subsample_offset` fractional samples) into its first control
+    /// block (0 unless scheduled mid-block).
+    pub(crate) fn new(
+        block: Region,
+        def: Arc<GraphDef>,
+        sample_offset: usize,
+        subsample_offset: f32,
+    ) -> Self {
         Graph {
             block,
             def,
             initialized: false,
             sample_offset,
+            subsample_offset,
             trace: false,
         }
     }
@@ -192,8 +204,9 @@ impl Graph {
         // The oversample factor (scsynth's `Resample(n)`): the graph's sample rate over the World's,
         // an exact power of two (1 for an ordinary def). The graph ticks `factor`x more often, and the
         // boundary I/O decimates/zero-order-holds by it.
-        let resample = (def.audio_rate().sample_rate / block.audio.sample_rate)
-            .round()
+        // `round()` is not available in `no_std` (the wasm target), so round-half-up with `floor`
+        // (the ratio is always positive).
+        let resample = math::floor(def.audio_rate().sample_rate / block.audio.sample_rate + 0.5)
             .max(1.0) as usize;
         let num_ticks = (world_bs / bs).max(1) * resample;
         // The first-block init pass runs on the very first tick only; tracked across ticks.
@@ -208,6 +221,7 @@ impl Graph {
             // The node's creation offset applies only to that very first tick (`OffsetOut` delays the
             // onset by it); later ticks/blocks start at the boundary.
             let sample_offset = if first { self.sample_offset } else { 0 };
+            let subsample_offset = if first { self.subsample_offset } else { 0.0 };
 
             // Apply control-bus mappings (`/n_map`): a mapped parameter takes the bus's current value.
             for (p, &bus) in pmaps.iter().enumerate() {
@@ -316,6 +330,7 @@ impl Graph {
                         tick,
                         resample_factor: resample,
                         sample_offset,
+                        subsample_offset,
                         // A consumer pulls demand sources through this; non-demand units ignore it. The
                         // demand arena is disjoint from this unit's `state` slot above.
                         demand: DemandAccess::new(

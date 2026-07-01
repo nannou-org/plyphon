@@ -130,6 +130,10 @@ pub struct World {
     /// `mSampleOffset`); 0 for immediate commands. Recorded onto a synth created mid-block so its
     /// `OffsetOut` onsets sample-exactly.
     current_sample_offset: usize,
+    /// The fractional (sub-sample) part of the current command's offset (scsynth's
+    /// `mSubsampleOffset`), in `[0, 1)`; 0 for immediate commands. Recorded onto a synth created
+    /// mid-block so its `SubsampleOffset` UGen can report it.
+    current_subsample_offset: f32,
     buf_counter: u64,
     block_size: usize,
     /// How many frames of the current control block have already been emitted to the host.
@@ -203,6 +207,7 @@ impl World {
             clock: Clock::new(options.sample_rate, bs),
             scheduler: Scheduler::new(options.max_scheduled),
             current_sample_offset: 0,
+            current_subsample_offset: 0.0,
             buf_counter: 0,
             block_size: bs,
             // Force a fresh control block on the first fill.
@@ -471,8 +476,9 @@ impl World {
     }
 
     /// Apply every scheduled command due by the end of this control block, in time order, stamping
-    /// each with its within-block sample offset (scsynth's per-event `mSampleOffset`). A late
-    /// command (its time already past) applies at offset 0.
+    /// each with its within-block sample offset and sub-sample offset (scsynth's per-event
+    /// `mSampleOffset` / `mSubsampleOffset`). A late command (its time already past) applies at
+    /// offset 0.
     fn apply_due_scheduled(&mut self) {
         let deadline = self.clock.block_end();
         while self
@@ -483,10 +489,13 @@ impl World {
             let Some((time, command)) = self.scheduler.pop() else {
                 break;
             };
-            self.current_sample_offset = self.clock.sample_offset(time, self.block_size);
+            let (sample, subsample) = self.clock.block_offset(time, self.block_size);
+            self.current_sample_offset = sample;
+            self.current_subsample_offset = subsample;
             self.apply(command);
         }
         self.current_sample_offset = 0;
+        self.current_subsample_offset = 0.0;
     }
 
     /// Apply the done actions collected during the tree walk. Each may free its synth (possibly with
@@ -1017,6 +1026,7 @@ impl World {
             region,
             Arc::clone(def),
             self.current_sample_offset,
+            self.current_subsample_offset,
         ))
     }
 

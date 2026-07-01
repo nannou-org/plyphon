@@ -477,6 +477,11 @@ pub struct ProcessCtx<'a> {
     /// `mSampleOffset`). It is non-zero only on the first block of a synth scheduled mid-block, and
     /// only `OffsetOut` acts on it - to delay the onset to that exact sample. Most units ignore it.
     pub sample_offset: usize,
+    /// The fractional (sub-sample) part of [`sample_offset`](Self::sample_offset) (scsynth's
+    /// `mSubsampleOffset`), in `[0, 1)`. Like `sample_offset` it is non-zero only on the first block
+    /// of a synth scheduled mid-block; `SubsampleOffset` is its only reader (it snapshots the value
+    /// for the synth's life). Most units ignore it.
+    pub subsample_offset: f32,
     /// Handle to the synth's demand plan. A demand-rate consumer (`Demand`/`Duty`) pulls demand
     /// sources through this with the [`demand_next`] / [`demand_reset`] free fns; other units ignore
     /// it. Empty for synths with no demand units.
