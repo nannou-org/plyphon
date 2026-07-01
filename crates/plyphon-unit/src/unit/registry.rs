@@ -60,6 +60,10 @@ use crate::unit::pan::{
 };
 use crate::unit::play_buf::PlayBufCtor;
 #[cfg(feature = "fft")]
+use crate::unit::pv_combine::{
+    ComplexKind, PolarKind, PvComplexCtor, PvCopyCtor, PvCopyPhaseCtor, PvPolarCtor,
+};
+#[cfg(feature = "fft")]
 use crate::unit::pv_mag_mul::PvMagMulCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_mag_squared::PvMagSquaredCtor;
@@ -344,6 +348,13 @@ impl UnitRegistry {
             registry.register("PV_PhaseShift270", Box::new(PvPhaseQuarterCtor(true)));
             registry.register("PV_BrickWall", Box::new(PvBrickWallCtor));
             registry.register("PV_Conj", Box::new(PvConjCtor));
+            registry.register("PV_Add", Box::new(PvComplexCtor(ComplexKind::Add)));
+            registry.register("PV_Mul", Box::new(PvComplexCtor(ComplexKind::Mul)));
+            registry.register("PV_Div", Box::new(PvComplexCtor(ComplexKind::Div)));
+            registry.register("PV_Max", Box::new(PvPolarCtor(PolarKind::Max)));
+            registry.register("PV_Min", Box::new(PvPolarCtor(PolarKind::Min)));
+            registry.register("PV_CopyPhase", Box::new(PvCopyPhaseCtor));
+            registry.register("PV_Copy", Box::new(PvCopyCtor));
         }
         registry
     }

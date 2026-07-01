@@ -108,6 +108,29 @@ pub fn bin_magnitude(coord: SpectrumCoord, b: Bin) -> f32 {
     }
 }
 
+/// Read bin `b` (stored in form `coord`) as a complex `(re, im)` pair, without mutating its buffer -
+/// for a two-buffer complex op reading its read-only second buffer.
+pub fn bin_as_complex(coord: SpectrumCoord, b: Bin) -> Bin {
+    match coord {
+        SpectrumCoord::Complex => b,
+        SpectrumCoord::Polar => Bin {
+            x: b.x * math::cos(b.y),
+            y: b.x * math::sin(b.y),
+        },
+    }
+}
+
+/// Read bin `b` (stored in form `coord`) as a polar `(mag, phase)` pair, without mutating its buffer.
+pub fn bin_as_polar(coord: SpectrumCoord, b: Bin) -> Bin {
+    match coord {
+        SpectrumCoord::Polar => b,
+        SpectrumCoord::Complex => Bin {
+            x: math::hypot(b.y, b.x),
+            y: math::atan2(b.y, b.x),
+        },
+    }
+}
+
 /// A read-only packed view of the bins (skipping `dc`/`nyq`), for the second buffer of a two-buffer
 /// op (`PV_MagMul` reads `B` while rewriting `A`). Empty if the slice is too short or odd.
 pub fn bins(data: &[f32]) -> &[Bin] {
