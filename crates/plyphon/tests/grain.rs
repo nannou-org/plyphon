@@ -129,3 +129,84 @@ fn grain_sin_pans_across_channels() {
         "pan +1 favours channel 1 (ch0={r0}, ch1={r1})"
     );
 }
+
+#[test]
+fn grain_fm_has_carrier_and_sidebands() {
+    // A long FM grain (carrier 440, modulator 110, index 2) resolves the full FM sideband series at
+    // 440 +/- k*110; at index 2 the first sidebands (330, 550) exceed the carrier (Bessel J1 > J0).
+    let out = render(
+        vec![
+            impulse(1.0), // a single, long grain over the render
+            UnitSpec::new(
+                "GrainFM",
+                Rate::Audio,
+                vec![
+                    u(0),
+                    c(0.2),
+                    c(440.0),
+                    c(110.0),
+                    c(2.0),
+                    c(0.0),
+                    c(-1.0),
+                    c(32.0),
+                ],
+                1,
+            ),
+            UnitSpec::new("Out", Rate::Audio, vec![c(0.0), u(1)], 0),
+        ],
+        1,
+        SR as usize / 4,
+    );
+    assert!(
+        out.iter().all(|s| s.is_finite()),
+        "GrainFM must stay finite"
+    );
+    assert!(out.iter().all(|&s| s.abs() < 3.0), "GrainFM stays bounded");
+    // 495 Hz sits between the 440 and 550 components (an ~empty bin).
+    let off = goertzel(&out, 495.0);
+    let carrier = goertzel(&out, 440.0);
+    let side = goertzel(&out, 550.0);
+    assert!(
+        carrier > 10.0 * off,
+        "the carrier should sound (440={carrier}, 495={off})"
+    );
+    assert!(
+        side > 10.0 * off,
+        "the 550 Hz FM sideband should appear (550={side}, 495={off})"
+    );
+    assert!(
+        side > carrier,
+        "at index 2 the first sideband exceeds the carrier (550={side}, 440={carrier})"
+    );
+}
+
+#[test]
+fn grain_in_windows_the_input() {
+    // GrainIn windows a live 440 Hz sine, so its grains ring at 440.
+    let out = render(
+        vec![
+            impulse(20.0),
+            UnitSpec::new("SinOsc", Rate::Audio, vec![c(440.0), c(0.0)], 1),
+            UnitSpec::new(
+                "GrainIn",
+                Rate::Audio,
+                vec![u(0), c(0.03), u(1), c(0.0), c(-1.0), c(32.0)],
+                1,
+            ),
+            UnitSpec::new("Out", Rate::Audio, vec![c(0.0), u(2)], 0),
+        ],
+        1,
+        SR as usize / 4,
+    );
+    assert!(
+        out.iter().all(|s| s.is_finite()),
+        "GrainIn must stay finite"
+    );
+    assert!(out.iter().all(|&s| s.abs() < 3.0), "GrainIn stays bounded");
+    let at = goertzel(&out, 440.0);
+    assert!(
+        at > 8.0 * goertzel(&out, 660.0),
+        "windows the 440 input (440={at})"
+    );
+    assert!(at > 0.02, "the windowed grains should sound");
+}

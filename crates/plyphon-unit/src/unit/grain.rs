@@ -127,6 +127,32 @@ fn env_buffer(buffers: &BufferTable, envbufnum: f32) -> Option<&[f32]> {
     }
 }
 
+/// Call `spawn(off)` at each rising edge of the trigger over the block, and return the new previous
+/// value. An audio-rate trigger is scanned per sample; a control-rate one fires at most once (offset 0).
+fn scan_triggers(
+    trig_audio: bool,
+    prev: f32,
+    ctrl: f32,
+    audio: &[f32],
+    mut spawn: impl FnMut(usize),
+) -> f32 {
+    if trig_audio {
+        let mut p = prev;
+        for (i, &t) in audio.iter().enumerate() {
+            if p <= 0.0 && t > 0.0 {
+                spawn(i);
+            }
+            p = t;
+        }
+        p
+    } else {
+        if prev <= 0.0 && ctrl > 0.0 {
+            spawn(0);
+        }
+        ctrl
+    }
+}
+
 /// One grain of [`GrainSin`]: a windowed sine.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -210,10 +236,10 @@ impl GrainSin {
         &mut self,
         ins: &Inputs<'_>,
         outs: &mut Outputs<'_>,
-        buffers: &BufferTable,
         block: usize,
         off: usize,
         table: &[f32],
+        win: Option<&[f32]>,
         sample_rate: f64,
     ) {
         if self.num_active as usize >= self.max_grains as usize {
@@ -224,7 +250,6 @@ impl GrainSin {
         let freq = sample_channel(ins, Self::FREQ, off);
         let pan = sample_channel(ins, Self::PAN, off);
         let win_type = ins.control(Self::ENVBUF);
-        let win = env_buffer(buffers, win_type);
         let (b1, y1, y2, win_pos, win_inc) = init_window(win_type, counter, win);
         let (chan, pan1, pan2) = grain_pan(pan, num_out);
         let mut grain = GrainSinG {
@@ -276,39 +301,21 @@ impl Unit for GrainSin {
         }
 
         // Scan the trigger for rising edges and spawn a grain at each.
-        if self.trig_audio != 0 {
-            let mut prev = self.prev_trig;
-            for i in 0..block {
-                let t = ins.audio(Self::TRIG)[i];
-                if prev <= 0.0 && t > 0.0 {
-                    self.spawn(
-                        &ins,
-                        &mut ctx.outs,
-                        ctx.buffers,
-                        block,
-                        i,
-                        table,
-                        sample_rate,
-                    );
-                }
-                prev = t;
-            }
-            self.prev_trig = prev;
+        let trig_audio = self.trig_audio != 0;
+        let audio = if trig_audio {
+            ins.audio(Self::TRIG)
         } else {
-            let t = ins.control(Self::TRIG);
-            if self.prev_trig <= 0.0 && t > 0.0 {
-                self.spawn(
-                    &ins,
-                    &mut ctx.outs,
-                    ctx.buffers,
-                    block,
-                    0,
-                    table,
-                    sample_rate,
-                );
-            }
-            self.prev_trig = t;
-        }
+            &[]
+        };
+        self.prev_trig = scan_triggers(
+            trig_audio,
+            self.prev_trig,
+            ins.control(Self::TRIG),
+            audio,
+            |off| {
+                self.spawn(&ins, &mut ctx.outs, block, off, table, win, sample_rate);
+            },
+        );
         DoneAction::Nothing
     }
 }
@@ -321,17 +328,390 @@ impl UnitDef for GrainSinCtor {
         if ctx.input_rates.len() < 6 {
             return Err(BuildError::WrongInputCount);
         }
-        let max_grains = ctx
-            .const_input(5)
-            .map(|m| (m as usize).clamp(1, MAX_GRAINS))
-            .unwrap_or(MAX_GRAINS) as u32;
         Ok(unit_spec(GrainSin {
             grains: [GrainSinG::zeroed(); MAX_GRAINS],
             num_active: 0,
             num_channels: ctx.num_outputs.max(1) as u32,
-            max_grains,
+            max_grains: max_grains(ctx, 5),
             prev_trig: 0.0,
-            trig_audio: (ctx.input_rates.first() == Some(&Rate::Audio)) as u32,
+            trig_audio: trig_is_audio(ctx),
+            _pad: 0,
+        }))
+    }
+}
+
+/// The `maxGrains` input (index `i`) clamped to `1..=MAX_GRAINS`, or the cap if it is not constant.
+fn max_grains(ctx: &BuildContext<'_>, i: usize) -> u32 {
+    ctx.const_input(i)
+        .map(|m| (m as usize).clamp(1, MAX_GRAINS))
+        .unwrap_or(MAX_GRAINS) as u32
+}
+
+/// Whether the trigger input (index 0) is audio-rate.
+fn trig_is_audio(ctx: &BuildContext<'_>) -> u32 {
+    (ctx.input_rates.first() == Some(&Rate::Audio)) as u32
+}
+
+/// One grain of [`GrainFM`]: a windowed FM carrier/modulator pair.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct GrainFMG {
+    b1: f64,
+    y1: f64,
+    y2: f64,
+    win_pos: f64,
+    win_inc: f64,
+    cphase: f64,
+    mphase: f64,
+    minc: f64,
+    counter: i32,
+    chan: i32,
+    carbase: f32,
+    deviation: f32,
+    pan1: f32,
+    pan2: f32,
+    win_type: f32,
+    _pad: u32,
+}
+
+impl GrainFMG {
+    #[allow(clippy::too_many_arguments)]
+    fn render(
+        &mut self,
+        outs: &mut Outputs<'_>,
+        block: usize,
+        off: usize,
+        table: &[f32],
+        win: Option<&[f32]>,
+        num_out: usize,
+        sample_dur: f64,
+    ) -> bool {
+        let n = (block - off).min(self.counter.max(0) as usize);
+        let chan = self.chan as usize;
+        for j in off..off + n {
+            let thismod = lookup_cycle(table, self.mphase as f32) as f64 * self.deviation as f64;
+            let carrier = lookup_cycle(table, self.cphase as f32);
+            let amp = window_amp(
+                self.win_type,
+                self.b1,
+                &mut self.y1,
+                &mut self.y2,
+                &mut self.win_pos,
+                self.win_inc,
+                win,
+            );
+            pan_out(outs, chan, j, amp * carrier, self.pan1, self.pan2, num_out);
+            let cp = self.cphase + (self.carbase as f64 + thismod) * sample_dur;
+            self.cphase = cp - math::floor(cp);
+            let mp = self.mphase + self.minc;
+            self.mphase = mp - math::floor(mp);
+            self.counter -= 1;
+        }
+        self.counter <= 0
+    }
+}
+
+/// `GrainFM.ar(numChannels, trigger, dur, carfreq, modfreq, index, pan, envbufnum, maxGrains)`: FM
+/// granular synthesis - each grain is a sine carrier at `carfreq` frequency-modulated by a sine at
+/// `modfreq` with modulation `index` (peak deviation `index * modfreq` Hz), windowed and panned like
+/// [`GrainSin`].
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct GrainFM {
+    grains: [GrainFMG; MAX_GRAINS],
+    num_active: u32,
+    num_channels: u32,
+    max_grains: u32,
+    prev_trig: f32,
+    trig_audio: u32,
+    _pad: u32,
+}
+
+impl GrainFM {
+    const TRIG: usize = 0;
+    const DUR: usize = 1;
+    const CARFREQ: usize = 2;
+    const MODFREQ: usize = 3;
+    const INDEX: usize = 4;
+    const PAN: usize = 5;
+    const ENVBUF: usize = 6;
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn(
+        &mut self,
+        ins: &Inputs<'_>,
+        outs: &mut Outputs<'_>,
+        block: usize,
+        off: usize,
+        table: &[f32],
+        win: Option<&[f32]>,
+        sample_rate: f64,
+    ) {
+        if self.num_active as usize >= self.max_grains as usize {
+            return;
+        }
+        let num_out = self.num_channels as usize;
+        let counter = grain_counter(sample_channel(ins, Self::DUR, off), sample_rate);
+        let carfreq = sample_channel(ins, Self::CARFREQ, off);
+        let modfreq = sample_channel(ins, Self::MODFREQ, off);
+        let index = sample_channel(ins, Self::INDEX, off);
+        let pan = sample_channel(ins, Self::PAN, off);
+        let win_type = ins.control(Self::ENVBUF);
+        let (b1, y1, y2, win_pos, win_inc) = init_window(win_type, counter, win);
+        let (chan, pan1, pan2) = grain_pan(pan, num_out);
+        let sample_dur = 1.0 / sample_rate;
+        let mut grain = GrainFMG {
+            b1,
+            y1,
+            y2,
+            win_pos,
+            win_inc,
+            cphase: 0.0,
+            mphase: 0.0,
+            minc: modfreq as f64 * sample_dur,
+            counter,
+            chan: chan as i32,
+            carbase: carfreq,
+            deviation: index * modfreq,
+            pan1,
+            pan2,
+            win_type,
+            _pad: 0,
+        };
+        if !grain.render(outs, block, off, table, win, num_out, sample_dur) {
+            self.grains[self.num_active as usize] = grain;
+            self.num_active += 1;
+        }
+    }
+}
+
+impl Unit for GrainFM {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let num_out = self.num_channels as usize;
+        let block = ctx.outs.audio(0).len();
+        for ch in 0..num_out {
+            ctx.outs.audio(ch).fill(0.0);
+        }
+        let sample_rate = ctx.audio.sample_rate;
+        let sample_dur = ctx.audio.sample_dur;
+        let table = ctx.wavetables.sine();
+        let ins = ctx.ins;
+        let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
+
+        let mut k = 0;
+        while k < self.num_active as usize {
+            if self.grains[k].render(&mut ctx.outs, block, 0, table, win, num_out, sample_dur) {
+                self.num_active -= 1;
+                self.grains[k] = self.grains[self.num_active as usize];
+            } else {
+                k += 1;
+            }
+        }
+
+        let trig_audio = self.trig_audio != 0;
+        let audio = if trig_audio {
+            ins.audio(Self::TRIG)
+        } else {
+            &[]
+        };
+        self.prev_trig = scan_triggers(
+            trig_audio,
+            self.prev_trig,
+            ins.control(Self::TRIG),
+            audio,
+            |off| {
+                self.spawn(&ins, &mut ctx.outs, block, off, table, win, sample_rate);
+            },
+        );
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`GrainFM`].
+pub struct GrainFMCtor;
+
+impl UnitDef for GrainFMCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 8 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(GrainFM {
+            grains: [GrainFMG::zeroed(); MAX_GRAINS],
+            num_active: 0,
+            num_channels: ctx.num_outputs.max(1) as u32,
+            max_grains: max_grains(ctx, 7),
+            prev_trig: 0.0,
+            trig_audio: trig_is_audio(ctx),
+            _pad: 0,
+        }))
+    }
+}
+
+/// One grain of [`GrainIn`]: a window applied to the live input.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct GrainInG {
+    b1: f64,
+    y1: f64,
+    y2: f64,
+    win_pos: f64,
+    win_inc: f64,
+    counter: i32,
+    chan: i32,
+    pan1: f32,
+    pan2: f32,
+    win_type: f32,
+    _pad: u32,
+}
+
+impl GrainInG {
+    fn render(
+        &mut self,
+        outs: &mut Outputs<'_>,
+        block: usize,
+        off: usize,
+        win: Option<&[f32]>,
+        num_out: usize,
+        input: &[f32],
+    ) -> bool {
+        let n = (block - off).min(self.counter.max(0) as usize);
+        let chan = self.chan as usize;
+        for j in off..off + n {
+            let x = input.get(j).copied().unwrap_or(0.0);
+            let amp = window_amp(
+                self.win_type,
+                self.b1,
+                &mut self.y1,
+                &mut self.y2,
+                &mut self.win_pos,
+                self.win_inc,
+                win,
+            );
+            pan_out(outs, chan, j, amp * x, self.pan1, self.pan2, num_out);
+            self.counter -= 1;
+        }
+        self.counter <= 0
+    }
+}
+
+/// `GrainIn.ar(numChannels, trigger, dur, in, pan, envbufnum, maxGrains)`: grains that window the live
+/// input signal `in` - a rising trigger starts a `dur`-long window over `in`, panned across the
+/// outputs. Overlapping grains sum windowed copies of the same input.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct GrainIn {
+    grains: [GrainInG; MAX_GRAINS],
+    num_active: u32,
+    num_channels: u32,
+    max_grains: u32,
+    prev_trig: f32,
+    trig_audio: u32,
+    _pad: u32,
+}
+
+impl GrainIn {
+    const TRIG: usize = 0;
+    const DUR: usize = 1;
+    const IN: usize = 2;
+    const PAN: usize = 3;
+    const ENVBUF: usize = 4;
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn(
+        &mut self,
+        ins: &Inputs<'_>,
+        outs: &mut Outputs<'_>,
+        block: usize,
+        off: usize,
+        win: Option<&[f32]>,
+        input: &[f32],
+        sample_rate: f64,
+    ) {
+        if self.num_active as usize >= self.max_grains as usize {
+            return;
+        }
+        let num_out = self.num_channels as usize;
+        let counter = grain_counter(sample_channel(ins, Self::DUR, off), sample_rate);
+        let pan = sample_channel(ins, Self::PAN, off);
+        let win_type = ins.control(Self::ENVBUF);
+        let (b1, y1, y2, win_pos, win_inc) = init_window(win_type, counter, win);
+        let (chan, pan1, pan2) = grain_pan(pan, num_out);
+        let mut grain = GrainInG {
+            b1,
+            y1,
+            y2,
+            win_pos,
+            win_inc,
+            counter,
+            chan: chan as i32,
+            pan1,
+            pan2,
+            win_type,
+            _pad: 0,
+        };
+        if !grain.render(outs, block, off, win, num_out, input) {
+            self.grains[self.num_active as usize] = grain;
+            self.num_active += 1;
+        }
+    }
+}
+
+impl Unit for GrainIn {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let num_out = self.num_channels as usize;
+        let block = ctx.outs.audio(0).len();
+        for ch in 0..num_out {
+            ctx.outs.audio(ch).fill(0.0);
+        }
+        let sample_rate = ctx.audio.sample_rate;
+        let ins = ctx.ins;
+        let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
+        let input = ins.audio(Self::IN);
+
+        let mut k = 0;
+        while k < self.num_active as usize {
+            if self.grains[k].render(&mut ctx.outs, block, 0, win, num_out, input) {
+                self.num_active -= 1;
+                self.grains[k] = self.grains[self.num_active as usize];
+            } else {
+                k += 1;
+            }
+        }
+
+        let trig_audio = self.trig_audio != 0;
+        let audio = if trig_audio {
+            ins.audio(Self::TRIG)
+        } else {
+            &[]
+        };
+        self.prev_trig = scan_triggers(
+            trig_audio,
+            self.prev_trig,
+            ins.control(Self::TRIG),
+            audio,
+            |off| {
+                self.spawn(&ins, &mut ctx.outs, block, off, win, input, sample_rate);
+            },
+        );
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`GrainIn`].
+pub struct GrainInCtor;
+
+impl UnitDef for GrainInCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 6 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(GrainIn {
+            grains: [GrainInG::zeroed(); MAX_GRAINS],
+            num_active: 0,
+            num_channels: ctx.num_outputs.max(1) as u32,
+            max_grains: max_grains(ctx, 5),
+            prev_trig: 0.0,
+            trig_audio: trig_is_audio(ctx),
             _pad: 0,
         }))
     }

@@ -48,7 +48,7 @@ use crate::unit::filter_simple::{
     SlewCtor, SlopeCtor,
 };
 use crate::unit::formant::FormantCtor;
-use crate::unit::grain::GrainSinCtor;
+use crate::unit::grain::{GrainFMCtor, GrainInCtor, GrainSinCtor};
 use crate::unit::hilbert::{FreqShiftCtor, HilbertCtor};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
 use crate::unit::input::InCtor;
@@ -365,6 +365,8 @@ impl UnitRegistry {
         registry.register("Klank", Box::new(KlankCtor));
         // Granular synthesis.
         registry.register("GrainSin", Box::new(GrainSinCtor));
+        registry.register("GrainFM", Box::new(GrainFMCtor));
+        registry.register("GrainIn", Box::new(GrainInCtor));
         registry.register("Pan2", Box::new(Pan2Ctor));
         registry.register("LinPan2", Box::new(LinPan2Ctor));
         registry.register("Balance2", Box::new(Balance2Ctor));
