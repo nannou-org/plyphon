@@ -80,8 +80,8 @@ use crate::unit::node_ctl::{
     PauseSelfWhenDoneCtor,
 };
 use crate::unit::noise::{
-    BrownNoiseCtor, ClipNoiseCtor, Dust2Ctor, DustCtor, GrayNoiseCtor, PinkNoiseCtor,
-    WhiteNoiseCtor,
+    BrownNoiseCtor, ClipNoiseCtor, CrackleCtor, Dust2Ctor, DustCtor, GrayNoiseCtor, HasherCtor,
+    LogisticCtor, MantissaMaskCtor, PinkNoiseCtor, WhiteNoiseCtor,
 };
 use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
 use crate::unit::out::{OffsetOutCtor, OutCtor, ReplaceOutCtor};
@@ -378,6 +378,10 @@ impl UnitRegistry {
         registry.register("BrownNoise", Box::new(BrownNoiseCtor));
         registry.register("Dust", Box::new(DustCtor));
         registry.register("Dust2", Box::new(Dust2Ctor));
+        registry.register("Crackle", Box::new(CrackleCtor));
+        registry.register("Logistic", Box::new(LogisticCtor));
+        registry.register("Hasher", Box::new(HasherCtor));
+        registry.register("MantissaMask", Box::new(MantissaMaskCtor));
         // Low-frequency / dynamic noise (a new random value at an average `freq`).
         registry.register("LFNoise0", Box::new(LFNoise0Ctor));
         registry.register("LFNoise1", Box::new(LFNoise1Ctor));

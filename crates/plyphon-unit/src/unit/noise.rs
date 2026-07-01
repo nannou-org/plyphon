@@ -1,16 +1,19 @@
 //! The noise generators - plyphon's ports of scsynth's `WhiteNoise`, `ClipNoise`, `GrayNoise`,
-//! `PinkNoise`, `BrownNoise`, `Dust` and `Dust2` (`NoiseUGens.cpp`).
+//! `PinkNoise`, `BrownNoise`, `Dust` and `Dust2`, plus the chaotic/deterministic `Crackle`, `Logistic`,
+//! `Hasher` and `MantissaMask` (`NoiseUGens.cpp`).
 //!
-//! Each embeds a per-unit [`Rng`] (scsynth's Taus88 `RGen`) in its `Pod` state and reseeds it in
-//! [`Unit::reseed`]; the coefficient-free generators output at whichever rate the SynthDef assigns.
-//! The float bit-tricks in scsynth's `SC_RGen.h` (`frand`/`frand2`/`frand8`/`fcoin`, and PinkNoise's
-//! mantissa packing) are reproduced with safe [`f32::from_bits`].
+//! The random generators embed a per-unit [`Rng`] (scsynth's Taus88 `RGen`) in their `Pod` state and
+//! reseed it in [`Unit::reseed`]; the coefficient-free ones output at whichever rate the SynthDef
+//! assigns. The float bit-tricks in scsynth's `SC_RGen.h` (`frand`/`frand2`/`frand8`/`fcoin`, and
+//! PinkNoise's mantissa packing) are reproduced with safe [`f32::from_bits`]. `Crackle`/`Logistic` are
+//! deterministic chaotic maps (seeded from the RGen / an `init` input); `Hasher`/`MantissaMask` are pure
+//! deterministic bit manglers of their input.
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
 use plyphon_dsp::rng::Rng;
 
@@ -39,6 +42,20 @@ fn generate(ctx: &mut ProcessCtx<'_>, audio: bool, mut next: impl FnMut() -> f32
         }
     } else {
         *ctx.outs.control(0) = next();
+    }
+}
+
+/// Map input 0 through `f` to the output at the unit's rate (a control input broadcasts).
+fn transform(ctx: &mut ProcessCtx<'_>, audio: bool, f: impl Fn(f32) -> f32) {
+    let ins = ctx.ins;
+    if audio {
+        let in_audio = (ins.rate(0) == Rate::Audio).then(|| ins.audio(0));
+        let in_ctrl = ins.control(0);
+        for (k, o) in ctx.outs.audio(0).iter_mut().enumerate() {
+            *o = f(in_audio.map_or(in_ctrl, |s| s[k]));
+        }
+    } else {
+        *ctx.outs.control(0) = f(ins.control(0));
     }
 }
 
@@ -348,6 +365,184 @@ impl UnitDef for Dust2Ctor {
         }
         Ok(unit_spec(Dust2 {
             rng: Rng::new(ctx.seed),
+            audio: (ctx.rate == Rate::Audio) as u32,
+        }))
+    }
+}
+
+/// Thomas Wang's integer hash (scsynth's `Hash(int32)`), used by [`Hasher`] to derive deterministic
+/// pseudo-noise from a signal's bits.
+fn hash(key: i32) -> i32 {
+    let mut h = key as u32;
+    h = h.wrapping_add(!(h << 15));
+    h ^= h >> 10;
+    h = h.wrapping_add(h << 3);
+    h ^= h >> 6;
+    h = h.wrapping_add(!(h << 11));
+    h ^= h >> 16;
+    h as i32
+}
+
+/// `Crackle.ar(chaosParam)`: a chaotic noise from the map `y0 = |y1*param - y2 - 0.05|` (scsynth's
+/// `Crackle`). Deterministic once seeded; `y1` starts from the per-unit RNG so instances decorrelate.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct Crackle {
+    y1: f32,
+    y2: f32,
+    audio: u32,
+    _pad: u32,
+}
+
+impl Unit for Crackle {
+    fn reseed(&mut self, seed: u64) {
+        self.y1 = Rng::new(seed).next_unipolar();
+        self.y2 = 0.0;
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let param = ctx.ins.control(0);
+        let audio = self.audio != 0;
+        let mut y1 = self.y1;
+        let mut y2 = self.y2;
+        generate(ctx, audio, || {
+            let y0 = (y1 * param - y2 - 0.05).abs();
+            y2 = y1;
+            y1 = y0;
+            y0
+        });
+        self.y1 = y1;
+        self.y2 = y2;
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`Crackle`].
+pub struct CrackleCtor;
+
+impl UnitDef for CrackleCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Crackle {
+            y1: 0.0,
+            y2: 0.0,
+            audio: (ctx.rate == Rate::Audio) as u32,
+            _pad: 0,
+        }))
+    }
+}
+
+/// `Logistic.ar(chaosParam, freq, init)`: the logistic map `y = param*y*(1-y)`, iterated at `freq`
+/// (held between iterations) - a route into chaos as `param` approaches 4. `y` starts from `init`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct Logistic {
+    y1: f64,
+    counter: i32,
+    audio: u32,
+}
+
+impl Unit for Logistic {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        self.y1 = ctx.ins.control(2) as f64;
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let param = ctx.ins.control(0) as f64;
+        let freq = ctx.ins.control(1);
+        let sr = ctx.audio.sample_rate as f32;
+        let audio = self.audio != 0;
+        let mut y1 = self.y1;
+        let mut counter = self.counter;
+        // Iterate the map when the sample counter expires (every `sr/freq` samples).
+        let step = |c: &mut i32, y: &mut f64| {
+            if *c <= 0 {
+                *c = ((sr / freq.max(0.001)) as i32).max(1);
+                *y = param * *y * (1.0 - *y);
+            }
+            *c -= 1;
+            *y as f32
+        };
+        if audio {
+            for o in ctx.outs.audio(0).iter_mut() {
+                *o = step(&mut counter, &mut y1);
+            }
+        } else {
+            *ctx.outs.control(0) = step(&mut counter, &mut y1);
+        }
+        self.y1 = y1;
+        self.counter = counter;
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`Logistic`].
+pub struct LogisticCtor;
+
+impl UnitDef for LogisticCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Logistic {
+            y1: 0.0,
+            counter: 0,
+            audio: (ctx.rate == Rate::Audio) as u32,
+        }))
+    }
+}
+
+/// `Hasher.ar/kr(in)`: a deterministic pseudo-random value in `[-1, 1)` per input sample (scsynth's
+/// integer `Hash` of the input's bits, packed into a float). The same input always gives the same
+/// output, so it "freezes" noise to a signal.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct Hasher {
+    audio: u32,
+}
+
+impl Unit for Hasher {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let map = |x: f32| {
+            let bits = 0x4000_0000u32 | ((hash(x.to_bits() as i32) as u32) >> 9);
+            f32::from_bits(bits) - 3.0
+        };
+        transform(ctx, self.audio != 0, map);
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`Hasher`].
+pub struct HasherCtor;
+
+impl UnitDef for HasherCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(Hasher {
+            audio: (ctx.rate == Rate::Audio) as u32,
+        }))
+    }
+}
+
+/// `MantissaMask.ar/kr(in, bits)`: keep only the top `bits` mantissa bits of the input, masking the
+/// rest to zero - a cheap bit-crush/distortion.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct MantissaMask {
+    audio: u32,
+}
+
+impl Unit for MantissaMask {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let bits = (ctx.ins.control(1) as i32).clamp(0, 23);
+        let mask = (-1i32) << (23 - bits);
+        let map = |x: f32| f32::from_bits((x.to_bits() as i32 & mask) as u32);
+        transform(ctx, self.audio != 0, map);
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`MantissaMask`].
+pub struct MantissaMaskCtor;
+
+impl UnitDef for MantissaMaskCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(MantissaMask {
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
