@@ -20,6 +20,7 @@ pub mod delay;
 pub mod demand;
 pub mod disk_in;
 pub mod disk_out;
+pub mod dynamics;
 pub mod env;
 #[cfg(feature = "fft")]
 pub mod fft;

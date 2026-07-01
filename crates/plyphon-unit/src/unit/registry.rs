@@ -26,6 +26,7 @@ use crate::unit::demand::duty::DutyCtor;
 use crate::unit::demand::dwhite::DwhiteCtor;
 use crate::unit::disk_in::DiskInCtor;
 use crate::unit::disk_out::DiskOutCtor;
+use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor};
 use crate::unit::env::EnvGenCtor;
 #[cfg(feature = "fft")]
 use crate::unit::fft::{FftCtor, IfftCtor};
@@ -227,6 +228,8 @@ impl UnitRegistry {
         registry.register("MulAdd", Box::new(MulAddCtor));
         registry.register("Lag", Box::new(LagCtor));
         registry.register("Amplitude", Box::new(AmplitudeCtor));
+        registry.register("Compander", Box::new(CompanderCtor));
+        registry.register("DetectSilence", Box::new(DetectSilenceCtor));
         registry.register("EnvGen", Box::new(EnvGenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
         registry.register("Trig", Box::new(TrigCtor));
