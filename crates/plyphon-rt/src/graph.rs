@@ -205,8 +205,8 @@ impl Graph {
         // an exact power of two (1 for an ordinary def). The graph ticks `factor`x more often, and the
         // boundary I/O decimates/zero-order-holds by it. `round()` is std-only (unavailable on the
         // wasm target), so route through `math::round`.
-        let resample = math::round(def.audio_rate().sample_rate / block.audio.sample_rate)
-            .max(1.0) as usize;
+        let resample =
+            math::round(def.audio_rate().sample_rate / block.audio.sample_rate).max(1.0) as usize;
         let num_ticks = (world_bs / bs).max(1) * resample;
         // The first-block init pass runs on the very first tick only; tracked across ticks.
         let first_block = !self.initialized;

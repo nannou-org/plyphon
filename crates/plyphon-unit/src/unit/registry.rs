@@ -42,7 +42,7 @@ use crate::unit::filter_simple::{
     APFCtor, BPZ2Ctor, BRZ2Ctor, Delay1Ctor, Delay2Ctor, HPZ1Ctor, HPZ2Ctor, LPZ1Ctor, LPZ2Ctor,
     SlewCtor, SlopeCtor,
 };
-use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
+use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{
     ImpulseCtor, LFCubCtor, LFParCtor, LFPulseCtor, LFSawCtor, LFTriCtor, SyncSawCtor, VarSawCtor,
@@ -83,6 +83,7 @@ use crate::unit::pv_ops::{
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
+use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::shape::{
@@ -296,6 +297,7 @@ impl UnitRegistry {
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
         registry.register("DiskOut", Box::new(DiskOutCtor));
+        registry.register("ScopeOut", Box::new(ScopeOutCtor));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
         registry.register("BufWr", Box::new(BufWrCtor));
         registry.register("LFSaw", Box::new(LFSawCtor));
@@ -365,6 +367,7 @@ impl UnitRegistry {
             Box::new(InfoCtor(InfoKind::NumRunningSynths)),
         );
         registry.register("NumBuffers", Box::new(InfoCtor(InfoKind::NumBuffers)));
+        registry.register("SubsampleOffset", Box::new(SubsampleOffsetCtor));
         registry.register("BufFrames", Box::new(BufInfoCtor(BufInfoKind::Frames)));
         registry.register("BufChannels", Box::new(BufInfoCtor(BufInfoKind::Channels)));
         registry.register("BufSamples", Box::new(BufInfoCtor(BufInfoKind::Samples)));

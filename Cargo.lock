@@ -444,6 +444,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-bouncing-ball"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
+name = "example-chaos"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
+name = "example-comb-string"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-control"
 version = "0.1.0"
 dependencies = [
@@ -481,6 +508,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-drunk-melody"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-duty-seq"
 version = "0.1.0"
 dependencies = [
@@ -508,7 +544,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-filters"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-glide"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
+name = "example-hard-sync"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
@@ -532,6 +586,24 @@ dependencies = [
  "console_error_panic_hook",
  "example-audio",
  "gloo-timers",
+ "plyphon",
+]
+
+[[package]]
+name = "example-noise"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
+name = "example-operators"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
  "plyphon",
 ]
 
@@ -596,6 +668,15 @@ dependencies = [
 
 [[package]]
 name = "example-routing"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
+name = "example-sample-hold"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
@@ -699,7 +780,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-wandering"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-waveforms"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
+name = "example-waveshaping"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
