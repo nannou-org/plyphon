@@ -53,6 +53,10 @@ use crate::unit::lf_noise::{
 };
 use crate::unit::line::{LineCtor, XLineCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
+use crate::unit::measure::{
+    LastValueCtor, LeastChangeCtor, MostChangeCtor, PeakCtor, PeakFollowerCtor, RunningMaxCtor,
+    RunningMinCtor,
+};
 use crate::unit::node_ctl::{
     DoneCtor, FreeCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseCtor, PauseSelfCtor,
     PauseSelfWhenDoneCtor,
@@ -342,6 +346,14 @@ impl UnitRegistry {
         registry.register("Timer", Box::new(TimerCtor));
         registry.register("Sweep", Box::new(SweepCtor));
         registry.register("Phasor", Box::new(PhasorCtor));
+        // Signal measurement / analysis.
+        registry.register("Peak", Box::new(PeakCtor));
+        registry.register("RunningMin", Box::new(RunningMinCtor));
+        registry.register("RunningMax", Box::new(RunningMaxCtor));
+        registry.register("PeakFollower", Box::new(PeakFollowerCtor));
+        registry.register("MostChange", Box::new(MostChangeCtor));
+        registry.register("LeastChange", Box::new(LeastChangeCtor));
+        registry.register("LastValue", Box::new(LastValueCtor));
         registry.register("SendReply", Box::new(SendReplyCtor));
         // Info: engine constants and per-buffer info.
         registry.register("SampleRate", Box::new(InfoCtor(InfoKind::SampleRate)));

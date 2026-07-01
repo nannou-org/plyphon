@@ -34,6 +34,7 @@ pub mod lf;
 pub mod lf_noise;
 pub mod line;
 pub mod local_io;
+pub mod measure;
 pub mod node_ctl;
 pub mod noise;
 pub mod one_pole;
