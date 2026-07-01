@@ -24,6 +24,7 @@ pub mod disk_in;
 pub mod disk_out;
 pub mod dynamics;
 pub mod env;
+pub mod eq;
 #[cfg(feature = "fft")]
 pub mod fft;
 pub mod filter;

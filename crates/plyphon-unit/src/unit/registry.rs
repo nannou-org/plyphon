@@ -39,6 +39,7 @@ use crate::unit::disk_in::DiskInCtor;
 use crate::unit::disk_out::DiskOutCtor;
 use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor};
 use crate::unit::env::EnvGenCtor;
+use crate::unit::eq::{FormletCtor, MidEQCtor};
 #[cfg(feature = "fft")]
 use crate::unit::fft::{FftCtor, IfftCtor};
 use crate::unit::filter::{ButterCtor, Kind};
@@ -232,6 +233,8 @@ impl UnitRegistry {
         registry.register("BRF", Box::new(BRFCtor));
         registry.register("Resonz", Box::new(ResonzCtor));
         registry.register("Ringz", Box::new(RingzCtor));
+        registry.register("Formlet", Box::new(FormletCtor));
+        registry.register("MidEQ", Box::new(MidEQCtor));
         registry.register("LPZ1", Box::new(LPZ1Ctor));
         registry.register("HPZ1", Box::new(HPZ1Ctor));
         registry.register("LPZ2", Box::new(LPZ2Ctor));
