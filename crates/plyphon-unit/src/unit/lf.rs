@@ -350,6 +350,90 @@ impl UnitDef for SyncSawCtor {
     }
 }
 
+/// `LFGauss.ar/kr(duration, width, iphase, loop, doneAction)`: a Gaussian-shaped grain/LFO. Over
+/// `duration` seconds an internal ramp sweeps `[-1, 1]`; the output is the Gaussian bump `exp(-0.5 *
+/// ((phase - iphase) / width)^2)`. When the ramp completes it either loops (`loop != 0`, the default)
+/// or marks itself done and fires `doneAction` (so a grain can free its own synth). All inputs are read
+/// at control rate.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct LFGauss {
+    /// The ramp position, in `[-1, 1]`, advanced by `2 / (duration * sampleRate)` per sample.
+    phase: f64,
+}
+
+impl LFGauss {
+    const DURATION: usize = 0;
+    const WIDTH: usize = 1;
+    const IPHASE: usize = 2;
+    const LOOP: usize = 3;
+    const DONE: usize = 4;
+}
+
+impl Unit for LFGauss {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let dur = ctx.ins.control(Self::DURATION) as f64;
+        // A zero/negative width or duration would poison the block with NaN/inf; floor them.
+        let width = (ctx.ins.control(Self::WIDTH) as f64).abs().max(1e-6);
+        let iphase = read_input(&ctx.ins, Self::IPHASE, 0.0) as f64;
+        let loop_on = read_input(&ctx.ins, Self::LOOP, 1.0) != 0.0;
+        let done_action = if ctx.ins.len() > Self::DONE {
+            DoneAction::from_code(ctx.ins.control(Self::DONE))
+        } else {
+            DoneAction::Nothing
+        };
+
+        let step = 2.0 * ctx.audio.sample_dur / dur.abs().max(1e-9);
+        let factor = -1.0 / (2.0 * width * width);
+        let mut x = self.phase - iphase;
+        let mut completed = false;
+        for o in ctx.outs.audio(0).iter_mut() {
+            if x > 1.0 {
+                if loop_on {
+                    x -= 2.0;
+                } else {
+                    completed = true;
+                }
+            }
+            *o = math::exp(x * x * factor) as f32;
+            x += step;
+        }
+        self.phase = x + iphase;
+        if completed {
+            // Reaching the end marks the unit done (scsynth's `mDone`), so a watcher sees it even when
+            // `doneAction` is 0.
+            ctx.done.mark_done();
+        }
+        if completed {
+            done_action
+        } else {
+            DoneAction::Nothing
+        }
+    }
+}
+
+/// Constructor for [`LFGauss`].
+pub struct LFGaussCtor;
+
+impl UnitDef for LFGaussCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 2 {
+            return Err(BuildError::WrongInputCount);
+        }
+        // Start the ramp at the beginning of the sweep (scsynth's `mPhase = -1`).
+        Ok(unit_spec(LFGauss { phase: -1.0 }))
+    }
+}
+
+/// Read input `i` as a single value, or `default` if the unit was built with fewer inputs.
+fn read_input(ins: &crate::unit::Inputs<'_>, i: usize, default: f32) -> f32 {
+    if ins.len() > i {
+        ins.control(i)
+    } else {
+        default
+    }
+}
+
 /// Wrap a phase into `[0, 1)` (assuming a single cycle's worth of drift at most).
 #[inline]
 fn wrap(phase: f32) -> f32 {

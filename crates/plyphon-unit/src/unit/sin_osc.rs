@@ -143,3 +143,50 @@ impl UnitDef for FSinOscCtor {
         }))
     }
 }
+
+/// `SinOscFB.ar(freq, feedback)`: a sine oscillator that phase-modulates itself by its own previous
+/// output scaled by `feedback` (radians) - `y[n] = sin(2*pi*phase + feedback*y[n-1])`. At `feedback ==
+/// 0` it is a plain sine; as feedback grows the tone brightens and eventually breaks into chaos. `freq`
+/// and `feedback` are read at control rate (scsynth's only calc variant).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct SinOscFB {
+    /// Normalised phase accumulator in cycles, kept in `[0, 1)`.
+    phase: f32,
+    /// The previous output sample - the feedback memory.
+    prevout: f32,
+}
+
+impl SinOscFB {
+    const FREQ: usize = 0;
+    const FEEDBACK: usize = 1;
+}
+
+impl Unit for SinOscFB {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let table = ctx.wavetables.sine();
+        let inc = ctx.ins.control(Self::FREQ) * ctx.audio.sample_dur as f32;
+        // Feedback is in radians; the phase offset it induces is `feedback/2pi` cycles.
+        let feedback = ctx.ins.control(Self::FEEDBACK) / TAU;
+        let mut prevout = self.prevout;
+        for o in ctx.outs.audio(0).iter_mut() {
+            prevout = lookup_cycle(table, self.phase + feedback * prevout);
+            *o = prevout;
+            self.phase = wrap_unit(self.phase + inc);
+        }
+        self.prevout = prevout;
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`SinOscFB`].
+pub struct SinOscFBCtor;
+
+impl UnitDef for SinOscFBCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(SinOscFB {
+            phase: 0.0,
+            prevout: 0.0,
+        }))
+    }
+}

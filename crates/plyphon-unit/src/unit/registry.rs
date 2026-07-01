@@ -49,7 +49,8 @@ use crate::unit::filter_simple::{
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{
-    ImpulseCtor, LFCubCtor, LFParCtor, LFPulseCtor, LFSawCtor, LFTriCtor, SyncSawCtor, VarSawCtor,
+    ImpulseCtor, LFCubCtor, LFGaussCtor, LFParCtor, LFPulseCtor, LFSawCtor, LFTriCtor, SyncSawCtor,
+    VarSawCtor,
 };
 use crate::unit::lf_noise::{
     LFClipNoiseCtor, LFDClipNoiseCtor, LFDNoise0Ctor, LFDNoise1Ctor, LFDNoise3Ctor, LFNoise0Ctor,
@@ -98,7 +99,7 @@ use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::shape::{
     InRangeCtor, InRectCtor, LinExpCtor, RangeKind, RangeShaperCtor, UnwrapCtor,
 };
-use crate::unit::sin_osc::{FSinOscCtor, SinOscCtor};
+use crate::unit::sin_osc::{FSinOscCtor, SinOscCtor, SinOscFBCtor};
 use crate::unit::test::{CheckBadValuesCtor, SanitizeCtor};
 use crate::unit::timing::{
     PhasorCtor, PulseCountCtor, PulseDividerCtor, StepperCtor, SweepCtor, TimerCtor,
@@ -325,6 +326,8 @@ impl UnitRegistry {
         registry.register("VarSaw", Box::new(VarSawCtor));
         registry.register("SyncSaw", Box::new(SyncSawCtor));
         registry.register("FSinOsc", Box::new(FSinOscCtor));
+        registry.register("SinOscFB", Box::new(SinOscFBCtor));
+        registry.register("LFGauss", Box::new(LFGaussCtor));
         registry.register("Saw", Box::new(SawCtor));
         registry.register("Pulse", Box::new(PulseCtor));
         // Wavetable oscillators (read a buffer as a single-cycle table).

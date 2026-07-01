@@ -165,6 +165,94 @@ fn fsinosc_is_a_nearly_pure_sine() {
 }
 
 #[test]
+fn sinoscfb_brightens_with_feedback() {
+    // At feedback 0 SinOscFB is a plain sine; feedback phase-modulates it into a brighter tone.
+    let clean = render_osc(
+        "SinOscFB",
+        vec![InputRef::Constant(FREQ), InputRef::Constant(0.0)],
+    );
+    assert!(
+        clean.iter().all(|s| s.abs() <= 1.5),
+        "SinOscFB out of range"
+    );
+    assert!(
+        goertzel(&clean, FREQ) > 20.0 * goertzel(&clean, FREQ * 2.0),
+        "at feedback 0 SinOscFB should be a nearly pure sine"
+    );
+    let bright = render_osc(
+        "SinOscFB",
+        vec![InputRef::Constant(FREQ), InputRef::Constant(1.0)],
+    );
+    assert!(
+        bright.iter().all(|s| s.is_finite()),
+        "SinOscFB must stay finite"
+    );
+    // Feedback injects harmonics, so the second harmonic becomes a real fraction of the fundamental.
+    assert!(
+        goertzel(&bright, FREQ * 2.0) > 0.1 * goertzel(&bright, FREQ),
+        "feedback should add harmonics"
+    );
+    // Still pitched at the fundamental.
+    assert!(
+        goertzel(&bright, FREQ) > 3.0 * goertzel(&bright, FREQ * 1.5),
+        "SinOscFB should stay pitched at {FREQ}"
+    );
+}
+
+#[test]
+fn lfgauss_is_a_normalised_bump() {
+    // A looping LFGauss: a train of Gaussian bumps in [0, 1] that peak near 1 and dip toward 0.
+    let out = render_osc(
+        "LFGauss",
+        vec![
+            InputRef::Constant(0.01), // 10 ms grain -> 100 Hz
+            InputRef::Constant(0.15), // width
+            InputRef::Constant(0.0),  // iphase
+            InputRef::Constant(1.0),  // loop
+        ],
+    );
+    assert!(
+        out.iter().all(|s| s.is_finite()),
+        "LFGauss must stay finite"
+    );
+    assert!(
+        out.iter().all(|&s| (0.0..=1.001).contains(&s)),
+        "LFGauss is a normalised bump in [0, 1]"
+    );
+    let peak = out.iter().cloned().fold(0.0f32, f32::max);
+    let min = out.iter().cloned().fold(f32::MAX, f32::min);
+    assert!(peak > 0.9, "the Gaussian should peak near 1 (peak {peak})");
+    assert!(
+        min < 0.1,
+        "it should dip toward 0 between bumps (min {min})"
+    );
+}
+
+#[test]
+fn lfgauss_non_looping_fires_once() {
+    // Non-looping (loop = 0): a single grain, then the ramp runs off the end and the output stays ~0.
+    let out = render_osc(
+        "LFGauss",
+        vec![
+            InputRef::Constant(0.02),
+            InputRef::Constant(0.15),
+            InputRef::Constant(0.0),
+            InputRef::Constant(0.0), // loop off
+        ],
+    );
+    let peak = out.iter().cloned().fold(0.0f32, f32::max);
+    assert!(
+        peak > 0.9,
+        "the single grain should peak near 1 (peak {peak})"
+    );
+    let tail = &out[out.len() / 2..];
+    assert!(
+        tail.iter().all(|&s| s < 0.05),
+        "after the grain LFGauss should be ~silent"
+    );
+}
+
+#[test]
 fn band_limited_saw_aliases_less_than_lfsaw() {
     // A high fundamental: the band-limited Saw should put far less energy at an aliased,
     // non-harmonic frequency than the naive LFSaw.
