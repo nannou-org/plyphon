@@ -47,6 +47,7 @@ Listed in reverse-topological order - dependents first, their dependencies below
 | [`example-noise`](crates/examples/noise) | Metallic rain: `Dust2` impulses ring a `Ringz` resonator over a quiet `PinkNoise` bed (the noise family `WhiteNoise`/`ClipNoise`/`GrayNoise`/`PinkNoise`/`BrownNoise`/`Dust`/`Dust2`). |
 | [`example-sample-hold`](crates/examples/sample-hold) | A self-playing sample-and-hold sequence: an `Impulse` clock latches a pitch contour with `Latch` into a `Decay2`-plucked saw (the in-graph trigger units `Trig`/`Latch`/`Gate`/`ToggleFF`/`Stepper`/`Phasor`/...). |
 | [`example-waveshaping`](crates/examples/waveshaping) | A wavefolder: a sine driven hard through `Fold` with an LFO-swept drive (the range shapers `Clip`/`Wrap`/`Fold`/`LinExp`/...). |
+| [`example-chaos`](crates/examples/chaos) | A chaotic drone: a `CuspN` oscillator through a resonant filter swept by a slow `LatoocarfianN` map (the chaotic generators `CuspN`/`QuadN`/`GbmanN`/`StandardN`/`LatoocarfianN`/`LinCongN`). |
 | [`example-pan`](crates/examples/pan) | A tone auto-panned across the stereo field with `Pan2`. |
 | [`example-envelope`](crates/examples/envelope) | Percussive plucks shaped by multi-segment `EnvGen` envelopes that free their own synths. |
 | [`example-osc`](crates/examples/osc) | Drives the engine through encoded SuperCollider OSC packets (no sockets) and prints the control commands and the replies/notifications that flow back. |
