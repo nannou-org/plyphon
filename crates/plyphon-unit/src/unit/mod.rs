@@ -19,6 +19,7 @@ pub mod buf_wr;
 pub mod chaos;
 pub mod decay;
 pub mod delay;
+pub mod deltap;
 pub mod demand;
 pub mod disk_in;
 pub mod disk_out;

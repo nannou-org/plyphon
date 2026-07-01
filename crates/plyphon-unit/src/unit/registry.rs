@@ -21,6 +21,7 @@ use crate::unit::decay::{Decay2Ctor, DecayCtor};
 use crate::unit::delay::{
     BufDelayCtor, BufFeedbackDelayCtor, DelayCtor, FeedbackDelayCtor, Interp,
 };
+use crate::unit::deltap::{DelTapRdCtor, DelTapWrCtor};
 use crate::unit::demand::BuiltDemandUnit;
 use crate::unit::demand::dbrown::DbrownCtor;
 use crate::unit::demand::dbufrd::DbufrdCtor;
@@ -353,6 +354,9 @@ impl UnitRegistry {
                 allpass: true,
             }),
         );
+        // A shared delay line: one writer, many readers, over a mono buffer.
+        registry.register("DelTapWr", Box::new(DelTapWrCtor));
+        registry.register("DelTapRd", Box::new(DelTapRdCtor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
         registry.register("GrayNoise", Box::new(GrayNoiseCtor));
