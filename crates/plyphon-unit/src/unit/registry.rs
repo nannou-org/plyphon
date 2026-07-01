@@ -90,6 +90,7 @@ use crate::unit::pv_mag_squared::PvMagSquaredCtor;
 use crate::unit::pv_ops::{
     MagKind, PvBrickWallCtor, PvConjCtor, PvLocalMaxCtor, PvMagThreshCtor, PvPhaseQuarterCtor,
 };
+use crate::unit::ramp::{RampCtor, VarLagCtor};
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
@@ -369,6 +370,8 @@ impl UnitRegistry {
         registry.register("LagUD", Box::new(LagUDCtor));
         registry.register("Lag2UD", Box::new(Lag2UDCtor));
         registry.register("Lag3UD", Box::new(Lag3UDCtor));
+        registry.register("Ramp", Box::new(RampCtor));
+        registry.register("VarLag", Box::new(VarLagCtor));
         registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry.register("Compander", Box::new(CompanderCtor));
         registry.register("DetectSilence", Box::new(DetectSilenceCtor));

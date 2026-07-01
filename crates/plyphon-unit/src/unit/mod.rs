@@ -54,6 +54,7 @@ pub mod pv_mag_mul;
 pub mod pv_mag_squared;
 #[cfg(feature = "fft")]
 pub mod pv_ops;
+pub mod ramp;
 pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
