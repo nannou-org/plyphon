@@ -639,6 +639,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-scope"
+version = "0.1.0"
+dependencies = [
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-send-reply"
 version = "0.1.0"
 dependencies = [

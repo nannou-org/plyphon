@@ -3,10 +3,10 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
+use crate::unit::io::sample_channel;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, Inputs, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::buffer::Buffer;
-use plyphon_dsp::rate::Rate;
 
 /// `RecordBuf.ar(inputArray, bufnum, offset, recLevel, preLevel, run, loop, trigger, doneAction)`:
 /// records its input channels into buffer `bufnum` through a write head, mixing into what is already
@@ -198,18 +198,6 @@ impl Unit for RecordBuf {
         self.rec_level = rec;
         self.pre_level = pre;
         action
-    }
-}
-
-/// Sample channel input `i` at within-block index `k` (per sample at audio rate; the single value
-/// broadcast otherwise). `0` if `i` is past the unit's inputs.
-fn sample_channel(ins: &Inputs<'_>, i: usize, k: usize) -> f32 {
-    if i >= ins.len() {
-        0.0
-    } else if ins.rate(i) == Rate::Audio {
-        ins.audio(i)[k]
-    } else {
-        ins.control(i)
     }
 }
 

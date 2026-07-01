@@ -48,6 +48,7 @@ use crate::unit::pv_mag_mul::PvMagMulCtor;
 use crate::unit::pv_mag_squared::PvMagSquaredCtor;
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor};
 use crate::unit::record_buf::RecordBufCtor;
+use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::sin_osc::SinOscCtor;
@@ -148,6 +149,7 @@ impl UnitRegistry {
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
         registry.register("DiskOut", Box::new(DiskOutCtor));
+        registry.register("ScopeOut", Box::new(ScopeOutCtor));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
         registry.register("BufWr", Box::new(BufWrCtor));
         registry.register("LFSaw", Box::new(LFSawCtor));

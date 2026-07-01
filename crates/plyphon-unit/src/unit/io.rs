@@ -12,9 +12,10 @@
 
 use plyphon_dsp::buffer::{Buffer, BufferTable};
 use plyphon_dsp::bus::Buses;
+use plyphon_dsp::rate::Rate;
 use plyphon_dsp::stream::{StreamPlayback, StreamRecording};
 
-use crate::unit::LocalBus;
+use crate::unit::{Inputs, LocalBus};
 
 /// Audio bus channel `ch` for this block (an empty slice if `ch` is out of range), for `In.ar`.
 pub fn audio_in(buses: &Buses, ch: usize) -> &[f32] {
@@ -126,7 +127,41 @@ pub fn stream_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut Str
     buffers.stream_mut(index)
 }
 
-/// The recording endpoint at `index`, mutably (to push chunks), for `DiskOut`.
+/// The recording endpoint at `index`, mutably (to push chunks), for `DiskOut`/`ScopeOut`.
 pub fn recording_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut StreamRecording> {
     buffers.recording_mut(index)
+}
+
+/// Sample channel input `i` at within-block index `k` - per sample at audio rate, or the single value
+/// broadcast at control rate; `0.0` if `i` is past the unit's inputs. The shared input reader for the
+/// channel-writing units (`RecordBuf`/`BufWr`/`DiskOut`/`ScopeOut`).
+pub(crate) fn sample_channel(ins: &Inputs<'_>, i: usize, k: usize) -> f32 {
+    if i >= ins.len() {
+        0.0
+    } else if ins.rate(i) == Rate::Audio {
+        ins.audio(i)[k]
+    } else {
+        ins.control(i)
+    }
+}
+
+/// Stream `num_channels` input channels (inputs `first_channel..first_channel + num_channels`) into the
+/// recording cued at `bufnum`, one recording channel per input; a no-op if no recording is cued there.
+/// Shared by `DiskOut` and `ScopeOut` - the audio thread only copies the block into the recording's
+/// chunk queue (drained off-thread); a full queue drops the surplus (a bounded overrun), never blocking
+/// or allocating. `ins` borrows the wires (not the buffer table), so it coexists with the `&mut`
+/// recording.
+pub(crate) fn stream_channels_to_recording(
+    ins: &Inputs<'_>,
+    buffers: &mut BufferTable,
+    block: usize,
+    bufnum: usize,
+    first_channel: usize,
+    num_channels: usize,
+) {
+    if let Some(rec) = recording_at_mut(buffers, bufnum) {
+        rec.write(block, num_channels, |frame, ch| {
+            sample_channel(ins, first_channel + ch, frame)
+        });
+    }
 }

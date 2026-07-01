@@ -23,13 +23,15 @@ Dynamic binary plugin loading (`.scx`) is intentionally out of scope: UGens are 
 engine (pure Rust, no FFI), so there is nothing to load at runtime.
 
 The **shared-memory / internal-server** surface is also intentionally out of scope, for the same
-reason plyphon shares no memory with its clients: **scope buffers** (`ScopeOut` + the shm scope ring),
-**shared controls** (the mmap'd shared control-bus region), the `/late` lateness reply (a late bundle
-is resolved to the soonest sample, never reported), and the legacy **binary integer OSC command
-form** (`inData[0] == 0` selecting `gCmdArray[int]`; plyphon dispatches string addresses only). A host
-that wants scope/metering builds it on plyphon's own ring transport, not scsynth's shm. `LocalBuf`
-(SynthDef-side local buffers, e.g. for an FFT chain) is **deferred**, not excluded - a chain buffer is
-`/b_alloc`'d instead, so it does not block the `PV_*` family.
+reason plyphon shares no memory with its clients: scsynth's **shm scope ring** (the transport behind
+`ScopeOut2`, mapped and polled by the GUI), **shared controls** (the mmap'd shared control-bus region),
+the `/late` lateness reply (a late bundle is resolved to the soonest sample, never reported), and the
+legacy **binary integer OSC command form** (`inData[0] == 0` selecting `gCmdArray[int]`; plyphon
+dispatches string addresses only). A host that wants scope/metering uses plyphon's own **`ScopeOut`**
+instead (implemented - see the I/O category below), which streams every input sample over the RT-safe
+chunk ring rather than shared memory. `LocalBuf` (SynthDef-side local buffers, e.g. for an FFT chain)
+is **deferred**, not excluded - a chain buffer is `/b_alloc`'d instead, so it does not block the `PV_*`
+family.
 
 Intra-graph **reblock and resample** (scsynth's `kGraph_Reblock` / `kGraph_Resample`, per-SynthDef
 `Reblock(n)` / `Resample(n)`) are **done**: a def can run its graph at a smaller power-of-two control
@@ -56,9 +58,9 @@ the programmatic API. The **control-driven** forms (`blockSize -1` / `resampleFa
 value comes from a synth control at instantiation) are unsupported - plyphon bakes the graph block into
 the per-synth layout at compile - and fall back to no reblock/resample.
 
-## UGens (66 of scsynth's ~250, grouped by category)
+## UGens (67 of scsynth's ~250, grouped by category)
 
-- [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`); missing ReplaceOut, XOut, SoundIn
+- [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`), and ScopeOut - a live monitoring/analysis tap that streams every sample of its (multichannel) input off the audio thread to the app, the shared-memory-free equivalent of scsynth's `ScopeOut2`. It reuses `DiskOut`'s bounded lock-free chunk-ring transport (`Controller::cue_scope` returns the `StreamConsumer` the app drains); scsynth's `ScopeOut` (an interleaved plain-`SndBuf` read only by the in-process internal server) and `ScopeOut2` (a shm ring) are both replaced by this one no-shm streaming path. Several `ScopeOut` units on distinct bufnums tap several graph points at once. Missing: ReplaceOut, XOut, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
 - [ ] **Noise** - have WhiteNoise; missing PinkNoise, BrownNoise, GrayNoise, ClipNoise, Dust/Dust2, LFNoise0/1/2, LFDNoise*, Crackle
 - [ ] **Filters** - have LPF, HPF, Lag; missing BPF, BRF, RLPF, RHPF, Resonz, Ringz, OnePole/OneZero, TwoPole/TwoZero, Integrator, LeakDC, Slew, Decay/Decay2, Formlet, MoogFF, MidEQ

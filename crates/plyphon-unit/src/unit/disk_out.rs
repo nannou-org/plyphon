@@ -3,9 +3,9 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
+use crate::unit::io::stream_channels_to_recording;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{self, BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
-use plyphon_dsp::rate::Rate;
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `DiskOut.ar(bufnum, channelsArray)`: streams its input channels to the disk-recording buffer
 /// `bufnum`, one buffer channel per input. It copies each block into the recording stream's chunk
@@ -36,11 +36,14 @@ impl Unit for DiskOut {
         let num_channels = self.num_channels as usize;
         let block = ctx.audio.block_size;
 
-        if let Some(rec) = unit::recording_at_mut(ctx.buffers, bufnum) {
-            rec.write(block, num_channels, |frame, ch| {
-                sample_channel(&ins, Self::FIRST_CHANNEL + ch, frame)
-            });
-        }
+        stream_channels_to_recording(
+            &ins,
+            ctx.buffers,
+            block,
+            bufnum,
+            Self::FIRST_CHANNEL,
+            num_channels,
+        );
 
         // One output: the running frame count (scsynth's `out[j] = framew++`), incremented per
         // sample regardless of overruns, persisted across blocks.
@@ -51,18 +54,6 @@ impl Unit for DiskOut {
         }
         self.frames_written = written;
         DoneAction::Nothing
-    }
-}
-
-/// Sample channel input `i` at within-block index `k` (per sample at audio rate; the single value
-/// broadcast otherwise). `0` if `i` is past the unit's inputs.
-fn sample_channel(ins: &Inputs<'_>, i: usize, k: usize) -> f32 {
-    if i >= ins.len() {
-        0.0
-    } else if ins.rate(i) == Rate::Audio {
-        ins.audio(i)[k]
-    } else {
-        ins.control(i)
     }
 }
 

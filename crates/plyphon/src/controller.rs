@@ -607,6 +607,24 @@ impl Controller {
         Ok(producer)
     }
 
+    /// Cue a recording stream at `index`: allocate a queue of `num_chunks` chunks of `chunk_frames`
+    /// frames each (off the audio thread) and install the RT-side recording endpoint, returning the
+    /// [`StreamConsumer`] the caller drains. Shared by [`buffer_cue_write`](Self::buffer_cue_write)
+    /// (disk) and [`cue_scope`](Self::cue_scope) (live monitoring) - they differ only in what the
+    /// caller does with the consumer.
+    fn cue_recording_into(
+        &mut self,
+        index: usize,
+        channels: usize,
+        sample_rate: f64,
+        chunk_frames: usize,
+        num_chunks: usize,
+    ) -> Result<StreamConsumer, QueueFull> {
+        let (recording, consumer) = cue_recording(channels, sample_rate, chunk_frames, num_chunks);
+        self.send(Command::CueRecording { index, recording })?;
+        Ok(consumer)
+    }
+
     /// Cue a disk-streaming *recording* buffer at `index`, for `DiskOut`.
     ///
     /// Allocates a queue of `num_chunks` chunks of `chunk_frames` frames each (off the audio thread)
@@ -620,9 +638,27 @@ impl Controller {
         chunk_frames: usize,
         num_chunks: usize,
     ) -> Result<StreamConsumer, QueueFull> {
-        let (recording, consumer) = cue_recording(channels, sample_rate, chunk_frames, num_chunks);
-        self.send(Command::CueRecording { index, recording })?;
-        Ok(consumer)
+        self.cue_recording_into(index, channels, sample_rate, chunk_frames, num_chunks)
+    }
+
+    /// Cue a live *scope* stream at `index`, for `ScopeOut`.
+    ///
+    /// The same chunked recording transport as [`buffer_cue_write`](Self::buffer_cue_write), but for
+    /// monitoring rather than disk: `ScopeOut.ar(index, channels)` streams every sample of its input
+    /// into the returned [`StreamConsumer`], which the app drains off the audio thread
+    /// (`pop_filled`/`recycle`) to display or analyse - plyphon's shared-memory-free equivalent of
+    /// scsynth's `ScopeOut2`. Several `ScopeOut` units on distinct `index`es tap several points at
+    /// once, each a separate cued stream. Free the slot with
+    /// [`close_recording`](Self::close_recording) (or by dropping the consumer) when done.
+    pub fn cue_scope(
+        &mut self,
+        index: usize,
+        channels: usize,
+        sample_rate: f64,
+        chunk_frames: usize,
+        num_chunks: usize,
+    ) -> Result<StreamConsumer, QueueFull> {
+        self.cue_recording_into(index, channels, sample_rate, chunk_frames, num_chunks)
     }
 
     /// Close a left-open `DiskOut` recording at `index` (`/b_close`): flush its final partial chunk to
