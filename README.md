@@ -43,6 +43,7 @@ Listed in reverse-topological order - dependents first, their dependencies below
 | [`example-stream`](crates/examples/stream) | Streams a WAV from storage in chunks via a `BufferStream`/`StreamFeeder` and plays it with `DiskIn`. |
 | [`example-waveforms`](crates/examples/waveforms) | Cycles through the oscillators (`Saw`/`Pulse`/`LFSaw`/`LFPulse`/`Impulse`) through a filter. |
 | [`example-operators`](crates/examples/operators) | A ring-modulated, soft-clipped bell tone built from `BinaryOpUGen`/`UnaryOpUGen` math operators (`midicps`, `midiratio`, ring modulation, `softclip`). |
+| [`example-filters`](crates/examples/filters) | A classic resonant low-pass sweep: a saw through an LFO-swept `RLPF` (one of the resonant biquads `RLPF`/`RHPF`/`BPF`/`BRF`/`Resonz`/`Ringz`). |
 | [`example-pan`](crates/examples/pan) | A tone auto-panned across the stereo field with `Pan2`. |
 | [`example-envelope`](crates/examples/envelope) | Percussive plucks shaped by multi-segment `EnvGen` envelopes that free their own synths. |
 | [`example-osc`](crates/examples/osc) | Drives the engine through encoded SuperCollider OSC packets (no sockets) and prints the control commands and the replies/notifications that flow back. |
