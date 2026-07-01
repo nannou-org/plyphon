@@ -66,7 +66,7 @@ place, so most are pure per-unit ports. Note the two operator *shells* below (`B
 - [ ] **I/O** - have Out, OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`); missing ReplaceOut, XOut, SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse; missing Blip, VarSaw, SyncSaw, LFTri/LFPar/LFCub, Osc/OscN, COsc, FSinOsc, Klang, Klank
 - [ ] **Noise** - have WhiteNoise; missing PinkNoise, BrownNoise, GrayNoise, ClipNoise, Dust/Dust2, LFNoise0/1/2, LFDNoise*, Crackle
-- [ ] **Filters** - have LPF, HPF, Lag; missing BPF, BRF, RLPF, RHPF, Resonz, Ringz, OnePole/OneZero, TwoPole/TwoZero, Integrator, LeakDC, Slew, Decay/Decay2, Formlet, MoogFF, MidEQ
+- [ ] **Filters** - have LPF, HPF, Lag, plus the primitives OnePole, OneZero, Integrator, LeakDC, TwoPole, TwoZero, Decay, Decay2; the resonant biquads RLPF, RHPF, BPF, BRF, Resonz, Ringz; and the fixed-coefficient/delay set LPZ1/HPZ1/LPZ2/HPZ2/BPZ2/BRZ2, Delay1/Delay2, Slope, Slew, APF (all `f64` state flushed with a shared `zap`, coefficients derived per block as `Butter` does). Missing: Formlet, MidEQ, the `B*` biquad EQ set, FOS/SOS, MoogFF, Median, Lag2/3/UD/VarLag, Flip, Hilbert, FreqShift
 - [ ] **Envelopes** - have EnvGen, Line; missing XLine, Linen, IEnvGen, DemandEnvGen
 - [ ] **Panning** - have Pan2; missing LinPan2, Pan4, Balance2, Rotate2, XFade2, LinXFade2, PanAz, Splay
 - [ ] **Dynamics** - have Amplitude; missing Compander, Limiter, Normalizer, DetectSilence
