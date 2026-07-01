@@ -87,6 +87,7 @@ use crate::unit::pan::{
     Balance2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Rotate2Ctor, XFade2Ctor,
 };
 use crate::unit::physical::{BallCtor, SpringCtor, TBallCtor};
+use crate::unit::pitch_shift::PitchShiftCtor;
 use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::pluck::PluckCtor;
 #[cfg(feature = "fft")]
@@ -361,6 +362,8 @@ impl UnitRegistry {
         // Karplus-Strong plucked string: a cubic comb with a trigger-gated excitation and a one-zero
         // damping filter in the feedback loop.
         registry.register("Pluck", Box::new(PluckCtor));
+        // Granular pitch shifter: four overlapping windowed grains over a delay line.
+        registry.register("PitchShift", Box::new(PitchShiftCtor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
         registry.register("GrayNoise", Box::new(GrayNoiseCtor));

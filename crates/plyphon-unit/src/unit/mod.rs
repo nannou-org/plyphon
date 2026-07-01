@@ -49,6 +49,7 @@ pub mod one_pole;
 pub mod out;
 pub mod pan;
 pub mod physical;
+pub mod pitch_shift;
 pub mod play_buf;
 pub mod pluck;
 #[cfg(feature = "fft")]
