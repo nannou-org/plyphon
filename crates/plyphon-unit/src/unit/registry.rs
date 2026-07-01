@@ -48,6 +48,7 @@ use crate::unit::filter_simple::{
     SlewCtor, SlopeCtor,
 };
 use crate::unit::formant::FormantCtor;
+use crate::unit::hilbert::{FreqShiftCtor, HilbertCtor};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{
@@ -239,6 +240,8 @@ impl UnitRegistry {
         registry.register("MidEQ", Box::new(MidEQCtor));
         registry.register("MoogFF", Box::new(MoogFFCtor));
         registry.register("Median", Box::new(MedianCtor));
+        registry.register("Hilbert", Box::new(HilbertCtor));
+        registry.register("FreqShift", Box::new(FreqShiftCtor));
         registry.register("LPZ1", Box::new(LPZ1Ctor));
         registry.register("HPZ1", Box::new(HPZ1Ctor));
         registry.register("LPZ2", Box::new(LPZ2Ctor));
