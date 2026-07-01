@@ -1,8 +1,9 @@
-//! Utility units - plyphon's ports of scsynth's `MulAdd`, `Lag`, and `Amplitude`.
+//! Utility units - plyphon's ports of scsynth's `MulAdd`, `Sum3`/`Sum4`, `Lag`, and `Amplitude`.
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
+use crate::unit::io::sample_channel;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
@@ -59,6 +60,49 @@ impl UnitDef for MulAddCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(MulAdd {
             in_audio: (ctx.input_rates.first() == Some(&Rate::Audio)) as u32,
+        }))
+    }
+}
+
+/// `Sum3.ar/kr(in0, in1, in2)` / `Sum4.ar/kr(in0, in1, in2, in3)`: the sum of its inputs. scsynth's
+/// SynthDef optimiser rewrites chains of additions into these, and `.sum`/`Mix` (and the class-library
+/// macros `DynKlank`/`DynKlang`, which expand to a summed `Ringz`/`SinOsc` bank) depend on them. Each
+/// input is read at its own rate.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct Sum {
+    /// How many inputs to add (3 for `Sum3`, 4 for `Sum4`).
+    count: u32,
+    /// `0`/`1`: whether the unit runs at audio rate.
+    audio: u32,
+}
+
+impl Unit for Sum {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let n = self.count as usize;
+        let ins = ctx.ins; // `Copy`; its slices are `'a`, so it coexists with the `&mut` output.
+        if self.audio != 0 {
+            for (i, o) in ctx.outs.audio(0).iter_mut().enumerate() {
+                *o = (0..n).map(|k| sample_channel(&ins, k, i)).sum::<f32>();
+            }
+        } else {
+            *ctx.outs.control(0) = (0..n).map(|k| ins.control(k)).sum::<f32>();
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`Sum`] (`Sum3`/`Sum4`), parameterized by the input count.
+pub struct SumCtor(pub u32);
+
+impl UnitDef for SumCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < self.0 as usize {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(Sum {
+            count: self.0,
+            audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
 }

@@ -111,7 +111,7 @@ use crate::unit::trigger::{
 };
 use crate::unit::two_pole::{TwoPoleCtor, TwoZeroCtor};
 use crate::unit::unary_op::UnaryOpCtor;
-use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor};
+use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor, SumCtor};
 use crate::unit::wavetable_osc::{COscCtor, OscCtor, OscNCtor, VOsc3Ctor, VOscCtor};
 use crate::unit::{BuiltUnit, InputSource};
 use plyphon_dsp::rate::{Rate, RateInfo};
@@ -354,6 +354,8 @@ impl UnitRegistry {
         registry.register("Ball", Box::new(BallCtor));
         registry.register("TBall", Box::new(TBallCtor));
         registry.register("MulAdd", Box::new(MulAddCtor));
+        registry.register("Sum3", Box::new(SumCtor(3)));
+        registry.register("Sum4", Box::new(SumCtor(4)));
         registry.register("Lag", Box::new(LagCtor));
         registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry.register("Compander", Box::new(CompanderCtor));
