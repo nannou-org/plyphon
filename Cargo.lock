@@ -707,6 +707,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-scale-walk"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-scgf"
 version = "0.1.0"
 dependencies = [
