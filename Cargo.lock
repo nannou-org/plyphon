@@ -834,6 +834,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-wavetable"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
