@@ -49,7 +49,9 @@ use crate::unit::noise::{
 };
 use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
 use crate::unit::out::{OffsetOutCtor, OutCtor};
-use crate::unit::pan::Pan2Ctor;
+use crate::unit::pan::{
+    Balance2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Rotate2Ctor, XFade2Ctor,
+};
 use crate::unit::play_buf::PlayBufCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_mag_mul::PvMagMulCtor;
@@ -217,6 +219,11 @@ impl UnitRegistry {
         registry.register("Saw", Box::new(SawCtor));
         registry.register("Pulse", Box::new(PulseCtor));
         registry.register("Pan2", Box::new(Pan2Ctor));
+        registry.register("LinPan2", Box::new(LinPan2Ctor));
+        registry.register("Balance2", Box::new(Balance2Ctor));
+        registry.register("XFade2", Box::new(XFade2Ctor));
+        registry.register("LinXFade2", Box::new(LinXFade2Ctor));
+        registry.register("Rotate2", Box::new(Rotate2Ctor));
         registry.register("MulAdd", Box::new(MulAddCtor));
         registry.register("Lag", Box::new(LagCtor));
         registry.register("Amplitude", Box::new(AmplitudeCtor));
