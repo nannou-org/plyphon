@@ -63,6 +63,10 @@ use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::pv_mag_mul::PvMagMulCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_mag_squared::PvMagSquaredCtor;
+#[cfg(feature = "fft")]
+use crate::unit::pv_ops::{
+    MagKind, PvBrickWallCtor, PvConjCtor, PvLocalMaxCtor, PvMagThreshCtor, PvPhaseQuarterCtor,
+};
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
@@ -332,6 +336,14 @@ impl UnitRegistry {
             registry.register("IFFT", Box::new(IfftCtor));
             registry.register("PV_MagMul", Box::new(PvMagMulCtor));
             registry.register("PV_MagSquared", Box::new(PvMagSquaredCtor));
+            registry.register("PV_MagAbove", Box::new(PvMagThreshCtor(MagKind::Above)));
+            registry.register("PV_MagBelow", Box::new(PvMagThreshCtor(MagKind::Below)));
+            registry.register("PV_MagClip", Box::new(PvMagThreshCtor(MagKind::Clip)));
+            registry.register("PV_LocalMax", Box::new(PvLocalMaxCtor));
+            registry.register("PV_PhaseShift90", Box::new(PvPhaseQuarterCtor(false)));
+            registry.register("PV_PhaseShift270", Box::new(PvPhaseQuarterCtor(true)));
+            registry.register("PV_BrickWall", Box::new(PvBrickWallCtor));
+            registry.register("PV_Conj", Box::new(PvConjCtor));
         }
         registry
     }

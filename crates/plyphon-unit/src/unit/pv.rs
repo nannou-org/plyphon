@@ -52,6 +52,12 @@ impl<'a> Spectrum<'a> {
     }
 }
 
+/// A packed view of `buf`'s spectrum *without* converting its coordinate form. For coord-independent
+/// edits (zeroing or copying whole bins, e.g. `PV_BrickWall`) that read neither magnitude nor phase.
+pub fn spectrum(buf: &mut Buffer) -> Option<Spectrum<'_>> {
+    Spectrum::new(buf.data_mut())
+}
+
 /// Read the frame-ready signal (input 0), pass it to output 0 (so the chain continues), and return
 /// the chain buffer index when a frame is ready. `None` between frames (`< 0`, normalised to `-1` on
 /// the output, like scsynth) - the unit returns without touching a buffer. scsynth's `PV_GET_BUF`
