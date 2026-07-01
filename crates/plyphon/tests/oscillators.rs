@@ -1,5 +1,6 @@
-//! Each oscillator (LFSaw, LFPulse, Impulse, Saw, Pulse) should produce its fundamental, stay in
-//! range, and not put energy at a non-harmonic frequency.
+//! Each oscillator (LFSaw, LFPulse, Impulse, Saw, Pulse, and the LFTri/LFPar/LFCub/VarSaw/SyncSaw/
+//! FSinOsc set) should produce its fundamental, stay in range, and not put energy at a non-harmonic
+//! frequency.
 
 use plyphon::{
     AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
@@ -85,6 +86,82 @@ fn oscillators_produce_their_fundamental() {
             "{name}: expected {FREQ} Hz fundamental, got fundamental={fundamental}, off={off}"
         );
     }
+}
+
+#[test]
+fn new_oscillators_produce_their_fundamental() {
+    let cases: [(&str, Vec<InputRef>); 5] = [
+        (
+            "LFTri",
+            vec![InputRef::Constant(FREQ), InputRef::Constant(0.0)],
+        ),
+        (
+            "LFPar",
+            vec![InputRef::Constant(FREQ), InputRef::Constant(0.0)],
+        ),
+        (
+            "LFCub",
+            vec![InputRef::Constant(FREQ), InputRef::Constant(0.0)],
+        ),
+        (
+            "VarSaw",
+            vec![
+                InputRef::Constant(FREQ),
+                InputRef::Constant(0.0),
+                InputRef::Constant(0.5),
+            ],
+        ),
+        (
+            "FSinOsc",
+            vec![InputRef::Constant(FREQ), InputRef::Constant(0.0)],
+        ),
+    ];
+    for (name, inputs) in cases {
+        let out = render_osc(name, inputs);
+        assert!(out.iter().any(|s| s.abs() > 0.1), "{name} was silent");
+        assert!(
+            out.iter().all(|s| s.abs() <= 1.5),
+            "{name} ran out of range"
+        );
+        let fundamental = goertzel(&out, FREQ);
+        let off = goertzel(&out, FREQ * 1.5); // 330 Hz: not a harmonic of 220
+        assert!(
+            fundamental > 5.0 * off,
+            "{name}: expected {FREQ} Hz fundamental, got fundamental={fundamental}, off={off}"
+        );
+    }
+}
+
+#[test]
+fn syncsaw_is_synced_and_bright() {
+    // SyncSaw(220, 440): a saw at 440 Hz hard-synced to 220 Hz. Its energy concentrates near the saw
+    // frequency (440, a harmonic of the 220 sync), far above a non-harmonic bin.
+    let out = render_osc(
+        "SyncSaw",
+        vec![InputRef::Constant(FREQ), InputRef::Constant(FREQ * 2.0)],
+    );
+    assert!(out.iter().any(|s| s.abs() > 0.1), "SyncSaw was silent");
+    assert!(
+        out.iter().all(|s| s.abs() <= 1.5),
+        "SyncSaw ran out of range"
+    );
+    assert!(
+        goertzel(&out, FREQ * 2.0) > 5.0 * goertzel(&out, FREQ * 1.5),
+        "SyncSaw should be bright at its saw frequency"
+    );
+}
+
+#[test]
+fn fsinosc_is_a_nearly_pure_sine() {
+    // The resonator sine should have almost no energy at the second harmonic.
+    let out = render_osc(
+        "FSinOsc",
+        vec![InputRef::Constant(FREQ), InputRef::Constant(0.0)],
+    );
+    assert!(
+        goertzel(&out, FREQ) > 20.0 * goertzel(&out, FREQ * 2.0),
+        "FSinOsc should be a nearly pure sine"
+    );
 }
 
 #[test]

@@ -40,7 +40,9 @@ use crate::unit::filter_simple::{
 };
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
 use crate::unit::input::InCtor;
-use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
+use crate::unit::lf::{
+    ImpulseCtor, LFCubCtor, LFParCtor, LFPulseCtor, LFSawCtor, LFTriCtor, SyncSawCtor, VarSawCtor,
+};
 use crate::unit::line::{LineCtor, XLineCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
 use crate::unit::node_ctl::{
@@ -69,7 +71,7 @@ use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::shape::{
     InRangeCtor, InRectCtor, LinExpCtor, RangeKind, RangeShaperCtor, UnwrapCtor,
 };
-use crate::unit::sin_osc::SinOscCtor;
+use crate::unit::sin_osc::{FSinOscCtor, SinOscCtor};
 use crate::unit::timing::{
     PhasorCtor, PulseCountCtor, PulseDividerCtor, StepperCtor, SweepCtor, TimerCtor,
     ZeroCrossingCtor,
@@ -226,6 +228,12 @@ impl UnitRegistry {
         registry.register("LFSaw", Box::new(LFSawCtor));
         registry.register("LFPulse", Box::new(LFPulseCtor));
         registry.register("Impulse", Box::new(ImpulseCtor));
+        registry.register("LFTri", Box::new(LFTriCtor));
+        registry.register("LFPar", Box::new(LFParCtor));
+        registry.register("LFCub", Box::new(LFCubCtor));
+        registry.register("VarSaw", Box::new(VarSawCtor));
+        registry.register("SyncSaw", Box::new(SyncSawCtor));
+        registry.register("FSinOsc", Box::new(FSinOscCtor));
         registry.register("Saw", Box::new(SawCtor));
         registry.register("Pulse", Box::new(PulseCtor));
         registry.register("Pan2", Box::new(Pan2Ctor));
