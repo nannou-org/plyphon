@@ -20,9 +20,13 @@
 //!   SynthDef that would exceed either is rejected at compile time (off-RT), keeping the audio thread
 //!   bounded and `unsafe`-free.
 
+pub mod dbrown;
 pub mod dbufrd;
 pub mod dbufwr;
 pub mod demand_ugen;
+pub mod dgeom;
+pub mod dibrown;
+pub mod diwhite;
 pub mod dpoll;
 pub mod dseq;
 pub mod dseries;
@@ -39,9 +43,13 @@ use crate::unit::{
     buffer_at, buffer_at_mut,
 };
 
+pub use dbrown::Dbrown;
 pub use dbufrd::Dbufrd;
 pub use dbufwr::Dbufwr;
 pub use demand_ugen::Demand;
+pub use dgeom::Dgeom;
+pub use dibrown::Dibrown;
+pub use diwhite::Diwhite;
 pub use dpoll::Dpoll;
 pub use dseq::Dseq;
 pub use dseries::Dseries;

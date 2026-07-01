@@ -19,9 +19,13 @@ use crate::unit::chaos::{
 use crate::unit::decay::{Decay2Ctor, DecayCtor};
 use crate::unit::delay::{DelayCtor, FeedbackDelayCtor, Interp};
 use crate::unit::demand::BuiltDemandUnit;
+use crate::unit::demand::dbrown::DbrownCtor;
 use crate::unit::demand::dbufrd::DbufrdCtor;
 use crate::unit::demand::dbufwr::DbufwrCtor;
 use crate::unit::demand::demand_ugen::DemandCtor;
+use crate::unit::demand::dgeom::DgeomCtor;
+use crate::unit::demand::dibrown::DibrownCtor;
+use crate::unit::demand::diwhite::DiwhiteCtor;
 use crate::unit::demand::dpoll::DpollCtor;
 use crate::unit::demand::dseq::DseqCtor;
 use crate::unit::demand::dseries::DseriesCtor;
@@ -396,7 +400,11 @@ impl UnitRegistry {
         // Demand-rate sources (the demand plan).
         registry.register_demand("Dseq", Box::new(DseqCtor));
         registry.register_demand("Dseries", Box::new(DseriesCtor));
+        registry.register_demand("Dgeom", Box::new(DgeomCtor));
         registry.register_demand("Dwhite", Box::new(DwhiteCtor));
+        registry.register_demand("Diwhite", Box::new(DiwhiteCtor));
+        registry.register_demand("Dbrown", Box::new(DbrownCtor));
+        registry.register_demand("Dibrown", Box::new(DibrownCtor));
         registry.register_demand("Dbufrd", Box::new(DbufrdCtor));
         registry.register_demand("Dbufwr", Box::new(DbufwrCtor));
         registry.register_demand("Dpoll", Box::new(DpollCtor));

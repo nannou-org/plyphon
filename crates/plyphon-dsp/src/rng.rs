@@ -55,6 +55,23 @@ impl Rng {
     pub fn next_unipolar(&mut self) -> f32 {
         (self.next_u32() >> 9) as f32 * (1.0 / 8_388_608.0)
     }
+
+    /// A uniform integer in `[0, scale)` (scsynth's `RGen::irand`, `floor(scale * frand)`). A `scale`
+    /// of `0` or less yields `0`.
+    #[inline]
+    pub fn next_irand(&mut self, scale: i32) -> i32 {
+        if scale <= 0 {
+            return 0;
+        }
+        (scale as f32 * self.next_unipolar()) as i32
+    }
+
+    /// A uniform integer in `[-scale, scale]` (scsynth's `RGen::irand2`,
+    /// `floor((2*scale + 1) * frand - scale)`).
+    #[inline]
+    pub fn next_irand2(&mut self, scale: i32) -> i32 {
+        crate::math::floor((2.0 * scale as f32 + 1.0) * self.next_unipolar() - scale as f32) as i32
+    }
 }
 
 #[cfg(test)]
