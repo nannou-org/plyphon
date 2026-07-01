@@ -37,7 +37,7 @@ use crate::unit::demand::dwhite::DwhiteCtor;
 use crate::unit::demand::dxrand::DxrandCtor;
 use crate::unit::disk_in::DiskInCtor;
 use crate::unit::disk_out::DiskOutCtor;
-use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor};
+use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor, LookAheadCtor, LookAheadMode};
 use crate::unit::env::EnvGenCtor;
 use crate::unit::eq::{FormletCtor, MidEQCtor};
 #[cfg(feature = "fft")]
@@ -385,6 +385,11 @@ impl UnitRegistry {
         registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry.register("Compander", Box::new(CompanderCtor));
         registry.register("DetectSilence", Box::new(DetectSilenceCtor));
+        registry.register("Limiter", Box::new(LookAheadCtor(LookAheadMode::Limiter)));
+        registry.register(
+            "Normalizer",
+            Box::new(LookAheadCtor(LookAheadMode::Normalizer)),
+        );
         registry.register("EnvGen", Box::new(EnvGenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
         registry.register("Trig", Box::new(TrigCtor));

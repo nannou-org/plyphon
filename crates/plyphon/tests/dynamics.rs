@@ -176,3 +176,74 @@ fn detect_silence_flags_when_the_input_goes_quiet() {
     assert_eq!(out[0], 0.0, "should not fire while the sound is present");
     assert_eq!(*out.last().unwrap(), 1.0, "should flag silence by the end");
 }
+
+/// `<name>(SinOsc(400) * amp, level, dur) -> Out`, returning the settled tail (past the look-ahead
+/// latency and gain glide).
+fn look_ahead(name: &str, amp: f32, level: f32, dur: f32) -> Vec<f32> {
+    let mut out = run(
+        vec![
+            sin(400.0),
+            UnitSpec {
+                name: "BinaryOpUGen".to_string(),
+                rate: Rate::Audio,
+                inputs: vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Constant(amp),
+                ],
+                num_outputs: 1,
+                special_index: 2,
+            },
+            UnitSpec::new(
+                name,
+                Rate::Audio,
+                vec![
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Constant(level),
+                    InputRef::Constant(dur),
+                ],
+                1,
+            ),
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 2, output: 0 },
+                ],
+                0,
+            ),
+        ],
+        SR as usize / 4,
+    );
+    out.split_off(out.len() / 2)
+}
+
+#[test]
+fn limiter_caps_loud_and_passes_quiet() {
+    // Loud (amp 2 > level 0.5) is capped to ~0.5; quiet (amp 0.3 < 0.5) passes at ~0.3.
+    let loud = peak(&look_ahead("Limiter", 2.0, 0.5, 0.01));
+    let quiet = peak(&look_ahead("Limiter", 0.3, 0.5, 0.01));
+    assert!(
+        (0.4..0.65).contains(&loud),
+        "loud signal should be limited to ~level, got {loud}"
+    );
+    assert!(
+        (0.25..0.35).contains(&quiet),
+        "quiet signal should pass unchanged, got {quiet}"
+    );
+}
+
+#[test]
+fn normalizer_drives_peak_to_level() {
+    // Both a loud (amp 2) and a quiet (amp 0.1) sine are driven to the target level (0.5).
+    let loud = peak(&look_ahead("Normalizer", 2.0, 0.5, 0.01));
+    let quiet = peak(&look_ahead("Normalizer", 0.1, 0.5, 0.01));
+    assert!(
+        (0.4..0.65).contains(&loud),
+        "loud signal should be normalized to ~0.5, got {loud}"
+    );
+    assert!(
+        (0.4..0.65).contains(&quiet),
+        "quiet signal should be boosted to ~0.5, got {quiet}"
+    );
+}

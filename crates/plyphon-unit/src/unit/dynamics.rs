@@ -1,17 +1,19 @@
-//! Dynamics processors - plyphon's ports of scsynth's `Compander` and `DetectSilence`
-//! (`FilterUGens.cpp`).
+//! Dynamics processors - plyphon's ports of scsynth's `Compander`, `DetectSilence`, `Limiter` and
+//! `Normalizer` (`FilterUGens.cpp`).
 //!
 //! `Compander` is a general compressor/expander/gate driven by a side-chain control signal;
 //! `DetectSilence` fires a done action (and outputs `1`) once its input has stayed below a threshold
-//! for a given time. `Limiter`/`Normalizer` are deferred - they need a look-ahead delay in aux
-//! memory.
+//! for a given time. `Limiter` and `Normalizer` are look-ahead peak processors: they delay the signal
+//! by `dur` seconds (a triple-buffer in aux memory) so a gain glide can be set up before each peak
+//! arrives - `Limiter` only attenuates (capping the peak *at* `level`), `Normalizer` always rescales
+//! (driving the peak *to* `level`).
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::trigger::{drive, sig};
-use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec, unit_spec_aux};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 
@@ -202,5 +204,181 @@ impl UnitDef for DetectSilenceCtor {
             fired: 0,
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
+    }
+}
+
+/// Whether a [`LookAhead`] normalizes (drives the peak *to* `level`) or limits (caps it *at* `level`).
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum LookAheadMode {
+    /// `Normalizer`: target gain is always `level / peak`.
+    Normalizer,
+    /// `Limiter`: target gain is `min(1, level / peak)` - only attenuates.
+    Limiter,
+}
+
+impl LookAheadMode {
+    fn to_tag(self) -> u32 {
+        match self {
+            LookAheadMode::Normalizer => 0,
+            LookAheadMode::Limiter => 1,
+        }
+    }
+}
+
+/// The look-ahead target gain for peak `maxval` and target `amp`, per mode (scsynth's `next_level`).
+fn look_ahead_gain(mode: u32, maxval: f32, amp: f32) -> f32 {
+    if mode == LookAheadMode::Limiter.to_tag() {
+        if maxval > amp { amp / maxval } else { 1.0 }
+    } else if maxval <= 0.00001 {
+        // Near-silence guard, so the boost gain stays finite.
+        100_000.0 * amp
+    } else {
+        amp / maxval
+    }
+}
+
+/// `Limiter.ar(in, level, dur)` / `Normalizer.ar(in, level, dur)`: a look-ahead peak processor. The
+/// signal is delayed by `dur` seconds through a rotating triple-buffer while the peak over the last two
+/// `dur`-length regions sets a gain that ramps in before the peak reaches the output, so limiting is
+/// click-free. `dur` is fixed at build (it sizes the buffer); `level` is read per block. Outputs
+/// silence for the first `2*dur` seconds (the look-ahead latency).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct LookAhead {
+    /// Current gain, ramped by `slope` each sample.
+    level: f32,
+    slope: f32,
+    /// Running peak of the region being written, and of the previous region.
+    curmaxval: f32,
+    prevmaxval: f32,
+    /// `1 / bufsize` - ramps a gain change over exactly one region.
+    slopefactor: f32,
+    /// Write/read position within the current region.
+    pos: i32,
+    /// Region rotations so far; real output begins at `2`.
+    flips: i32,
+    /// Samples per region (`ceil(dur * sampleRate)`).
+    bufsize: u32,
+    /// Sample offsets of the write / pending / read regions into the aux buffer.
+    in_off: u32,
+    mid_off: u32,
+    out_off: u32,
+    /// `0` = `Normalizer`, `1` = `Limiter`.
+    mode: u32,
+}
+
+impl LookAhead {
+    const IN: usize = 0;
+    const LEVEL: usize = 1;
+    const DUR: usize = 2;
+}
+
+impl Unit for LookAhead {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let amp = ctx.ins.control(Self::LEVEL);
+        let n = self.bufsize as usize;
+        let mode = self.mode;
+        let slopefactor = self.slopefactor;
+        let input = ctx.ins.audio(Self::IN);
+        let block = input.len();
+        let buf = ctx.aux.f32_mut();
+        if n == 0 || buf.len() < 3 * n {
+            ctx.outs.audio(0).fill(0.0);
+            return DoneAction::Nothing;
+        }
+        let out = ctx.outs.audio(0);
+
+        let (mut pos, mut flips) = (self.pos as usize, self.flips);
+        let (mut level, mut slope) = (self.level, self.slope);
+        let (mut curmaxval, mut prevmaxval) = (self.curmaxval, self.prevmaxval);
+        let (mut in_off, mut mid_off, mut out_off) = (
+            self.in_off as usize,
+            self.mid_off as usize,
+            self.out_off as usize,
+        );
+
+        let mut i = 0;
+        while i < block {
+            let nsmps = (block - i).min(n - pos);
+            let active = flips >= 2;
+            for _ in 0..nsmps {
+                let x = input[i];
+                buf[in_off + pos] = x;
+                out[i] = if active {
+                    level * buf[out_off + pos]
+                } else {
+                    0.0
+                };
+                level += slope;
+                let a = x.abs();
+                if a > curmaxval {
+                    curmaxval = a;
+                }
+                pos += 1;
+                i += 1;
+            }
+            if pos >= n {
+                pos = 0;
+                let maxval2 = prevmaxval.max(curmaxval);
+                prevmaxval = curmaxval;
+                curmaxval = 0.0;
+                let next_level = look_ahead_gain(mode, maxval2, amp);
+                slope = (next_level - level) * slopefactor;
+                // Rotate the regions: read <- pending, pending <- just-written, write <- old read.
+                let temp = out_off;
+                out_off = mid_off;
+                mid_off = in_off;
+                in_off = temp;
+                flips += 1;
+            }
+        }
+
+        self.pos = pos as i32;
+        self.flips = flips;
+        self.level = level;
+        self.slope = slope;
+        self.curmaxval = curmaxval;
+        self.prevmaxval = prevmaxval;
+        self.in_off = in_off as u32;
+        self.mid_off = mid_off as u32;
+        self.out_off = out_off as u32;
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`LookAhead`] (`Limiter`/`Normalizer`), parameterized by [`LookAheadMode`].
+pub struct LookAheadCtor(pub LookAheadMode);
+
+impl UnitDef for LookAheadCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 3 {
+            return Err(BuildError::WrongInputCount);
+        }
+        // `dur` sizes the look-ahead buffer, so it must be a compile-time constant (as in scsynth).
+        let dur = ctx
+            .const_input(LookAhead::DUR)
+            .ok_or(BuildError::AuxRequiresConstant {
+                input: LookAhead::DUR,
+            })?;
+        let n = (math::ceil(dur as f64 * ctx.audio.sample_rate) as usize).max(1);
+        let aux_bytes = 3 * n * core::mem::size_of::<f32>();
+        Ok(unit_spec_aux(
+            LookAhead {
+                level: 1.0,
+                slope: 0.0,
+                curmaxval: 0.0,
+                prevmaxval: 0.0,
+                slopefactor: 1.0 / n as f32,
+                pos: 0,
+                flips: 0,
+                bufsize: n as u32,
+                in_off: 0,
+                mid_off: n as u32,
+                out_off: 2 * n as u32,
+                mode: self.0.to_tag(),
+            },
+            aux_bytes,
+            core::mem::align_of::<f32>(),
+        ))
     }
 }
