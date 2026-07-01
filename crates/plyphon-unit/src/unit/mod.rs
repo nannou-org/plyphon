@@ -31,6 +31,7 @@ pub mod fft;
 pub mod filter;
 pub mod filter_simple;
 pub mod formant;
+pub mod freeverb;
 pub mod grain;
 pub mod hilbert;
 pub mod info;

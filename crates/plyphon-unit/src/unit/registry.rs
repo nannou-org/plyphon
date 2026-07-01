@@ -51,6 +51,7 @@ use crate::unit::filter_simple::{
     SlewCtor, SlopeCtor,
 };
 use crate::unit::formant::FormantCtor;
+use crate::unit::freeverb::{FreeVerb2Ctor, FreeVerbCtor};
 use crate::unit::grain::{
     GrainBufCtor, GrainFMCtor, GrainInCtor, GrainSinCtor, TGrainsCtor, Warp1Ctor,
 };
@@ -364,6 +365,9 @@ impl UnitRegistry {
         registry.register("Pluck", Box::new(PluckCtor));
         // Granular pitch shifter: four overlapping windowed grains over a delay line.
         registry.register("PitchShift", Box::new(PitchShiftCtor));
+        // Freeverb: eight parallel damped combs into four series allpasses (mono and true-stereo).
+        registry.register("FreeVerb", Box::new(FreeVerbCtor));
+        registry.register("FreeVerb2", Box::new(FreeVerb2Ctor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
         registry.register("GrayNoise", Box::new(GrayNoiseCtor));
