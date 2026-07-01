@@ -3,6 +3,7 @@
 
 use plyphon::{
     AddAction, Buffer, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine,
+    to_wavetable,
 };
 
 const SR: f64 = 48_000.0;
@@ -170,6 +171,105 @@ fn fold_index_folds_the_index() {
     assert!(
         (index("FoldIndex", &t, -1.0) - 20.0).abs() < 1e-4,
         "-1 folds to 1"
+    );
+}
+
+/// `Shaper.ar(bufnum=0, DC(x)) -> Out` against a wavetable-format transfer `table`.
+fn shape(table: &[f32], x: f32) -> f32 {
+    let units = vec![
+        UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(x)], 1),
+        UnitSpec::new(
+            "Shaper",
+            Rate::Audio,
+            vec![
+                InputRef::Constant(0.0),
+                InputRef::Unit { unit: 0, output: 0 },
+            ],
+            1,
+        ),
+        out_unit(1),
+    ];
+    run(units, Some(table))
+}
+
+#[test]
+fn shaper_identity_transfer_is_transparent() {
+    // A ramp -1..1 is the identity transfer f(u) = u, so shaping x returns ~x.
+    let n = 64;
+    let ramp: Vec<f32> = (0..n).map(|i| -1.0 + 2.0 * i as f32 / n as f32).collect();
+    let wt = to_wavetable(&ramp);
+    for x in [-0.7f32, -0.2, 0.0, 0.3, 0.6] {
+        assert!(
+            (shape(&wt, x) - x).abs() < 1e-2,
+            "identity shape({x}) = {}",
+            shape(&wt, x)
+        );
+    }
+}
+
+#[test]
+fn shaper_applies_a_nonlinear_transfer() {
+    // A T2 Chebyshev transfer f(u) = 2u^2 - 1: shaping x returns ~2x^2 - 1.
+    let n = 128;
+    let t2: Vec<f32> = (0..n)
+        .map(|i| {
+            let u = -1.0 + 2.0 * i as f32 / n as f32;
+            2.0 * u * u - 1.0
+        })
+        .collect();
+    let wt = to_wavetable(&t2);
+    for x in [-0.6f32, -0.25, 0.0, 0.4, 0.7] {
+        let expected = 2.0 * x * x - 1.0;
+        assert!(
+            (shape(&wt, x) - expected).abs() < 2e-2,
+            "T2 shape({x}) = {}, expected {expected}",
+            shape(&wt, x)
+        );
+    }
+}
+
+/// `DegreeToKey.ar(bufnum=0, DC(degree), octave) -> Out` against a scale `table`.
+fn degree_to_key(table: &[f32], degree: f32, octave: f32) -> f32 {
+    let units = vec![
+        UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(degree)], 1),
+        UnitSpec::new(
+            "DegreeToKey",
+            Rate::Audio,
+            vec![
+                InputRef::Constant(0.0),
+                InputRef::Unit { unit: 0, output: 0 },
+                InputRef::Constant(octave),
+            ],
+            1,
+        ),
+        out_unit(1),
+    ];
+    run(units, Some(table))
+}
+
+#[test]
+fn degree_to_key_maps_scale_degrees_with_octave_wrap() {
+    // A C-major scale (7 degrees, semitone offsets), octave = 12.
+    let scale = [0.0f32, 2.0, 4.0, 5.0, 7.0, 9.0, 11.0];
+    let key = |d: f32| degree_to_key(&scale, d, 12.0);
+    assert!((key(0.0) - 0.0).abs() < 1e-4, "degree 0 -> key 0");
+    assert!((key(3.0) - 5.0).abs() < 1e-4, "degree 3 -> key 5");
+    assert!(
+        (key(7.0) - 12.0).abs() < 1e-4,
+        "degree 7 -> octave up, degree 0"
+    );
+    assert!(
+        (key(8.0) - 14.0).abs() < 1e-4,
+        "degree 8 -> octave up, degree 1"
+    );
+    // Negative degrees wrap down (Euclidean modulo, unlike scsynth's C `%` at exact multiples).
+    assert!(
+        (key(-1.0) - -1.0).abs() < 1e-4,
+        "degree -1 -> top degree an octave down"
+    );
+    assert!(
+        (key(-7.0) - -12.0).abs() < 1e-4,
+        "degree -7 -> degree 0 an octave down"
     );
 }
 

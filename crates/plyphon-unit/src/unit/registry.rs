@@ -94,7 +94,7 @@ use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
 use crate::unit::scope_out::ScopeOutCtor;
-use crate::unit::select::{IndexCtor, IndexMode, SelectCtor};
+use crate::unit::select::{DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor};
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::shape::{
@@ -316,6 +316,8 @@ impl UnitRegistry {
         registry.register("IndexL", Box::new(IndexCtor(IndexMode::Lin)));
         registry.register("WrapIndex", Box::new(IndexCtor(IndexMode::Wrap)));
         registry.register("FoldIndex", Box::new(IndexCtor(IndexMode::Fold)));
+        registry.register("Shaper", Box::new(ShaperCtor));
+        registry.register("DegreeToKey", Box::new(DegreeToKeyCtor));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
         registry.register("BufWr", Box::new(BufWrCtor));
         registry.register("LFSaw", Box::new(LFSawCtor));

@@ -80,11 +80,19 @@ pub fn to_wavetable(samples: &[f32]) -> Vec<f32> {
     wt
 }
 
+/// Read the `(a, b)` pair at whole index `i` blended by `frac` (in `[0, 1)`). scsynth stores `b` as a
+/// slope and reads it against `1 + frac` (its `PhaseFrac1` bias), which reconstructs the plain linear
+/// blend `s[i] + (s[i+1] - s[i])·frac`.
+#[inline]
+fn interp_pair(wt: &[f32], i: usize, frac: f32) -> f32 {
+    wt[2 * i] + wt[2 * i + 1] * (1.0 + frac)
+}
+
 /// Interpolate a *wavetable-format* table (`(a, b)` pairs, see [`to_wavetable`]) at normalised `phase`
 /// in cycles. `wt` holds `2N` floats for `N` logical samples; only the fractional part of `phase` is
 /// used (the table is one periodic cycle). Reconstructs the same linear interpolation as
 /// [`lookup_cycle`] but with the pre-differenced coefficients scsynth stores, so the per-sample cost
-/// is one multiply-add: `a + b·(1 + frac)`. An empty table reads `0.0`.
+/// is one multiply-add. An empty table reads `0.0`.
 #[inline]
 pub fn lookup_wavetable(wt: &[f32], phase: f32) -> f32 {
     let n = wt.len() / 2; // logical samples
@@ -94,12 +102,24 @@ pub fn lookup_wavetable(wt: &[f32], phase: f32) -> f32 {
     let frac_phase = phase - math::floor(phase); // wrap into [0, 1)
     let pos = frac_phase * n as f32;
     let i = (pos as usize).min(n - 1); // 0..=n-1 (frac_phase < 1)
-    let frac = pos - i as f32;
-    let a = wt[2 * i];
-    let b = wt[2 * i + 1];
-    // scsynth stores b as a slope and reads with frac in [1, 2); `1 + frac` folds that bias in so
-    // `a + b·(1 + frac) == s[i] + (s[i+1] - s[i])·frac`, the plain linear blend.
-    a + b * (1.0 + frac)
+    interp_pair(wt, i, pos - i as f32)
+}
+
+/// Waveshape `x` (nominally in `[-1, 1]`) through a *wavetable-format* transfer function `wt` (e.g. a
+/// Chebyshev table from `/b_gen cheby … wavetable`), as scsynth's `Shaper` does: `x` maps linearly
+/// across the whole `N`-sample table (`x = -1` → start, `x = 0` → middle, `x = +1` → end) and is read
+/// with linear interpolation. An empty table reads `0.0`.
+#[inline]
+pub fn shape_wavetable(wt: &[f32], x: f32) -> f32 {
+    let n = wt.len() / 2; // logical samples
+    if n == 0 {
+        return 0.0;
+    }
+    let offset = n as f32 * 0.5;
+    // Clamp so the whole index stays in `0..=n-1` (scsynth's `fmaxindex = N - 0.001`).
+    let findex = (offset * (1.0 + x)).clamp(0.0, n as f32 - 0.001);
+    let i = findex as usize;
+    interp_pair(wt, i, findex - i as f32)
 }
 
 #[cfg(test)]
@@ -131,6 +151,26 @@ mod tests {
         assert!(close(lookup_wavetable(&wt, 0.875), -0.5));
         // Phase wraps into [0, 1): 1.125 reads the same as 0.125.
         assert!(close(lookup_wavetable(&wt, 1.125), 0.5));
+    }
+
+    #[test]
+    fn shape_wavetable_applies_the_transfer_function() {
+        // A linear-ramp transfer function f(u) = u: shaping x returns ~x across the interior range
+        // (x = 0 reads the table's middle, x = -1 the start, x = +1 the end).
+        let n = 64;
+        let samples: Vec<f32> = (0..n).map(|i| -1.0 + 2.0 * i as f32 / n as f32).collect();
+        let wt = to_wavetable(&samples);
+        for &x in &[-0.9f32, -0.5, -0.1, 0.3, 0.7] {
+            assert!(
+                (shape_wavetable(&wt, x) - x).abs() < 1e-3,
+                "shape({x}) = {}",
+                shape_wavetable(&wt, x)
+            );
+        }
+        assert!(
+            (shape_wavetable(&wt, 0.0) - 0.0).abs() < 1e-3,
+            "x=0 is the midpoint"
+        );
     }
 
     #[test]
