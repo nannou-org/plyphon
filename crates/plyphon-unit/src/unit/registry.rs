@@ -86,7 +86,8 @@ use crate::unit::noise::{
 use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
 use crate::unit::out::{OffsetOutCtor, OutCtor, ReplaceOutCtor};
 use crate::unit::pan::{
-    Balance2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Rotate2Ctor, XFade2Ctor,
+    Balance2Ctor, BiPanB2Ctor, DecodeB2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Pan4Ctor,
+    PanAzCtor, PanB2Ctor, PanBCtor, Rotate2Ctor, XFade2Ctor,
 };
 use crate::unit::physical::{BallCtor, SpringCtor, TBallCtor};
 use crate::unit::pitch_shift::PitchShiftCtor;
@@ -448,6 +449,13 @@ impl UnitRegistry {
         registry.register("XFade2", Box::new(XFade2Ctor));
         registry.register("LinXFade2", Box::new(LinXFade2Ctor));
         registry.register("Rotate2", Box::new(Rotate2Ctor));
+        // Multichannel / ambisonic panners.
+        registry.register("Pan4", Box::new(Pan4Ctor));
+        registry.register("PanAz", Box::new(PanAzCtor));
+        registry.register("PanB", Box::new(PanBCtor));
+        registry.register("PanB2", Box::new(PanB2Ctor));
+        registry.register("BiPanB2", Box::new(BiPanB2Ctor));
+        registry.register("DecodeB2", Box::new(DecodeB2Ctor));
         registry.register("Spring", Box::new(SpringCtor));
         registry.register("Ball", Box::new(BallCtor));
         registry.register("TBall", Box::new(TBallCtor));
