@@ -1,23 +1,31 @@
-//! `DelayN` - a non-interpolating delay line, plyphon's port of scsynth's `DelayN`.
+//! The delay-line family - plyphon's ports of scsynth's `DelayN/L/C`, `CombN/L/C` and
+//! `AllpassN/L/C` (`DelayUGens.cpp`).
 //!
-//! This is the first unit to use per-instance [auxiliary memory](crate::unit::Aux): its delay line
-//! is sized at build time from the scalar `maxdelaytime` and lives in the synth's pool block (the
-//! safe stand-in for scsynth's `RTAlloc`'d `float* m_dlybuf`). The whole delay/comb/allpass family
-//! follows the same shape; only the per-sample read kernel (no interp here; linear/cubic, feedback)
-//! differs.
+//! These are the units that use per-instance [auxiliary memory](crate::unit::Aux): the delay line is
+//! sized at build time from the scalar `maxdelaytime` and lives in the synth's pool block (the safe
+//! stand-in for scsynth's `RTAlloc`'d `float* m_dlybuf`). They share one circular buffer and one read
+//! kernel; the family splits only three ways:
+//!
+//! - **interpolation** of the fractional tap - `N` none, `L` linear, `C` cubic (`Interp`);
+//! - **feedback** - a plain delay ([`Delay`]) writes the input, while a comb/allpass
+//!   ([`FeedbackDelay`]) recirculates the delayed value with a coefficient derived from `decaytime`;
+//! - **allpass vs comb** - the allpass additionally subtracts the feed-forward path.
+//!
+//! The aux arena is *not* zeroed at instantiation (it may recycle a freed synth's dirty memory), so
+//! while the line is still filling (`numoutput < len`) reads use scsynth's cold-start (`_z`) guard:
+//! any tap before the start of writing reads `0` rather than stale memory.
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_aux};
+use plyphon_dsp::interp::{cubicinterp, lininterp};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 
-/// scsynth's `DelayN`/`DelayL` `minDelaySamples` (a cubic `DelayC` would use 2). `CalcDelay` clamps
-/// the requested delay in samples to `[MIN_DELAY, fdelaylen]`, so a `delaytime` of 0 still delays by
-/// one sample (plyphon omits scsynth's separate scalar-zero passthrough optimization).
-const MIN_DELAY: f32 = 1.0;
+/// `ln(0.001)`, scsynth's `log001`, the decay a comb/allpass reaches over its `decaytime` (-60 dB).
+const LOG001: f32 = -6.907_755_4;
 
 /// Calc-variant tags, chosen from the `delaytime` input's rate at build time (scsynth selects a
 /// `_next` vs `_next_a` calc func by `INRATE(2)`). Stored as a `u32` so the state stays [`Pod`].
@@ -29,14 +37,206 @@ mod calc {
     pub const DELAY_AUDIO: u32 = 1;
 }
 
-/// `DelayN.ar(in, maxdelaytime, delaytime)`: a simple delay with no interpolation.
+/// How a fractional delay tap is interpolated. Stored as a `u32` tag so the state stays [`Pod`].
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Interp {
+    /// No interpolation - truncate to the nearest integer sample (`DelayN`/`CombN`/`AllpassN`).
+    None,
+    /// Linear interpolation between the two adjacent samples (`DelayL`/`CombL`/`AllpassL`).
+    Lin,
+    /// 4-point cubic interpolation (`DelayC`/`CombC`/`AllpassC`).
+    Cubic,
+}
+
+impl Interp {
+    fn to_tag(self) -> u32 {
+        match self {
+            Interp::None => 0,
+            Interp::Lin => 1,
+            Interp::Cubic => 2,
+        }
+    }
+
+    fn from_tag(tag: u32) -> Interp {
+        match tag {
+            1 => Interp::Lin,
+            2 => Interp::Cubic,
+            _ => Interp::None,
+        }
+    }
+
+    /// The minimum delay in samples (scsynth's `minDelaySamples`). Cubic *feedback* delays reserve two
+    /// samples of headroom for the interpolator; every other case reserves one (note plain `DelayC`
+    /// keeps the `1`-sample minimum, matching scsynth's `InterpolationUnit` inheritance).
+    fn min_delay(self, feedback: bool) -> f32 {
+        if feedback && self == Interp::Cubic {
+            2.0
+        } else {
+            1.0
+        }
+    }
+}
+
+/// scsynth's `DelayUnit_AllocDelayLine` length in `f32`s: `NEXTPOWEROFTWO(ceil(maxdelay*SR + 1) +
+/// BUFLENGTH)`. The `+1` lets a read sit one sample behind a write at the same phase; the `+block`
+/// headroom keeps the write head and any delayed read from colliding within a block; the power-of-two
+/// length makes circular addressing a single mask.
+fn line_len(max_delay: f32, sr: f64, block: usize) -> u32 {
+    let base = math::ceil(max_delay.max(0.0) as f64 * sr + 1.0) as i64;
+    let len = (base + block as i64).max(1) as u64;
+    len.next_power_of_two() as u32
+}
+
+/// Clamp a delay in samples to `[min, max]` (scsynth's `CalcDelay`/`sc_clip`). NaN-safe: the
+/// `max`/`min` order maps a NaN to `min` rather than propagating it onto the read index.
+#[inline]
+fn clamp_delay(samples: f32, min: f32, max: f32) -> f32 {
+    samples.max(min).min(max)
+}
+
+/// scsynth's `sc_CalcFeedback`: the recirculation coefficient giving a -60 dB (factor 0.001) decay
+/// over `decaytime` seconds for a loop of length `delaytime`; negative `decaytime` flips the sign.
+#[inline]
+fn calc_feedback(delaytime: f32, decaytime: f32) -> f32 {
+    if delaytime == 0.0 || decaytime == 0.0 {
+        return 0.0;
+    }
+    let absret = math::exp(LOG001 * delaytime / decaytime.abs());
+    absret.copysign(decaytime)
+}
+
+/// Read the delayed value `idsamp + frac` samples behind the write head, interpolated per `interp`.
 ///
-/// The delay line itself is not a field - it is the [`ProcessCtx::aux`] slice, sized to `len` `f32`s
-/// at build time. Field names mirror scsynth's `DelayUnit` (minus the `float* m_dlybuf` pointer).
+/// When `warm` (the line has filled) the taps wrap freely with `mask`. While cold, `iwrphase < len`
+/// so the read phase is compared as a signed index and any tap before the start of writing
+/// contributes `0` - scsynth's `_z` checked helpers, reproduced so recycled dirty aux never leaks.
+#[inline]
+fn read_delayed(
+    buf: &[f32],
+    iwrphase: u32,
+    mask: u32,
+    idsamp: i64,
+    frac: f32,
+    interp: Interp,
+    warm: bool,
+) -> f32 {
+    if warm {
+        let tap = |back: i64| buf[((iwrphase as i64 - back) as u32 & mask) as usize];
+        match interp {
+            Interp::None => tap(idsamp),
+            Interp::Lin => lininterp(frac, tap(idsamp), tap(idsamp + 1)),
+            Interp::Cubic => cubicinterp(
+                frac,
+                tap(idsamp - 1),
+                tap(idsamp),
+                tap(idsamp + 1),
+                tap(idsamp + 2),
+            ),
+        }
+    } else {
+        let rd = iwrphase as i64 - idsamp;
+        let at = |ph: i64| buf[(ph as u32 & mask) as usize];
+        match interp {
+            Interp::None => {
+                if rd < 0 {
+                    0.0
+                } else {
+                    at(rd)
+                }
+            }
+            Interp::Lin => {
+                if rd < 0 {
+                    0.0
+                } else if rd - 1 < 0 {
+                    let d1 = at(rd);
+                    d1 - frac * d1
+                } else {
+                    lininterp(frac, at(rd), at(rd - 1))
+                }
+            }
+            Interp::Cubic => {
+                if rd + 1 < 0 {
+                    0.0
+                } else {
+                    let d0 = at(rd + 1);
+                    let (d1, d2, d3) = if rd < 0 {
+                        (0.0, 0.0, 0.0)
+                    } else if rd - 1 < 0 {
+                        (at(rd), 0.0, 0.0)
+                    } else if rd - 2 < 0 {
+                        (at(rd), at(rd - 1), 0.0)
+                    } else {
+                        (at(rd), at(rd - 1), at(rd - 2))
+                    };
+                    cubicinterp(frac, d0, d1, d2, d3)
+                }
+            }
+        }
+    }
+}
+
+/// One plain-delay sample: write `x` at the head, read the (interpolated) delayed tap, advance the
+/// head. Writing first lets a cubic tap read one sample ahead of the main tap at the shortest delay.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn delay_tick(
+    buf: &mut [f32],
+    iwrphase: &mut u32,
+    mask: u32,
+    idsamp: i64,
+    frac: f32,
+    interp: Interp,
+    x: f32,
+    warm: bool,
+) -> f32 {
+    buf[(*iwrphase & mask) as usize] = x;
+    let y = read_delayed(buf, *iwrphase, mask, idsamp, frac, interp, warm);
+    *iwrphase = iwrphase.wrapping_add(1);
+    y
+}
+
+/// One feedback (comb/allpass) sample: read the delayed value first, then write the recirculated
+/// input. A comb writes `x + feedbk * value` and outputs `value`; an allpass writes `x + feedbk *
+/// value` and outputs `value - feedbk * written`, cancelling the feed-forward path.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn feedback_tick(
+    buf: &mut [f32],
+    iwrphase: &mut u32,
+    mask: u32,
+    idsamp: i64,
+    frac: f32,
+    interp: Interp,
+    x: f32,
+    feedbk: f32,
+    allpass: bool,
+    warm: bool,
+) -> f32 {
+    let value = read_delayed(buf, *iwrphase, mask, idsamp, frac, interp, warm);
+    let out = if allpass {
+        let dwr = x + feedbk * value;
+        buf[(*iwrphase & mask) as usize] = dwr;
+        value - feedbk * dwr
+    } else {
+        buf[(*iwrphase & mask) as usize] = x + feedbk * value;
+        value
+    };
+    *iwrphase = iwrphase.wrapping_add(1);
+    out
+}
+
+const IN: usize = 0;
+const MAXDELAY: usize = 1;
+const DELAY: usize = 2;
+const DECAY: usize = 3;
+
+/// `DelayN/L/C.ar(in, maxdelaytime, delaytime)`: a delay line with no feedback, tapped with no,
+/// linear, or cubic interpolation. The line is the [`ProcessCtx::aux`] slice, sized to `len` `f32`s at
+/// build time. Field names mirror scsynth's `DelayUnit` (minus the `float* m_dlybuf` pointer).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct DelayN {
-    /// Current delay in samples (`m_dsamp`), possibly mid-slope; truncated to an integer tap.
+pub struct Delay {
+    /// Current delay in samples (`m_dsamp`), possibly fractional and mid-slope.
     dsamp: f32,
     /// The `delaytime` seen last block (`m_delaytime`), to detect a change and slope toward the new
     /// value. Only used for control-rate `delaytime`.
@@ -47,76 +247,38 @@ pub struct DelayN {
     mask: u32,
     /// Monotonic write phase (`m_iwrphase`); only masked at use, so it may wrap freely once warm.
     iwrphase: u32,
-    /// Samples written so far, saturating at `len` (`m_numoutput`). While `< len` the line is not yet
-    /// filled, so reads behind the write head return 0 (scsynth's `_z` cold-start variants).
+    /// Samples written so far, saturating at `len` (`m_numoutput`); while `< len` the cold-start guard
+    /// applies.
     numoutput: u32,
     /// Which calc variant (see [`calc`]), chosen from the `delaytime` rate at build time.
     calc: u32,
+    /// Interpolation tag (see [`Interp`]).
+    interp: u32,
 }
 
-impl DelayN {
-    const IN: usize = 0;
-    const MAXDELAY: usize = 1;
-    const DELAY: usize = 2;
-}
-
-/// Clamp a delay in samples to `[MIN_DELAY, max]` (scsynth's `CalcDelay`/`sc_clip`). NaN-safe: the
-/// `max`/`min` order maps a NaN to `MIN_DELAY` rather than propagating it onto the read index.
-#[inline]
-fn clamp_delay(samples: f32, max: f32) -> f32 {
-    samples.max(MIN_DELAY).min(max)
-}
-
-/// One delay sample: write `x` at the write head, read the tap `idsamp` samples behind it, advance.
-/// `warm` drops the cold-start guard once the line has filled (scsynth's `_z` -> steady calc swap);
-/// while cold, a tap before the start of writing reads 0. Mirrors scsynth's `DelayN_helper::perform`.
-#[inline]
-fn delay_tick(
-    buf: &mut [f32],
-    iwrphase: &mut u32,
-    mask: u32,
-    idsamp: i64,
-    x: f32,
-    warm: bool,
-) -> f32 {
-    buf[(*iwrphase & mask) as usize] = x;
-    let y = if warm {
-        buf[(iwrphase.wrapping_sub(idsamp as u32) & mask) as usize]
-    } else {
-        // Cold start: `iwrphase < len`, so this subtraction cannot wrap and the sign is meaningful.
-        let irdphase = *iwrphase as i64 - idsamp;
-        if irdphase < 0 {
-            0.0
-        } else {
-            buf[(irdphase as u32 & mask) as usize]
-        }
-    };
-    *iwrphase = iwrphase.wrapping_add(1);
-    y
-}
-
-impl Unit for DelayN {
+impl Unit for Delay {
     fn init(&mut self, ctx: &InitCtx<'_>) {
         // Seed `dsamp`/`delaytime` from the initial `delaytime` so the first block uses the steady
-        // path (no ramp-from-zero), mirroring scsynth's `DelayUnit_Reset` (`m_dsamp = CalcDelay`).
-        let dt = ctx.ins.control(Self::DELAY);
+        // path (no ramp-from-zero), mirroring scsynth's `DelayUnit_Reset`.
+        let dt = ctx.ins.control(DELAY);
+        let min = Interp::from_tag(self.interp).min_delay(false);
         self.delaytime = dt;
-        self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, self.len as f32);
+        self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, self.len as f32);
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let sr = ctx.audio.sample_rate as f32;
-        let max_delay = self.len as f32;
+        let max = self.len as f32;
+        let interp = Interp::from_tag(self.interp);
+        let min = interp.min_delay(false);
         let mask = self.mask;
         let mut iwrphase = self.iwrphase;
         let warm = self.numoutput >= self.len;
 
-        // The signal input, per sample (audio-rate) or broadcast (control/scalar). Wires are `'a`, so
-        // these borrows do not tie up `ctx` while `outs`/`aux` are borrowed mutably below.
-        let in_audio = (ctx.ins.rate(Self::IN) == Rate::Audio).then(|| ctx.ins.audio(Self::IN));
-        let in_ctrl = ctx.ins.control(Self::IN);
-        let dt_audio = (self.calc == calc::DELAY_AUDIO).then(|| ctx.ins.audio(Self::DELAY));
-        let dt_ctrl = ctx.ins.control(Self::DELAY);
+        let in_audio = (ctx.ins.rate(IN) == Rate::Audio).then(|| ctx.ins.audio(IN));
+        let in_ctrl = ctx.ins.control(IN);
+        let dt_audio = (self.calc == calc::DELAY_AUDIO).then(|| ctx.ins.audio(DELAY));
+        let dt_ctrl = ctx.ins.control(DELAY);
 
         let out = ctx.outs.audio(0);
         let buf = ctx.aux.f32_mut();
@@ -125,35 +287,61 @@ impl Unit for DelayN {
             return DoneAction::Nothing;
         }
         let n = out.len();
+        let input = |i: usize| in_audio.map_or(in_ctrl, |s| s[i]);
 
         match dt_audio {
             Some(dt) => {
-                // Audio-rate delaytime: recompute the tap every sample, no slope or state carry.
-                for i in 0..n {
-                    let x = in_audio.map_or(in_ctrl, |s| s[i]);
-                    let idsamp = clamp_delay(dt[i] * sr, max_delay) as i64;
-                    out[i] = delay_tick(buf, &mut iwrphase, mask, idsamp, x, warm);
+                for (i, o) in out.iter_mut().enumerate() {
+                    let dsamp = clamp_delay(dt[i] * sr, min, max);
+                    let idsamp = dsamp as i64;
+                    let frac = dsamp - idsamp as f32;
+                    *o = delay_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        warm,
+                    );
                 }
             }
             None if dt_ctrl == self.delaytime => {
-                // Unchanged control-rate delaytime: a fixed integer tap for the whole block.
-                let idsamp = self.dsamp as i64;
-                for i in 0..n {
-                    let x = in_audio.map_or(in_ctrl, |s| s[i]);
-                    out[i] = delay_tick(buf, &mut iwrphase, mask, idsamp, x, warm);
+                let dsamp = self.dsamp;
+                let idsamp = dsamp as i64;
+                let frac = dsamp - idsamp as f32;
+                for (i, o) in out.iter_mut().enumerate() {
+                    *o = delay_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        warm,
+                    );
                 }
             }
             None => {
-                // Changed control-rate delaytime: slope `dsamp` from the old value to the new across
-                // the block (scsynth's `CALCSLOPE`, i.e. `(next - cur) / blockSize` per sample).
-                let next = clamp_delay(dt_ctrl * sr, max_delay);
+                let next = clamp_delay(dt_ctrl * sr, min, max);
                 let mut dsamp = self.dsamp;
                 let slope = (next - dsamp) / n as f32;
-                for i in 0..n {
+                for (i, o) in out.iter_mut().enumerate() {
                     dsamp += slope;
                     let idsamp = dsamp as i64;
-                    let x = in_audio.map_or(in_ctrl, |s| s[i]);
-                    out[i] = delay_tick(buf, &mut iwrphase, mask, idsamp, x, warm);
+                    let frac = dsamp - idsamp as f32;
+                    *o = delay_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        warm,
+                    );
                 }
                 self.dsamp = dsamp;
                 self.delaytime = dt_ctrl;
@@ -168,46 +356,225 @@ impl Unit for DelayN {
     }
 }
 
-/// Constructor for [`DelayN`].
-pub struct DelayNCtor;
+/// `CombN/L/C` and `AllpassN/L/C.ar(in, maxdelaytime, delaytime, decaytime)`: a delay line that
+/// recirculates its output. `decaytime` sets the feedback coefficient (`sc_CalcFeedback`).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct FeedbackDelay {
+    /// Current delay in samples (`m_dsamp`), possibly fractional and mid-slope.
+    dsamp: f32,
+    /// The `delaytime` seen last block (`m_delaytime`).
+    delaytime: f32,
+    /// The `decaytime` seen last block (`m_decaytime`).
+    decaytime: f32,
+    /// The recirculation coefficient last block (`m_feedbk`).
+    feedbk: f32,
+    /// Delay-line length in samples (`m_idelaylen`), a power of two.
+    len: u32,
+    /// `len - 1`, the wrap mask (`m_mask`).
+    mask: u32,
+    /// Monotonic write phase (`m_iwrphase`).
+    iwrphase: u32,
+    /// Samples written so far, saturating at `len` (`m_numoutput`).
+    numoutput: u32,
+    /// Which calc variant (see [`calc`]).
+    calc: u32,
+    /// Interpolation tag (see [`Interp`]).
+    interp: u32,
+    /// `1` for an allpass, `0` for a comb.
+    allpass: u32,
+}
 
-impl UnitDef for DelayNCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        // Needs `in`, `maxdelaytime`, `delaytime`.
-        if ctx.input_rates.len() < 3 {
-            return Err(BuildError::WrongInputCount);
+impl Unit for FeedbackDelay {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        let dt = ctx.ins.control(DELAY);
+        let decay = ctx.ins.control(DECAY);
+        let min = Interp::from_tag(self.interp).min_delay(true);
+        self.delaytime = dt;
+        self.decaytime = decay;
+        self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, self.len as f32);
+        self.feedbk = calc_feedback(dt, decay);
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let sr = ctx.audio.sample_rate as f32;
+        let max = self.len as f32;
+        let interp = Interp::from_tag(self.interp);
+        let min = interp.min_delay(true);
+        let allpass = self.allpass != 0;
+        let mask = self.mask;
+        let mut iwrphase = self.iwrphase;
+        let warm = self.numoutput >= self.len;
+
+        let in_audio = (ctx.ins.rate(IN) == Rate::Audio).then(|| ctx.ins.audio(IN));
+        let in_ctrl = ctx.ins.control(IN);
+        let dt_audio = (self.calc == calc::DELAY_AUDIO).then(|| ctx.ins.audio(DELAY));
+        let dt_ctrl = ctx.ins.control(DELAY);
+        // `decaytime` is always read at scalar/control rate, even when `delaytime` is audio-rate.
+        let decay = ctx.ins.control(DECAY);
+
+        let out = ctx.outs.audio(0);
+        let buf = ctx.aux.f32_mut();
+        if buf.is_empty() {
+            out.fill(0.0);
+            return DoneAction::Nothing;
         }
-        // `maxdelaytime` sizes the line, so it must be a compile-time constant (scsynth reads it once
-        // at ctor and never again).
-        let max_delay =
-            ctx.const_input(DelayN::MAXDELAY)
-                .ok_or(BuildError::AuxRequiresConstant {
-                    input: DelayN::MAXDELAY,
-                })?;
-        let sr = ctx.audio.sample_rate;
-        let block = ctx.audio.block_size as i64;
-        // scsynth's `DelayUnit_AllocDelayLine`: `NEXTPOWEROFTWO(ceil(maxdelay*SR + 1) + BUFLENGTH)`.
-        // The `+1` lets a read sit one sample behind a write at the same phase; the `+block` headroom
-        // keeps the write head and any delayed read from colliding within a block; the power-of-two
-        // length makes circular addressing a single mask.
-        let base = math::ceil(max_delay.max(0.0) as f64 * sr + 1.0) as i64;
-        let len = (base + block).max(1) as u64;
-        let len = len.next_power_of_two();
-        let len = len as u32;
-        let calc = match ctx.input_rates[DelayN::DELAY] {
-            Rate::Audio => calc::DELAY_AUDIO,
-            _ => calc::DELAY_CONTROL,
-        };
-        let aux_bytes = len as usize * core::mem::size_of::<f32>();
+        let n = out.len();
+        let input = |i: usize| in_audio.map_or(in_ctrl, |s| s[i]);
+
+        match dt_audio {
+            Some(dt) => {
+                // Audio-rate delaytime: recompute the tap and coefficient every sample, no slope.
+                for (i, o) in out.iter_mut().enumerate() {
+                    let del = dt[i];
+                    let dsamp = clamp_delay(del * sr, min, max);
+                    let idsamp = dsamp as i64;
+                    let frac = dsamp - idsamp as f32;
+                    let feedbk = calc_feedback(del, decay);
+                    *o = feedback_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        feedbk,
+                        allpass,
+                        warm,
+                    );
+                }
+            }
+            None if dt_ctrl == self.delaytime && decay == self.decaytime => {
+                let dsamp = self.dsamp;
+                let idsamp = dsamp as i64;
+                let frac = dsamp - idsamp as f32;
+                let feedbk = self.feedbk;
+                for (i, o) in out.iter_mut().enumerate() {
+                    *o = feedback_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        feedbk,
+                        allpass,
+                        warm,
+                    );
+                }
+            }
+            None => {
+                // Changed control-rate delaytime and/or decaytime: slope both across the block.
+                let next_dsamp = clamp_delay(dt_ctrl * sr, min, max);
+                let next_feedbk = calc_feedback(dt_ctrl, decay);
+                let mut dsamp = self.dsamp;
+                let mut feedbk = self.feedbk;
+                let dsamp_slope = (next_dsamp - dsamp) / n as f32;
+                let feedbk_slope = (next_feedbk - feedbk) / n as f32;
+                for (i, o) in out.iter_mut().enumerate() {
+                    dsamp += dsamp_slope;
+                    feedbk += feedbk_slope;
+                    let idsamp = dsamp as i64;
+                    let frac = dsamp - idsamp as f32;
+                    *o = feedback_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        feedbk,
+                        allpass,
+                        warm,
+                    );
+                }
+                self.dsamp = dsamp;
+                self.feedbk = feedbk;
+                self.delaytime = dt_ctrl;
+                self.decaytime = decay;
+            }
+        }
+
+        self.iwrphase = iwrphase;
+        if !warm {
+            self.numoutput = self.numoutput.saturating_add(n as u32).min(self.len);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Build a delay line, validating inputs and sizing the aux buffer from the constant `maxdelaytime`.
+/// Returns `(len, mask, calc, aux_bytes)`.
+fn build_line(
+    ctx: &BuildContext<'_>,
+    min_inputs: usize,
+) -> Result<(u32, u32, u32, usize), BuildError> {
+    if ctx.input_rates.len() < min_inputs {
+        return Err(BuildError::WrongInputCount);
+    }
+    // `maxdelaytime` sizes the line, so it must be a compile-time constant (scsynth reads it once at
+    // ctor and never again).
+    let max_delay = ctx
+        .const_input(MAXDELAY)
+        .ok_or(BuildError::AuxRequiresConstant { input: MAXDELAY })?;
+    let len = line_len(max_delay, ctx.audio.sample_rate, ctx.audio.block_size);
+    let calc = match ctx.input_rates[DELAY] {
+        Rate::Audio => calc::DELAY_AUDIO,
+        _ => calc::DELAY_CONTROL,
+    };
+    let aux_bytes = len as usize * core::mem::size_of::<f32>();
+    Ok((len, len - 1, calc, aux_bytes))
+}
+
+/// Constructor for [`Delay`] (`DelayN`/`DelayL`/`DelayC`), parameterized by [`Interp`].
+pub struct DelayCtor(pub Interp);
+
+impl UnitDef for DelayCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        let (len, mask, calc, aux_bytes) = build_line(ctx, 3)?;
         Ok(unit_spec_aux(
-            DelayN {
+            Delay {
                 dsamp: 0.0,
                 delaytime: 0.0,
                 len,
-                mask: len - 1,
+                mask,
                 iwrphase: 0,
                 numoutput: 0,
                 calc,
+                interp: self.0.to_tag(),
+            },
+            aux_bytes,
+            core::mem::align_of::<f32>(),
+        ))
+    }
+}
+
+/// Constructor for [`FeedbackDelay`] (`CombN/L/C`, `AllpassN/L/C`), parameterized by [`Interp`] and
+/// whether it is an allpass (else a comb).
+pub struct FeedbackDelayCtor {
+    pub interp: Interp,
+    pub allpass: bool,
+}
+
+impl UnitDef for FeedbackDelayCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        let (len, mask, calc, aux_bytes) = build_line(ctx, 4)?;
+        Ok(unit_spec_aux(
+            FeedbackDelay {
+                dsamp: 0.0,
+                delaytime: 0.0,
+                decaytime: 0.0,
+                feedbk: 0.0,
+                len,
+                mask,
+                iwrphase: 0,
+                numoutput: 0,
+                calc,
+                interp: self.interp.to_tag(),
+                allpass: self.allpass as u32,
             },
             aux_bytes,
             core::mem::align_of::<f32>(),

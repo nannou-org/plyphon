@@ -162,7 +162,7 @@ impl DoneAction {
 pub use band_limited::{Pulse, Saw};
 pub use binary_op::BinaryOp;
 pub use buf_wr::BufWr;
-pub use delay::DelayN;
+pub use delay::{Delay, FeedbackDelay};
 pub use demand::{
     Dbufrd, Dbufwr, Demand, DemandAccess, DemandCtx, DemandUnit, DemandVtbl, DemandWorld, Dpoll,
     Dseq, Dseries, Duty, Dwhite, demand_next, demand_reset,

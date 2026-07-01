@@ -17,7 +17,7 @@ use crate::unit::chaos::{
     CuspNCtor, GbmanNCtor, LatoocarfianNCtor, LinCongNCtor, QuadNCtor, StandardNCtor,
 };
 use crate::unit::decay::{Decay2Ctor, DecayCtor};
-use crate::unit::delay::DelayNCtor;
+use crate::unit::delay::{DelayCtor, FeedbackDelayCtor, Interp};
 use crate::unit::demand::BuiltDemandUnit;
 use crate::unit::demand::dbufrd::DbufrdCtor;
 use crate::unit::demand::dbufwr::DbufwrCtor;
@@ -221,7 +221,52 @@ impl UnitRegistry {
         registry.register("Slope", Box::new(SlopeCtor));
         registry.register("Slew", Box::new(SlewCtor));
         registry.register("APF", Box::new(APFCtor));
-        registry.register("DelayN", Box::new(DelayNCtor));
+        // Delay lines: plain (Delay*) and recirculating (Comb*/Allpass*), sharing one read kernel.
+        registry.register("DelayN", Box::new(DelayCtor(Interp::None)));
+        registry.register("DelayL", Box::new(DelayCtor(Interp::Lin)));
+        registry.register("DelayC", Box::new(DelayCtor(Interp::Cubic)));
+        registry.register(
+            "CombN",
+            Box::new(FeedbackDelayCtor {
+                interp: Interp::None,
+                allpass: false,
+            }),
+        );
+        registry.register(
+            "CombL",
+            Box::new(FeedbackDelayCtor {
+                interp: Interp::Lin,
+                allpass: false,
+            }),
+        );
+        registry.register(
+            "CombC",
+            Box::new(FeedbackDelayCtor {
+                interp: Interp::Cubic,
+                allpass: false,
+            }),
+        );
+        registry.register(
+            "AllpassN",
+            Box::new(FeedbackDelayCtor {
+                interp: Interp::None,
+                allpass: true,
+            }),
+        );
+        registry.register(
+            "AllpassL",
+            Box::new(FeedbackDelayCtor {
+                interp: Interp::Lin,
+                allpass: true,
+            }),
+        );
+        registry.register(
+            "AllpassC",
+            Box::new(FeedbackDelayCtor {
+                interp: Interp::Cubic,
+                allpass: true,
+            }),
+        );
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
         registry.register("GrayNoise", Box::new(GrayNoiseCtor));
