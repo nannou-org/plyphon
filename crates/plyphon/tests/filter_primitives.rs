@@ -1,7 +1,8 @@
 //! Exercise the primitive filters (`OnePole`, `OneZero`, `Integrator`, `LeakDC`, `TwoPole`,
-//! `TwoZero`, `Decay`, `Decay2`) and the resonant biquads (`RLPF`, `RHPF`, `BPF`, `BRF`, `Resonz`,
-//! `Ringz`) through the engine: each is checked for the frequency emphasis or time-domain shape
-//! scsynth's kernel produces.
+//! `TwoZero`, `Decay`, `Decay2`), the resonant biquads (`RLPF`, `RHPF`, `BPF`, `BRF`, `Resonz`,
+//! `Ringz`) and the fixed-coefficient/delay filters (`LPZ1`, `HPZ1`, `LPZ2`, `HPZ2`, `BPZ2`, `BRZ2`,
+//! `Slope`, `Delay1`, `Delay2`, `Slew`, `APF`) through the engine: each is checked for the frequency
+//! emphasis or time-domain shape scsynth's kernel produces.
 
 use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine};
 
@@ -98,6 +99,33 @@ fn on_mix(filter: &str, extra: Vec<InputRef>) -> Vec<f32> {
 
 fn ratio(out: &[f32]) -> (f32, f32) {
     (goertzel(out, 200.0), goertzel(out, 4000.0))
+}
+
+/// `filter.ar((SinOsc.ar(f1) + SinOsc.ar(f2)), ..extra) -> Out`, returning `(|f1|, |f2|)`.
+fn on_two(filter: &str, f1: f32, f2: f32, extra: Vec<InputRef>) -> (f32, f32) {
+    let mut inputs = vec![InputRef::Unit { unit: 2, output: 0 }];
+    inputs.extend(extra);
+    let out = run(vec![
+        sin(f1),
+        sin(f2),
+        UnitSpec {
+            name: "BinaryOpUGen".to_string(),
+            rate: Rate::Audio,
+            inputs: vec![
+                InputRef::Unit { unit: 0, output: 0 },
+                InputRef::Unit { unit: 1, output: 0 },
+            ],
+            num_outputs: 1,
+            special_index: 0,
+        },
+        UnitSpec::new(filter, Rate::Audio, inputs, 1),
+        out(3),
+    ]);
+    assert!(
+        out.iter().all(|s| s.is_finite()),
+        "{filter} output not finite"
+    );
+    (goertzel(&out, f1), goertzel(&out, f2))
 }
 
 #[test]
@@ -364,5 +392,136 @@ fn ringz_rings_at_its_frequency() {
     assert!(
         high > 4.0 * low,
         "Ringz@4000 should ring at 4000: {low} vs {high}"
+    );
+}
+
+#[test]
+fn lpz1_and_lpz2_favour_lows() {
+    // These are gentle low-passes with the cutoff at Nyquist, so they only discriminate against a
+    // near-Nyquist tone: 1 kHz survives, 22 kHz is attenuated.
+    for f in ["LPZ1", "LPZ2"] {
+        let (low, high) = on_two(f, 1000.0, 22_000.0, vec![]);
+        assert!(
+            low > 4.0 * high,
+            "{f} should favour 1 kHz over 22 kHz: {low} vs {high}"
+        );
+    }
+}
+
+#[test]
+fn hpz1_and_hpz2_favour_highs() {
+    for f in ["HPZ1", "HPZ2"] {
+        let o = on_mix(f, vec![]);
+        assert!(o.iter().all(|s| s.is_finite()));
+        let (low, high) = ratio(&o);
+        assert!(high > 4.0 * low, "{f} should favour 4000: {low} vs {high}");
+    }
+}
+
+#[test]
+fn bpz2_favours_the_mid_band() {
+    // BPZ2's `0.5*(x0 - x2)` has zeros at DC and Nyquist and a peak at SR/4, so of 200 vs 4000 it
+    // strongly favours the higher tone.
+    let o = on_mix("BPZ2", vec![]);
+    assert!(o.iter().all(|s| s.is_finite()));
+    let (low, high) = ratio(&o);
+    assert!(high > 4.0 * low, "BPZ2 should favour 4000: {low} vs {high}");
+}
+
+#[test]
+fn brz2_notches_quarter_nyquist() {
+    // BRZ2's `0.5*(x0 + x2)` notches SR/4 (12 kHz at 48 kHz), so a 12 kHz tone is killed relative to
+    // a 1 kHz tone.
+    let out = run(vec![
+        sin(1000.0),
+        sin(12_000.0),
+        UnitSpec {
+            name: "BinaryOpUGen".to_string(),
+            rate: Rate::Audio,
+            inputs: vec![
+                InputRef::Unit { unit: 0, output: 0 },
+                InputRef::Unit { unit: 1, output: 0 },
+            ],
+            num_outputs: 1,
+            special_index: 0,
+        },
+        UnitSpec::new(
+            "BRZ2",
+            Rate::Audio,
+            vec![InputRef::Unit { unit: 2, output: 0 }],
+            1,
+        ),
+        out(3),
+    ]);
+    assert!(out.iter().all(|s| s.is_finite()));
+    let low = goertzel(&out, 1000.0);
+    let high = goertzel(&out, 12_000.0);
+    assert!(
+        low > 4.0 * high,
+        "BRZ2 should notch 12 kHz: {low} vs {high}"
+    );
+}
+
+#[test]
+fn slope_boosts_highs_like_a_differentiator() {
+    // Slope is the sample-rate-scaled difference, so its gain rises with frequency: 4000 dominates.
+    let o = on_mix("Slope", vec![]);
+    assert!(o.iter().all(|s| s.is_finite()));
+    let (low, high) = ratio(&o);
+    assert!(high > 4.0 * low, "Slope should boost 4000: {low} vs {high}");
+}
+
+#[test]
+fn delay1_and_delay2_pass_signal_transparently() {
+    // A pure sample delay is magnitude-flat, so both tones survive unchanged.
+    for f in ["Delay1", "Delay2"] {
+        let o = on_mix(f, vec![]);
+        assert!(o.iter().all(|s| s.is_finite()));
+        let (low, high) = ratio(&o);
+        assert!(
+            low > 0.1 && high > 0.1,
+            "{f} should pass both tones: {low}, {high}"
+        );
+    }
+}
+
+#[test]
+fn apf_passes_all_frequencies() {
+    // An all-pass is magnitude-flat: both tones survive its phase shift.
+    let o = on_mix(
+        "APF",
+        vec![InputRef::Constant(1000.0), InputRef::Constant(0.9)],
+    );
+    assert!(o.iter().all(|s| s.is_finite()));
+    let (low, high) = ratio(&o);
+    assert!(
+        low > 0.1 && high > 0.1,
+        "APF should pass both tones: {low}, {high}"
+    );
+}
+
+#[test]
+fn slew_limits_the_rate_of_change() {
+    // A 200 Hz sine (amplitude 1) slew-limited to ±100/s can only climb ~0.25 over a half-cycle, so
+    // its amplitude is throttled well below the input's.
+    let out = run(vec![
+        sin(200.0),
+        UnitSpec::new(
+            "Slew",
+            Rate::Audio,
+            vec![
+                InputRef::Unit { unit: 0, output: 0 },
+                InputRef::Constant(100.0),
+                InputRef::Constant(100.0),
+            ],
+            1,
+        ),
+        out(1),
+    ]);
+    assert!(out.iter().all(|s| s.is_finite()));
+    let peak = out.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+    assert!(
+        peak > 0.05 && peak < 0.5,
+        "Slew should throttle the amplitude, peak {peak}"
     );
 }

@@ -24,6 +24,7 @@ pub mod env;
 #[cfg(feature = "fft")]
 pub mod fft;
 pub mod filter;
+pub mod filter_simple;
 pub mod info;
 pub mod input;
 pub mod io;

@@ -30,7 +30,11 @@ use crate::unit::env::EnvGenCtor;
 #[cfg(feature = "fft")]
 use crate::unit::fft::{FftCtor, IfftCtor};
 use crate::unit::filter::{ButterCtor, Kind};
-use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
+use crate::unit::filter_simple::{
+    APFCtor, BPZ2Ctor, BRZ2Ctor, Delay1Ctor, Delay2Ctor, HPZ1Ctor, HPZ2Ctor, LPZ1Ctor, LPZ2Ctor,
+    SlewCtor, SlopeCtor,
+};
+use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
 use crate::unit::line::LineCtor;
@@ -51,7 +55,6 @@ use crate::unit::pv_mag_squared::PvMagSquaredCtor;
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
-use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::sin_osc::SinOscCtor;
@@ -162,12 +165,22 @@ impl UnitRegistry {
         registry.register("BRF", Box::new(BRFCtor));
         registry.register("Resonz", Box::new(ResonzCtor));
         registry.register("Ringz", Box::new(RingzCtor));
+        registry.register("LPZ1", Box::new(LPZ1Ctor));
+        registry.register("HPZ1", Box::new(HPZ1Ctor));
+        registry.register("LPZ2", Box::new(LPZ2Ctor));
+        registry.register("HPZ2", Box::new(HPZ2Ctor));
+        registry.register("BPZ2", Box::new(BPZ2Ctor));
+        registry.register("BRZ2", Box::new(BRZ2Ctor));
+        registry.register("Delay1", Box::new(Delay1Ctor));
+        registry.register("Delay2", Box::new(Delay2Ctor));
+        registry.register("Slope", Box::new(SlopeCtor));
+        registry.register("Slew", Box::new(SlewCtor));
+        registry.register("APF", Box::new(APFCtor));
         registry.register("DelayN", Box::new(DelayNCtor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
         registry.register("DiskOut", Box::new(DiskOutCtor));
-        registry.register("ScopeOut", Box::new(ScopeOutCtor));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
         registry.register("BufWr", Box::new(BufWrCtor));
         registry.register("LFSaw", Box::new(LFSawCtor));
@@ -206,7 +219,6 @@ impl UnitRegistry {
             Box::new(InfoCtor(InfoKind::NumRunningSynths)),
         );
         registry.register("NumBuffers", Box::new(InfoCtor(InfoKind::NumBuffers)));
-        registry.register("SubsampleOffset", Box::new(SubsampleOffsetCtor));
         registry.register("BufFrames", Box::new(BufInfoCtor(BufInfoKind::Frames)));
         registry.register("BufChannels", Box::new(BufInfoCtor(BufInfoKind::Channels)));
         registry.register("BufSamples", Box::new(BufInfoCtor(BufInfoKind::Samples)));
