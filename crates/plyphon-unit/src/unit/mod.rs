@@ -50,6 +50,7 @@ pub mod out;
 pub mod pan;
 pub mod physical;
 pub mod play_buf;
+pub mod pluck;
 #[cfg(feature = "fft")]
 pub mod pv;
 #[cfg(feature = "fft")]

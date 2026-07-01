@@ -88,6 +88,7 @@ use crate::unit::pan::{
 };
 use crate::unit::physical::{BallCtor, SpringCtor, TBallCtor};
 use crate::unit::play_buf::PlayBufCtor;
+use crate::unit::pluck::PluckCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_combine::{
     ComplexKind, PolarKind, PvComplexCtor, PvCopyCtor, PvCopyPhaseCtor, PvPolarCtor,
@@ -357,6 +358,9 @@ impl UnitRegistry {
         // A shared delay line: one writer, many readers, over a mono buffer.
         registry.register("DelTapWr", Box::new(DelTapWrCtor));
         registry.register("DelTapRd", Box::new(DelTapRdCtor));
+        // Karplus-Strong plucked string: a cubic comb with a trigger-gated excitation and a one-zero
+        // damping filter in the feedback loop.
+        registry.register("Pluck", Box::new(PluckCtor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
         registry.register("GrayNoise", Box::new(GrayNoiseCtor));

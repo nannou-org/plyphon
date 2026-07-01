@@ -74,7 +74,7 @@ impl Interp {
     /// The minimum delay in samples (scsynth's `minDelaySamples`). Cubic *feedback* delays reserve two
     /// samples of headroom for the interpolator; every other case reserves one (note plain `DelayC`
     /// keeps the `1`-sample minimum, matching scsynth's `InterpolationUnit` inheritance).
-    fn min_delay(self, feedback: bool) -> f32 {
+    pub(crate) fn min_delay(self, feedback: bool) -> f32 {
         if feedback && self == Interp::Cubic {
             2.0
         } else {
@@ -87,7 +87,7 @@ impl Interp {
 /// BUFLENGTH)`. The `+1` lets a read sit one sample behind a write at the same phase; the `+block`
 /// headroom keeps the write head and any delayed read from colliding within a block; the power-of-two
 /// length makes circular addressing a single mask.
-fn line_len(max_delay: f32, sr: f64, block: usize) -> u32 {
+pub(crate) fn line_len(max_delay: f32, sr: f64, block: usize) -> u32 {
     let base = math::ceil(max_delay.max(0.0) as f64 * sr + 1.0) as i64;
     let len = (base + block as i64).max(1) as u64;
     len.next_power_of_two() as u32
@@ -96,14 +96,14 @@ fn line_len(max_delay: f32, sr: f64, block: usize) -> u32 {
 /// Clamp a delay in samples to `[min, max]` (scsynth's `CalcDelay`/`sc_clip`). NaN-safe: the
 /// `max`/`min` order maps a NaN to `min` rather than propagating it onto the read index.
 #[inline]
-fn clamp_delay(samples: f32, min: f32, max: f32) -> f32 {
+pub(crate) fn clamp_delay(samples: f32, min: f32, max: f32) -> f32 {
     samples.max(min).min(max)
 }
 
 /// scsynth's `sc_CalcFeedback`: the recirculation coefficient giving a -60 dB (factor 0.001) decay
 /// over `decaytime` seconds for a loop of length `delaytime`; negative `decaytime` flips the sign.
 #[inline]
-fn calc_feedback(delaytime: f32, decaytime: f32) -> f32 {
+pub(crate) fn calc_feedback(delaytime: f32, decaytime: f32) -> f32 {
     if delaytime == 0.0 || decaytime == 0.0 {
         return 0.0;
     }
@@ -117,7 +117,7 @@ fn calc_feedback(delaytime: f32, decaytime: f32) -> f32 {
 /// so the read phase is compared as a signed index and any tap before the start of writing
 /// contributes `0` - scsynth's `_z` checked helpers, reproduced so recycled dirty aux never leaks.
 #[inline]
-fn read_delayed(
+pub(crate) fn read_delayed(
     buf: &[f32],
     iwrphase: u32,
     mask: u32,
