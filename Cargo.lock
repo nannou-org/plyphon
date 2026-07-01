@@ -580,6 +580,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-granular"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-hard-sync"
 version = "0.1.0"
 dependencies = [
