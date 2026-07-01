@@ -16,6 +16,7 @@ pub mod amp_comp;
 pub mod band_limited;
 pub mod bank;
 pub mod binary_op;
+pub mod buf_rd;
 pub mod buf_wr;
 pub mod chaos;
 pub mod decay;

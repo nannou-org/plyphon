@@ -14,6 +14,7 @@ use crate::unit::amp_comp::{AmpCompACtor, AmpCompCtor};
 use crate::unit::band_limited::{BlipCtor, PulseCtor, SawCtor};
 use crate::unit::bank::{KlangCtor, KlankCtor};
 use crate::unit::binary_op::BinaryOpCtor;
+use crate::unit::buf_rd::BufRdCtor;
 use crate::unit::buf_wr::BufWrCtor;
 use crate::unit::chaos::{
     CuspNCtor, GbmanNCtor, LatoocarfianNCtor, LinCongNCtor, QuadNCtor, StandardNCtor,
@@ -402,6 +403,7 @@ impl UnitRegistry {
         registry.register("StandardN", Box::new(StandardNCtor));
         registry.register("LatoocarfianN", Box::new(LatoocarfianNCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
+        registry.register("BufRd", Box::new(BufRdCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
         registry.register("DiskOut", Box::new(DiskOutCtor));
         registry.register("ScopeOut", Box::new(ScopeOutCtor));
