@@ -28,10 +28,13 @@ pub mod dgeom;
 pub mod dibrown;
 pub mod diwhite;
 pub mod dpoll;
+pub mod drand;
 pub mod dseq;
+pub mod dser;
 pub mod dseries;
 pub mod duty;
 pub mod dwhite;
+pub mod dxrand;
 
 use alloc::boxed::Box;
 
@@ -51,10 +54,13 @@ pub use dgeom::Dgeom;
 pub use dibrown::Dibrown;
 pub use diwhite::Diwhite;
 pub use dpoll::Dpoll;
+pub use drand::Drand;
 pub use dseq::Dseq;
+pub use dser::Dser;
 pub use dseries::Dseries;
 pub use duty::Duty;
 pub use dwhite::Dwhite;
+pub use dxrand::Dxrand;
 
 /// The largest `Pod` state a demand-rate unit may have, in bytes. A pull copies the source's state
 /// into a stack buffer this size, so the recursion can reborrow the whole demand arena without

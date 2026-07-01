@@ -27,10 +27,13 @@ use crate::unit::demand::dgeom::DgeomCtor;
 use crate::unit::demand::dibrown::DibrownCtor;
 use crate::unit::demand::diwhite::DiwhiteCtor;
 use crate::unit::demand::dpoll::DpollCtor;
+use crate::unit::demand::drand::DrandCtor;
 use crate::unit::demand::dseq::DseqCtor;
+use crate::unit::demand::dser::DserCtor;
 use crate::unit::demand::dseries::DseriesCtor;
 use crate::unit::demand::duty::DutyCtor;
 use crate::unit::demand::dwhite::DwhiteCtor;
+use crate::unit::demand::dxrand::DxrandCtor;
 use crate::unit::disk_in::DiskInCtor;
 use crate::unit::disk_out::DiskOutCtor;
 use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor};
@@ -414,6 +417,9 @@ impl UnitRegistry {
         registry.register("Demand", Box::new(DemandCtor));
         // Demand-rate sources (the demand plan).
         registry.register_demand("Dseq", Box::new(DseqCtor));
+        registry.register_demand("Dser", Box::new(DserCtor));
+        registry.register_demand("Drand", Box::new(DrandCtor));
+        registry.register_demand("Dxrand", Box::new(DxrandCtor));
         registry.register_demand("Dseries", Box::new(DseriesCtor));
         registry.register_demand("Dgeom", Box::new(DgeomCtor));
         registry.register_demand("Dwhite", Box::new(DwhiteCtor));
