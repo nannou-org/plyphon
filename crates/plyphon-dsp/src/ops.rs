@@ -229,6 +229,31 @@ pub fn fold(mut x: f32, lo: f32, hi: f32) -> f32 {
     c + lo
 }
 
+/// Wrap integer `x` into `[lo, hi]` *inclusive* (scsynth's integer `sc_wrap`). A degenerate
+/// `hi < lo` collapses to `lo`.
+pub fn iwrap(x: i32, lo: i32, hi: i32) -> i32 {
+    if hi < lo {
+        return lo;
+    }
+    let range = hi - lo + 1;
+    lo + (x - lo).rem_euclid(range)
+}
+
+/// Fold integer `x` into `[lo, hi]` *inclusive* with a triangle wave (scsynth's integer `sc_fold`). A
+/// degenerate `hi <= lo` collapses to `lo`.
+pub fn ifold(x: i32, lo: i32, hi: i32) -> i32 {
+    if hi <= lo {
+        return lo;
+    }
+    let b = hi - lo;
+    let two_b = b + b;
+    let mut c = (x - lo).rem_euclid(two_b);
+    if c > b {
+        c = two_b - c;
+    }
+    c + lo
+}
+
 /// Clamp `x` to `[lo, hi]` (scsynth `sc_clip`). Unlike [`f32::clamp`] this never panics when
 /// `lo > hi`, matching scsynth's `max(min(x, hi), lo)`.
 pub fn clip(x: f32, lo: f32, hi: f32) -> f32 {

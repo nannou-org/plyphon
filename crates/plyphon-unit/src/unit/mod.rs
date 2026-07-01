@@ -57,6 +57,7 @@ pub mod record_buf;
 pub mod registry;
 pub mod resonant;
 pub mod scope_out;
+pub mod select;
 pub mod send_reply;
 pub mod send_trig;
 pub mod shape;

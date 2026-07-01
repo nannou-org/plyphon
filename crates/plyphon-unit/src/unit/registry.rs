@@ -91,6 +91,7 @@ use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
 use crate::unit::scope_out::ScopeOutCtor;
+use crate::unit::select::{IndexCtor, IndexMode, SelectCtor};
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::shape::{
@@ -305,6 +306,12 @@ impl UnitRegistry {
         registry.register("DiskIn", Box::new(DiskInCtor));
         registry.register("DiskOut", Box::new(DiskOutCtor));
         registry.register("ScopeOut", Box::new(ScopeOutCtor));
+        // Selection / buffer indexing.
+        registry.register("Select", Box::new(SelectCtor));
+        registry.register("Index", Box::new(IndexCtor(IndexMode::Clip)));
+        registry.register("IndexL", Box::new(IndexCtor(IndexMode::Lin)));
+        registry.register("WrapIndex", Box::new(IndexCtor(IndexMode::Wrap)));
+        registry.register("FoldIndex", Box::new(IndexCtor(IndexMode::Fold)));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
         registry.register("BufWr", Box::new(BufWrCtor));
         registry.register("LFSaw", Box::new(LFSawCtor));

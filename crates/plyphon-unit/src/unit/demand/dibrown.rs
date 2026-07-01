@@ -6,22 +6,8 @@ use crate::error::BuildError;
 use crate::unit::demand::{BuiltDemandUnit, DemandCtx, DemandUnit, demand_unit_spec};
 use crate::unit::registry::{BuildContext, DemandUnitDef};
 use plyphon_dsp::math;
+use plyphon_dsp::ops::ifold;
 use plyphon_dsp::rng::Rng;
-
-/// scsynth's integer `sc_fold`: reflect `x` back into `[lo, hi]` with a triangle wave (folds
-/// repeatedly, not just once). A degenerate `hi <= lo` collapses to `lo`.
-fn ifold(x: i32, lo: i32, hi: i32) -> i32 {
-    if hi <= lo {
-        return lo;
-    }
-    let b = hi - lo;
-    let two_b = b + b;
-    let mut c = (x - lo).rem_euclid(two_b);
-    if c > b {
-        c = two_b - c;
-    }
-    c + lo
-}
 
 /// `Dibrown(length, lo, hi, step)`: like `Dbrown` but on the integers - each demand steps the value by
 /// a random integer in `[-step, step]` and folds it back into `[lo, hi]`, for `length` values, then
