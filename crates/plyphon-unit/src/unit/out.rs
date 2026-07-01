@@ -68,6 +68,61 @@ impl UnitDef for OutCtor {
     }
 }
 
+/// `ReplaceOut.ar(bus, signals)` / `ReplaceOut.kr(bus, signals)`: like [`Out`], but *overwrites* each
+/// bus channel with its signal instead of summing onto whatever earlier units wrote this block.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct ReplaceOut {
+    /// `0`/`1`: whether this writes the audio or control bus bank.
+    audio: u32,
+}
+
+impl Unit for ReplaceOut {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        if ctx.ins.is_empty() {
+            return DoneAction::Nothing;
+        }
+        let base = ctx.ins.control(0) as usize;
+        if self.audio != 0 {
+            let factor = ctx.resample_factor;
+            for k in 1..ctx.ins.len() {
+                let signal = ctx.ins.audio(k);
+                let out_samples = signal.len() / factor;
+                let offset = ctx.tick * out_samples;
+                unit::audio_replace_decimated(
+                    ctx.buses,
+                    ctx.buf_counter,
+                    base + (k - 1),
+                    offset,
+                    signal,
+                    factor,
+                );
+            }
+        } else {
+            for k in 1..ctx.ins.len() {
+                unit::control_replace(
+                    ctx.buses,
+                    ctx.buf_counter,
+                    base + (k - 1),
+                    ctx.ins.control(k),
+                );
+            }
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`ReplaceOut`].
+pub struct ReplaceOutCtor;
+
+impl UnitDef for ReplaceOutCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(ReplaceOut {
+            audio: (ctx.rate == Rate::Audio) as u32,
+        }))
+    }
+}
+
 /// `OffsetOut.ar(bus, signals)`: like [`Out`], but a synth created partway into a control block - by
 /// a scheduled, time-tagged command - has its whole output delayed by the creation offset, so it
 /// becomes audible at exactly the scheduled sample. plyphon's port of scsynth's `OffsetOut`.

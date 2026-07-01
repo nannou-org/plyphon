@@ -54,7 +54,7 @@ use crate::unit::noise::{
     WhiteNoiseCtor,
 };
 use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
-use crate::unit::out::{OffsetOutCtor, OutCtor};
+use crate::unit::out::{OffsetOutCtor, OutCtor, ReplaceOutCtor};
 use crate::unit::pan::{
     Balance2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Rotate2Ctor, XFade2Ctor,
 };
@@ -160,6 +160,7 @@ impl UnitRegistry {
         let mut registry = Self::new();
         registry.register("SinOsc", Box::new(SinOscCtor));
         registry.register("Out", Box::new(OutCtor));
+        registry.register("ReplaceOut", Box::new(ReplaceOutCtor));
         registry.register("OffsetOut", Box::new(OffsetOutCtor));
         registry.register("In", Box::new(InCtor));
         // `InFeedback` reads a global audio bus tolerating a later writer; plyphon's `In` already

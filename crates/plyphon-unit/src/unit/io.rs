@@ -49,6 +49,28 @@ pub fn audio_out_decimated(
         .write_accumulate_decimated(ch, buf_counter, offset, src, factor);
 }
 
+/// Overwrite audio bus channel `ch` at sample `offset` with `src` decimated by `factor`, marking it
+/// touched (`ReplaceOut.ar`). `offset == 0`, `factor == 1` overwrites the whole channel. Out of range
+/// is a no-op.
+pub fn audio_replace_decimated(
+    buses: &mut Buses,
+    buf_counter: u64,
+    ch: usize,
+    offset: usize,
+    src: &[f32],
+    factor: usize,
+) {
+    buses
+        .audio_mut()
+        .write_replace_decimated(ch, buf_counter, offset, src, factor);
+}
+
+/// Overwrite control bus channel `ch` with `value` for this block (`ReplaceOut.kr`). Out of range is
+/// a no-op.
+pub fn control_replace(buses: &mut Buses, buf_counter: u64, ch: usize, value: f32) {
+    buses.control_mut().write_replace(ch, buf_counter, value);
+}
+
 /// Control bus channel `ch`'s current value (0.0 if out of range), for `In.kr`.
 pub fn control_in(buses: &Buses, ch: usize) -> f32 {
     buses.control().read(ch)

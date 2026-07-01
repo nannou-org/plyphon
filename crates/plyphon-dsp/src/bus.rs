@@ -111,6 +111,33 @@ impl AudioBus {
         }
     }
 
+    /// Overwrite channel `ch`'s samples `[offset, offset + src.len()/factor)` with `src` (decimated
+    /// by `factor`) for block `buf_counter`, replacing whatever was there and marking the channel
+    /// touched - scsynth's `ReplaceOut`. Unlike [`write_accumulate_decimated`](Self::write_accumulate_decimated)
+    /// it neither sums nor clears the channel: each writer overwrites only its own slice. `offset == 0`,
+    /// `factor == 1`, full-block `src` overwrites the whole channel.
+    pub fn write_replace_decimated(
+        &mut self,
+        ch: usize,
+        buf_counter: u64,
+        offset: usize,
+        src: &[f32],
+        factor: usize,
+    ) {
+        if ch >= self.num_channels {
+            return;
+        }
+        let factor = factor.max(1);
+        let bs = self.block_size;
+        self.touched[ch] = buf_counter;
+        let start = ch * bs;
+        let dst = &mut self.data[start..start + bs];
+        let count = (src.len() / factor).min(bs.saturating_sub(offset));
+        for j in 0..count {
+            dst[offset + j] = src[j * factor];
+        }
+    }
+
     /// Has channel `ch` been written during block `buf_counter`?
     pub fn is_touched(&self, ch: usize, buf_counter: u64) -> bool {
         self.touched[ch] == buf_counter
@@ -172,6 +199,15 @@ impl ControlBus {
         if self.touched[ch] == buf_counter {
             self.data[ch] += value;
         } else {
+            self.data[ch] = value;
+            self.touched[ch] = buf_counter;
+        }
+    }
+
+    /// Overwrite channel `ch` with `value` for block `buf_counter`, marking it touched (scsynth's
+    /// `ReplaceOut.kr`): replaces whatever an earlier same-block `Out.kr` wrote.
+    pub fn write_replace(&mut self, ch: usize, buf_counter: u64, value: f32) {
+        if ch < self.num_channels {
             self.data[ch] = value;
             self.touched[ch] = buf_counter;
         }
