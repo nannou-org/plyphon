@@ -58,6 +58,7 @@ use crate::unit::out::{OffsetOutCtor, OutCtor, ReplaceOutCtor};
 use crate::unit::pan::{
     Balance2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Rotate2Ctor, XFade2Ctor,
 };
+use crate::unit::physical::{BallCtor, SpringCtor, TBallCtor};
 use crate::unit::play_buf::PlayBufCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_combine::{
@@ -251,6 +252,9 @@ impl UnitRegistry {
         registry.register("XFade2", Box::new(XFade2Ctor));
         registry.register("LinXFade2", Box::new(LinXFade2Ctor));
         registry.register("Rotate2", Box::new(Rotate2Ctor));
+        registry.register("Spring", Box::new(SpringCtor));
+        registry.register("Ball", Box::new(BallCtor));
+        registry.register("TBall", Box::new(TBallCtor));
         registry.register("MulAdd", Box::new(MulAddCtor));
         registry.register("Lag", Box::new(LagCtor));
         registry.register("Amplitude", Box::new(AmplitudeCtor));

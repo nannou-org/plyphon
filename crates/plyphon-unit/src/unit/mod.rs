@@ -38,6 +38,7 @@ pub mod noise;
 pub mod one_pole;
 pub mod out;
 pub mod pan;
+pub mod physical;
 pub mod play_buf;
 #[cfg(feature = "fft")]
 pub mod pv;
