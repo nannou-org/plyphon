@@ -64,6 +64,8 @@ use crate::unit::measure::{
     LastValueCtor, LeastChangeCtor, MostChangeCtor, PeakCtor, PeakFollowerCtor, RunningMaxCtor,
     RunningMinCtor,
 };
+use crate::unit::median::MedianCtor;
+use crate::unit::moog::MoogFFCtor;
 use crate::unit::node_ctl::{
     DoneCtor, FreeCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseCtor, PauseSelfCtor,
     PauseSelfWhenDoneCtor,
@@ -235,6 +237,8 @@ impl UnitRegistry {
         registry.register("Ringz", Box::new(RingzCtor));
         registry.register("Formlet", Box::new(FormletCtor));
         registry.register("MidEQ", Box::new(MidEQCtor));
+        registry.register("MoogFF", Box::new(MoogFFCtor));
+        registry.register("Median", Box::new(MedianCtor));
         registry.register("LPZ1", Box::new(LPZ1Ctor));
         registry.register("HPZ1", Box::new(HPZ1Ctor));
         registry.register("LPZ2", Box::new(LPZ2Ctor));

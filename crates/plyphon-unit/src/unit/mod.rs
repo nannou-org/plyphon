@@ -38,6 +38,8 @@ pub mod lf_noise;
 pub mod line;
 pub mod local_io;
 pub mod measure;
+pub mod median;
+pub mod moog;
 pub mod node_ctl;
 pub mod noise;
 pub mod one_pole;
