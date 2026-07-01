@@ -18,7 +18,9 @@ use crate::unit::chaos::{
     CuspNCtor, GbmanNCtor, LatoocarfianNCtor, LinCongNCtor, QuadNCtor, StandardNCtor,
 };
 use crate::unit::decay::{Decay2Ctor, DecayCtor};
-use crate::unit::delay::{DelayCtor, FeedbackDelayCtor, Interp};
+use crate::unit::delay::{
+    BufDelayCtor, BufFeedbackDelayCtor, DelayCtor, FeedbackDelayCtor, Interp,
+};
 use crate::unit::demand::BuiltDemandUnit;
 use crate::unit::demand::dbrown::DbrownCtor;
 use crate::unit::demand::dbufrd::DbufrdCtor;
@@ -301,6 +303,52 @@ impl UnitRegistry {
         registry.register(
             "AllpassC",
             Box::new(FeedbackDelayCtor {
+                interp: Interp::Cubic,
+                allpass: true,
+            }),
+        );
+        // Buffer-backed twins of the above: the delay line is a `/b_alloc`'d buffer at `bufnum`.
+        registry.register("BufDelayN", Box::new(BufDelayCtor(Interp::None)));
+        registry.register("BufDelayL", Box::new(BufDelayCtor(Interp::Lin)));
+        registry.register("BufDelayC", Box::new(BufDelayCtor(Interp::Cubic)));
+        registry.register(
+            "BufCombN",
+            Box::new(BufFeedbackDelayCtor {
+                interp: Interp::None,
+                allpass: false,
+            }),
+        );
+        registry.register(
+            "BufCombL",
+            Box::new(BufFeedbackDelayCtor {
+                interp: Interp::Lin,
+                allpass: false,
+            }),
+        );
+        registry.register(
+            "BufCombC",
+            Box::new(BufFeedbackDelayCtor {
+                interp: Interp::Cubic,
+                allpass: false,
+            }),
+        );
+        registry.register(
+            "BufAllpassN",
+            Box::new(BufFeedbackDelayCtor {
+                interp: Interp::None,
+                allpass: true,
+            }),
+        );
+        registry.register(
+            "BufAllpassL",
+            Box::new(BufFeedbackDelayCtor {
+                interp: Interp::Lin,
+                allpass: true,
+            }),
+        );
+        registry.register(
+            "BufAllpassC",
+            Box::new(BufFeedbackDelayCtor {
                 interp: Interp::Cubic,
                 allpass: true,
             }),

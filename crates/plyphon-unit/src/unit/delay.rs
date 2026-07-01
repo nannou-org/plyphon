@@ -1,10 +1,13 @@
-//! The delay-line family - plyphon's ports of scsynth's `DelayN/L/C`, `CombN/L/C` and
-//! `AllpassN/L/C` (`DelayUGens.cpp`).
+//! The delay-line family - plyphon's ports of scsynth's `DelayN/L/C`, `CombN/L/C`, `AllpassN/L/C` and
+//! their buffer-backed twins `BufDelayN/L/C`, `BufCombN/L/C`, `BufAllpassN/L/C` (`DelayUGens.cpp`).
 //!
-//! These are the units that use per-instance [auxiliary memory](crate::unit::Aux): the delay line is
-//! sized at build time from the scalar `maxdelaytime` and lives in the synth's pool block (the safe
-//! stand-in for scsynth's `RTAlloc`'d `float* m_dlybuf`). They share one circular buffer and one read
-//! kernel; the family splits only three ways:
+//! The plain `Delay*`/`Comb*`/`Allpass*` use per-instance [auxiliary memory](crate::unit::Aux): the
+//! delay line is sized at build time from the scalar `maxdelaytime` and lives in the synth's pool block
+//! (the safe stand-in for scsynth's `RTAlloc`'d `float* m_dlybuf`). The `Buf*` twins instead use a
+//! `/b_alloc`'d buffer (addressed by `bufnum`, resolved each block via [`buffer_at_mut`]) as the line -
+//! so the line is shared, resizable and outlives the synth. A buffer of `N` samples is used only up to
+//! its largest power-of-two prefix `2^floor(log2 N)` (scsynth's `BUFMASK`), so the same power-of-two
+//! circular addressing applies. All variants share one read kernel; the family splits only three ways:
 //!
 //! - **interpolation** of the fractional tap - `N` none, `L` linear, `C` cubic (`Interp`);
 //! - **feedback** - a plain delay ([`Delay`]) writes the input, while a comb/allpass
@@ -19,7 +22,10 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_aux};
+use crate::unit::{
+    BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, buffer_at, buffer_at_mut, unit_spec,
+    unit_spec_aux,
+};
 use plyphon_dsp::interp::{cubicinterp, lininterp};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
@@ -579,5 +585,353 @@ impl UnitDef for FeedbackDelayCtor {
             aux_bytes,
             core::mem::align_of::<f32>(),
         ))
+    }
+}
+
+// Buffer-backed delays (`BufDelay*`, `BufComb*`, `BufAllpass*`): the delay line is a `/b_alloc`'d
+// buffer rather than aux memory. Inputs are `[bufnum, in, delaytime(, decaytime)]` - `in` is at index
+// 1, and there is no `maxdelaytime` (the buffer sizes the line).
+const BUF_BUFNUM: usize = 0;
+const BUF_IN: usize = 1;
+const BUF_DELAY: usize = 2;
+const BUF_DECAY: usize = 3;
+
+/// The power-of-two prefix length and wrap mask a buffer-backed delay uses for a buffer of
+/// `buf_samples` samples (scsynth's `BUFMASK` = `PREVIOUSPOWEROFTWO(bufSamples) - 1`): only the largest
+/// `2^floor(log2 bufSamples)` samples are addressed as the circular line.
+fn buf_line(buf_samples: usize) -> (usize, u32) {
+    if buf_samples == 0 {
+        return (0, 0);
+    }
+    let len = 1usize << (usize::BITS - 1 - buf_samples.leading_zeros());
+    (len, (len - 1) as u32)
+}
+
+/// `BufDelayN/L/C.ar(bufnum, in, delaytime)`: a no-feedback delay line living in the buffer at
+/// `bufnum`. Otherwise identical to [`Delay`], but the line is resolved each block from the buffer
+/// table (so it may be shared or resized) and its length is the buffer's power-of-two prefix.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct BufDelay {
+    /// Current delay in samples (`m_dsamp`), possibly fractional and mid-slope.
+    dsamp: f32,
+    /// The `delaytime` seen last block (`m_delaytime`).
+    delaytime: f32,
+    /// Monotonic write phase (`m_iwrphase`).
+    iwrphase: u32,
+    /// Samples written so far, saturating at the line length (`m_numoutput`); while below it the
+    /// cold-start guard applies so a not-yet-written tap reads `0` rather than the buffer's prior
+    /// content.
+    numoutput: u32,
+    /// Which calc variant (see [`calc`]), chosen from the `delaytime` rate at build time.
+    calc: u32,
+    /// Interpolation tag (see [`Interp`]).
+    interp: u32,
+}
+
+impl Unit for BufDelay {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        let dt = ctx.ins.control(BUF_DELAY);
+        let min = Interp::from_tag(self.interp).min_delay(false);
+        let bufnum = ctx.ins.control(BUF_BUFNUM).max(0.0) as usize;
+        let max = buffer_at(ctx.buffers, bufnum).map_or(0, |b| buf_line(b.data().len()).1 as usize);
+        self.delaytime = dt;
+        self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, max as f32);
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let sr = ctx.audio.sample_rate as f32;
+        let interp = Interp::from_tag(self.interp);
+        let min = interp.min_delay(false);
+        let mut iwrphase = self.iwrphase;
+
+        let ins = ctx.ins;
+        let in_audio = (ins.rate(BUF_IN) == Rate::Audio).then(|| ins.audio(BUF_IN));
+        let in_ctrl = ins.control(BUF_IN);
+        let dt_audio = (self.calc == calc::DELAY_AUDIO).then(|| ins.audio(BUF_DELAY));
+        let dt_ctrl = ins.control(BUF_DELAY);
+        let bufnum = ins.control(BUF_BUFNUM).max(0.0) as usize;
+
+        let out = ctx.outs.audio(0);
+        let buf = match buffer_at_mut(ctx.buffers, bufnum) {
+            Some(b) => b.data_mut(),
+            None => {
+                out.fill(0.0);
+                return DoneAction::Nothing;
+            }
+        };
+        let (len, mask) = buf_line(buf.len());
+        if len == 0 {
+            out.fill(0.0);
+            return DoneAction::Nothing;
+        }
+        let max = mask as f32;
+        let warm = self.numoutput as usize >= len;
+        let n = out.len();
+        let input = |i: usize| in_audio.map_or(in_ctrl, |s| s[i]);
+
+        match dt_audio {
+            Some(dt) => {
+                for (i, o) in out.iter_mut().enumerate() {
+                    let dsamp = clamp_delay(dt[i] * sr, min, max);
+                    let idsamp = dsamp as i64;
+                    let frac = dsamp - idsamp as f32;
+                    *o = delay_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        warm,
+                    );
+                }
+            }
+            None if dt_ctrl == self.delaytime => {
+                let dsamp = self.dsamp;
+                let idsamp = dsamp as i64;
+                let frac = dsamp - idsamp as f32;
+                for (i, o) in out.iter_mut().enumerate() {
+                    *o = delay_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        warm,
+                    );
+                }
+            }
+            None => {
+                let next = clamp_delay(dt_ctrl * sr, min, max);
+                let mut dsamp = self.dsamp;
+                let slope = (next - dsamp) / n as f32;
+                for (i, o) in out.iter_mut().enumerate() {
+                    dsamp += slope;
+                    let idsamp = dsamp as i64;
+                    let frac = dsamp - idsamp as f32;
+                    *o = delay_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        warm,
+                    );
+                }
+                self.dsamp = dsamp;
+                self.delaytime = dt_ctrl;
+            }
+        }
+
+        self.iwrphase = iwrphase;
+        if !warm {
+            self.numoutput = (self.numoutput.saturating_add(n as u32)).min(len as u32);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// `BufCombN/L/C` and `BufAllpassN/L/C.ar(bufnum, in, delaytime, decaytime)`: the buffer-backed twin of
+/// [`FeedbackDelay`] - a comb/allpass whose line is the buffer at `bufnum`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct BufFeedbackDelay {
+    dsamp: f32,
+    delaytime: f32,
+    decaytime: f32,
+    feedbk: f32,
+    iwrphase: u32,
+    numoutput: u32,
+    calc: u32,
+    interp: u32,
+    allpass: u32,
+    _pad: u32,
+}
+
+impl Unit for BufFeedbackDelay {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        let dt = ctx.ins.control(BUF_DELAY);
+        let decay = ctx.ins.control(BUF_DECAY);
+        let min = Interp::from_tag(self.interp).min_delay(true);
+        let bufnum = ctx.ins.control(BUF_BUFNUM).max(0.0) as usize;
+        let max = buffer_at(ctx.buffers, bufnum).map_or(0, |b| buf_line(b.data().len()).1 as usize);
+        self.delaytime = dt;
+        self.decaytime = decay;
+        self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, max as f32);
+        self.feedbk = calc_feedback(dt, decay);
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let sr = ctx.audio.sample_rate as f32;
+        let interp = Interp::from_tag(self.interp);
+        let min = interp.min_delay(true);
+        let allpass = self.allpass != 0;
+        let mut iwrphase = self.iwrphase;
+
+        let ins = ctx.ins;
+        let in_audio = (ins.rate(BUF_IN) == Rate::Audio).then(|| ins.audio(BUF_IN));
+        let in_ctrl = ins.control(BUF_IN);
+        let dt_audio = (self.calc == calc::DELAY_AUDIO).then(|| ins.audio(BUF_DELAY));
+        let dt_ctrl = ins.control(BUF_DELAY);
+        let decay = ins.control(BUF_DECAY);
+        let bufnum = ins.control(BUF_BUFNUM).max(0.0) as usize;
+
+        let out = ctx.outs.audio(0);
+        let buf = match buffer_at_mut(ctx.buffers, bufnum) {
+            Some(b) => b.data_mut(),
+            None => {
+                out.fill(0.0);
+                return DoneAction::Nothing;
+            }
+        };
+        let (len, mask) = buf_line(buf.len());
+        if len == 0 {
+            out.fill(0.0);
+            return DoneAction::Nothing;
+        }
+        let max = mask as f32;
+        let warm = self.numoutput as usize >= len;
+        let n = out.len();
+        let input = |i: usize| in_audio.map_or(in_ctrl, |s| s[i]);
+
+        match dt_audio {
+            Some(dt) => {
+                for (i, o) in out.iter_mut().enumerate() {
+                    let del = dt[i];
+                    let dsamp = clamp_delay(del * sr, min, max);
+                    let idsamp = dsamp as i64;
+                    let frac = dsamp - idsamp as f32;
+                    let feedbk = calc_feedback(del, decay);
+                    *o = feedback_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        feedbk,
+                        allpass,
+                        warm,
+                    );
+                }
+            }
+            None if dt_ctrl == self.delaytime && decay == self.decaytime => {
+                let dsamp = self.dsamp;
+                let idsamp = dsamp as i64;
+                let frac = dsamp - idsamp as f32;
+                let feedbk = self.feedbk;
+                for (i, o) in out.iter_mut().enumerate() {
+                    *o = feedback_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        feedbk,
+                        allpass,
+                        warm,
+                    );
+                }
+            }
+            None => {
+                let next_dsamp = clamp_delay(dt_ctrl * sr, min, max);
+                let next_feedbk = calc_feedback(dt_ctrl, decay);
+                let mut dsamp = self.dsamp;
+                let mut feedbk = self.feedbk;
+                let dsamp_slope = (next_dsamp - dsamp) / n as f32;
+                let feedbk_slope = (next_feedbk - feedbk) / n as f32;
+                for (i, o) in out.iter_mut().enumerate() {
+                    dsamp += dsamp_slope;
+                    feedbk += feedbk_slope;
+                    let idsamp = dsamp as i64;
+                    let frac = dsamp - idsamp as f32;
+                    *o = feedback_tick(
+                        buf,
+                        &mut iwrphase,
+                        mask,
+                        idsamp,
+                        frac,
+                        interp,
+                        input(i),
+                        feedbk,
+                        allpass,
+                        warm,
+                    );
+                }
+                self.dsamp = dsamp;
+                self.feedbk = feedbk;
+                self.delaytime = dt_ctrl;
+                self.decaytime = decay;
+            }
+        }
+
+        self.iwrphase = iwrphase;
+        if !warm {
+            self.numoutput = (self.numoutput.saturating_add(n as u32)).min(len as u32);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`BufDelay`] (`BufDelayN`/`BufDelayL`/`BufDelayC`), parameterized by [`Interp`].
+pub struct BufDelayCtor(pub Interp);
+
+impl UnitDef for BufDelayCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 3 {
+            return Err(BuildError::WrongInputCount);
+        }
+        let calc = match ctx.input_rates[BUF_DELAY] {
+            Rate::Audio => calc::DELAY_AUDIO,
+            _ => calc::DELAY_CONTROL,
+        };
+        Ok(unit_spec(BufDelay {
+            dsamp: 0.0,
+            delaytime: 0.0,
+            iwrphase: 0,
+            numoutput: 0,
+            calc,
+            interp: self.0.to_tag(),
+        }))
+    }
+}
+
+/// Constructor for [`BufFeedbackDelay`] (`BufCombN/L/C`, `BufAllpassN/L/C`), parameterized by
+/// [`Interp`] and whether it is an allpass (else a comb).
+pub struct BufFeedbackDelayCtor {
+    pub interp: Interp,
+    pub allpass: bool,
+}
+
+impl UnitDef for BufFeedbackDelayCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 4 {
+            return Err(BuildError::WrongInputCount);
+        }
+        let calc = match ctx.input_rates[BUF_DELAY] {
+            Rate::Audio => calc::DELAY_AUDIO,
+            _ => calc::DELAY_CONTROL,
+        };
+        Ok(unit_spec(BufFeedbackDelay {
+            dsamp: 0.0,
+            delaytime: 0.0,
+            decaytime: 0.0,
+            feedbk: 0.0,
+            iwrphase: 0,
+            numoutput: 0,
+            calc,
+            interp: self.interp.to_tag(),
+            allpass: self.allpass as u32,
+            _pad: 0,
+        }))
     }
 }
