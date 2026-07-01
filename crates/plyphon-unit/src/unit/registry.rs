@@ -112,7 +112,10 @@ use crate::unit::trigger::{
 };
 use crate::unit::two_pole::{TwoPoleCtor, TwoZeroCtor};
 use crate::unit::unary_op::UnaryOpCtor;
-use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor, SumCtor};
+use crate::unit::util::{
+    AmplitudeCtor, Lag2Ctor, Lag2UDCtor, Lag3Ctor, Lag3UDCtor, LagCtor, LagUDCtor, MulAddCtor,
+    SumCtor,
+};
 use crate::unit::wavetable_osc::{COscCtor, OscCtor, OscNCtor, VOsc3Ctor, VOscCtor};
 use crate::unit::{BuiltUnit, InputSource};
 use plyphon_dsp::rate::{Rate, RateInfo};
@@ -361,6 +364,11 @@ impl UnitRegistry {
         registry.register("Sum3", Box::new(SumCtor(3)));
         registry.register("Sum4", Box::new(SumCtor(4)));
         registry.register("Lag", Box::new(LagCtor));
+        registry.register("Lag2", Box::new(Lag2Ctor));
+        registry.register("Lag3", Box::new(Lag3Ctor));
+        registry.register("LagUD", Box::new(LagUDCtor));
+        registry.register("Lag2UD", Box::new(Lag2UDCtor));
+        registry.register("Lag3UD", Box::new(Lag3UDCtor));
         registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry.register("Compander", Box::new(CompanderCtor));
         registry.register("DetectSilence", Box::new(DetectSilenceCtor));
