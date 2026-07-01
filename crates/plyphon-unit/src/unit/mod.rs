@@ -12,6 +12,7 @@
 //! unit can read an input and write an output (or a bus) in the same expression - the safe
 //! equivalent of scsynth's raw aliasing `float*` wires.
 
+pub mod amp_comp;
 pub mod band_limited;
 pub mod bank;
 pub mod binary_op;

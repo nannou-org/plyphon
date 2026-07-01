@@ -10,6 +10,7 @@ use alloc::string::{String, ToString};
 use hashbrown::HashMap;
 
 use crate::error::BuildError;
+use crate::unit::amp_comp::{AmpCompACtor, AmpCompCtor};
 use crate::unit::band_limited::{BlipCtor, PulseCtor, SawCtor};
 use crate::unit::bank::{KlangCtor, KlankCtor};
 use crate::unit::binary_op::BinaryOpCtor;
@@ -223,6 +224,8 @@ impl UnitRegistry {
         registry.register("UnaryOpUGen", Box::new(UnaryOpCtor));
         registry.register("Line", Box::new(LineCtor));
         registry.register("XLine", Box::new(XLineCtor));
+        registry.register("AmpComp", Box::new(AmpCompCtor));
+        registry.register("AmpCompA", Box::new(AmpCompACtor));
         registry.register("Clip", Box::new(RangeShaperCtor(RangeKind::Clip)));
         registry.register("Wrap", Box::new(RangeShaperCtor(RangeKind::Wrap)));
         registry.register("Fold", Box::new(RangeShaperCtor(RangeKind::Fold)));
