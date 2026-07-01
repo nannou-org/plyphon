@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>plyphon: bouncing-ball</title>
+    <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
+    <script src="audio.js"></script>
+    <link data-trunk rel="copy-file" href="audio.js" />
+    <link data-trunk rel="copy-file" href="style.css" />
+    <link rel="stylesheet" href="style.css" />
+    <link
+      data-trunk
+      rel="rust"
+      href="../crates/examples/bouncing-ball/Cargo.toml"
+      data-bin="example-bouncing-ball"
+      data-cargo-profile-release="wasm_release"
+      data-wasm-opt="z"
+      data-wasm-opt-params="--enable-bulk-memory --enable-reference-types --enable-multivalue --enable-tail-call --enable-nontrapping-float-to-int"
+      data-initializer="initializer.js"
+    />
+  </head>
+  <body class="loading">
+    <div id="loading">
+      <p id="loading-title">plyphon</p>
+      <div id="loading-track"><div id="loading-bar"></div></div>
+    </div>
+    <main class="demo">
+      <p class="title">bouncing-ball</p>
+      <p>Physical-model percussion: a TBall bouncing on an oscillating floor rings a Ringz resonator.</p>
+      <p class="hint">Click anywhere to start audio.</p>
+      <a class="back" href="../">&larr; all examples</a>
+    </main>
+  </body>
+</html>

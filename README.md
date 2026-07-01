@@ -49,6 +49,7 @@ Listed in reverse-topological order - dependents first, their dependencies below
 | [`example-waveshaping`](crates/examples/waveshaping) | A wavefolder: a sine driven hard through `Fold` with an LFO-swept drive (the range shapers `Clip`/`Wrap`/`Fold`/`LinExp`/...). |
 | [`example-chaos`](crates/examples/chaos) | A chaotic drone: a `CuspN` oscillator through a resonant filter swept by a slow `LatoocarfianN` map (the chaotic generators `CuspN`/`QuadN`/`GbmanN`/`StandardN`/`LatoocarfianN`/`LinCongN`). |
 | [`example-hard-sync`](crates/examples/hard-sync) | A hard-sync lead: a `SyncSaw` whose saw frequency is swept by an LFO over a fixed pitch (the oscillators `LFTri`/`LFPar`/`LFCub`/`VarSaw`/`SyncSaw`/`FSinOsc`). |
+| [`example-bouncing-ball`](crates/examples/bouncing-ball) | Physical-model percussion: a `TBall` bouncing on an oscillating floor rings a `Ringz` resonator (the physical models `Spring`/`Ball`/`TBall`). |
 | [`example-pan`](crates/examples/pan) | A tone auto-panned across the stereo field with `Pan2`. |
 | [`example-envelope`](crates/examples/envelope) | Percussive plucks shaped by multi-segment `EnvGen` envelopes that free their own synths. |
 | [`example-osc`](crates/examples/osc) | Drives the engine through encoded SuperCollider OSC packets (no sockets) and prints the control commands and the replies/notifications that flow back. |
