@@ -462,6 +462,14 @@ impl<'a> Aux<'a> {
     /// (the architecture rules this out for a well-built unit) yields an empty slice rather than
     /// aborting the audio thread.
     pub fn f32_mut(&mut self) -> &mut [f32] {
+        self.cast_mut()
+    }
+
+    /// The aux region as a slice of `Pod` elements `T` (e.g. a bank of grains). Its length is
+    /// `aux_bytes / size_of::<T>()`; a region whose size or alignment does not fit `T` yields an
+    /// empty slice rather than aborting the audio thread. A well-built unit sizes and aligns its aux
+    /// for `T` (`aux_bytes`/`aux_align` in [`unit_spec_aux`]), so the cast always succeeds.
+    pub fn cast_mut<T: bytemuck::Pod>(&mut self) -> &mut [T] {
         bytemuck::try_cast_slice_mut(self.bytes).unwrap_or(&mut [])
     }
 }
