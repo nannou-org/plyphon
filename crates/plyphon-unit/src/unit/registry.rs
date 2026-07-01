@@ -61,6 +61,9 @@ use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, Ri
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::sin_osc::SinOscCtor;
+use crate::unit::trigger::{
+    GateCtor, LatchCtor, SchmidtCtor, SetResetFFCtor, TDelayCtor, ToggleFFCtor, Trig1Ctor, TrigCtor,
+};
 use crate::unit::two_pole::{TwoPoleCtor, TwoZeroCtor};
 use crate::unit::unary_op::UnaryOpCtor;
 use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor};
@@ -203,6 +206,14 @@ impl UnitRegistry {
         registry.register("Amplitude", Box::new(AmplitudeCtor));
         registry.register("EnvGen", Box::new(EnvGenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
+        registry.register("Trig", Box::new(TrigCtor));
+        registry.register("Trig1", Box::new(Trig1Ctor));
+        registry.register("TDelay", Box::new(TDelayCtor));
+        registry.register("ToggleFF", Box::new(ToggleFFCtor));
+        registry.register("SetResetFF", Box::new(SetResetFFCtor));
+        registry.register("Latch", Box::new(LatchCtor));
+        registry.register("Gate", Box::new(GateCtor));
+        registry.register("Schmidt", Box::new(SchmidtCtor));
         registry.register("SendReply", Box::new(SendReplyCtor));
         // Info: engine constants and per-buffer info.
         registry.register("SampleRate", Box::new(InfoCtor(InfoKind::SampleRate)));
