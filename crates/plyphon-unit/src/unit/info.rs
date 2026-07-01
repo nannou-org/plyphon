@@ -2,10 +2,14 @@
 //!
 //! These surface engine-level constants to the graph: the audio sample rate and its reciprocal,
 //! `RadiansPerSample`, the control rate/duration, and the bus counts ([`Info`]); plus per-buffer
-//! info - frame/channel/sample counts, sample rate, rate scale, and duration ([`BufInfo`]). They
-//! hold no per-instance state. Each writes a single value, broadcast across the block every block,
-//! so a `BufInfo` tracks a buffer that is reallocated under it (scsynth re-reads the buffer each
-//! calc too).
+//! info - frame/channel/sample counts, sample rate, rate scale, and duration ([`BufInfo`]). The
+//! [`Info`]/[`BufInfo`] units hold no per-instance state and re-read the context every block, each
+//! writing a single value broadcast across the block (so a `BufInfo` tracks a buffer reallocated
+//! under it, as scsynth re-reads the buffer each calc too).
+//!
+//! [`SubsampleOffset`] is the exception: it reports a per-*node* constant (the fractional offset at
+//! which the synth was created) that is only present on the synth's first block, so it snapshots the
+//! value once and holds it.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -224,6 +228,46 @@ impl UnitDef for BufInfoCtor {
     fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(BufInfo {
             kind: self.0.to_tag(),
+        }))
+    }
+}
+
+/// `SubsampleOffset.ir`: the fractional (sub-sample) part of the within-block offset at which the
+/// enclosing synth was created (scsynth's `mParent->mSubsampleOffset`), in `[0, 1)`. Non-zero only
+/// for a synth scheduled at a sub-sample-accurate time mid-block; `0` for an immediately-created one.
+///
+/// Unlike the [`Info`] constants (which re-read the context every block), this value is present only
+/// on the synth's first block, so the unit snapshots it once and holds it for the synth's life -
+/// mirroring how `OffsetOut` captures [`ProcessCtx::sample_offset`], and scsynth's `SubsampleOffset`
+/// which sets its output once at construction.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct SubsampleOffset {
+    /// The captured sub-sample offset, held after the first block.
+    value: f32,
+    /// `0` until the first block captures [`value`](Self::value), then `1`.
+    warmed: u32,
+}
+
+impl Unit for SubsampleOffset {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        if self.warmed == 0 {
+            self.value = ctx.subsample_offset;
+            self.warmed = 1;
+        }
+        ctx.outs.audio(0).fill(self.value);
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`SubsampleOffset`].
+pub struct SubsampleOffsetCtor;
+
+impl UnitDef for SubsampleOffsetCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(SubsampleOffset {
+            value: 0.0,
+            warmed: 0,
         }))
     }
 }

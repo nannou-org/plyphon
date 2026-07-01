@@ -29,7 +29,7 @@ use crate::unit::env::EnvGenCtor;
 #[cfg(feature = "fft")]
 use crate::unit::fft::{FftCtor, IfftCtor};
 use crate::unit::filter::{ButterCtor, Kind};
-use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind};
+use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{ImpulseCtor, LFPulseCtor, LFSawCtor};
 use crate::unit::line::LineCtor;
@@ -186,6 +186,7 @@ impl UnitRegistry {
             Box::new(InfoCtor(InfoKind::NumRunningSynths)),
         );
         registry.register("NumBuffers", Box::new(InfoCtor(InfoKind::NumBuffers)));
+        registry.register("SubsampleOffset", Box::new(SubsampleOffsetCtor));
         registry.register("BufFrames", Box::new(BufInfoCtor(BufInfoKind::Frames)));
         registry.register("BufChannels", Box::new(BufInfoCtor(BufInfoKind::Channels)));
         registry.register("BufSamples", Box::new(BufInfoCtor(BufInfoKind::Samples)));
