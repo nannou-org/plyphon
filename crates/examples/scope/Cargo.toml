@@ -1,0 +1,14 @@
+[package]
+name = "example-scope"
+version = "0.1.0"
+publish = false
+description = "A plyphon example: tap a signal with ScopeOut and draw a live level meter from the streamed samples, off the audio thread."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+example-audio.workspace = true
+plyphon.workspace = true
