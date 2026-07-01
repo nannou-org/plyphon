@@ -15,6 +15,7 @@
 pub mod band_limited;
 pub mod binary_op;
 pub mod buf_wr;
+pub mod chaos;
 pub mod decay;
 pub mod delay;
 pub mod demand;

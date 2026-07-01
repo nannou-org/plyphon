@@ -13,6 +13,9 @@ use crate::error::BuildError;
 use crate::unit::band_limited::{PulseCtor, SawCtor};
 use crate::unit::binary_op::BinaryOpCtor;
 use crate::unit::buf_wr::BufWrCtor;
+use crate::unit::chaos::{
+    CuspNCtor, GbmanNCtor, LatoocarfianNCtor, LinCongNCtor, QuadNCtor, StandardNCtor,
+};
 use crate::unit::decay::{Decay2Ctor, DecayCtor};
 use crate::unit::delay::DelayNCtor;
 use crate::unit::demand::BuiltDemandUnit;
@@ -209,6 +212,12 @@ impl UnitRegistry {
         registry.register("BrownNoise", Box::new(BrownNoiseCtor));
         registry.register("Dust", Box::new(DustCtor));
         registry.register("Dust2", Box::new(Dust2Ctor));
+        registry.register("CuspN", Box::new(CuspNCtor));
+        registry.register("QuadN", Box::new(QuadNCtor));
+        registry.register("LinCongN", Box::new(LinCongNCtor));
+        registry.register("GbmanN", Box::new(GbmanNCtor));
+        registry.register("StandardN", Box::new(StandardNCtor));
+        registry.register("LatoocarfianN", Box::new(LatoocarfianNCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
         registry.register("DiskOut", Box::new(DiskOutCtor));
