@@ -94,6 +94,7 @@ use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
 use crate::unit::scope_out::ScopeOutCtor;
+use crate::unit::section::{FOSCtor, SOSCtor};
 use crate::unit::select::{DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor};
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
@@ -238,6 +239,9 @@ impl UnitRegistry {
         registry.register("Slope", Box::new(SlopeCtor));
         registry.register("Slew", Box::new(SlewCtor));
         registry.register("APF", Box::new(APFCtor));
+        // Explicit-coefficient sections (the `B*` EQ macros feed these).
+        registry.register("FOS", Box::new(FOSCtor));
+        registry.register("SOS", Box::new(SOSCtor));
         // Delay lines: plain (Delay*) and recirculating (Comb*/Allpass*), sharing one read kernel.
         registry.register("DelayN", Box::new(DelayCtor(Interp::None)));
         registry.register("DelayL", Box::new(DelayCtor(Interp::Lin)));
