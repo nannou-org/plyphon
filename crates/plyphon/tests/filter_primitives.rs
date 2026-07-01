@@ -1,6 +1,7 @@
 //! Exercise the primitive filters (`OnePole`, `OneZero`, `Integrator`, `LeakDC`, `TwoPole`,
-//! `TwoZero`, `Decay`, `Decay2`) through the engine: each is checked for the frequency emphasis or
-//! time-domain shape scsynth's kernel produces.
+//! `TwoZero`, `Decay`, `Decay2`) and the resonant biquads (`RLPF`, `RHPF`, `BPF`, `BRF`, `Resonz`,
+//! `Ringz`) through the engine: each is checked for the frequency emphasis or time-domain shape
+//! scsynth's kernel produces.
 
 use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine};
 
@@ -279,5 +280,89 @@ fn decay2_shapes_a_smooth_attack_decay() {
     assert!(
         energy > 0.01,
         "the envelope should carry energy, got {energy}"
+    );
+}
+
+#[test]
+fn rlpf_keeps_lows() {
+    let o = on_mix(
+        "RLPF",
+        vec![InputRef::Constant(1000.0), InputRef::Constant(1.0)],
+    );
+    assert!(o.iter().all(|s| s.is_finite()));
+    let (low, high) = ratio(&o);
+    assert!(
+        low > 4.0 * high,
+        "RLPF@1000 should keep 200: {low} vs {high}"
+    );
+}
+
+#[test]
+fn rhpf_keeps_highs() {
+    let o = on_mix(
+        "RHPF",
+        vec![InputRef::Constant(1000.0), InputRef::Constant(1.0)],
+    );
+    assert!(o.iter().all(|s| s.is_finite()));
+    let (low, high) = ratio(&o);
+    assert!(
+        high > 4.0 * low,
+        "RHPF@1000 should keep 4000: {low} vs {high}"
+    );
+}
+
+#[test]
+fn bpf_passes_its_band() {
+    let o = on_mix(
+        "BPF",
+        vec![InputRef::Constant(4000.0), InputRef::Constant(1.0)],
+    );
+    assert!(o.iter().all(|s| s.is_finite()));
+    let (low, high) = ratio(&o);
+    assert!(
+        high > 4.0 * low,
+        "BPF@4000 should pass 4000, reject 200: {low} vs {high}"
+    );
+}
+
+#[test]
+fn brf_rejects_its_band() {
+    let o = on_mix(
+        "BRF",
+        vec![InputRef::Constant(4000.0), InputRef::Constant(1.0)],
+    );
+    assert!(o.iter().all(|s| s.is_finite()));
+    let (low, high) = ratio(&o);
+    assert!(
+        low > 4.0 * high,
+        "BRF@4000 should reject 4000, keep 200: {low} vs {high}"
+    );
+}
+
+#[test]
+fn resonz_boosts_its_centre() {
+    let o = on_mix(
+        "Resonz",
+        vec![InputRef::Constant(4000.0), InputRef::Constant(0.1)],
+    );
+    assert!(o.iter().all(|s| s.is_finite()));
+    let (low, high) = ratio(&o);
+    assert!(
+        high > 4.0 * low,
+        "Resonz@4000 should boost 4000: {low} vs {high}"
+    );
+}
+
+#[test]
+fn ringz_rings_at_its_frequency() {
+    let o = on_mix(
+        "Ringz",
+        vec![InputRef::Constant(4000.0), InputRef::Constant(0.1)],
+    );
+    assert!(o.iter().all(|s| s.is_finite()));
+    let (low, high) = ratio(&o);
+    assert!(
+        high > 4.0 * low,
+        "Ringz@4000 should ring at 4000: {low} vs {high}"
     );
 }

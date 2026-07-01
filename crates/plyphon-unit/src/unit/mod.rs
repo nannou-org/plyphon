@@ -45,6 +45,7 @@ pub mod pv_mag_squared;
 pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
+pub mod resonant;
 pub mod scope_out;
 pub mod send_reply;
 pub mod send_trig;

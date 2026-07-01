@@ -18,7 +18,8 @@ const LOG001: f64 = -6.907_755_278_982_137;
 
 /// The per-sample feedback coefficient that decays to `-60 dB` over `time` seconds (0 for an
 /// immediate response), matching scsynth's `decayTime == 0 ? 0 : exp(log001 / (decayTime * SR))`.
-fn decay_coef(time: f32, sample_rate: f64) -> f64 {
+/// Shared with `Ringz`, whose pole radius is the same quantity.
+pub(crate) fn decay_coef(time: f32, sample_rate: f64) -> f64 {
     if time == 0.0 {
         0.0
     } else {
