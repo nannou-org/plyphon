@@ -110,6 +110,7 @@ use crate::unit::trigger::{
 use crate::unit::two_pole::{TwoPoleCtor, TwoZeroCtor};
 use crate::unit::unary_op::UnaryOpCtor;
 use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor};
+use crate::unit::wavetable_osc::{OscCtor, OscNCtor};
 use crate::unit::{BuiltUnit, InputSource};
 use plyphon_dsp::rate::{Rate, RateInfo};
 
@@ -326,6 +327,9 @@ impl UnitRegistry {
         registry.register("FSinOsc", Box::new(FSinOscCtor));
         registry.register("Saw", Box::new(SawCtor));
         registry.register("Pulse", Box::new(PulseCtor));
+        // Wavetable oscillators (read a buffer as a single-cycle table).
+        registry.register("Osc", Box::new(OscCtor));
+        registry.register("OscN", Box::new(OscNCtor));
         // Additive / modal resonator banks.
         registry.register("Klang", Box::new(KlangCtor));
         registry.register("Klank", Box::new(KlankCtor));

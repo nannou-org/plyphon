@@ -69,6 +69,7 @@ pub mod trigger;
 pub mod two_pole;
 pub mod unary_op;
 pub mod util;
+pub mod wavetable_osc;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;

@@ -32,6 +32,7 @@ pub mod engine;
 pub mod render;
 pub mod synthdef;
 
+pub use plyphon_dsp::wavetable::to_wavetable;
 pub use plyphon_dsp::{Buffer, Chunk, Rate, RateInfo, StreamConsumer, StreamProducer};
 pub use plyphon_rt::{
     AddAction, CommandTime, Event, Graph, NodeMsg, NodeMsgKind, NodeNotify, Nrt, Options,

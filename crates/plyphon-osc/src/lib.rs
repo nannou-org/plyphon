@@ -2430,9 +2430,10 @@ impl OscDispatcher {
     /// `sine1`/`sine2`/`sine3`/`cheby` are computed control-side into a fresh buffer and installed via
     /// the `/b_alloc` swap path (so no engine round-trip, and the old buffer trashes off-thread);
     /// `copy` reads a live source buffer, so it routes to the engine. Flags: `normalize`(1) supported;
-    /// `wavetable`(2) rejected (the consuming `Osc` UGen is unimplemented); `clear`(4) is implicit -
-    /// the dispatcher has no copy of the current samples, so it always generates fresh (a documented
-    /// deviation from scsynth's accumulate-when-unset). Non-mono buffers are rejected.
+    /// `wavetable`(2) packs the fill into scsynth's `(a, b)` wavetable format for `Osc`/`COsc`/`VOsc`
+    /// (the buffer's frames hold `frames / 2` logical samples); `clear`(4) is implicit - the dispatcher
+    /// has no copy of the current samples, so it always generates fresh (a documented deviation from
+    /// scsynth's accumulate-when-unset). Non-mono buffers are rejected.
     fn b_gen(&mut self, controller: &mut Controller, args: &[OscType]) -> Result<(), OscError> {
         let bufnum = int_arg(
             args.first()
@@ -2456,10 +2457,6 @@ impl OscDispatcher {
         };
         let gen_args = &args[3.min(gen_end)..gen_end];
 
-        if flags & 2 != 0 {
-            self.fail("/b_gen", "wavetable mode unsupported");
-            return Ok(());
-        }
         let Some(info) = self.buffers.get(&bufnum).copied() else {
             self.fail("/b_gen", "unknown buffer");
             return Ok(());
@@ -2472,8 +2469,22 @@ impl OscDispatcher {
             self.fail("/b_gen", "b_gen requires a mono buffer");
             return Ok(());
         }
+
+        // Wavetable mode (flag 2) packs the fill into scsynth's `(a, b)` format, so the buffer's
+        // `num_frames` floats encode `num_frames / 2` logical samples: generate that many, then pack.
+        let wavetable = flags & 2 != 0;
+        let table_len = if wavetable {
+            if !info.num_frames.is_multiple_of(2) {
+                self.fail("/b_gen", "wavetable mode needs an even frame count");
+                return Ok(());
+            }
+            info.num_frames / 2
+        } else {
+            info.num_frames
+        };
+
         let floats: Vec<f32> = gen_args.iter().map(float_arg).collect::<Result<_, _>>()?;
-        let mut samples = vec![0.0f32; info.num_frames];
+        let mut samples = vec![0.0f32; table_len];
         match gen_name.as_str() {
             "sine1" => bgen::sine1(&mut samples, &floats),
             "sine2" => bgen::sine2(&mut samples, &to_pairs(&floats)),
@@ -2487,7 +2498,12 @@ impl OscDispatcher {
         if flags & 1 != 0 {
             bgen::normalize(&mut samples);
         }
-        let buffer = Box::new(Buffer::from_interleaved(samples, 1, info.sample_rate));
+        let data = if wavetable {
+            plyphon_dsp::wavetable::to_wavetable(&samples)
+        } else {
+            samples
+        };
+        let buffer = Box::new(Buffer::from_interleaved(data, 1, info.sample_rate));
         controller
             .buffer_set(bufnum as usize, buffer)
             .map_err(|_| OscError::QueueFull)?;

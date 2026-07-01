@@ -528,6 +528,89 @@ fn b_gen_sine1_plays_a_tone() {
     );
 }
 
+/// `Osc.ar(0, freq, 0) -> Out.ar(0)` - reads buffer 0 as a wavetable.
+fn osc_def(freq: f32) -> SynthDef {
+    SynthDef {
+        name: "osc".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new(
+                "Osc",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Constant(freq),
+                    InputRef::Constant(0.0),
+                ],
+                1,
+            ),
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 0, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    }
+}
+
+#[test]
+fn b_gen_wavetable_feeds_osc() {
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    let mut osc = OscDispatcher::new();
+    controller.add_synthdef(osc_def(400.0));
+
+    // A 2048-frame buffer holds a 1024-sample wavetable; sine1 with the wavetable flag (2) packs one
+    // cycle of its partial into scsynth's `(a, b)` format so `Osc` can read it.
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_alloc",
+            vec![OscType::Int(0), OscType::Int(2048), OscType::Int(1)],
+        ),
+    )
+    .expect("/b_alloc");
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/b_gen",
+            vec![
+                OscType::Int(0),
+                OscType::String("sine1".to_string()),
+                OscType::Int(3), // normalize | wavetable
+                OscType::Float(1.0),
+            ],
+        ),
+    )
+    .expect("/b_gen");
+    osc.apply_bytes(
+        &mut controller,
+        &msg(
+            "/s_new",
+            vec![
+                OscType::String("osc".to_string()),
+                OscType::Int(1000),
+                OscType::Int(1),
+                OscType::Int(ROOT_GROUP_ID),
+            ],
+        ),
+    )
+    .expect("/s_new");
+
+    let out = render(&mut world, SR as usize / 4);
+    assert!(
+        goertzel(&out, 400.0) > 10.0 * goertzel(&out, 800.0),
+        "a /b_gen wavetable buffer should play back through Osc as a 400 Hz tone"
+    );
+}
+
 #[test]
 fn b_gen_copy_duplicates_a_buffer() {
     let (mut osc, mut controller, mut world) = player_engine();
