@@ -10,7 +10,7 @@ use alloc::string::{String, ToString};
 use hashbrown::HashMap;
 
 use crate::error::BuildError;
-use crate::unit::band_limited::{PulseCtor, SawCtor};
+use crate::unit::band_limited::{BlipCtor, PulseCtor, SawCtor};
 use crate::unit::bank::{KlangCtor, KlankCtor};
 use crate::unit::binary_op::BinaryOpCtor;
 use crate::unit::buf_wr::BufWrCtor;
@@ -46,6 +46,7 @@ use crate::unit::filter_simple::{
     APFCtor, BPZ2Ctor, BRZ2Ctor, Delay1Ctor, Delay2Ctor, HPZ1Ctor, HPZ2Ctor, LPZ1Ctor, LPZ2Ctor,
     SlewCtor, SlopeCtor,
 };
+use crate::unit::formant::FormantCtor;
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
 use crate::unit::input::InCtor;
 use crate::unit::lf::{
@@ -330,6 +331,8 @@ impl UnitRegistry {
         registry.register("LFGauss", Box::new(LFGaussCtor));
         registry.register("Saw", Box::new(SawCtor));
         registry.register("Pulse", Box::new(PulseCtor));
+        registry.register("Blip", Box::new(BlipCtor));
+        registry.register("Formant", Box::new(FormantCtor));
         // Wavetable oscillators (read a buffer as a single-cycle table).
         registry.register("Osc", Box::new(OscCtor));
         registry.register("OscN", Box::new(OscNCtor));

@@ -253,6 +253,70 @@ fn lfgauss_non_looping_fires_once() {
 }
 
 #[test]
+fn blip_is_a_band_limited_impulse() {
+    // Blip(220, 10): a band-limited impulse train carrying the first 10 harmonics of 220, each at
+    // equal amplitude 1/N.
+    let out = render_osc(
+        "Blip",
+        vec![InputRef::Constant(FREQ), InputRef::Constant(10.0)],
+    );
+    assert!(out.iter().all(|s| s.is_finite()), "Blip must stay finite");
+    assert!(out.iter().all(|&s| s.abs() <= 1.5), "Blip out of range");
+    let off = goertzel(&out, FREQ * 1.5);
+    assert!(
+        goertzel(&out, FREQ) > 5.0 * off,
+        "the fundamental is present"
+    );
+    assert!(
+        goertzel(&out, FREQ * 5.0) > 5.0 * off,
+        "the 5th harmonic (within numharm) is present"
+    );
+}
+
+#[test]
+fn blip_limits_harmonics_to_numharm() {
+    // numharm = 2: harmonics above the 2nd are strongly suppressed.
+    let out = render_osc(
+        "Blip",
+        vec![InputRef::Constant(FREQ), InputRef::Constant(2.0)],
+    );
+    let h2 = goertzel(&out, FREQ * 2.0);
+    let h5 = goertzel(&out, FREQ * 5.0);
+    assert!(
+        h2 > 10.0 * h5,
+        "harmonics above numharm are suppressed (h2={h2}, h5={h5})"
+    );
+}
+
+#[test]
+fn formant_peaks_at_the_formant_frequency() {
+    // fundfreq 200, formfreq 1400 (the 7th harmonic), bwfreq 400.
+    let out = render_osc(
+        "Formant",
+        vec![
+            InputRef::Constant(200.0),
+            InputRef::Constant(1400.0),
+            InputRef::Constant(400.0),
+        ],
+    );
+    assert!(
+        out.iter().all(|s| s.is_finite()),
+        "Formant must stay finite"
+    );
+    assert!(out.iter().all(|&s| s.abs() <= 3.0), "Formant out of range");
+    // Spectral energy concentrates near the formant frequency, far above a distant bin.
+    assert!(
+        goertzel(&out, 1400.0) > 5.0 * goertzel(&out, 3400.0),
+        "energy should peak near the formant frequency"
+    );
+    // Periodic at the fundamental: a harmonic bin far outweighs a between-harmonics bin.
+    assert!(
+        goertzel(&out, 1400.0) > 5.0 * goertzel(&out, 1300.0),
+        "should be pitched at the 200 Hz fundamental"
+    );
+}
+
+#[test]
 fn band_limited_saw_aliases_less_than_lfsaw() {
     // A high fundamental: the band-limited Saw should put far less energy at an aliased,
     // non-harmonic frequency than the naive LFSaw.
