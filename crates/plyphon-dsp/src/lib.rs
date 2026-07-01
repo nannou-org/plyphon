@@ -23,6 +23,7 @@ extern crate alloc;
 pub mod buffer;
 pub mod bus;
 pub mod fft;
+pub mod interp;
 pub mod math;
 pub mod ops;
 pub mod rate;

@@ -18,7 +18,7 @@ use plyphon_dsp::rng::Rng;
 const GRAY_SCALE: f32 = 1.0 / 2_147_483_648.0;
 
 /// One of `-1.0`/`+1.0` chosen at random (scsynth's `fcoin`).
-fn coin(rng: &mut Rng) -> f32 {
+pub(crate) fn coin(rng: &mut Rng) -> f32 {
     if rng.next_u32() & 0x8000_0000 != 0 {
         -1.0
     } else {

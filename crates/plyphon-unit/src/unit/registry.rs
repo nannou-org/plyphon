@@ -43,6 +43,10 @@ use crate::unit::input::InCtor;
 use crate::unit::lf::{
     ImpulseCtor, LFCubCtor, LFParCtor, LFPulseCtor, LFSawCtor, LFTriCtor, SyncSawCtor, VarSawCtor,
 };
+use crate::unit::lf_noise::{
+    LFClipNoiseCtor, LFDClipNoiseCtor, LFDNoise0Ctor, LFDNoise1Ctor, LFDNoise3Ctor, LFNoise0Ctor,
+    LFNoise1Ctor, LFNoise2Ctor,
+};
 use crate::unit::line::{LineCtor, XLineCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
 use crate::unit::node_ctl::{
@@ -225,6 +229,15 @@ impl UnitRegistry {
         registry.register("BrownNoise", Box::new(BrownNoiseCtor));
         registry.register("Dust", Box::new(DustCtor));
         registry.register("Dust2", Box::new(Dust2Ctor));
+        // Low-frequency / dynamic noise (a new random value at an average `freq`).
+        registry.register("LFNoise0", Box::new(LFNoise0Ctor));
+        registry.register("LFNoise1", Box::new(LFNoise1Ctor));
+        registry.register("LFNoise2", Box::new(LFNoise2Ctor));
+        registry.register("LFClipNoise", Box::new(LFClipNoiseCtor));
+        registry.register("LFDNoise0", Box::new(LFDNoise0Ctor));
+        registry.register("LFDNoise1", Box::new(LFDNoise1Ctor));
+        registry.register("LFDNoise3", Box::new(LFDNoise3Ctor));
+        registry.register("LFDClipNoise", Box::new(LFDClipNoiseCtor));
         registry.register("CuspN", Box::new(CuspNCtor));
         registry.register("QuadN", Box::new(QuadNCtor));
         registry.register("LinCongN", Box::new(LinCongNCtor));

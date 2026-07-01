@@ -56,7 +56,7 @@ the programmatic API. The **control-driven** forms (`blockSize -1` / `resampleFa
 value comes from a synth control at instantiation) are unsupported - plyphon bakes the graph block into
 the per-synth layout at compile - and fall back to no reblock/resample.
 
-## UGens (155 of scsynth's ~382 standard DSP UGens, grouped by category)
+## UGens (163 of scsynth's ~382 standard DSP UGens, grouped by category)
 
 The remaining gap to full scsynth compatibility is UGen breadth; the engine seams these need (aux
 memory, per-unit RNG, the demand vtable, the FFT/PV bin seam, trailing-input spec arrays) are all in
@@ -65,7 +65,7 @@ place, so most are pure per-unit ports. Note the two operator *shells* below (`B
 
 - [ ] **I/O** - have Out, ReplaceOut (overwrites the bus channel instead of summing, via a `write_replace` bus method), OffsetOut, In, LocalIn, LocalOut, InFeedback (a per-synth feedback bus with a one-block delay; `InFeedback` aliases `In`); missing XOut (crossfade write - the touched-based mix under reblock is deferred), SoundIn
 - [ ] **Oscillators** - have SinOsc, Saw, Pulse, LFSaw, LFPulse, Impulse, plus LFTri, LFPar, LFCub, VarSaw, SyncSaw (scsynth's own `f64` phase accumulators) and FSinOsc (a resonator sine); missing Blip, Formant, Klang, Klank, DynKlank, the wavetable oscillators Osc/OscN/COsc/VOsc/VOsc3 (need the buffer-backed wavetable reader), SinOscFB, LFGauss, Select/Index/Shaper/DegreeToKey
-- [ ] **Noise** - have WhiteNoise, ClipNoise, GrayNoise, PinkNoise, BrownNoise, Dust, Dust2 (each embeds the per-unit Taus88 `Rng`, reproducing scsynth's `SC_RGen.h` bit-tricks with safe `f32::from_bits`); missing LFNoise0/1/2, LFDNoise*, LFClipNoise, Crackle, Logistic
+- [ ] **Noise** - have WhiteNoise, ClipNoise, GrayNoise, PinkNoise, BrownNoise, Dust, Dust2 (each embeds the per-unit Taus88 `Rng`, reproducing scsynth's `SC_RGen.h` bit-tricks with safe `f32::from_bits`), plus the low-frequency/dynamic noise family LFNoise0/1/2, LFClipNoise (a whole-sample counter between random values, so transitions quantise to the sample rate) and the dynamic LFDNoise0/1/3, LFDClipNoise (a floating phase decremented by `freq * sampleDur`, so `freq` can be modulated at audio rate and transitions land off-grid; LFDNoise3's cubic reconstruction reuses the new `plyphon_dsp::interp::cubicinterp`); missing Crackle, Logistic, Hasher, MantissaMask
 - [ ] **Filters** - have LPF, HPF, Lag, plus the primitives OnePole, OneZero, Integrator, LeakDC, TwoPole, TwoZero, Decay, Decay2; the resonant biquads RLPF, RHPF, BPF, BRF, Resonz, Ringz; and the fixed-coefficient/delay set LPZ1/HPZ1/LPZ2/HPZ2/BPZ2/BRZ2, Delay1/Delay2, Slope, Slew, APF (all `f64` state flushed with a shared `zap`, coefficients derived per block as `Butter` does). Missing: Formlet, MidEQ, the `B*` biquad EQ set, FOS/SOS, MoogFF, Median, Lag2/3/UD/VarLag, Flip, Hilbert, FreqShift
 - [ ] **Envelopes** - have EnvGen, Line, XLine (exponential line, latch + done-action like Line); missing Linen, IEnvGen, DemandEnvGen
 - [ ] **Panning** - have Pan2, LinPan2, Balance2, XFade2, LinXFade2, Rotate2 (equal-power units share `Pan2`'s cos/sin law); missing Pan4, PanAz, PanB/PanB2/BiPanB2, DecodeB2 (client-side Splay is out of scope)

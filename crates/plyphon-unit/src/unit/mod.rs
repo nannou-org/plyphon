@@ -31,6 +31,7 @@ pub mod info;
 pub mod input;
 pub mod io;
 pub mod lf;
+pub mod lf_noise;
 pub mod line;
 pub mod local_io;
 pub mod node_ctl;
