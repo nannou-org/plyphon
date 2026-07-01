@@ -1,5 +1,6 @@
 //! Rate-conversion units: DC (constant), A2K (audio->control first sample), T2A (control trigger ->
-//! sample-accurate audio), and K2A (control->audio interpolation).
+//! sample-accurate audio), K2A (control->audio interpolation), and T2K (audio trigger -> control
+//! block maximum).
 
 use plyphon::{
     AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
@@ -130,6 +131,62 @@ fn t2a_places_trigger_at_offset() {
     // Second block: level held high, no new edge, so silence.
     for x in one_block(&mut world) {
         assert!(x.abs() < 1e-6, "T2A second block should be silent, got {x}");
+    }
+}
+
+#[test]
+fn t2k_takes_block_maximum() {
+    // T2A places a lone 1.0 spike at sample 5 of the first block (zero elsewhere). A2K.kr would read
+    // sample 0 and miss it; T2K.kr takes the block max and catches it. Broadcast the control value
+    // back to audio via MulAdd so we can observe it.
+    let offset = 5usize;
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller.add_synthdef(SynthDef {
+        name: "t2k".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new(
+                "T2A",
+                Rate::Audio,
+                vec![InputRef::Constant(1.0), InputRef::Constant(offset as f32)],
+                1,
+            ),
+            UnitSpec::new(
+                "T2K",
+                Rate::Control,
+                vec![InputRef::Unit { unit: 0, output: 0 }],
+                1,
+            ),
+            UnitSpec::new(
+                "MulAdd",
+                Rate::Audio,
+                vec![
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Constant(1.0),
+                    InputRef::Constant(0.0),
+                ],
+                1,
+            ),
+            out(2),
+        ],
+    });
+    controller
+        .synth_new("t2k", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("synth_new");
+
+    // First block: the spike at sample 5 becomes the block max, so the control value is 1.0.
+    for x in one_block(&mut world) {
+        assert!(
+            (x - 1.0).abs() < 1e-6,
+            "T2K should catch the spike, got {x}"
+        );
+    }
+    // Second block: T2A holds high (no new edge), so the block is silent and T2K reports 0.
+    for x in one_block(&mut world) {
+        assert!(
+            x.abs() < 1e-6,
+            "T2K should be 0 once the spike passes, got {x}"
+        );
     }
 }
 

@@ -1,9 +1,10 @@
-//! Rate-conversion units - plyphon's ports of scsynth's `DC`, `K2A`, `A2K`, and `T2A`.
+//! Rate-conversion units - plyphon's ports of scsynth's `DC`, `K2A`, `A2K`, `T2A`, and `T2K`.
 //!
 //! These bridge calc rates: `DC` emits a constant signal, `K2A` lifts a control signal to audio rate
 //! (linearly interpolating between blocks), `A2K` samples an audio signal down to control rate (its
-//! first sample), and `T2A` places a control-rate trigger at a sample-accurate position in an audio
-//! block.
+//! first sample), `T2A` places a control-rate trigger at a sample-accurate position in an audio
+//! block, and `T2K` collapses an audio-rate trigger to control rate by taking the block's maximum
+//! (so a trigger anywhere in the block survives the downsample).
 
 use bytemuck::{Pod, Zeroable};
 
@@ -150,5 +151,41 @@ pub struct T2ACtor;
 impl UnitDef for T2ACtor {
     fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(T2A { prev: 0.0 }))
+    }
+}
+
+/// `T2K.kr(in)`: convert an audio-rate trigger to control rate by taking the block's maximum value
+/// (scsynth reduces the whole audio block to `max(0, samples...)`, so a trigger firing anywhere in
+/// the block survives the downsample instead of being missed between control ticks).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct T2K {
+    _pad: u32,
+}
+
+impl T2K {
+    const IN: usize = 0;
+}
+
+impl Unit for T2K {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // scsynth starts the accumulator at 0 and keeps the largest sample, so NaN inputs (which
+        // never compare `>`) are ignored and the output floors at 0.
+        let peak = ctx
+            .ins
+            .audio(Self::IN)
+            .iter()
+            .fold(0.0f32, |m, &s| m.max(s));
+        *ctx.outs.control(0) = peak;
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`T2K`].
+pub struct T2KCtor;
+
+impl UnitDef for T2KCtor {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(T2K { _pad: 0 }))
     }
 }

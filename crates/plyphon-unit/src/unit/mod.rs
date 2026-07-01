@@ -59,6 +59,7 @@ pub mod send_reply;
 pub mod send_trig;
 pub mod shape;
 pub mod sin_osc;
+pub mod test;
 pub mod timing;
 pub mod trigger;
 pub mod two_pole;

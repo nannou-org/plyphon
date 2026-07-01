@@ -72,7 +72,7 @@ use crate::unit::pv_mag_squared::PvMagSquaredCtor;
 use crate::unit::pv_ops::{
     MagKind, PvBrickWallCtor, PvConjCtor, PvLocalMaxCtor, PvMagThreshCtor, PvPhaseQuarterCtor,
 };
-use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor};
+use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
 use crate::unit::send_reply::SendReplyCtor;
@@ -81,6 +81,7 @@ use crate::unit::shape::{
     InRangeCtor, InRectCtor, LinExpCtor, RangeKind, RangeShaperCtor, UnwrapCtor,
 };
 use crate::unit::sin_osc::{FSinOscCtor, SinOscCtor};
+use crate::unit::test::{CheckBadValuesCtor, SanitizeCtor};
 use crate::unit::timing::{
     PhasorCtor, PulseCountCtor, PulseDividerCtor, StepperCtor, SweepCtor, TimerCtor,
     ZeroCrossingCtor,
@@ -327,6 +328,10 @@ impl UnitRegistry {
         registry.register("K2A", Box::new(K2ACtor));
         registry.register("A2K", Box::new(A2KCtor));
         registry.register("T2A", Box::new(T2ACtor));
+        registry.register("T2K", Box::new(T2KCtor));
+        // Diagnostic guards (NaN/inf/subnormal detection).
+        registry.register("CheckBadValues", Box::new(CheckBadValuesCtor));
+        registry.register("Sanitize", Box::new(SanitizeCtor));
         // Demand-rate consumers (normal calc-rate units that pull from the demand plan).
         registry.register("Duty", Box::new(DutyCtor));
         registry.register("Demand", Box::new(DemandCtor));
