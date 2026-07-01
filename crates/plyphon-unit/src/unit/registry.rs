@@ -43,7 +43,10 @@ use crate::unit::node_ctl::{
     DoneCtor, FreeCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseCtor, PauseSelfCtor,
     PauseSelfWhenDoneCtor,
 };
-use crate::unit::noise::WhiteNoiseCtor;
+use crate::unit::noise::{
+    BrownNoiseCtor, ClipNoiseCtor, Dust2Ctor, DustCtor, GrayNoiseCtor, PinkNoiseCtor,
+    WhiteNoiseCtor,
+};
 use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
 use crate::unit::out::{OffsetOutCtor, OutCtor};
 use crate::unit::pan::Pan2Ctor;
@@ -178,6 +181,12 @@ impl UnitRegistry {
         registry.register("APF", Box::new(APFCtor));
         registry.register("DelayN", Box::new(DelayNCtor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
+        registry.register("ClipNoise", Box::new(ClipNoiseCtor));
+        registry.register("GrayNoise", Box::new(GrayNoiseCtor));
+        registry.register("PinkNoise", Box::new(PinkNoiseCtor));
+        registry.register("BrownNoise", Box::new(BrownNoiseCtor));
+        registry.register("Dust", Box::new(DustCtor));
+        registry.register("Dust2", Box::new(Dust2Ctor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
         registry.register("DiskOut", Box::new(DiskOutCtor));
