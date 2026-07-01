@@ -15,6 +15,7 @@
 pub mod band_limited;
 pub mod binary_op;
 pub mod buf_wr;
+pub mod decay;
 pub mod delay;
 pub mod demand;
 pub mod disk_in;
@@ -31,6 +32,7 @@ pub mod line;
 pub mod local_io;
 pub mod node_ctl;
 pub mod noise;
+pub mod one_pole;
 pub mod out;
 pub mod pan;
 pub mod play_buf;
@@ -47,6 +49,7 @@ pub mod scope_out;
 pub mod send_reply;
 pub mod send_trig;
 pub mod sin_osc;
+pub mod two_pole;
 pub mod unary_op;
 pub mod util;
 

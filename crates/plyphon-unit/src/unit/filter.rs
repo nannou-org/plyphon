@@ -145,8 +145,9 @@ impl UnitDef for ButterCtor {
     }
 }
 
-/// Flush denormals and non-finite values to zero (scsynth's `zapgremlins`).
-fn zap(x: f64) -> f64 {
+/// Flush denormals and non-finite values to zero (scsynth's `zapgremlins`). Shared by the other
+/// recursive filters to keep their `f64` feedback state finite at block boundaries.
+pub(crate) fn zap(x: f64) -> f64 {
     let a = x.abs();
     if a > 1e-15 && a < 1e15 { x } else { 0.0 }
 }

@@ -13,6 +13,7 @@ use crate::error::BuildError;
 use crate::unit::band_limited::{PulseCtor, SawCtor};
 use crate::unit::binary_op::BinaryOpCtor;
 use crate::unit::buf_wr::BufWrCtor;
+use crate::unit::decay::{Decay2Ctor, DecayCtor};
 use crate::unit::delay::DelayNCtor;
 use crate::unit::demand::BuiltDemandUnit;
 use crate::unit::demand::dbufrd::DbufrdCtor;
@@ -39,6 +40,7 @@ use crate::unit::node_ctl::{
     PauseSelfWhenDoneCtor,
 };
 use crate::unit::noise::WhiteNoiseCtor;
+use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
 use crate::unit::out::{OffsetOutCtor, OutCtor};
 use crate::unit::pan::Pan2Ctor;
 use crate::unit::play_buf::PlayBufCtor;
@@ -52,6 +54,7 @@ use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::sin_osc::SinOscCtor;
+use crate::unit::two_pole::{TwoPoleCtor, TwoZeroCtor};
 use crate::unit::unary_op::UnaryOpCtor;
 use crate::unit::util::{AmplitudeCtor, LagCtor, MulAddCtor};
 use crate::unit::{BuiltUnit, InputSource};
@@ -144,6 +147,14 @@ impl UnitRegistry {
         registry.register("Line", Box::new(LineCtor));
         registry.register("LPF", Box::new(ButterCtor(Kind::LowPass)));
         registry.register("HPF", Box::new(ButterCtor(Kind::HighPass)));
+        registry.register("OnePole", Box::new(OnePoleCtor));
+        registry.register("OneZero", Box::new(OneZeroCtor));
+        registry.register("Integrator", Box::new(IntegratorCtor));
+        registry.register("LeakDC", Box::new(LeakDCCtor));
+        registry.register("TwoPole", Box::new(TwoPoleCtor));
+        registry.register("TwoZero", Box::new(TwoZeroCtor));
+        registry.register("Decay", Box::new(DecayCtor));
+        registry.register("Decay2", Box::new(Decay2Ctor));
         registry.register("DelayN", Box::new(DelayNCtor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
