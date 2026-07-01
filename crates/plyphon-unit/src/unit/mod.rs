@@ -13,6 +13,7 @@
 //! equivalent of scsynth's raw aliasing `float*` wires.
 
 pub mod band_limited;
+pub mod bank;
 pub mod binary_op;
 pub mod buf_wr;
 pub mod chaos;

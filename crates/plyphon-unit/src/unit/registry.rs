@@ -11,6 +11,7 @@ use hashbrown::HashMap;
 
 use crate::error::BuildError;
 use crate::unit::band_limited::{PulseCtor, SawCtor};
+use crate::unit::bank::{KlangCtor, KlankCtor};
 use crate::unit::binary_op::BinaryOpCtor;
 use crate::unit::buf_wr::BufWrCtor;
 use crate::unit::chaos::{
@@ -325,6 +326,9 @@ impl UnitRegistry {
         registry.register("FSinOsc", Box::new(FSinOscCtor));
         registry.register("Saw", Box::new(SawCtor));
         registry.register("Pulse", Box::new(PulseCtor));
+        // Additive / modal resonator banks.
+        registry.register("Klang", Box::new(KlangCtor));
+        registry.register("Klank", Box::new(KlankCtor));
         registry.register("Pan2", Box::new(Pan2Ctor));
         registry.register("LinPan2", Box::new(LinPan2Ctor));
         registry.register("Balance2", Box::new(Balance2Ctor));
