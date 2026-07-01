@@ -1,5 +1,7 @@
 //! Exercise the trigger / sample-hold / flip-flop units (`Trig`, `Trig1`, `TDelay`, `Latch`, `Gate`,
-//! `ToggleFF`, `SetResetFF`, `Schmidt`) driven by `Impulse` and `SinOsc` sources.
+//! `ToggleFF`, `SetResetFF`, `Schmidt`) and the counting / timing units (`PulseCount`,
+//! `PulseDivider`, `Stepper`, `ZeroCrossing`, `Timer`, `Sweep`, `Phasor`) driven by `Impulse` and
+//! `SinOsc` sources.
 
 use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine};
 
@@ -307,6 +309,209 @@ fn set_reset_ff_latches_between_set_and_reset() {
     assert!(
         out.contains(&1.0) && out.contains(&0.0),
         "both states should occur"
+    );
+}
+
+fn constant(v: f32) -> UnitSpec {
+    UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(v)], 1)
+}
+
+#[test]
+fn pulse_count_counts_rising_edges() {
+    // PulseCount(Impulse(10), 0): counts up ~10 over 1 s, never decreasing.
+    let out = render_units(
+        vec![
+            impulse(10.0),
+            constant(0.0),
+            UnitSpec::new(
+                "PulseCount",
+                Rate::Audio,
+                vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
+                ],
+                1,
+            ),
+            out(2),
+        ],
+        SR as usize,
+    );
+    assert!(
+        out.windows(2).all(|w| w[1] >= w[0]),
+        "PulseCount must be monotonic without a reset"
+    );
+    let last = *out.last().unwrap();
+    assert!(
+        (9.0..=11.0).contains(&last),
+        "PulseCount(10Hz) should reach ~10, got {last}"
+    );
+}
+
+#[test]
+fn pulse_divider_divides_the_rate() {
+    // PulseDivider(Impulse(40), 4): fires every 4th impulse -> ~10 pulses/second.
+    let out = render_units(
+        vec![
+            impulse(40.0),
+            UnitSpec::new(
+                "PulseDivider",
+                Rate::Audio,
+                vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Constant(4.0),
+                    InputRef::Constant(0.0),
+                ],
+                1,
+            ),
+            out(1),
+        ],
+        SR as usize,
+    );
+    let pulses = out.iter().filter(|&&x| x == 1.0).count();
+    assert!(
+        (8..=12).contains(&pulses),
+        "PulseDivider(40Hz/4) should emit ~10, got {pulses}"
+    );
+}
+
+#[test]
+fn stepper_cycles_within_bounds() {
+    // Stepper(Impulse(20), 0, min=0, max=4, step=1, resetval=0): steps 0..4 and wraps.
+    let out = render_units(
+        vec![
+            impulse(20.0),
+            constant(0.0),
+            UnitSpec::new(
+                "Stepper",
+                Rate::Audio,
+                vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
+                    InputRef::Constant(0.0),
+                    InputRef::Constant(4.0),
+                    InputRef::Constant(1.0),
+                    InputRef::Constant(0.0),
+                ],
+                1,
+            ),
+            out(2),
+        ],
+        SR as usize,
+    );
+    assert!(
+        out.iter()
+            .all(|&x| (0.0..=4.0).contains(&x) && x.fract() == 0.0),
+        "Stepper out of bounds"
+    );
+    assert!(
+        out.contains(&0.0) && out.contains(&4.0),
+        "Stepper should span its full range"
+    );
+}
+
+#[test]
+fn zero_crossing_estimates_frequency() {
+    // ZeroCrossing(SinOsc(500)) should settle near 500 Hz.
+    let out = render_units(
+        vec![
+            sin(500.0),
+            UnitSpec::new(
+                "ZeroCrossing",
+                Rate::Audio,
+                vec![InputRef::Unit { unit: 0, output: 0 }],
+                1,
+            ),
+            out(1),
+        ],
+        SR as usize / 2,
+    );
+    let est = *out.last().unwrap();
+    assert!(
+        (450.0..=550.0).contains(&est),
+        "ZeroCrossing should estimate ~500 Hz, got {est}"
+    );
+}
+
+#[test]
+fn timer_measures_the_trigger_period() {
+    // Timer(Impulse(10)) should report ~0.1 s between triggers.
+    let out = render_units(
+        vec![
+            impulse(10.0),
+            UnitSpec::new(
+                "Timer",
+                Rate::Audio,
+                vec![InputRef::Unit { unit: 0, output: 0 }],
+                1,
+            ),
+            out(1),
+        ],
+        SR as usize,
+    );
+    let last = *out.last().unwrap();
+    assert!(
+        (0.09..=0.11).contains(&last),
+        "Timer(10Hz) should report ~0.1 s, got {last}"
+    );
+}
+
+#[test]
+fn sweep_ramps_and_resets() {
+    // Sweep(Impulse(2), 100): ramps at 100/s, reset every 0.5 s -> spans ~[0, 50].
+    let out = render_units(
+        vec![
+            impulse(2.0),
+            UnitSpec::new(
+                "Sweep",
+                Rate::Audio,
+                vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Constant(100.0),
+                ],
+                1,
+            ),
+            out(1),
+        ],
+        SR as usize,
+    );
+    let max = out.iter().cloned().fold(f32::MIN, f32::max);
+    let min = out.iter().cloned().fold(f32::MAX, f32::min);
+    assert!(
+        (40.0..=55.0).contains(&max),
+        "Sweep should ramp to ~50, peak {max}"
+    );
+    assert!(min < 5.0, "Sweep should reset near 0, min {min}");
+}
+
+#[test]
+fn phasor_ramps_and_wraps() {
+    // Phasor(0, 0.001, 0, 1, 0): a 0..1 sawtooth wrapping every 1000 samples.
+    let out = render_units(
+        vec![
+            constant(0.0),
+            UnitSpec::new(
+                "Phasor",
+                Rate::Audio,
+                vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Constant(0.001),
+                    InputRef::Constant(0.0),
+                    InputRef::Constant(1.0),
+                    InputRef::Constant(0.0),
+                ],
+                1,
+            ),
+            out(1),
+        ],
+        SR as usize / 10,
+    );
+    assert!(
+        out.iter().all(|&x| (0.0..1.0).contains(&x)),
+        "Phasor should stay in [0, 1)"
+    );
+    assert!(
+        out.iter().any(|&x| x < 0.05) && out.iter().any(|&x| x > 0.95),
+        "Phasor should sweep the whole range"
     );
 }
 

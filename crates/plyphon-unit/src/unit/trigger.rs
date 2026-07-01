@@ -15,14 +15,14 @@ use crate::unit::{BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
 
 /// An input read either per-sample (audio rate) or as a single held value (control rate).
-enum Sig<'a> {
+pub(crate) enum Sig<'a> {
     Audio(&'a [f32]),
     Control(f32),
 }
 
 impl Sig<'_> {
     /// The input's value at frame `i` (the held value at every frame when control-rate).
-    fn at(&self, i: usize) -> f32 {
+    pub(crate) fn at(&self, i: usize) -> f32 {
         match *self {
             Sig::Audio(s) => s[i],
             Sig::Control(v) => v,
@@ -32,7 +32,7 @@ impl Sig<'_> {
 
 /// Resolve input `i` to a [`Sig`] at its declared rate. The returned slice is tied to the World's
 /// data lifetime, so it never conflicts with the mutable borrow of the output.
-fn sig<'a>(ins: &Inputs<'a>, i: usize) -> Sig<'a> {
+pub(crate) fn sig<'a>(ins: &Inputs<'a>, i: usize) -> Sig<'a> {
     if ins.rate(i) == Rate::Audio {
         Sig::Audio(ins.audio(i))
     } else {
@@ -41,7 +41,7 @@ fn sig<'a>(ins: &Inputs<'a>, i: usize) -> Sig<'a> {
 }
 
 /// Drive the output at the unit's rate, computing each frame with `f`.
-fn drive(ctx: &mut ProcessCtx<'_>, audio_out: bool, mut f: impl FnMut(usize) -> f32) {
+pub(crate) fn drive(ctx: &mut ProcessCtx<'_>, audio_out: bool, mut f: impl FnMut(usize) -> f32) {
     if audio_out {
         for (i, o) in ctx.outs.audio(0).iter_mut().enumerate() {
             *o = f(i);
