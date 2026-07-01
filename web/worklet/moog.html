@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>plyphon: moog</title>
+    <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
+    <script src="coi-serviceworker.min.js"></script>
+    <script src="audio.js"></script>
+    <link data-trunk rel="copy-file" href="../coi-serviceworker.min.js" />
+    <link data-trunk rel="copy-file" href="../audio.js" />
+    <link data-trunk rel="copy-file" href="../style.css" />
+    <link rel="stylesheet" href="style.css" />
+    <link
+      data-trunk
+      rel="rust"
+      href="../../crates/examples/moog/Cargo.toml"
+      data-bin="example-moog"
+      data-cargo-features="audioworklet"
+      data-cargo-profile-release="wasm_release"
+      data-wasm-opt="z"
+      data-wasm-opt-params="--enable-threads --enable-bulk-memory --enable-mutable-globals --enable-reference-types --enable-multivalue --enable-tail-call --enable-nontrapping-float-to-int"
+      data-initializer="../initializer.js"
+    />
+  </head>
+  <body class="loading">
+    <div id="loading">
+      <p id="loading-title">plyphon</p>
+      <div id="loading-track"><div id="loading-bar"></div></div>
+    </div>
+    <main class="demo">
+      <p class="title">moog</p>
+      <p>A resonant acid bassline: a Saw through a MoogFF ladder filter whose cutoff an LFO sweeps, with high feedback resonance, over an octave-bouncing bass.</p>
+      <p class="hint">Click anywhere to start audio.</p>
+      <a class="back" href="../">&larr; all examples</a>
+    </main>
+  </body>
+</html>
