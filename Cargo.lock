@@ -807,6 +807,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-vowel"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+]
+
+[[package]]
 name = "example-wandering"
 version = "0.1.0"
 dependencies = [
