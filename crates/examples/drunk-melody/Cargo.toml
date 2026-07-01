@@ -1,0 +1,22 @@
+[package]
+name = "example-drunk-melody"
+version = "0.1.0"
+publish = false
+description = "A self-driving drunk-walk melody: Dibrown steps a random-walk MIDI line clocked by Duty."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+example-audio.workspace = true
+plyphon.workspace = true
+
+# Web-only: the wasm panic hook for readable console errors.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook.workspace = true
+
+[features]
+# Build the web demo on cpal's AudioWorklet backend (see pkgs/plyphon-website-worklet.nix).
+audioworklet = ["example-audio/audioworklet"]

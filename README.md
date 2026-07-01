@@ -52,6 +52,7 @@ Listed in reverse-topological order - dependents first, their dependencies below
 | [`example-hard-sync`](crates/examples/hard-sync) | A hard-sync lead: a `SyncSaw` whose saw frequency is swept by an LFO over a fixed pitch (the oscillators `LFTri`/`LFPar`/`LFCub`/`VarSaw`/`SyncSaw`/`FSinOsc`). |
 | [`example-bouncing-ball`](crates/examples/bouncing-ball) | Physical-model percussion: a `TBall` bouncing on an oscillating floor rings a `Ringz` resonator (the physical models `Spring`/`Ball`/`TBall`). |
 | [`example-comb-string`](crates/examples/comb-string) | Karplus-Strong plucked strings: periodic noise bursts excite a tuned `CombL` resonator (delay = one pitch period), diffused by an `AllpassC` (the recirculating delays `CombN/L/C`/`AllpassN/L/C` and interpolating `DelayL/C`). |
+| [`example-drunk-melody`](crates/examples/drunk-melody) | A self-driving drunk-walk melody: `Duty.kr` clocks a `Dibrown` integer random walk over MIDI notes (`midicps` + `Lag` glide), showcasing the generator demand sources `Dgeom`/`Diwhite`/`Dbrown`/`Dibrown`. |
 | [`example-pan`](crates/examples/pan) | A tone auto-panned across the stereo field with `Pan2`. |
 | [`example-envelope`](crates/examples/envelope) | Percussive plucks shaped by multi-segment `EnvGen` envelopes that free their own synths. |
 | [`example-osc`](crates/examples/osc) | Drives the engine through encoded SuperCollider OSC packets (no sockets) and prints the control commands and the replies/notifications that flow back. |
