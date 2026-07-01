@@ -17,7 +17,8 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
-use plyphon_dsp::buffer::Buffer;
+use plyphon_dsp::buffer::{Buffer, BufferTable};
+use plyphon_dsp::interp::lininterp;
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 use plyphon_dsp::wavetable::lookup_wavetable;
@@ -196,6 +197,241 @@ impl UnitDef for OscNCtor {
         Ok(unit_spec(OscN {
             phase: 0.0,
             calc: freq_calc(ctx, OscN::FREQ),
+        }))
+    }
+}
+
+/// `COsc.ar(bufnum, freq, beats)`: a chorusing wavetable oscillator - two [`Osc`]-style readers of the
+/// same buffer detuned by `beats` Hz (one at `freq + beats/2`, one at `freq - beats/2`) summed, so the
+/// two slowly-drifting copies beat against each other. `freq` and `beats` are control-rate (scsynth's
+/// single `COsc_next`). A missing or non-power-of-two buffer outputs silence.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct COsc {
+    /// The two detuned phase accumulators, each in cycles kept in `[0, 1)`.
+    phase1: f32,
+    phase2: f32,
+}
+
+impl COsc {
+    const BUFNUM: usize = 0;
+    const FREQ: usize = 1;
+    const BEATS: usize = 2;
+}
+
+impl Unit for COsc {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
+        let freq = ctx.ins.control(Self::FREQ);
+        let beats = ctx.ins.control(Self::BEATS) * 0.5; // half the beat spread each side
+        let sample_dur = ctx.audio.sample_dur as f32;
+        let wt = match unit::buffer_at(ctx.buffers, bufnum).and_then(wavetable_data) {
+            Some(wt) => wt,
+            None => {
+                ctx.outs.audio(0).fill(0.0);
+                return DoneAction::Nothing;
+            }
+        };
+        let inc1 = (freq + beats) * sample_dur;
+        let inc2 = (freq - beats) * sample_dur;
+        for o in ctx.outs.audio(0).iter_mut() {
+            *o = lookup_wavetable(wt, self.phase1) + lookup_wavetable(wt, self.phase2);
+            self.phase1 = wrap_unit(self.phase1 + inc1);
+            self.phase2 = wrap_unit(self.phase2 + inc2);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`COsc`].
+pub struct COscCtor;
+
+impl UnitDef for COscCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 3 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(COsc {
+            phase1: 0.0,
+            phase2: 0.0,
+        }))
+    }
+}
+
+/// The crossfaded read of two consecutive wavetables at `bufindex`/`bufindex + 1` in the buffer table,
+/// each read at `phase`, blended by `level` (the fractional buffer position). `0.0` unless both slots
+/// hold valid, equal-size wavetables - scsynth's `VOsc` silences a missing/mismatched bank member.
+fn crossfade_read(buffers: &BufferTable, bufindex: usize, phase: f32, level: f32) -> f32 {
+    let table0 = unit::buffer_at(buffers, bufindex).and_then(wavetable_data);
+    let table1 = unit::buffer_at(buffers, bufindex + 1).and_then(wavetable_data);
+    match (table0, table1) {
+        (Some(t0), Some(t1)) if t0.len() == t1.len() => lininterp(
+            level,
+            lookup_wavetable(t0, phase),
+            lookup_wavetable(t1, phase),
+        ),
+        _ => 0.0,
+    }
+}
+
+/// `VOsc.ar(bufpos, freq, phase)`: a wavetable-*crossfade* oscillator. `bufpos` selects a position in a
+/// bank of consecutively-numbered wavetable buffers; the output crossfades between buffer
+/// `floor(bufpos)` and the next by the fractional part, so sweeping `bufpos` morphs smoothly through
+/// the bank (all members must be equal-size `(a, b)` wavetables). `bufpos` is interpolated across the
+/// block from its previous value, so a moving `bufpos` sweeps sample-accurately. `freq` is audio or
+/// control rate, `phase` a control-rate offset in radians.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct VOsc {
+    /// Phase accumulator in cycles, kept in `[0, 1)`.
+    phase: f32,
+    /// The previous block's `bufpos`, so this block can ramp from it.
+    bufpos: f32,
+    /// Which freq calc variant (see [`calc`]).
+    calc: u32,
+    /// `0` until the first block seeds `bufpos`, then `1`.
+    warmed: u32,
+}
+
+impl VOsc {
+    const BUFPOS: usize = 0;
+    const FREQ: usize = 1;
+    const PHASE: usize = 2;
+}
+
+impl Unit for VOsc {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let next_bufpos = ctx.ins.control(Self::BUFPOS);
+        let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
+        let sample_dur = ctx.audio.sample_dur as f32;
+        let audio_freq = self.calc == calc::FREQ_AUDIO;
+        let freq_slice = if audio_freq {
+            ctx.ins.audio(Self::FREQ)
+        } else {
+            &[]
+        };
+        let freq_ctl = if audio_freq {
+            0.0
+        } else {
+            ctx.ins.control(Self::FREQ)
+        };
+
+        let prev = if self.warmed == 0 {
+            self.warmed = 1;
+            next_bufpos
+        } else {
+            self.bufpos
+        };
+        self.bufpos = next_bufpos;
+        let bufdiff = next_bufpos - prev;
+
+        let block = ctx.outs.audio(0).len();
+        for i in 0..block {
+            let cur = prev + bufdiff * (i as f32 / block as f32);
+            let base = math::floor(cur);
+            let level = cur - base;
+            let bufindex = base.max(0.0) as usize;
+            ctx.outs.audio(0)[i] =
+                crossfade_read(ctx.buffers, bufindex, self.phase + phase_offset, level);
+            // Audio rate: `freq_slice` has one value per sample; control rate: it is empty and `.get`
+            // falls back to the per-block `freq_ctl`.
+            let f = freq_slice.get(i).copied().unwrap_or(freq_ctl);
+            self.phase = wrap_unit(self.phase + f * sample_dur);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`VOsc`].
+pub struct VOscCtor;
+
+impl UnitDef for VOscCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 3 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(VOsc {
+            phase: 0.0,
+            bufpos: 0.0,
+            calc: freq_calc(ctx, VOsc::FREQ),
+            warmed: 0,
+        }))
+    }
+}
+
+/// `VOsc3.ar(bufpos, freq1, freq2, freq3)`: three [`VOsc`]-style oscillators (control-rate `freq1..3`)
+/// summed and read from the same crossfaded buffer-bank position - a three-voice detuned wavetable
+/// oscillator. Like `VOsc`, `bufpos` crossfades a bank of equal-size wavetables and is ramped across
+/// the block. No phase input.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct VOsc3 {
+    /// The three phase accumulators, each in cycles kept in `[0, 1)`.
+    phase1: f32,
+    phase2: f32,
+    phase3: f32,
+    /// The previous block's `bufpos`, so this block can ramp from it.
+    bufpos: f32,
+    /// `0` until the first block seeds `bufpos`, then `1`.
+    warmed: u32,
+}
+
+impl VOsc3 {
+    const BUFPOS: usize = 0;
+    const FREQ1: usize = 1;
+    const FREQ2: usize = 2;
+    const FREQ3: usize = 3;
+}
+
+impl Unit for VOsc3 {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let next_bufpos = ctx.ins.control(Self::BUFPOS);
+        let sample_dur = ctx.audio.sample_dur as f32;
+        let inc1 = ctx.ins.control(Self::FREQ1) * sample_dur;
+        let inc2 = ctx.ins.control(Self::FREQ2) * sample_dur;
+        let inc3 = ctx.ins.control(Self::FREQ3) * sample_dur;
+
+        let prev = if self.warmed == 0 {
+            self.warmed = 1;
+            next_bufpos
+        } else {
+            self.bufpos
+        };
+        self.bufpos = next_bufpos;
+        let bufdiff = next_bufpos - prev;
+
+        let block = ctx.outs.audio(0).len();
+        for i in 0..block {
+            let cur = prev + bufdiff * (i as f32 / block as f32);
+            let base = math::floor(cur);
+            let level = cur - base;
+            let bufindex = base.max(0.0) as usize;
+            let voices = crossfade_read(ctx.buffers, bufindex, self.phase1, level)
+                + crossfade_read(ctx.buffers, bufindex, self.phase2, level)
+                + crossfade_read(ctx.buffers, bufindex, self.phase3, level);
+            ctx.outs.audio(0)[i] = voices;
+            self.phase1 = wrap_unit(self.phase1 + inc1);
+            self.phase2 = wrap_unit(self.phase2 + inc2);
+            self.phase3 = wrap_unit(self.phase3 + inc3);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`VOsc3`].
+pub struct VOsc3Ctor;
+
+impl UnitDef for VOsc3Ctor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 4 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(VOsc3 {
+            phase1: 0.0,
+            phase2: 0.0,
+            phase3: 0.0,
+            bufpos: 0.0,
+            warmed: 0,
         }))
     }
 }
