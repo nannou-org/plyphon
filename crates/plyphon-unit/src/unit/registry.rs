@@ -626,9 +626,25 @@ impl UnitRegistry {
         self.map.get(name).map(|boxed| boxed.as_ref())
     }
 
+    /// The names of every registered calc-rate unit, in arbitrary (hash-map)
+    /// order. Pair with [`demand_names`](Self::demand_names) for the full
+    /// registry contents; a host validating an external unit catalog should
+    /// sort or set-index the result rather than rely on order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.map.keys().map(String::as_str)
+    }
+
     /// Look up a demand-rate definition by name.
     pub fn get_demand(&self, name: &str) -> Option<&dyn DemandUnitDef> {
         self.demand_map.get(name).map(|boxed| boxed.as_ref())
+    }
+
+    /// The names of every registered demand-rate unit, in arbitrary
+    /// (hash-map) order. Demand-rate units live in their own map: a SynthDef
+    /// unit at `Rate::Demand` resolves here, every other rate in the
+    /// calc-rate map (see [`get`](Self::get)/[`get_demand`](Self::get_demand)).
+    pub fn demand_names(&self) -> impl Iterator<Item = &str> {
+        self.demand_map.keys().map(String::as_str)
     }
 }
 

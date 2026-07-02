@@ -155,6 +155,12 @@ impl Controller {
         &mut self.registry
     }
 
+    /// Shared access to the unit registry, e.g. to enumerate or look up
+    /// registered units without taking `&mut self`.
+    pub fn registry(&self) -> &UnitRegistry {
+        &self.registry
+    }
+
     /// The engine's audio sample rate in Hz (e.g. to stamp a freshly allocated buffer).
     pub fn sample_rate(&self) -> f64 {
         self.audio.sample_rate
@@ -309,9 +315,19 @@ impl Controller {
         Ok(())
     }
 
-    /// Ensure `def_name` is compiled and resident in the `World`'s def table, returning its `def_id`.
-    /// Compiles (and ships a [`Command::DefineGraphDef`]) on first use or after a redefinition.
-    fn ensure_compiled(&mut self, def_name: &str) -> Result<u32, SynthNewError> {
+    /// Ensure `def_name` is compiled and resident in the `World`'s def table,
+    /// returning its stable `def_id`. Idempotent: an already-compiled def
+    /// returns immediately.
+    ///
+    /// [`add_synthdef`](Self::add_synthdef) defers compilation to the first
+    /// [`synth_new`](Self::synth_new) that uses the def; a host with a
+    /// real-time deadline (e.g. launching synths on a musical beat) should
+    /// call this ahead of time - at load/prepare, or right after a
+    /// redefinition - so `synth_new` is a pure pool-alloc instantiation and
+    /// never compiles on the deadline path. The `DefineGraphDef` install is
+    /// sent immediately (ignoring any open scheduling window), so a
+    /// subsequently scheduled `synth_new` finds the def resident.
+    pub fn ensure_compiled(&mut self, def_name: &str) -> Result<u32, SynthNewError> {
         if self.compiled.contains_key(def_name) {
             return Ok(self.def_ids[def_name]);
         }
