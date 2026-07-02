@@ -65,13 +65,13 @@ impl Unit for Pluck {
         self.delaytime = dt;
         self.decaytime = decay;
         self.coef = ctx.ins.control(COEF);
-        self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, self.len as f32);
+        self.dsamp = clamp_delay(dt * ctx.own.sample_rate as f32, min, self.len as f32);
         self.feedbk = calc_feedback(dt, decay);
     }
 
     #[allow(clippy::needless_range_loop)]
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let sr = ctx.audio.sample_rate as f32;
+        let sr = ctx.own.sample_rate as f32;
         let min = Interp::Cubic.min_delay(true);
         let max = self.len as f32;
         let mask = self.mask;

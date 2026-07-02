@@ -106,7 +106,7 @@ impl Unit for EnvGen {
         let level_bias = ctx.ins.control(Self::LEVEL_BIAS) as f64;
         let time_scale = (ctx.ins.control(Self::TIME_SCALE) as f64).max(0.0);
         let done_action = DoneAction::from_code(ctx.ins.control(Self::DONE_ACTION));
-        let sample_rate = ctx.audio.sample_rate;
+        let sample_rate = ctx.own.sample_rate;
         let num_segments = self.num_segments(&ctx.ins);
         let release_node = self.release_node(&ctx.ins);
 

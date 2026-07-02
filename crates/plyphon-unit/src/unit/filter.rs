@@ -101,7 +101,7 @@ impl Unit for Butter {
         let kind = Kind::from_tag(self.kind);
         let freq = ctx.ins.control(Self::FREQ);
         if freq != self.freq {
-            let pfreq = freq as f64 * ctx.audio.sample_rate.recip() * PI;
+            let pfreq = freq as f64 * ctx.own.sample_rate.recip() * PI;
             let (a0, b1, b2) = kind.coeffs(pfreq);
             self.a0 = a0;
             self.b1 = b1;

@@ -33,7 +33,7 @@ fn chaos1(
     mut map: impl FnMut(f64) -> f64,
     out: impl Fn(f64) -> f64,
 ) -> f64 {
-    let spc = samples_per_cycle(ctx.ins.control(0), ctx.audio.sample_rate as f32);
+    let spc = samples_per_cycle(ctx.ins.control(0), ctx.own.sample_rate as f32);
     let mut x = xn;
     for o in ctx.outs.audio(0).iter_mut() {
         if *counter >= spc {
@@ -55,7 +55,7 @@ fn chaos2(
     mut map: impl FnMut(f64, f64) -> (f64, f64),
     out: impl Fn(f64) -> f64,
 ) -> (f64, f64) {
-    let spc = samples_per_cycle(ctx.ins.control(0), ctx.audio.sample_rate as f32);
+    let spc = samples_per_cycle(ctx.ins.control(0), ctx.own.sample_rate as f32);
     let (mut x, mut y) = (xn, yn);
     for o in ctx.outs.audio(0).iter_mut() {
         if *counter >= spc {

@@ -55,11 +55,7 @@ impl Unit for Line {
         let end = ctx.ins.control(Self::END) as f64;
         let dur = (ctx.ins.control(Self::DUR) as f64).max(0.0);
         // Frames to ramp over: samples at audio rate, control blocks at control rate.
-        let rate = if self.audio != 0 {
-            ctx.audio.sample_rate
-        } else {
-            ctx.control.sample_rate
-        };
+        let rate = ctx.own.sample_rate;
         let frames = (dur * rate).max(1.0);
         self.value = start;
         self.end = end;
@@ -158,11 +154,7 @@ impl Unit for XLine {
         let start = ctx.ins.control(Self::START) as f64;
         let end = ctx.ins.control(Self::END) as f64;
         let dur = (ctx.ins.control(Self::DUR) as f64).max(0.0);
-        let rate = if self.audio != 0 {
-            ctx.audio.sample_rate
-        } else {
-            ctx.control.sample_rate
-        };
+        let rate = ctx.own.sample_rate;
         let frames = (dur * rate).max(1.0);
         self.value = start;
         self.end = end;

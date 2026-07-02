@@ -26,7 +26,7 @@ pub struct LFSaw {
 
 impl Unit for LFSaw {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let inc = ctx.ins.control(0) * ctx.audio.sample_dur as f32;
+        let inc = ctx.ins.control(0) * ctx.own.sample_dur as f32;
         for o in ctx.outs.audio(0).iter_mut() {
             *o = 2.0 * self.phase - 1.0;
             self.phase = wrap(self.phase + inc);
@@ -59,7 +59,7 @@ impl LFPulse {
 
 impl Unit for LFPulse {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let inc = ctx.ins.control(Self::FREQ) * ctx.audio.sample_dur as f32;
+        let inc = ctx.ins.control(Self::FREQ) * ctx.own.sample_dur as f32;
         let width = if ctx.ins.len() > Self::WIDTH {
             ctx.ins.control(Self::WIDTH)
         } else {
@@ -92,7 +92,7 @@ pub struct Impulse {
 
 impl Unit for Impulse {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let inc = ctx.ins.control(0) * ctx.audio.sample_dur as f32;
+        let inc = ctx.ins.control(0) * ctx.own.sample_dur as f32;
         for o in ctx.outs.audio(0).iter_mut() {
             if self.phase >= 1.0 {
                 self.phase -= 1.0;
@@ -129,7 +129,7 @@ impl Unit for LFTri {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let freq = ctx.ins.control(0) as f64 * 4.0 * ctx.audio.sample_dur;
+        let freq = ctx.ins.control(0) as f64 * 4.0 * ctx.own.sample_dur;
         let mut phase = self.phase;
         for o in ctx.outs.audio(0).iter_mut() {
             let z = if phase > 1.0 { 2.0 - phase } else { phase };
@@ -158,7 +158,7 @@ impl Unit for LFPar {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let freq = ctx.ins.control(0) as f64 * 4.0 * ctx.audio.sample_dur;
+        let freq = ctx.ins.control(0) as f64 * 4.0 * ctx.own.sample_dur;
         let mut phase = self.phase;
         for o in ctx.outs.audio(0).iter_mut() {
             if phase < 1.0 {
@@ -190,7 +190,7 @@ impl Unit for LFCub {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let freq = ctx.ins.control(0) as f64 * 2.0 * ctx.audio.sample_dur;
+        let freq = ctx.ins.control(0) as f64 * 2.0 * ctx.own.sample_dur;
         let mut phase = self.phase;
         for o in ctx.outs.audio(0).iter_mut() {
             let z = if phase < 1.0 {
@@ -236,7 +236,7 @@ impl Unit for VarSaw {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let freq = ctx.ins.control(0) as f64 * ctx.audio.sample_dur;
+        let freq = ctx.ins.control(0) as f64 * ctx.own.sample_dur;
         let next_duty = ctx.ins.control(2);
         let mut phase = self.phase;
         for o in ctx.outs.audio(0).iter_mut() {
@@ -270,7 +270,7 @@ pub struct SyncSaw {
 
 impl Unit for SyncSaw {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let fmul = 2.0 * ctx.audio.sample_dur;
+        let fmul = 2.0 * ctx.own.sample_dur;
         let freq1x = ctx.ins.control(0) as f64 * fmul;
         let freq2x = ctx.ins.control(1) as f64 * fmul;
         let (mut phase1, mut phase2) = (self.phase1, self.phase2);
@@ -383,7 +383,7 @@ impl Unit for LFGauss {
             DoneAction::Nothing
         };
 
-        let step = 2.0 * ctx.audio.sample_dur / dur.abs().max(1e-9);
+        let step = 2.0 * ctx.own.sample_dur / dur.abs().max(1e-9);
         let factor = -1.0 / (2.0 * width * width);
         let mut x = self.phase - iphase;
         let mut completed = false;

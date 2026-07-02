@@ -41,7 +41,7 @@ impl SinOsc {
 impl Unit for SinOsc {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let table = ctx.wavetables.sine();
-        let sample_dur = ctx.audio.sample_dur as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         // Phase offset in cycles (radians / 2pi). Constant/control rate for now.
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
         match self.calc {
@@ -100,7 +100,7 @@ impl Unit for FSinOsc {
     fn init(&mut self, ctx: &InitCtx<'_>) {
         let freq = ctx.ins.control(0);
         let iphase = ctx.ins.control(1) as f64;
-        let w = freq as f64 * TAU as f64 * ctx.audio.sample_dur;
+        let w = freq as f64 * TAU as f64 * ctx.own.sample_dur;
         self.b1 = 2.0 * math::cos(w);
         // Seed the recurrence two samples back so it oscillates as `sin(n*w + iphase)`.
         self.y1 = math::sin(iphase - w);
@@ -111,7 +111,7 @@ impl Unit for FSinOsc {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let freq = ctx.ins.control(0);
         if freq != self.freq {
-            let w = freq as f64 * TAU as f64 * ctx.audio.sample_dur;
+            let w = freq as f64 * TAU as f64 * ctx.own.sample_dur;
             self.b1 = 2.0 * math::cos(w);
             self.freq = freq;
         }
@@ -165,7 +165,7 @@ impl SinOscFB {
 impl Unit for SinOscFB {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let table = ctx.wavetables.sine();
-        let inc = ctx.ins.control(Self::FREQ) * ctx.audio.sample_dur as f32;
+        let inc = ctx.ins.control(Self::FREQ) * ctx.own.sample_dur as f32;
         // Feedback is in radians; the phase offset it induces is `feedback/2pi` cycles.
         let feedback = ctx.ins.control(Self::FEEDBACK) / TAU;
         let mut prevout = self.prevout;

@@ -195,7 +195,7 @@ impl GVerb {
 
 impl Unit for GVerb {
     fn init(&mut self, ctx: &InitCtx<'_>) {
-        let sr = ctx.audio.sample_rate;
+        let sr = ctx.own.sample_rate;
         let revtime = ctx.ins.control(Self::REVTIME);
         self.alpha = math::powf(0.001f64, 1.0 / (sr * revtime as f64));
         for j in 0..FDN {
@@ -215,7 +215,7 @@ impl Unit for GVerb {
 
     #[allow(clippy::needless_range_loop)]
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let sr = ctx.audio.sample_rate;
+        let sr = ctx.own.sample_rate;
         let ins = ctx.ins;
         let in_audio = ins.audio(Self::IN);
         let revtime = ins.control(Self::REVTIME);

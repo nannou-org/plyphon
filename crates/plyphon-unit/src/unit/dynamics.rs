@@ -47,7 +47,7 @@ pub struct Compander {
 
 impl Unit for Compander {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let sr = ctx.audio.sample_rate as f32;
+        let sr = ctx.own.sample_rate as f32;
         let thresh = ctx.ins.control(2);
         let slope_below = ctx.ins.control(3);
         let slope_above = ctx.ins.control(4);

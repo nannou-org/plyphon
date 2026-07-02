@@ -38,7 +38,7 @@ impl Unit for Ramp {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ins = ctx.ins;
         let period = ins.control(Self::PERIOD) as f64;
-        let sr = ctx.audio.sample_rate;
+        let sr = ctx.own.sample_rate;
         let out = ctx.outs.audio(0);
         let block = out.len();
         let mut level = self.level;
@@ -111,7 +111,7 @@ impl Unit for VarLag {
         let in0 = ctx.ins.control(Self::IN);
         let lag = ctx.ins.control(Self::TIME);
         self.level = ctx.ins.control(Self::START) as f64;
-        self.counter = ((lag * ctx.audio.sample_rate as f32) as i32).max(1);
+        self.counter = ((lag * ctx.own.sample_rate as f32) as i32).max(1);
         self.slope = (in0 as f64 - self.level) / self.counter as f64;
         self.in_prev = in0;
         self.lag_prev = lag;
@@ -121,7 +121,7 @@ impl Unit for VarLag {
         // Change detection is block-rate: scsynth reads only the first input sample.
         let in0 = ctx.ins.control(Self::IN);
         let lag = ctx.ins.control(Self::TIME);
-        let sr = ctx.audio.sample_rate;
+        let sr = ctx.own.sample_rate;
         let mut level = self.level;
         let mut slope = self.slope;
         let mut counter = self.counter;

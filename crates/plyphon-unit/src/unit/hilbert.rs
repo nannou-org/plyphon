@@ -129,7 +129,7 @@ impl Unit for FreqShift {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let freq = ctx.ins.control(Self::FREQ);
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU; // radians -> cycles
-        let inc = freq * ctx.audio.sample_dur as f32;
+        let inc = freq * ctx.own.sample_dur as f32;
         let table = ctx.wavetables.sine();
         let coefs = self.coefs;
         let mut y1 = self.y1;

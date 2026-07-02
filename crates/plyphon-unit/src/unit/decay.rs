@@ -38,7 +38,7 @@ pub struct Decay {
 
 impl Unit for Decay {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let b1 = decay_coef(ctx.ins.control(1), ctx.audio.sample_rate);
+        let b1 = decay_coef(ctx.ins.control(1), ctx.own.sample_rate);
         let mut y1 = self.y1;
         let input = ctx.ins.audio(0);
         let out = ctx.outs.audio(0);
@@ -75,7 +75,7 @@ pub struct Decay2 {
 
 impl Unit for Decay2 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let sr = ctx.audio.sample_rate;
+        let sr = ctx.own.sample_rate;
         let b1a = decay_coef(ctx.ins.control(2), sr); // decay
         let b1b = decay_coef(ctx.ins.control(1), sr); // attack
         let (mut y1a, mut y1b) = (self.y1a, self.y1b);

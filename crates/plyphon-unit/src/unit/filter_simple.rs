@@ -77,7 +77,7 @@ impl Unit for Slope {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let sr = ctx.audio.sample_rate;
+        let sr = ctx.own.sample_rate;
         let mut x1 = self.x1;
         for (o, &x) in ctx.outs.audio(0).iter_mut().zip(ctx.ins.audio(0)) {
             let x0 = x as f64;
@@ -271,7 +271,7 @@ impl Unit for Slew {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let sample_dur = 1.0 / ctx.audio.sample_rate;
+        let sample_dur = 1.0 / ctx.own.sample_rate;
         let upf = ctx.ins.control(Self::UP) as f64 * sample_dur;
         let dnf = -(ctx.ins.control(Self::DN) as f64) * sample_dur;
         let mut level = self.level;
@@ -317,7 +317,7 @@ impl Unit for APF {
         let freq = ctx.ins.control(1);
         let reson = ctx.ins.control(2);
         if freq != self.freq || reson != self.reson {
-            let w = freq as f64 * TAU / ctx.audio.sample_rate;
+            let w = freq as f64 * TAU / ctx.own.sample_rate;
             self.b1 = 2.0 * reson as f64 * math::cos(w);
             self.b2 = -(reson as f64 * reson as f64);
             self.freq = freq;

@@ -36,7 +36,7 @@ impl Formant {
 
 impl Unit for Formant {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let sample_dur = ctx.audio.sample_dur;
+        let sample_dur = ctx.own.sample_dur;
         let inc1 = ctx.ins.control(Self::FUNDFREQ) as f64 * sample_dur;
         let inc2 = ctx.ins.control(Self::FORMFREQ) as f64 * sample_dur;
         let inc3 = ctx.ins.control(Self::BWFREQ) as f64 * sample_dur;

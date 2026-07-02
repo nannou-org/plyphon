@@ -24,8 +24,8 @@ pub struct Spring {
 
 impl Unit for Spring {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let c = ctx.audio.sample_dur as f32;
-        let rc = ctx.audio.sample_rate as f32;
+        let c = ctx.own.sample_dur as f32;
+        let rc = ctx.own.sample_rate as f32;
         let spring = ctx.ins.control(1) * c;
         let damping = 1.0 - ctx.ins.control(2);
         let (mut pos, mut vel) = (self.pos, self.vel);
@@ -77,7 +77,7 @@ impl Unit for Ball {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let c = ctx.audio.sample_dur as f32;
+        let c = ctx.own.sample_dur as f32;
         let g_in = ctx.ins.control(1);
         let damping = 1.0 - ctx.ins.control(2);
         let friction = ctx.ins.control(3);
@@ -157,7 +157,7 @@ impl Unit for TBall {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let c = ctx.audio.sample_dur as f32;
+        let c = ctx.own.sample_dur as f32;
         let g_in = ctx.ins.control(1);
         let damping = 1.0 - ctx.ins.control(2);
         let friction = ctx.ins.control(3);

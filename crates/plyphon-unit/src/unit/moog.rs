@@ -48,9 +48,9 @@ impl Unit for MoogFF {
         let k = Self::read(&ctx.ins, Self::GAIN, 2.0).clamp(0.0, 4.0) as f64;
         let reset = Self::read(&ctx.ins, Self::RESET, 0.0);
         if freq != self.freq {
-            let t = ctx.audio.sample_dur;
+            let t = ctx.own.sample_dur;
             // Bilinear-transform cutoff; a negative (super-Nyquist) value collapses to 0.
-            let wc_d = (2.0 * math::tan(t * PI * freq as f64) * ctx.audio.sample_rate).max(0.0);
+            let wc_d = (2.0 * math::tan(t * PI * freq as f64) * ctx.own.sample_rate).max(0.0);
             let twc_d = t * wc_d;
             self.b0 = twc_d / (twc_d + 2.0);
             self.a1 = (twc_d - 2.0) / (twc_d + 2.0);

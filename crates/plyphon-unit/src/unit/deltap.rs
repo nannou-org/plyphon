@@ -144,11 +144,11 @@ impl DelTapRd {
 
 impl Unit for DelTapRd {
     fn init(&mut self, ctx: &InitCtx<'_>) {
-        self.del_time = ctx.ins.control(Self::DELTIME) * ctx.audio.sample_rate as f32;
+        self.del_time = ctx.ins.control(Self::DELTIME) * ctx.own.sample_rate as f32;
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let sr = ctx.audio.sample_rate as f32;
+        let sr = ctx.own.sample_rate as f32;
         let interp = self.interp;
         let ins = ctx.ins;
         let mut phase_in = Self::head(&ins);

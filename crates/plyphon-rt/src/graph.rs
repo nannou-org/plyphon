@@ -282,6 +282,13 @@ impl Graph {
                     Rate::Audio => def.audio_rate(),
                     _ => def.control_rate(),
                 };
+                // The unit's calc length (scsynth's `inNumSamples`): a full block for an `.ar`
+                // unit, one sample for a `.kr`/`.ir` one - its `Outputs` are sliced to this, so a
+                // control-rate unit computes (and pays for) exactly one sample per tick.
+                let calc_len = match v.rate {
+                    Rate::Audio => bs,
+                    _ => 1,
+                };
                 let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
                 // This unit's private aux memory (a delay line), a disjoint sub-slice of the aux arena;
                 // empty (`&mut []`) for units that declared none. Persists across blocks like `state`.
@@ -335,7 +342,7 @@ impl Graph {
                         wavetables: block.wavetables,
                         fft: block.fft,
                         ins,
-                        outs: Outputs::new(&mut scratch[..], bs),
+                        outs: Outputs::new(&mut scratch[..], calc_len),
                         buses: &mut *block.buses,
                         buffers: &mut *block.buffers,
                         buf_counter: block.buf_counter,
@@ -373,14 +380,16 @@ impl Graph {
                             block.trace,
                             block.trace_cap,
                             Reply::TraceValue {
-                                value: scratch[k * bs],
+                                value: scratch[k * calc_len],
                             },
                         );
                     }
                 }
-                // Publish this unit's scratch outputs into the wires.
+                // Publish this unit's scratch outputs into the wires. Scratch is packed at the
+                // unit's calc length: full blocks for an audio unit, single samples for a
+                // control-rate one (whose outputs are all control wires).
                 for (k, ow) in v.outputs.iter().enumerate() {
-                    let src = k * bs;
+                    let src = k * calc_len;
                     match ow.rate {
                         Rate::Audio => {
                             let dst = ow.wire as usize * bs;

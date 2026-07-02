@@ -27,7 +27,7 @@ pub struct Saw {
 
 impl Unit for Saw {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let inc = ctx.ins.control(0) * ctx.audio.sample_dur as f32;
+        let inc = ctx.ins.control(0) * ctx.own.sample_dur as f32;
         let dt = inc.abs().max(f32::MIN_POSITIVE);
         for o in ctx.outs.audio(0).iter_mut() {
             *o = (2.0 * self.phase - 1.0) - poly_blep(self.phase, dt);
@@ -60,7 +60,7 @@ impl Pulse {
 
 impl Unit for Pulse {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let inc = ctx.ins.control(Self::FREQ) * ctx.audio.sample_dur as f32;
+        let inc = ctx.ins.control(Self::FREQ) * ctx.own.sample_dur as f32;
         let width = if ctx.ins.len() > Self::WIDTH {
             ctx.ins.control(Self::WIDTH).clamp(0.0, 1.0)
         } else {
@@ -114,7 +114,7 @@ impl Unit for Blip {
             200
         };
         // Clamp the harmonic count to the Nyquist limit so the impulse never aliases.
-        let sr = ctx.audio.sample_rate as f32;
+        let sr = ctx.own.sample_rate as f32;
         let max_n = if freq > 0.0 {
             (sr / (2.0 * freq)) as i32
         } else {
@@ -123,7 +123,7 @@ impl Unit for Blip {
         let n = numharm.clamp(1, max_n.max(1));
         let scale = 0.5 / n as f64;
         let two_n1 = (2 * n + 1) as f64;
-        let inc = freq * ctx.audio.sample_dur as f32;
+        let inc = freq * ctx.own.sample_dur as f32;
 
         for o in ctx.outs.audio(0).iter_mut() {
             let p = self.phase as f64;

@@ -75,11 +75,7 @@ impl Unit for Klang {
         let audio = self.audio != 0;
         let n = self.num_partials as usize;
         let ins = ctx.ins;
-        let rps = if audio {
-            ctx.audio.radians_per_sample
-        } else {
-            ctx.control.radians_per_sample
-        } as f32;
+        let rps = ctx.own.radians_per_sample as f32;
         let warm = self.warmed == 0;
         self.warmed = 1;
 
@@ -198,12 +194,10 @@ impl Unit for Klank {
         let audio = self.audio != 0;
         let n = self.num_partials as usize;
         let ins = ctx.ins;
-        let (rps, sr) = if audio {
-            (ctx.audio.radians_per_sample, ctx.audio.sample_rate)
-        } else {
-            (ctx.control.radians_per_sample, ctx.control.sample_rate)
-        };
-        let (rps, sr) = (rps as f32, sr as f32);
+        let (rps, sr) = (
+            ctx.own.radians_per_sample as f32,
+            ctx.own.sample_rate as f32,
+        );
         let warm = self.warmed == 0;
         self.warmed = 1;
 

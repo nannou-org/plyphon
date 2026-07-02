@@ -38,7 +38,7 @@ impl Unit for TwoPole {
         let freq = ctx.ins.control(Self::FREQ);
         let reson = ctx.ins.control(Self::RESON);
         if freq != self.freq || reson != self.reson {
-            let w = freq as f64 * TAU / ctx.audio.sample_rate;
+            let w = freq as f64 * TAU / ctx.own.sample_rate;
             self.b1 = 2.0 * reson as f64 * math::cos(w);
             self.b2 = -(reson as f64 * reson as f64);
             self.freq = freq;
@@ -103,7 +103,7 @@ impl Unit for TwoZero {
         let freq = ctx.ins.control(Self::FREQ);
         let reson = ctx.ins.control(Self::RESON);
         if freq != self.freq || reson != self.reson {
-            let w = freq as f64 * TAU / ctx.audio.sample_rate;
+            let w = freq as f64 * TAU / ctx.own.sample_rate;
             self.b1 = -2.0 * reson as f64 * math::cos(w);
             self.b2 = reson as f64 * reson as f64;
             self.freq = freq;

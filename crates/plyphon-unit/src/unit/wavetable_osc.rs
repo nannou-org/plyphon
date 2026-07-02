@@ -91,7 +91,7 @@ impl Unit for Osc {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
-        let sample_dur = ctx.audio.sample_dur as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         let wt = match unit::buffer_at(ctx.buffers, bufnum).and_then(wavetable_data) {
             Some(wt) => wt,
             None => {
@@ -158,7 +158,7 @@ impl Unit for OscN {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
-        let sample_dur = ctx.audio.sample_dur as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         let table = match unit::buffer_at(ctx.buffers, bufnum) {
             Some(buffer) if buffer.num_frames() > 0 => buffer.data(),
             _ => {
@@ -224,7 +224,7 @@ impl Unit for COsc {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let freq = ctx.ins.control(Self::FREQ);
         let beats = ctx.ins.control(Self::BEATS) * 0.5; // half the beat spread each side
-        let sample_dur = ctx.audio.sample_dur as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         let wt = match unit::buffer_at(ctx.buffers, bufnum).and_then(wavetable_data) {
             Some(wt) => wt,
             None => {
@@ -303,7 +303,7 @@ impl Unit for VOsc {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let next_bufpos = ctx.ins.control(Self::BUFPOS);
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
-        let sample_dur = ctx.audio.sample_dur as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         let audio_freq = self.calc == calc::FREQ_AUDIO;
         let freq_slice = if audio_freq {
             ctx.ins.audio(Self::FREQ)
@@ -386,7 +386,7 @@ impl VOsc3 {
 impl Unit for VOsc3 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let next_bufpos = ctx.ins.control(Self::BUFPOS);
-        let sample_dur = ctx.audio.sample_dur as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         let inc1 = ctx.ins.control(Self::FREQ1) * sample_dur;
         let inc2 = ctx.ins.control(Self::FREQ2) * sample_dur;
         let inc3 = ctx.ins.control(Self::FREQ3) * sample_dur;

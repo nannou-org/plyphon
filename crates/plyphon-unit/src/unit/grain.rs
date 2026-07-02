@@ -321,7 +321,7 @@ impl Unit for GrainSin {
         for ch in 0..num_out {
             ctx.outs.audio(ch).fill(0.0);
         }
-        let sample_rate = ctx.audio.sample_rate;
+        let sample_rate = ctx.own.sample_rate;
         let table = ctx.wavetables.sine();
         let ins = ctx.ins;
         let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
@@ -531,8 +531,8 @@ impl Unit for GrainFM {
         for ch in 0..num_out {
             ctx.outs.audio(ch).fill(0.0);
         }
-        let sample_rate = ctx.audio.sample_rate;
-        let sample_dur = ctx.audio.sample_dur;
+        let sample_rate = ctx.own.sample_rate;
+        let sample_dur = ctx.own.sample_dur;
         let table = ctx.wavetables.sine();
         let ins = ctx.ins;
         let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
@@ -702,7 +702,7 @@ impl Unit for GrainIn {
         for ch in 0..num_out {
             ctx.outs.audio(ch).fill(0.0);
         }
-        let sample_rate = ctx.audio.sample_rate;
+        let sample_rate = ctx.own.sample_rate;
         let ins = ctx.ins;
         let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
         let input = ins.audio(Self::IN);
@@ -898,7 +898,7 @@ impl Unit for GrainBuf {
         for ch in 0..num_out {
             ctx.outs.audio(ch).fill(0.0);
         }
-        let sample_rate = ctx.audio.sample_rate;
+        let sample_rate = ctx.own.sample_rate;
         let ins = ctx.ins;
         let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
 
@@ -1077,7 +1077,7 @@ impl Unit for TGrains {
         for ch in 0..num_out {
             ctx.outs.audio(ch).fill(0.0);
         }
-        let sample_rate = ctx.audio.sample_rate;
+        let sample_rate = ctx.own.sample_rate;
         let ins = ctx.ins;
 
         let mut k = 0;
@@ -1217,8 +1217,8 @@ impl Unit for Warp1 {
         for ch in 0..num_out {
             ctx.outs.audio(ch).fill(0.0);
         }
-        let sample_rate = ctx.audio.sample_rate;
-        let sample_dur = ctx.audio.sample_dur;
+        let sample_rate = ctx.own.sample_rate;
+        let sample_dur = ctx.own.sample_dur;
         let ins = ctx.ins;
 
         // The sound buffer is resolved once from `bufnum` (scsynth reads it per block, not per grain).

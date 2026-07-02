@@ -60,8 +60,8 @@ impl Unit for Formlet {
         let attack = ctx.ins.control(Self::ATTACK);
         let decay = ctx.ins.control(Self::DECAY);
         if freq != self.freq || attack != self.attack || decay != self.decay {
-            let sr = ctx.audio.sample_rate;
-            let ffreq = freq as f64 * ctx.audio.radians_per_sample;
+            let sr = ctx.own.sample_rate;
+            let ffreq = freq as f64 * ctx.own.radians_per_sample;
             let (b01, b02) = resonator_coefs(decay_coef(decay, sr), ffreq);
             let (b11, b12) = resonator_coefs(decay_coef(attack, sr), ffreq);
             self.b01 = b01;
@@ -148,7 +148,7 @@ impl Unit for MidEQ {
         let db = ctx.ins.control(Self::DB);
         if freq != self.freq || bw != self.bw || db != self.db {
             let amp = math::exp(db as f64 * (LN_10 / 20.0)) - 1.0; // sc_dbamp(db) - 1
-            let pfreq = freq as f64 * ctx.audio.radians_per_sample;
+            let pfreq = freq as f64 * ctx.own.radians_per_sample;
             let pbw = bw as f64 * pfreq * 0.5;
             let c = 1.0 / math::tan(pbw);
             let d = 2.0 * math::cos(pfreq);

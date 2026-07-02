@@ -695,14 +695,18 @@ impl<'a> Inputs<'a> {
 /// Mutable view of a unit's output wires for one block.
 ///
 /// Outputs are written into pre-allocated scratch (disjoint from the input wires), then the synth
-/// process loop copies them into the arena. Output `i` occupies `scratch[i*bs .. (i+1)*bs]`.
+/// process loop copies them into the arena. Output `i` occupies `scratch[i*len .. (i+1)*len]`,
+/// where `len` is the unit's calc length: the full block for an audio-rate unit, **one sample**
+/// for a control-rate one (scsynth's `inNumSamples == 1`) - so a `.kr` unit's block loop runs
+/// once, computing exactly the one value it publishes.
 pub struct Outputs<'a> {
     scratch: &'a mut [f32],
     block_size: usize,
 }
 
 impl<'a> Outputs<'a> {
-    /// Construct an output view over `scratch`. Used by the synth process loop.
+    /// Construct an output view over `scratch` at the owning unit's calc length. Used by the synth
+    /// process loop.
     pub fn new(scratch: &'a mut [f32], block_size: usize) -> Self {
         Outputs {
             scratch,
@@ -710,14 +714,16 @@ impl<'a> Outputs<'a> {
         }
     }
 
-    /// Audio-rate output `i` as a mutable `block_size` slice to write into.
+    /// Audio-rate output `i` as a mutable slice to write into: `block_size` samples for an
+    /// audio-rate unit, a 1-sample slice for a control-rate one (whose per-sample loop then runs
+    /// exactly once).
     pub fn audio(&mut self, i: usize) -> &mut [f32] {
         let start = i * self.block_size;
         &mut self.scratch[start..start + self.block_size]
     }
 
-    /// Control-rate output `i` as a single mutable value to write (the first scratch slot, which the
-    /// synth process loop publishes to the output's control wire).
+    /// Control-rate output `i` as a single mutable value to write (the output's first scratch
+    /// slot, which the synth process loop publishes to its control wire).
     pub fn control(&mut self, i: usize) -> &mut f32 {
         &mut self.scratch[i * self.block_size]
     }

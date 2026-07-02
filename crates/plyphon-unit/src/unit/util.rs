@@ -159,7 +159,7 @@ impl Unit for Lag {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let lag_time = ctx.ins.control(Self::TIME);
         if lag_time != self.lag_time {
-            self.b1 = smoothing_coef(lag_time, ctx.audio.sample_rate as f32);
+            self.b1 = smoothing_coef(lag_time, ctx.own.sample_rate as f32);
             self.lag_time = lag_time;
         }
         let b1 = self.b1;
@@ -223,7 +223,7 @@ impl Unit for Lag2 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let lag = ctx.ins.control(Self::TIME);
         if lag != self.lag_time {
-            self.b1 = smoothing_coef(lag, ctx.audio.sample_rate as f32);
+            self.b1 = smoothing_coef(lag, ctx.own.sample_rate as f32);
             self.lag_time = lag;
         }
         let b1 = self.b1;
@@ -292,7 +292,7 @@ impl Unit for Lag3 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let lag = ctx.ins.control(Self::TIME);
         if lag != self.lag_time {
-            self.b1 = smoothing_coef(lag, ctx.audio.sample_rate as f32);
+            self.b1 = smoothing_coef(lag, ctx.own.sample_rate as f32);
             self.lag_time = lag;
         }
         let b1 = self.b1;
@@ -359,7 +359,7 @@ impl LagUD {
     fn update(&mut self, ctx: &ProcessCtx<'_>) {
         let (lu, ld) = (ctx.ins.control(Self::UP), ctx.ins.control(Self::DOWN));
         if lu != self.lag_u || ld != self.lag_d {
-            let sr = ctx.audio.sample_rate as f32;
+            let sr = ctx.own.sample_rate as f32;
             self.b1u = smoothing_coef(lu, sr);
             self.b1d = smoothing_coef(ld, sr);
             self.lag_u = lu;
@@ -435,7 +435,7 @@ impl Lag2UD {
     fn update(&mut self, ctx: &ProcessCtx<'_>) {
         let (lu, ld) = (ctx.ins.control(Self::UP), ctx.ins.control(Self::DOWN));
         if lu != self.lag_u || ld != self.lag_d {
-            let sr = ctx.audio.sample_rate as f32;
+            let sr = ctx.own.sample_rate as f32;
             self.b1u = smoothing_coef(lu, sr);
             self.b1d = smoothing_coef(ld, sr);
             self.lag_u = lu;
@@ -520,7 +520,7 @@ impl Lag3UD {
     fn update(&mut self, ctx: &ProcessCtx<'_>) {
         let (lu, ld) = (ctx.ins.control(Self::UP), ctx.ins.control(Self::DOWN));
         if lu != self.lag_u || ld != self.lag_d {
-            let sr = ctx.audio.sample_rate as f32;
+            let sr = ctx.own.sample_rate as f32;
             self.b1u = smoothing_coef(lu, sr);
             self.b1d = smoothing_coef(ld, sr);
             self.lag_u = lu;
@@ -600,7 +600,15 @@ impl Amplitude {
 
 impl Unit for Amplitude {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let sample_rate = ctx.audio.sample_rate as f32;
+        // The follower steps once per *input* sample: at the audio rate for an audio input - a kr
+        // instance still consumes the whole block (scsynth's `Amplitude_next_atok`) - else at the
+        // unit's own rate.
+        let in_audio = ctx.ins.rate(Self::IN) == Rate::Audio;
+        let sample_rate = if in_audio {
+            ctx.audio.sample_rate
+        } else {
+            ctx.own.sample_rate
+        } as f32;
         let attack = if ctx.ins.len() > Self::ATTACK {
             ctx.ins.control(Self::ATTACK)
         } else {
@@ -621,17 +629,35 @@ impl Unit for Amplitude {
         }
         let (attack_coef, release_coef) = (self.attack_coef, self.release_coef);
         let mut prev = self.prev;
-        let out = ctx.outs.audio(0);
-        for (o, &x) in out.iter_mut().zip(ctx.ins.audio(Self::IN)) {
+        // Rise quickly (attack) when the level grows, fall slowly (release) when it shrinks.
+        let step = |prev: &mut f32, x: f32| {
             let val = x.abs();
-            // Rise quickly (attack) when the level grows, fall slowly (release) when it shrinks.
-            let coef = if val < prev {
+            let coef = if val < *prev {
                 release_coef
             } else {
                 attack_coef
             };
-            prev = coef * (prev - val) + val;
-            *o = prev;
+            *prev = coef * (*prev - val) + val;
+        };
+        let out = ctx.outs.audio(0);
+        if in_audio && out.len() < ctx.ins.audio(Self::IN).len() {
+            // A kr instance over an audio input still consumes every input sample and publishes
+            // the final follower value.
+            for &x in ctx.ins.audio(Self::IN) {
+                step(&mut prev, x);
+            }
+            out[0] = prev;
+        } else if in_audio {
+            for (o, &x) in out.iter_mut().zip(ctx.ins.audio(Self::IN)) {
+                step(&mut prev, x);
+                *o = prev;
+            }
+        } else {
+            let x = ctx.ins.control(Self::IN);
+            for o in out.iter_mut() {
+                step(&mut prev, x);
+                *o = prev;
+            }
         }
         self.prev = prev;
         DoneAction::Nothing

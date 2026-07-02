@@ -37,7 +37,7 @@ impl Unit for RLPF {
         let reson = ctx.ins.control(2);
         if freq != self.freq || reson != self.reson {
             let qres = (reson as f64).max(0.001);
-            let pfreq = freq as f64 * TAU / ctx.audio.sample_rate;
+            let pfreq = freq as f64 * TAU / ctx.own.sample_rate;
             let d = math::tan(pfreq * qres * 0.5);
             let c = (1.0 - d) / (1.0 + d);
             let cosf = math::cos(pfreq);
@@ -80,7 +80,7 @@ impl Unit for RHPF {
         let reson = ctx.ins.control(2);
         if freq != self.freq || reson != self.reson {
             let qres = (reson as f64).max(0.001);
-            let pfreq = freq as f64 * TAU / ctx.audio.sample_rate;
+            let pfreq = freq as f64 * TAU / ctx.own.sample_rate;
             let d = math::tan(pfreq * qres * 0.5);
             let c = (1.0 - d) / (1.0 + d);
             let cosf = math::cos(pfreq);
@@ -122,7 +122,7 @@ impl Unit for BPF {
         let freq = ctx.ins.control(1);
         let bw = ctx.ins.control(2);
         if freq != self.freq || bw != self.bw {
-            let pfreq = freq as f64 * TAU / ctx.audio.sample_rate;
+            let pfreq = freq as f64 * TAU / ctx.own.sample_rate;
             let pbw = bw as f64 * pfreq * 0.5;
             let c = 1.0 / math::tan(pbw);
             let d = 2.0 * math::cos(pfreq);
@@ -164,7 +164,7 @@ impl Unit for BRF {
         let freq = ctx.ins.control(1);
         let bw = ctx.ins.control(2);
         if freq != self.freq || bw != self.bw {
-            let pfreq = freq as f64 * TAU / ctx.audio.sample_rate;
+            let pfreq = freq as f64 * TAU / ctx.own.sample_rate;
             let pbw = bw as f64 * pfreq * 0.5;
             let c = math::tan(pbw);
             let d = 2.0 * math::cos(pfreq);
@@ -208,7 +208,7 @@ impl Unit for Resonz {
         let freq = ctx.ins.control(1);
         let rq = ctx.ins.control(2);
         if freq != self.freq || rq != self.rq {
-            let ffreq = freq as f64 * TAU / ctx.audio.sample_rate;
+            let ffreq = freq as f64 * TAU / ctx.own.sample_rate;
             let r = 1.0 - ffreq * rq as f64 * 0.5;
             let two_r = 2.0 * r;
             let r2 = r * r;
@@ -241,8 +241,8 @@ impl Unit for Ringz {
         let freq = ctx.ins.control(1);
         let decay_time = ctx.ins.control(2);
         if freq != self.freq || decay_time != self.decay_time {
-            let ffreq = freq as f64 * TAU / ctx.audio.sample_rate;
-            let r = decay_coef(decay_time, ctx.audio.sample_rate);
+            let ffreq = freq as f64 * TAU / ctx.own.sample_rate;
+            let r = decay_coef(decay_time, ctx.own.sample_rate);
             let two_r = 2.0 * r;
             let r2 = r * r;
             let cost = (two_r * math::cos(ffreq)) / (1.0 + r2);
