@@ -56,4 +56,4 @@ jobs:
           env: pr-${{ steps.pr-info.outputs.number }}
           status: success
           deployment_id: ${{ steps.deployment.outputs.deployment_id }}
-          env_url: https://mitchmindtree.github.io/plyphon/pr-preview/pr-${{ steps.pr-info.outputs.number }}/
+          env_url: https://nannou-org.github.io/plyphon/pr-preview/pr-${{ steps.pr-info.outputs.number }}/
