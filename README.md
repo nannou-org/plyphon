@@ -90,15 +90,16 @@ wasm. It is built by `nix build .#plyphon-website` and auto-deployed to
 
 ```console
 nix run .#serve-plyphon-website     # build the whole site and serve it on localhost:8088
-# or, for live-reloading a single example during development:
-trunk serve web/<name>.html
+# or, for live-reloading a single example during development (the nightly WASM-threads shell,
+# since every page is the AudioWorklet build):
+nix develop .#plyphon-web -c trunk serve web/<name>.html
 ```
 
 Open `localhost:8088` and click once to start audio (browsers hold audio until a user gesture).
 
 `cpal` is the audio backend on both targets: natively via ALSA/CoreAudio/WASAPI, on the web via its
-WebAudio backend (the `wasm-bindgen` cpal feature). The `plyphon` engine that feeds it is identical
-on both - only how the control plane is ticked differs by platform.
+AudioWorklet backend (a real audio thread over WASM threads / `SharedArrayBuffer`). The `plyphon`
+engine that feeds it is identical on both - only how the control plane is ticked differs by platform.
 
 ## Feature parity with scsynth
 
