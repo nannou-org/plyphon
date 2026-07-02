@@ -1,6 +1,6 @@
 [package]
 name = "plyphon-unit"
-version = "0.1.0"
+version = "0.1.1"
 description = "The plyphon unit-generator abstraction: the `Unit` trait, the built-in units, and the compiled graph definition."
 authors.workspace = true
 edition.workspace = true

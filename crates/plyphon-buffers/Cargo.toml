@@ -1,6 +1,6 @@
 [package]
 name = "plyphon-buffers"
-version = "0.1.0"
+version = "0.1.1"
 description = "Async buffer-source traits for loading sample data into the plyphon engine (native and web)."
 authors.workspace = true
 edition.workspace = true
