@@ -95,6 +95,7 @@ use crate::unit::physical::{BallCtor, SpringCtor, TBallCtor};
 use crate::unit::pitch_shift::PitchShiftCtor;
 use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::pluck::PluckCtor;
+use crate::unit::poll::PollCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_combine::{
     ComplexKind, PolarKind, PvComplexCtor, PvCopyCtor, PvCopyPhaseCtor, PvPolarCtor,
@@ -485,6 +486,7 @@ impl UnitRegistry {
         );
         registry.register("EnvGen", Box::new(EnvGenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
+        registry.register("Poll", Box::new(PollCtor));
         registry.register("Trig", Box::new(TrigCtor));
         registry.register("Trig1", Box::new(Trig1Ctor));
         registry.register("TDelay", Box::new(TDelayCtor));
