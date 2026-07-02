@@ -25,16 +25,11 @@
     in
     {
       overlays.default = final: prev: {
-        # A pinned Rust toolchain with the wasm target for the web demo.
+        # A pinned stable Rust toolchain with the wasm target (used by the dev shell, including the
+        # wasm32 `no_std` build check).
         rustToolchain = final.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" ];
           targets = [ "wasm32-unknown-unknown" ];
-        };
-        # A `buildRustPackage` platform using the pinned toolchain, used by the website build to
-        # cross-compile to `wasm32-unknown-unknown` with our toolchain rather than nixpkgs' rustc.
-        rustPlatformWasm = final.makeRustPlatform {
-          cargo = final.rustToolchain;
-          rustc = final.rustToolchain;
         };
         # A pinned *nightly* toolchain for the AudioWorklet web build, which needs WASM atomics +
         # `-Z build-std` (both nightly-only). `selectLatestNightlyWith` pins the choice to the
@@ -46,36 +41,27 @@
             targets = [ "wasm32-unknown-unknown" ];
           }
         );
-        # A `buildRustPackage` platform on the nightly toolchain for the worklet website build.
-        rustPlatformWasmNightly = final.makeRustPlatform {
-          cargo = final.rustToolchainWasmNightly;
-          rustc = final.rustToolchainWasmNightly;
-        };
         # Pin wasm-bindgen-cli to the exact version in Cargo.lock so trunk uses it instead of
         # trying to download a matching release.
         wasm-bindgen-cli = prev.callPackage ./pkgs/wasm-bindgen-cli.nix { };
         # The `plyphon` CLI binary (the default package).
         plyphon = final.callPackage ./pkgs/plyphon.nix { };
-        # The web demo (default) is the AudioWorklet build (nightly + WASM threads); the legacy
-        # ScriptProcessor build is kept alongside as a fallback. Plus their serve helpers.
+        # The web demo: every example built for cpal's AudioWorklet backend (nightly + WASM
+        # threads), plus a helper to build and serve the whole site locally.
         plyphon-website = final.callPackage ./pkgs/plyphon-website.nix { };
         serve-plyphon-website = final.callPackage ./pkgs/serve-plyphon-website.nix { };
-        plyphon-website-legacy = final.callPackage ./pkgs/plyphon-website-legacy.nix { };
-        serve-plyphon-website-legacy = final.callPackage ./pkgs/serve-plyphon-website-legacy.nix { };
       };
 
       packages = perSystemPkgs (pkgs: {
         plyphon = pkgs.plyphon;
         plyphon-website = pkgs.plyphon-website;
         serve-plyphon-website = pkgs.serve-plyphon-website;
-        plyphon-website-legacy = pkgs.plyphon-website-legacy;
-        serve-plyphon-website-legacy = pkgs.serve-plyphon-website-legacy;
         default = pkgs.plyphon;
       });
 
       devShells = perSystemPkgs (pkgs: {
         plyphon-dev = pkgs.callPackage ./shell.nix { };
-        # Nightly + WASM-threads shell for local AudioWorklet builds (`trunk serve web/worklet/...`).
+        # Nightly + WASM-threads shell for local AudioWorklet builds (`trunk serve web/<name>.html`).
         plyphon-web = pkgs.callPackage ./shell-web.nix { };
         default = inputs.self.devShells.${pkgs.stdenv.hostPlatform.system}.plyphon-dev;
       });
