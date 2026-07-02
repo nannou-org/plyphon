@@ -90,10 +90,11 @@ stdenv.mkDerivation (
       # Each example is its own wasm binary built to its own page under $out/<name>/. The worklet
       # pages (web/worklet/*.html, generated from web/*.html by web/worklet/generate.sh) opt into
       # cpal's `audioworklet` feature; the shared build flags (atomics + build-std) come from the
-      # derivation env below.
-      for name in \
-        sine motif waveforms envelope pan feedback delay custom-unit duty-seq \
-        routing control node-control glide osc schedule triggers send-reply scgf sampler stream record; do
+      # derivation env below. The set is the worklet pages themselves, so a new example (added as a
+      # web/*.html page and regenerated) builds and links here automatically - no list to keep in sync.
+      for page in web/worklet/*.html; do
+        name=$(basename "$page" .html)
+        [ "$name" = index ] && continue
         trunk build --config Trunk.worklet.toml --release --dist $out/$name web/worklet/$name.html
       done
 

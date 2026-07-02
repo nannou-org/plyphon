@@ -53,10 +53,11 @@ rustPlatformWasm.buildRustPackage {
     # Each example is its own wasm binary built to its own page under $out/<name>/. trunk emits the
     # entry HTML as index.html plus the bin's assets, and public_url="./" keeps asset URLs relative
     # to the page. The engine compiles once into the shared target dir, so only the per-example
-    # link/bindgen/opt steps repeat.
-    for name in \
-      sine motif waveforms envelope pan feedback delay custom-unit duty-seq \
-      routing control node-control glide osc schedule triggers send-reply scgf sampler stream record; do
+    # link/bindgen/opt steps repeat. The example set is the web/*.html pages (the single source of
+    # truth), so a page added there builds and links here automatically - no list to keep in sync.
+    for page in web/*.html; do
+      name=$(basename "$page" .html)
+      [ "$name" = index ] && continue
       trunk build --release --dist $out/$name web/$name.html
     done
 
