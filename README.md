@@ -102,9 +102,15 @@ on both - only how the control plane is ticked differs by platform.
 
 ## Feature parity with scsynth
 
-plyphon is an early-stage research engine. See [`FEATURE_PARITY.md`](FEATURE_PARITY.md) for a living
-checklist of where it stands against scsynth - engine architecture, UGens, OSC commands, replies,
-and SynthDef/buffer support.
+plyphon is an early-stage research engine. That said, internals and OSC support
+should already be roughly on par with `scsynth`.
+
+~1/3 UGens are yet to be ported (there's a LOT of them). See [this
+issue](https://github.com/mitchmindtree/plyphon/issues/4) for a living
+checklist.
+
+plyphon does *not* yet have a story for `.scx` plugin compatibility, though it
+would be great to have and proposals are welcome.
 
 ## License
 
