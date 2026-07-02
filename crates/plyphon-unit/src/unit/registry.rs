@@ -215,10 +215,10 @@ impl UnitRegistry {
         registry.register("Out", Box::new(OutCtor));
         registry.register("ReplaceOut", Box::new(ReplaceOutCtor));
         registry.register("OffsetOut", Box::new(OffsetOutCtor));
-        registry.register("In", Box::new(InCtor));
-        // `InFeedback` reads a global audio bus tolerating a later writer; plyphon's `In` already
-        // reads current bus contents with no "written-this-block" check, so it is the same unit.
-        registry.register("InFeedback", Box::new(InCtor));
+        registry.register("In", Box::new(InCtor { feedback: false }));
+        // The same unit with the touched check disabled: `InFeedback` reads a bus channel written
+        // by a *later* (or freed) node - last block's signal - for deliberate one-block feedback.
+        registry.register("InFeedback", Box::new(InCtor { feedback: true }));
         registry.register("LocalIn", Box::new(LocalInCtor));
         registry.register("LocalOut", Box::new(LocalOutCtor));
         registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));

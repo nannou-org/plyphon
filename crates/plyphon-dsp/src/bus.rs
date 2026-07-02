@@ -143,6 +143,17 @@ impl AudioBus {
         self.touched[ch] == buf_counter
     }
 
+    /// Mark every channel in `range` as written for block `buf_counter` without touching its
+    /// samples (out-of-range channels are ignored). Used for the hardware input channels, whose
+    /// samples the host deposits outside the `write_*` path.
+    pub fn touch_range(&mut self, range: Range<usize>, buf_counter: u64) {
+        for ch in range {
+            if let Some(t) = self.touched.get_mut(ch) {
+                *t = buf_counter;
+            }
+        }
+    }
+
     /// Zero every channel in `range` that was *not* written during block `buf_counter`, so stale
     /// audio from an earlier block is not re-emitted on a channel nothing wrote to this block.
     pub fn silence_untouched_range(&mut self, range: Range<usize>, buf_counter: u64) {
@@ -287,6 +298,16 @@ impl Buses {
     pub fn silence_untouched_outputs(&mut self, buf_counter: u64) {
         self.audio
             .silence_untouched_range(0..self.output_channels, buf_counter);
+    }
+
+    /// Mark the hardware input channels as written for block `buf_counter`, so `In.ar` reads them
+    /// as live. The World calls this once per block whether or not the host supplied input: absent
+    /// input is silence (zeros), which is still a valid read - matching scsynth, whose input buses
+    /// are always valid for the block.
+    pub fn touch_inputs(&mut self, buf_counter: u64) {
+        let base = self.output_channels;
+        self.audio
+            .touch_range(base..base + self.input_channels, buf_counter);
     }
 
     /// Deposit one block of interleaved host input into the input bus region.

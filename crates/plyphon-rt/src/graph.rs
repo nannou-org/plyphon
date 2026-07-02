@@ -238,11 +238,15 @@ impl Graph {
                 if bus != u32::MAX {
                     // Read this tick's `bs / resample` World-rate samples from the bus and
                     // zero-order-hold them up to the graph wire's `bs` samples (an identity copy when
-                    // not reblocked/resampled: `tick == 0`, `resample == 1`).
+                    // not reblocked/resampled: `tick == 0`, `resample == 1`). Only a bus written
+                    // *this* block is read - scsynth's `Graph_Calc` checks `mAudioBusTouched` for a
+                    // mapped audio param exactly as `In.ar` does - so a stale bus reads as silence.
+                    let touched =
+                        unit::audio_in_touched(block.buses, bus as usize, block.buf_counter);
                     let chan = unit::audio_in(block.buses, bus as usize);
                     let world_samples = bs / resample;
                     let off = tick * world_samples;
-                    if chan.len() >= off + world_samples {
+                    if touched && chan.len() >= off + world_samples {
                         for (j, slot) in audio[dst..dst + bs].iter_mut().enumerate() {
                             *slot = chan[off + j / resample];
                         }

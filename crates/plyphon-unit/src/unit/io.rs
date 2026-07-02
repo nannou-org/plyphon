@@ -27,6 +27,15 @@ pub fn audio_in(buses: &Buses, ch: usize) -> &[f32] {
     }
 }
 
+/// Whether audio bus channel `ch` was written during block `buf_counter` (scsynth's
+/// `touched[i] == bufCounter`). `In.ar` outputs zero for an untouched channel - a channel whose
+/// writer freed or runs later in the tree holds *last* block's audio, which only `InFeedback`
+/// deliberately reads. Out of range reads as untouched.
+pub fn audio_in_touched(buses: &Buses, ch: usize, buf_counter: u64) -> bool {
+    let audio = buses.audio();
+    ch < audio.num_channels() && audio.is_touched(ch, buf_counter)
+}
+
 /// Accumulate `src` into audio bus channel `ch` for this block (`Out.ar`). Out of range is a no-op.
 pub fn audio_out(buses: &mut Buses, buf_counter: u64, ch: usize, src: &[f32]) {
     buses.audio_mut().write_accumulate(ch, buf_counter, src);

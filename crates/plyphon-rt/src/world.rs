@@ -335,6 +335,9 @@ impl World {
         self.drain_commands();
         self.apply_due_scheduled();
         self.buf_counter += 1;
+        // Stamp the hardware input channels live for this block (whether or not the host supplied
+        // input - silence is a valid read), so `In.ar`'s touched check passes on them.
+        self.buses.touch_inputs(self.buf_counter);
         self.done_nodes.clear();
         self.trigger_buf.clear();
         self.node_msg_buf.clear();
