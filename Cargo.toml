@@ -57,9 +57,18 @@ thiserror = { version = "2", default-features = false }
 console_error_panic_hook = "0.1"
 wasm-bindgen = "0.2"
 
+# Native release: fat LTO + one codegen unit so the many small cross-crate DSP kernels
+# (plyphon-dsp math/ops, the unit inner loops) inline into the per-block hot path.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+# The web examples' profile (each web/*.html selects it via `data-cargo-profile-release`).
+# Speed-optimized: the DSP hot path runs on the audio thread, where `opt-level = 'z'` size
+# optimization would pessimize the per-sample loops; lto/strip still trim the bundle.
 [profile.wasm_release]
 inherits = "release"
-opt-level = 'z'  # Optimize for size
+opt-level = 3
 lto = true       # Enable link-time optimization
 codegen-units = 1
 panic = 'abort'  # Remove panic unwinding to reduce size

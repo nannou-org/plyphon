@@ -62,6 +62,95 @@ fn amped_sine() -> SynthDef {
     }
 }
 
+/// Render one block of `DC(a) <op> DC(b)` (or unary `<op>(DC(a))` when `b` is `None`).
+fn op_block(special_index: i16, a: f32, b: Option<f32>) -> f32 {
+    let (name, inputs) = match b {
+        Some(b) => (
+            "BinaryOpUGen",
+            vec![InputRef::Unit { unit: 0, output: 0 }, InputRef::Constant(b)],
+        ),
+        None => ("UnaryOpUGen", vec![InputRef::Unit { unit: 0, output: 0 }]),
+    };
+    let def = SynthDef {
+        name: "op".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(a)], 1),
+            UnitSpec {
+                name: name.to_string(),
+                rate: Rate::Audio,
+                inputs,
+                num_outputs: 1,
+                special_index,
+            },
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 1, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    };
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        ..Options::default()
+    });
+    controller.add_synthdef(def);
+    controller
+        .synth_new("op", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    let mut blk = [0.0f32; 64];
+    world.fill(&mut blk, 1);
+    assert!(
+        blk.windows(2).all(|w| w[0] == w[1]),
+        "constant operands must give a constant block (op {special_index})"
+    );
+    blk[0]
+}
+
+#[test]
+fn hot_op_dispatch_matches_definitions() {
+    // The monomorphised fast paths (and a couple of fn-pointer fallbacks) against their
+    // definitions - guards the dispatch's index mapping.
+    let (a, b) = (0.75f32, 0.4f32);
+    let binary: &[(i16, f32)] = &[
+        (0, a + b),
+        (1, a - b),
+        (2, a * b),
+        (4, a / b),
+        (12, a.min(b)),
+        (13, a.max(b)),
+        (5, a % b),          // fallback path (opMod)
+        (38, (a - b).abs()), // fallback path (opAbsDif)
+    ];
+    for &(op, expected) in binary {
+        let got = op_block(op, a, Some(b));
+        assert!(
+            (got - expected).abs() < 1e-6,
+            "binary op {op}: got {got}, expected {expected}"
+        );
+    }
+    let neg = -0.6f32;
+    let unary: &[(i16, f32, f32)] = &[
+        (0, a, -a),
+        (5, neg, neg.abs()),
+        (12, a, a * a),
+        (13, a, a * a * a),
+        (15, a, a.exp()), // fallback path (opExp)
+    ];
+    for &(op, x, expected) in unary {
+        let got = op_block(op, x, None);
+        assert!(
+            (got - expected).abs() < 1e-6,
+            "unary op {op}: got {got}, expected {expected}"
+        );
+    }
+}
+
 #[test]
 fn binary_op_multiply_scales_amplitude() {
     let (mut controller, _nrt, mut world) = engine(Options {

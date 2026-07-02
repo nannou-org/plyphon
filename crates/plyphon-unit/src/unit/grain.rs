@@ -140,20 +140,43 @@ fn init_window(win_type: f32, counter: i32, win: Option<&[f32]>) -> (f64, f64, f
     }
 }
 
-/// Accumulate `value * pan` into output channels `chan` and (for >1 output) `chan + 1` at sample `j`.
-fn pan_out(
-    outs: &mut Outputs<'_>,
+/// Bind the pan target channels out of `outs` once per grain render: the grain's primary channel
+/// and (for multichannel output) the wrapped neighbour it pans against - so the per-sample
+/// accumulate ([`pan_out`]) indexes pre-bound slices instead of re-slicing the scratch twice per
+/// sample.
+fn pan_channels<'a>(
+    outs: &'a mut Outputs<'_>,
     chan: usize,
+    num_out: usize,
+) -> (&'a mut [f32], Option<&'a mut [f32]>) {
+    if num_out > 1 {
+        let chan2 = if chan + 1 >= num_out { 0 } else { chan + 1 };
+        match outs.audio_pair(chan, chan2) {
+            Some((c1, c2)) => (c1, Some(c2)),
+            // Unreachable (`chan2 != chan` whenever `num_out > 1`, and both are in scratch
+            // range); degrade to silence rather than panic - `pan_out` writes through `get_mut`.
+            None => (&mut [], None),
+        }
+    } else {
+        (outs.audio(chan), None)
+    }
+}
+
+/// Accumulate `value * pan` into the grain's pre-bound pan channels at sample `j`.
+#[inline]
+fn pan_out(
+    ch1: &mut [f32],
+    ch2: &mut Option<&mut [f32]>,
     j: usize,
     value: f32,
     pan1: f32,
     pan2: f32,
-    num_out: usize,
 ) {
-    outs.audio(chan)[j] += value * pan1;
-    if num_out > 1 {
-        let chan2 = if chan + 1 >= num_out { 0 } else { chan + 1 };
-        outs.audio(chan2)[j] += value * pan2;
+    if let Some(o) = ch1.get_mut(j) {
+        *o += value * pan1;
+    }
+    if let Some(o) = ch2.as_mut().and_then(|c2| c2.get_mut(j)) {
+        *o += value * pan2;
     }
 }
 
@@ -225,6 +248,7 @@ impl GrainSinG {
     ) -> bool {
         let n = (block - off).min(self.counter.max(0) as usize);
         let chan = self.chan as usize;
+        let (ch1, mut ch2) = pan_channels(outs, chan, num_out);
         for j in off..off + n {
             let osc = lookup_cycle(table, self.phase as f32);
             let amp = window_amp(
@@ -236,7 +260,7 @@ impl GrainSinG {
                 self.win_inc,
                 win,
             );
-            pan_out(outs, chan, j, amp * osc, self.pan1, self.pan2, num_out);
+            pan_out(ch1, &mut ch2, j, amp * osc, self.pan1, self.pan2);
             let p = self.phase + self.inc;
             self.phase = p - math::floor(p);
             self.counter -= 1;
@@ -427,6 +451,7 @@ impl GrainFMG {
     ) -> bool {
         let n = (block - off).min(self.counter.max(0) as usize);
         let chan = self.chan as usize;
+        let (ch1, mut ch2) = pan_channels(outs, chan, num_out);
         for j in off..off + n {
             let thismod = lookup_cycle(table, self.mphase as f32) as f64 * self.deviation as f64;
             let carrier = lookup_cycle(table, self.cphase as f32);
@@ -439,7 +464,7 @@ impl GrainFMG {
                 self.win_inc,
                 win,
             );
-            pan_out(outs, chan, j, amp * carrier, self.pan1, self.pan2, num_out);
+            pan_out(ch1, &mut ch2, j, amp * carrier, self.pan1, self.pan2);
             let cp = self.cphase + (self.carbase as f64 + thismod) * sample_dur;
             self.cphase = cp - math::floor(cp);
             let mp = self.mphase + self.minc;
@@ -615,6 +640,7 @@ impl GrainInG {
     ) -> bool {
         let n = (block - off).min(self.counter.max(0) as usize);
         let chan = self.chan as usize;
+        let (ch1, mut ch2) = pan_channels(outs, chan, num_out);
         for j in off..off + n {
             let x = input.get(j).copied().unwrap_or(0.0);
             let amp = window_amp(
@@ -626,7 +652,7 @@ impl GrainInG {
                 self.win_inc,
                 win,
             );
-            pan_out(outs, chan, j, amp * x, self.pan1, self.pan2, num_out);
+            pan_out(ch1, &mut ch2, j, amp * x, self.pan1, self.pan2);
             self.counter -= 1;
         }
         self.counter <= 0
@@ -797,6 +823,7 @@ impl GrainBufG {
     ) -> bool {
         let n = (block - off).min(self.counter.max(0) as usize);
         let chan = self.chan as usize;
+        let (ch1, mut ch2) = pan_channels(outs, chan, num_out);
         let snd = buffer_at(buffers, self.bufnum.max(0) as usize).map(|b| b.data());
         for j in off..off + n {
             let sample = snd.map_or(0.0, |b| read_buffer(b, self.phase, self.interp));
@@ -809,7 +836,7 @@ impl GrainBufG {
                 self.win_inc,
                 win,
             );
-            pan_out(outs, chan, j, amp * sample, self.pan1, self.pan2, num_out);
+            pan_out(ch1, &mut ch2, j, amp * sample, self.pan1, self.pan2);
             self.phase += self.rate;
             self.counter -= 1;
         }
@@ -987,11 +1014,12 @@ impl TGrainG {
     ) -> bool {
         let n = (block - off).min(self.counter.max(0) as usize);
         let chan = self.chan as usize;
+        let (ch1, mut ch2) = pan_channels(outs, chan, num_out);
         let snd = buffer_at(buffers, self.bufnum.max(0) as usize).map(|b| b.data());
         for j in off..off + n {
             let sample = snd.map_or(0.0, |b| read_buffer(b, self.phase, self.interp));
             let amp = default_window_amp(self.b1, &mut self.y1, &mut self.y2);
-            pan_out(outs, chan, j, amp * sample, self.pan1, self.pan2, num_out);
+            pan_out(ch1, &mut ch2, j, amp * sample, self.pan1, self.pan2);
             self.phase += self.rate;
             self.counter -= 1;
         }

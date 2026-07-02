@@ -20,11 +20,12 @@ pub struct UnaryOp {
     a_audio: u32,
 }
 
-impl Unit for UnaryOp {
-    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let Some(op) = unary_op(self.op as i16) else {
-            return DoneAction::Nothing;
-        };
+impl UnaryOp {
+    /// Run the block with `op` inlined into the loop. Monomorphised per closure at the `process`
+    /// dispatch below, so the hot operators compile to straight-line (vectorizable) loops instead
+    /// of a per-sample indirect call.
+    #[inline(always)]
+    fn run(&self, ctx: &mut ProcessCtx<'_>, op: impl Fn(f32) -> f32 + Copy) {
         let out = ctx.outs.audio(0);
         if self.a_audio != 0 {
             let a = ctx.ins.audio(0);
@@ -33,6 +34,25 @@ impl Unit for UnaryOp {
             }
         } else {
             out.fill(op(ctx.ins.control(0)));
+        }
+    }
+}
+
+impl Unit for UnaryOp {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The hot operators dispatch to monomorphised loops; the rest fall back to the table's fn
+        // pointer, whose per-sample indirect call LLVM cannot inline or vectorize.
+        match self.op {
+            0 => self.run(ctx, |a| -a),
+            5 => self.run(ctx, |a| a.abs()),
+            12 => self.run(ctx, |a| a * a),
+            13 => self.run(ctx, |a| a * a * a),
+            op => {
+                let Some(f) = unary_op(op as i16) else {
+                    return DoneAction::Nothing;
+                };
+                self.run(ctx, f);
+            }
         }
         DoneAction::Nothing
     }

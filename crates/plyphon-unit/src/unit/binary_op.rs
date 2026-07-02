@@ -21,11 +21,12 @@ pub struct BinaryOp {
     b_audio: u32,
 }
 
-impl Unit for BinaryOp {
-    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let Some(op) = binary_op(self.op as i16) else {
-            return DoneAction::Nothing;
-        };
+impl BinaryOp {
+    /// Run the block with `op` inlined into the loop. Monomorphised per closure at the `process`
+    /// dispatch below, so the hot operators compile to straight-line (vectorizable) loops instead
+    /// of a per-sample indirect call.
+    #[inline(always)]
+    fn run(&self, ctx: &mut ProcessCtx<'_>, op: impl Fn(f32, f32) -> f32 + Copy) {
         let out = ctx.outs.audio(0);
         match (self.a_audio != 0, self.b_audio != 0) {
             (true, true) => {
@@ -50,6 +51,28 @@ impl Unit for BinaryOp {
                 }
             }
             (false, false) => out.fill(op(ctx.ins.control(0), ctx.ins.control(1))),
+        }
+    }
+}
+
+impl Unit for BinaryOp {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The hot arithmetic operators - typically the most numerous units in a real graph -
+        // dispatch to monomorphised loops; the rest fall back to the table's fn pointer, whose
+        // per-sample indirect call LLVM cannot inline or vectorize.
+        match self.op {
+            0 => self.run(ctx, |a, b| a + b),
+            1 => self.run(ctx, |a, b| a - b),
+            2 => self.run(ctx, |a, b| a * b),
+            4 => self.run(ctx, |a, b| a / b),
+            12 => self.run(ctx, |a, b| a.min(b)),
+            13 => self.run(ctx, |a, b| a.max(b)),
+            op => {
+                let Some(f) = binary_op(op as i16) else {
+                    return DoneAction::Nothing;
+                };
+                self.run(ctx, f);
+            }
         }
         DoneAction::Nothing
     }

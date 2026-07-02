@@ -13,7 +13,8 @@
 # drift between the Nix build and local `trunk serve`.
 {
   RUSTFLAGS = builtins.concatStringsSep " " [
-    "-C target-feature=+atomics"
+    # SIMD128 vectorizes the per-sample DSP loops (broad browser support alongside threads).
+    "-C target-feature=+atomics,+simd128"
     "-C link-arg=--shared-memory"
     "-C link-arg=--max-memory=1073741824"
     "-C link-arg=--import-memory"

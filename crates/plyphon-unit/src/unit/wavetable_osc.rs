@@ -258,19 +258,26 @@ impl UnitDef for COscCtor {
     }
 }
 
-/// The crossfaded read of two consecutive wavetables at `bufindex`/`bufindex + 1` in the buffer table,
-/// each read at `phase`, blended by `level` (the fractional buffer position). `0.0` unless both slots
-/// hold valid, equal-size wavetables - scsynth's `VOsc` silences a missing/mismatched bank member.
-fn crossfade_read(buffers: &BufferTable, bufindex: usize, phase: f32, level: f32) -> f32 {
-    let table0 = unit::buffer_at(buffers, bufindex).and_then(wavetable_data);
-    let table1 = unit::buffer_at(buffers, bufindex + 1).and_then(wavetable_data);
-    match (table0, table1) {
-        (Some(t0), Some(t1)) if t0.len() == t1.len() => lininterp(
+/// The two consecutive wavetables at `bufindex`/`bufindex + 1` in the buffer table, for a
+/// crossfaded (`VOsc`-style) read. `None` unless both slots hold valid, equal-size wavetables -
+/// scsynth's `VOsc` silences a missing/mismatched bank member. Resolved once per `bufindex` change
+/// (the loops below cache the pair), not per sample.
+fn wavetable_pair(buffers: &BufferTable, bufindex: usize) -> Option<(&[f32], &[f32])> {
+    let t0 = unit::buffer_at(buffers, bufindex).and_then(wavetable_data)?;
+    let t1 = unit::buffer_at(buffers, bufindex + 1).and_then(wavetable_data)?;
+    (t0.len() == t1.len()).then_some((t0, t1))
+}
+
+/// The crossfaded read of a resolved [`wavetable_pair`] at `phase`, blended by `level`.
+#[inline]
+fn crossfade(tables: Option<(&[f32], &[f32])>, phase: f32, level: f32) -> f32 {
+    match tables {
+        Some((t0, t1)) => lininterp(
             level,
             lookup_wavetable(t0, phase),
             lookup_wavetable(t1, phase),
         ),
-        _ => 0.0,
+        None => 0.0,
     }
 }
 
@@ -325,19 +332,29 @@ impl Unit for VOsc {
         self.bufpos = next_bufpos;
         let bufdiff = next_bufpos - prev;
 
-        let block = ctx.outs.audio(0).len();
-        for i in 0..block {
-            let cur = prev + bufdiff * (i as f32 / block as f32);
+        let out = ctx.outs.audio(0);
+        let inv_block = 1.0 / out.len() as f32;
+        let mut phase = self.phase;
+        // The table pair is re-resolved only when the (block-ramped) buffer index crosses into the
+        // next bank member - not per sample.
+        let mut tables = None;
+        let mut cur_index = usize::MAX;
+        for (i, o) in out.iter_mut().enumerate() {
+            let cur = prev + bufdiff * (i as f32 * inv_block);
             let base = math::floor(cur);
             let level = cur - base;
             let bufindex = base.max(0.0) as usize;
-            ctx.outs.audio(0)[i] =
-                crossfade_read(ctx.buffers, bufindex, self.phase + phase_offset, level);
+            if bufindex != cur_index {
+                cur_index = bufindex;
+                tables = wavetable_pair(ctx.buffers, bufindex);
+            }
+            *o = crossfade(tables, phase + phase_offset, level);
             // Audio rate: `freq_slice` has one value per sample; control rate: it is empty and `.get`
             // falls back to the per-block `freq_ctl`.
             let f = freq_slice.get(i).copied().unwrap_or(freq_ctl);
-            self.phase = wrap_unit(self.phase + f * sample_dur);
+            phase = wrap_unit(phase + f * sample_dur);
         }
+        self.phase = phase;
         DoneAction::Nothing
     }
 }
@@ -400,20 +417,32 @@ impl Unit for VOsc3 {
         self.bufpos = next_bufpos;
         let bufdiff = next_bufpos - prev;
 
-        let block = ctx.outs.audio(0).len();
-        for i in 0..block {
-            let cur = prev + bufdiff * (i as f32 / block as f32);
+        let out = ctx.outs.audio(0);
+        let inv_block = 1.0 / out.len() as f32;
+        let (mut phase1, mut phase2, mut phase3) = (self.phase1, self.phase2, self.phase3);
+        // The table pair is re-resolved only when the (block-ramped) buffer index crosses into the
+        // next bank member - not per sample (let alone three times per sample).
+        let mut tables = None;
+        let mut cur_index = usize::MAX;
+        for (i, o) in out.iter_mut().enumerate() {
+            let cur = prev + bufdiff * (i as f32 * inv_block);
             let base = math::floor(cur);
             let level = cur - base;
             let bufindex = base.max(0.0) as usize;
-            let voices = crossfade_read(ctx.buffers, bufindex, self.phase1, level)
-                + crossfade_read(ctx.buffers, bufindex, self.phase2, level)
-                + crossfade_read(ctx.buffers, bufindex, self.phase3, level);
-            ctx.outs.audio(0)[i] = voices;
-            self.phase1 = wrap_unit(self.phase1 + inc1);
-            self.phase2 = wrap_unit(self.phase2 + inc2);
-            self.phase3 = wrap_unit(self.phase3 + inc3);
+            if bufindex != cur_index {
+                cur_index = bufindex;
+                tables = wavetable_pair(ctx.buffers, bufindex);
+            }
+            *o = crossfade(tables, phase1, level)
+                + crossfade(tables, phase2, level)
+                + crossfade(tables, phase3, level);
+            phase1 = wrap_unit(phase1 + inc1);
+            phase2 = wrap_unit(phase2 + inc2);
+            phase3 = wrap_unit(phase3 + inc3);
         }
+        self.phase1 = phase1;
+        self.phase2 = phase2;
+        self.phase3 = phase3;
         DoneAction::Nothing
     }
 }

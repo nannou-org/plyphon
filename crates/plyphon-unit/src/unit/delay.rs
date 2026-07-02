@@ -297,6 +297,10 @@ impl Unit for Delay {
             out.fill(0.0);
             return DoneAction::Nothing;
         }
+        // Pre-slice to the power-of-two line so the compiler can prove `idx & mask` in-bounds and
+        // elide the per-tap bounds checks (`min` only guards the impossible mismatch).
+        let line_end = (mask as usize + 1).min(buf.len());
+        let buf = &mut buf[..line_end];
         let n = out.len();
         let input = |i: usize| in_audio.map_or(in_ctrl, |s| s[i]);
 
@@ -430,6 +434,10 @@ impl Unit for FeedbackDelay {
             out.fill(0.0);
             return DoneAction::Nothing;
         }
+        // Pre-slice to the power-of-two line so the compiler can prove `idx & mask` in-bounds and
+        // elide the per-tap bounds checks (`min` only guards the impossible mismatch).
+        let line_end = (mask as usize + 1).min(buf.len());
+        let buf = &mut buf[..line_end];
         let n = out.len();
         let input = |i: usize| in_audio.map_or(in_ctrl, |s| s[i]);
 
@@ -672,6 +680,9 @@ impl Unit for BufDelay {
         }
         let max = mask as f32;
         let warm = self.numoutput as usize >= len;
+        // Pre-slice to the power-of-two prefix actually used, so the compiler can prove
+        // `idx & mask` in-bounds and elide the per-tap bounds checks.
+        let buf = &mut buf[..len];
         let n = out.len();
         let input = |i: usize| in_audio.map_or(in_ctrl, |s| s[i]);
 
@@ -802,6 +813,9 @@ impl Unit for BufFeedbackDelay {
         }
         let max = mask as f32;
         let warm = self.numoutput as usize >= len;
+        // Pre-slice to the power-of-two prefix actually used, so the compiler can prove
+        // `idx & mask` in-bounds and elide the per-tap bounds checks.
+        let buf = &mut buf[..len];
         let n = out.len();
         let input = |i: usize| in_audio.map_or(in_ctrl, |s| s[i]);
 

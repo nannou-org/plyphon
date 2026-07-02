@@ -247,8 +247,14 @@ impl Graph {
                     let world_samples = bs / resample;
                     let off = tick * world_samples;
                     if touched && chan.len() >= off + world_samples {
-                        for (j, slot) in audio[dst..dst + bs].iter_mut().enumerate() {
-                            *slot = chan[off + j / resample];
+                        if resample == 1 {
+                            // The common (non-oversampled) case: a straight copy, with no
+                            // per-sample division for the compiler to grind through.
+                            audio[dst..dst + bs].copy_from_slice(&chan[off..off + bs]);
+                        } else {
+                            for (j, slot) in audio[dst..dst + bs].iter_mut().enumerate() {
+                                *slot = chan[off + j / resample];
+                            }
                         }
                     } else {
                         audio[dst..dst + bs].fill(0.0);

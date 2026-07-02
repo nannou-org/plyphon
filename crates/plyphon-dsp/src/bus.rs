@@ -106,8 +106,15 @@ impl AudioBus {
         }
         // World-rate output samples = the decimated source length, clamped into the channel slice.
         let count = (src.len() / factor).min(bs.saturating_sub(offset));
-        for j in 0..count {
-            dst[offset + j] += src[j * factor];
+        if factor == 1 {
+            // The common (non-oversampled) case: a contiguous zip the compiler can vectorize.
+            for (d, &s) in dst[offset..offset + count].iter_mut().zip(src) {
+                *d += s;
+            }
+        } else {
+            for j in 0..count {
+                dst[offset + j] += src[j * factor];
+            }
         }
     }
 
@@ -133,8 +140,13 @@ impl AudioBus {
         let start = ch * bs;
         let dst = &mut self.data[start..start + bs];
         let count = (src.len() / factor).min(bs.saturating_sub(offset));
-        for j in 0..count {
-            dst[offset + j] = src[j * factor];
+        if factor == 1 {
+            // The common (non-oversampled) case: a straight copy.
+            dst[offset..offset + count].copy_from_slice(&src[..count]);
+        } else {
+            for j in 0..count {
+                dst[offset + j] = src[j * factor];
+            }
         }
     }
 

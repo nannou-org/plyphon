@@ -733,6 +733,18 @@ impl<'a> Outputs<'a> {
     pub fn control(&mut self, i: usize) -> &mut f32 {
         &mut self.scratch[i * self.block_size]
     }
+
+    /// Two distinct audio outputs as simultaneous mutable slices, so an accumulate spanning two
+    /// channels (a stereo-panned grain) binds both once per render rather than re-slicing per
+    /// sample. `None` when `a == b` or either output is out of scratch range.
+    pub fn audio_pair(&mut self, a: usize, b: usize) -> Option<(&mut [f32], &mut [f32])> {
+        let bs = self.block_size;
+        let [sa, sb] = self
+            .scratch
+            .get_disjoint_mut([a * bs..(a + 1) * bs, b * bs..(b + 1) * bs])
+            .ok()?;
+        Some((sa, sb))
+    }
 }
 
 /// A unit generator - plyphon's `Unit` is scsynth's server-side `Unit` (the language-side `UGen` has

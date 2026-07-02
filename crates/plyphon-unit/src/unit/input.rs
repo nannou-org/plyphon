@@ -50,8 +50,14 @@ impl Unit for In {
                     || unit::audio_in_touched(ctx.buses, base + o, ctx.buf_counter);
                 let chan = unit::audio_in(ctx.buses, base + o);
                 if live && chan.len() >= offset + world_samples {
-                    for (j, slot) in dst.iter_mut().enumerate() {
-                        *slot = chan[offset + j / factor];
+                    if factor == 1 {
+                        // The common (non-oversampled) case: a straight copy, with no per-sample
+                        // division for the compiler to grind through.
+                        dst.copy_from_slice(&chan[offset..offset + world_samples]);
+                    } else {
+                        for (j, slot) in dst.iter_mut().enumerate() {
+                            *slot = chan[offset + j / factor];
+                        }
                     }
                 } else {
                     dst.fill(0.0);
