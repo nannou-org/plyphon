@@ -1,4 +1,4 @@
 .direnv
 dist
-result
+result*
 target
