@@ -378,6 +378,7 @@ impl SynthDef {
         let mut calc_built: Vec<BuiltUnit> = Vec::new();
         let mut calc_inputs: Vec<Box<[InputSource]>> = Vec::new();
         let mut calc_outputs: Vec<Box<[OutputWire]>> = Vec::new();
+        let mut calc_rates: Vec<Rate> = Vec::new();
         let mut demand_built: Vec<BuiltDemandUnit> = Vec::new();
         let mut demand_inputs: Vec<Box<[InputSource]>> = Vec::new();
         let mut max_outputs = 0usize;
@@ -466,6 +467,7 @@ impl SynthDef {
                 calc_built.push(def.build(&build_ctx)?);
                 calc_inputs.push(sources.into_boxed_slice());
                 calc_outputs.push(outputs_plan[u].clone());
+                calc_rates.push(spec.rate);
                 max_outputs = max_outputs.max(spec.num_outputs);
             }
         }
@@ -540,10 +542,12 @@ impl SynthDef {
             .into_iter()
             .zip(calc_inputs)
             .zip(calc_outputs)
+            .zip(calc_rates)
             .zip(state_offsets)
             .zip(aux_offsets)
             .map(
-                |((((b, inputs), outputs), state_offset), aux_offset)| UnitVtbl {
+                |(((((b, inputs), outputs), rate), state_offset), aux_offset)| UnitVtbl {
+                    rate,
                     process: b.process,
                     init: b.init,
                     reseed: b.reseed,

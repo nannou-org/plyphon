@@ -53,6 +53,13 @@ pub struct LagParam {
 /// One unit's compiled record: its calc/seed vtable, resolved wiring, and state slot in the arena -
 /// plyphon's per-unit `UnitSpec` plus `mCalcFunc`.
 pub struct UnitVtbl {
+    /// The unit's own calculation rate (scsynth's `unit->mCalcRate`): `Audio` units compute a full
+    /// block per tick, `Control`/`Scalar` units one sample. Selects the unit's [`Outputs`] length
+    /// and its own-rate constants ([`ProcessCtx::own`]) in the process loop.
+    ///
+    /// [`Outputs`]: crate::unit::Outputs
+    /// [`ProcessCtx::own`]: crate::unit::ProcessCtx::own
+    pub rate: Rate,
     /// Per-block calc function over the state slot.
     pub process: ProcessFn,
     /// One-time first-block seeding function over the state slot.

@@ -495,6 +495,12 @@ pub struct ProcessCtx<'a> {
     pub audio: &'a RateInfo,
     /// Control-rate constants.
     pub control: &'a RateInfo,
+    /// *This unit's* rate constants (scsynth's `unit->mRate`): [`audio`](Self::audio) for an `.ar`
+    /// unit, [`control`](Self::control) for a `.kr` one. Step sizing and seconds-to-samples
+    /// conversions use this, so a unit advancing once per control period counts control periods;
+    /// `audio`/`control` remain for units that genuinely need a specific rate (boundary I/O, FFT
+    /// hop math, the `Info` units).
+    pub own: &'a RateInfo,
     /// Shared wavetables (sine, ...), owned by the engine.
     pub wavetables: &'a Wavetables,
     /// Shared FFT plans + windows (`FFT`/`IFFT`/`PV_*`); empty without the `fft` feature. Most units
@@ -565,6 +571,8 @@ pub struct InitCtx<'a> {
     pub audio: &'a RateInfo,
     /// Control-rate constants.
     pub control: &'a RateInfo,
+    /// *This unit's* rate constants (scsynth's `unit->mRate`) - see [`ProcessCtx::own`].
+    pub own: &'a RateInfo,
     /// Shared wavetables.
     pub wavetables: &'a Wavetables,
     /// Shared FFT plans + windows (empty without the `fft` feature).

@@ -275,6 +275,13 @@ impl Graph {
                 );
             }
             for (i, v) in def.units().iter().enumerate() {
+                // This unit's own rate constants (scsynth's `unit->mRate`): the graph's audio rate
+                // for an `.ar` unit, its control rate for a `.kr`/`.ir` one. Both are graph-relative,
+                // so reblock/resample stay exact.
+                let own = match v.rate {
+                    Rate::Audio => def.audio_rate(),
+                    _ => def.control_rate(),
+                };
                 let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
                 // This unit's private aux memory (a delay line), a disjoint sub-slice of the aux arena;
                 // empty (`&mut []`) for units that declared none. Persists across blocks like `state`.
@@ -309,6 +316,7 @@ impl Graph {
                     let init_ctx = InitCtx {
                         audio: def.audio_rate(),
                         control: def.control_rate(),
+                        own,
                         wavetables: block.wavetables,
                         fft: block.fft,
                         ins,
@@ -323,6 +331,7 @@ impl Graph {
                     let mut ctx = ProcessCtx {
                         audio: def.audio_rate(),
                         control: def.control_rate(),
+                        own,
                         wavetables: block.wavetables,
                         fft: block.fft,
                         ins,
