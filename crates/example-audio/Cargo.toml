@@ -22,7 +22,9 @@ web-sys = { version = "0.3", features = ["Window"] }
 gloo-timers = "0.3"
 
 [features]
-# Opt into cpal's AudioWorklet backend. Only ever enable this for `wasm32` builds compiled with
-# WASM atomics + `-Z build-std` (see `pkgs/plyphon-website-worklet.nix`); on other targets it
-# pulls cpal's wasm-only web-sys deps and will not build.
+# cpal's AudioWorklet host on the web - a real audio thread, off the deprecated ScriptProcessor
+# host. Every example enables it by default; the cpal deps it pulls are all wasm32-gated, so it is a
+# no-op on native. Build an example with `--no-default-features` to fall back to cpal's default host
+# (the ScriptProcessor Web Audio host on the web). The wasm site build compiles this with WASM
+# atomics + `-Z build-std` for the shared-memory worklet thread (see `pkgs/plyphon-website.nix`).
 audioworklet = ["cpal/audioworklet"]

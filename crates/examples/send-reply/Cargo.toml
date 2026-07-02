@@ -21,4 +21,5 @@ web-sys = { version = "0.3", features = ["console"] }
 
 [features]
 # Build the web demo on cpal's AudioWorklet backend (see pkgs/plyphon-website.nix).
+default = ["audioworklet"]
 audioworklet = ["example-audio/audioworklet"]

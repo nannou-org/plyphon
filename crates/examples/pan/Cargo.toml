@@ -18,5 +18,6 @@ plyphon.workspace = true
 console_error_panic_hook.workspace = true
 
 [features]
-# Build the web demo on cpal's AudioWorklet backend (see pkgs/plyphon-website-worklet.nix).
+# Build the web demo on cpal's AudioWorklet backend (see pkgs/plyphon-website.nix).
+default = ["audioworklet"]
 audioworklet = ["example-audio/audioworklet"]
