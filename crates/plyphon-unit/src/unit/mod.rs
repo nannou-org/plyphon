@@ -85,6 +85,7 @@ pub mod trigger;
 pub mod two_pole;
 pub mod unary_op;
 pub mod util;
+pub mod vdisk_in;
 pub mod wavetable_osc;
 
 use alloc::boxed::Box;

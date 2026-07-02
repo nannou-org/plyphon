@@ -16,6 +16,12 @@ use alloc::vec::Vec;
 
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 
+use crate::interp::cubicinterp;
+
+/// Frames retained for `VDiskIn`'s 4-point cubic resampling window (`[a, b, c, d]`, the read position
+/// between `b` and `c`).
+const RESAMPLE_WINDOW: usize = 4;
+
 /// A fixed-capacity block of interleaved samples passed between the feeder and the audio thread.
 pub struct Chunk {
     /// Interleaved samples, `capacity * channels` long.
@@ -70,6 +76,53 @@ pub struct StreamPlayback {
     cursor: usize,
     channels: usize,
     sample_rate: f64,
+    /// `VDiskIn` resampling state: the fractional read position between the window's `b` and `c`
+    /// frames.
+    phase: f64,
+    /// The 4-frame cubic-interpolation window (`RESAMPLE_WINDOW * channels`), only used by
+    /// [`read_resampled`](StreamPlayback::read_resampled).
+    window: Vec<f32>,
+    /// Whether the resampling window has been primed with the first source frames.
+    primed: bool,
+}
+
+/// Copy the next source frame into `out` (length `channels`), advancing the chunk cursor and recycling
+/// each exhausted chunk to the feeder. Returns `false` on underrun (nothing queued). Field args (not
+/// `&mut self`) so the caller can also borrow the disjoint window slice.
+fn next_source_frame(
+    current: &mut Option<Chunk>,
+    cursor: &mut usize,
+    chunks: &mut Consumer<Chunk>,
+    recycle: &mut Producer<Chunk>,
+    channels: usize,
+    out: &mut [f32],
+) -> bool {
+    let exhausted = match current {
+        Some(chunk) => *cursor >= chunk.frames,
+        None => true,
+    };
+    if exhausted {
+        if let Some(done) = current.take() {
+            let _ = recycle.push(done);
+        }
+        match chunks.pop() {
+            Ok(chunk) => {
+                *current = Some(chunk);
+                *cursor = 0;
+            }
+            Err(_) => return false,
+        }
+    }
+    let chunk = match current {
+        Some(chunk) if *cursor < chunk.frames => chunk,
+        _ => return false,
+    };
+    let base = *cursor * channels;
+    for (c, o) in out.iter_mut().take(channels).enumerate() {
+        *o = chunk.data[base + c];
+    }
+    *cursor += 1;
+    true
 }
 
 impl StreamPlayback {
@@ -121,6 +174,93 @@ impl StreamPlayback {
             }
             self.cursor += 1;
             produced += 1;
+        }
+        produced
+    }
+
+    /// Pull up to `frames` output frames, reading the stream at fractional `rate` (frames per output
+    /// frame) with 4-point cubic interpolation, calling `emit(frame, channel, sample)` per produced
+    /// sample; returns how many frames were produced (fewer on underrun). `VDiskIn`'s resampled read.
+    ///
+    /// The stream is forward-only (a chunk queue), so a 4-frame window `[a, b, c, d]` is retained and
+    /// slid forward one source frame at a time as the phase crosses integer boundaries - the cubic
+    /// analogue of [`read`](StreamPlayback::read)'s 1:1 drain. `rate` is clamped to `>= 0` (no reverse
+    /// play - the stream cannot rewind). Looping is a host concern (a looping `BufferStream` feeds a
+    /// queue that never ends); this drops to silence at end-of-stream like `read`.
+    pub fn read_resampled(
+        &mut self,
+        frames: usize,
+        out_channels: usize,
+        rate: f64,
+        mut emit: impl FnMut(usize, usize, f32),
+    ) -> usize {
+        let ch = self.channels;
+        let rate = rate.max(0.0);
+        if !self.primed {
+            // `a` starts at silence (before the stream); `b`/`c`/`d` are the first three frames. If the
+            // very first frame is not yet queued, stay unprimed and play silence until it arrives.
+            self.window[..ch].fill(0.0);
+            if !next_source_frame(
+                &mut self.current,
+                &mut self.cursor,
+                &mut self.chunks,
+                &mut self.recycle,
+                ch,
+                &mut self.window[ch..2 * ch],
+            ) {
+                return 0;
+            }
+            for slot in 2..RESAMPLE_WINDOW {
+                let (head, tail) = self.window.split_at_mut(slot * ch);
+                if !next_source_frame(
+                    &mut self.current,
+                    &mut self.cursor,
+                    &mut self.chunks,
+                    &mut self.recycle,
+                    ch,
+                    &mut tail[..ch],
+                ) {
+                    tail[..ch].fill(0.0);
+                }
+                let _ = head;
+            }
+            self.primed = true;
+            self.phase = 0.0;
+        }
+
+        let outc = ch.min(out_channels);
+        let mut produced = 0;
+        while produced < frames {
+            let frac = self.phase as f32;
+            for c in 0..outc {
+                let (a, b, cc, d) = (
+                    self.window[c],
+                    self.window[ch + c],
+                    self.window[2 * ch + c],
+                    self.window[3 * ch + c],
+                );
+                emit(produced, c, cubicinterp(frac, a, b, cc, d));
+            }
+            produced += 1;
+            self.phase += rate;
+            // Slide the window forward one source frame per integer the phase crossed.
+            while self.phase >= 1.0 {
+                self.phase -= 1.0;
+                self.window.copy_within(ch..RESAMPLE_WINDOW * ch, 0);
+                let last = (RESAMPLE_WINDOW - 1) * ch;
+                let (head, tail) = self.window.split_at_mut(last);
+                let _ = head;
+                if !next_source_frame(
+                    &mut self.current,
+                    &mut self.cursor,
+                    &mut self.chunks,
+                    &mut self.recycle,
+                    ch,
+                    &mut tail[..ch],
+                ) {
+                    return produced; // underrun: the caller silences the rest
+                }
+            }
         }
         produced
     }
@@ -191,6 +331,9 @@ pub fn cue(
         cursor: 0,
         channels,
         sample_rate,
+        phase: 0.0,
+        window: vec![0.0; RESAMPLE_WINDOW * channels],
+        primed: false,
     });
     let producer = StreamProducer {
         chunks: chunks_tx,

@@ -135,6 +135,7 @@ use crate::unit::util::{
     AmplitudeCtor, Lag2Ctor, Lag2UDCtor, Lag3Ctor, Lag3UDCtor, LagCtor, LagUDCtor, MulAddCtor,
     SumCtor,
 };
+use crate::unit::vdisk_in::VDiskInCtor;
 use crate::unit::wavetable_osc::{COscCtor, OscCtor, OscNCtor, VOsc3Ctor, VOscCtor};
 use crate::unit::{BuiltUnit, InputSource};
 use plyphon_dsp::rate::{Rate, RateInfo};
@@ -407,6 +408,7 @@ impl UnitRegistry {
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("BufRd", Box::new(BufRdCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
+        registry.register("VDiskIn", Box::new(VDiskInCtor));
         registry.register("DiskOut", Box::new(DiskOutCtor));
         registry.register("ScopeOut", Box::new(ScopeOutCtor));
         // Selection / buffer indexing.
