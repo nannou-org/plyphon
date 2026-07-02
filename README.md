@@ -33,39 +33,39 @@ Listed in reverse-topological order - dependents first, their dependencies below
 
 | Example | Description |
 | --- | --- |
-| [`example-motif`](crates/examples/motif) | A looping motif of self-freeing notes via `cpal`. |
-| [`example-sine`](crates/examples/sine) | The simplest example: a continuous sine. |
-| [`example-custom-unit`](crates/examples/custom-unit) | Implement a custom unit generator (a `tanh` saturator) and register it alongside the base set. |
-| [`example-routing`](crates/examples/routing) | Bus routing: an LFO-swept filter on noise, wired through audio and control buses. |
-| [`example-control`](crates/examples/control) | Host-driven control buses: an arpeggio steered by `/n_map` + `/c_set`. |
-| [`example-scgf`](crates/examples/scgf) | Loads a SuperCollider SCgf-compiled SynthDef and plays it. |
-| [`example-sampler`](crates/examples/sampler) | Implements a `BufferSource` that loads a checked-in WAV (filesystem natively, `fetch` on the web) and loops it with `PlayBuf`. |
-| [`example-stream`](crates/examples/stream) | Streams a WAV from storage in chunks via a `BufferStream`/`StreamFeeder` and plays it with `DiskIn`. |
-| [`example-waveforms`](crates/examples/waveforms) | Cycles through the oscillators (`Saw`/`Pulse`/`LFSaw`/`LFPulse`/`Impulse`) through a filter. |
-| [`example-operators`](crates/examples/operators) | A ring-modulated, soft-clipped bell tone built from `BinaryOpUGen`/`UnaryOpUGen` math operators (`midicps`, `midiratio`, ring modulation, `softclip`). |
-| [`example-filters`](crates/examples/filters) | A classic resonant low-pass sweep: a saw through an LFO-swept `RLPF` (one of the resonant biquads `RLPF`/`RHPF`/`BPF`/`BRF`/`Resonz`/`Ringz`). |
-| [`example-moog`](crates/examples/moog) | A resonant acid bassline: a saw through a `MoogFF` Moog-ladder filter with an LFO-swept cutoff and high feedback resonance (the filter additions `MoogFF`/`Formlet`/`MidEQ`/`SOS`/`Median`/`Lag2`/`Hilbert`/`FreqShift`). |
-| [`example-noise`](crates/examples/noise) | Metallic rain: `Dust2` impulses ring a `Ringz` resonator over a quiet `PinkNoise` bed (the noise family `WhiteNoise`/`ClipNoise`/`GrayNoise`/`PinkNoise`/`BrownNoise`/`Dust`/`Dust2`). |
-| [`example-wandering`](crates/examples/wandering) | A generative burble driven by the low-frequency/dynamic noise family: `LFNoise1` wanders the pitch, `LFNoise2` sweeps the filter, `LFDNoise3` shimmers the amplitude (`LFNoise0/1/2`/`LFClipNoise`/`LFDNoise0/1/3`/`LFDClipNoise`). |
-| [`example-sample-hold`](crates/examples/sample-hold) | A self-playing sample-and-hold sequence: an `Impulse` clock latches a pitch contour with `Latch` into a `Decay2`-plucked saw (the in-graph trigger units `Trig`/`Latch`/`Gate`/`ToggleFF`/`Stepper`/`Phasor`/...). |
-| [`example-auto-wah`](crates/examples/auto-wah) | An envelope-following auto-wah: a `PeakFollower` tracks a plucked source's amplitude and drives an `RLPF` cutoff (the signal-measurement units `Peak`/`RunningMin`/`RunningMax`/`PeakFollower`/`MostChange`/`LeastChange`/`LastValue`). |
-| [`example-scale-walk`](crates/examples/scale-walk) | A scale-quantised melodic walk: an `LFNoise1` indexes a scale buffer through `Index`, so a smooth wander always lands on in-scale notes (the selection/lookup units `Select`/`Index`/`IndexL`/`WrapIndex`/`FoldIndex`). |
-| [`example-bell`](crates/examples/bell) | Modal bell synthesis: an `Impulse` strikes a `Klank` bank of inharmonic resonators (tubular-bell ratios), ringing a struck-metal bell (the additive/modal banks `Klang`/`Klank`). |
-| [`example-wavetable`](crates/examples/wavetable) | A morphing wavetable drone: a `VOsc` sweeps its position through a bank of increasingly-bright wavetables, crossfading the timbre from a pure sine to a rich saw (the wavetable oscillators `Osc`/`OscN`/`COsc`/`VOsc`/`VOsc3`). |
-| [`example-vowel`](crates/examples/vowel) | A synthesized sung vowel: three `Formant` oscillators voice the formants of an "ah" over a vibrato'd fundamental, forming a vocal-like drone (`Formant`, alongside the batch's `SinOscFB`/`Blip`/`LFGauss`). |
-| [`example-granular`](crates/examples/granular) | A granular time-stretch: `Warp1` smears a short synthesized arpeggio into a slowly-morphing stereo pad, holding pitch while a slow pointer stretches time (the granular family `GrainSin`/`GrainFM`/`GrainIn`/`GrainBuf`/`TGrains`/`Warp1`). |
-| [`example-reverb`](crates/examples/reverb) | A cavernous space: two Karplus-Strong plucked strings on drifting clocks smear through a large `GVerb` FDN reverb (the delay/reverb family `BufDelay*`/`BufComb*`/`BufAllpass*`/`DelTapWr`/`DelTapRd`/`Pluck`/`PitchShift`/`FreeVerb`/`FreeVerb2`/`GVerb`). |
-| [`example-waveshaping`](crates/examples/waveshaping) | A wavefolder: a sine driven hard through `Fold` with an LFO-swept drive (the range shapers `Clip`/`Wrap`/`Fold`/`LinExp`/...). |
-| [`example-chaos`](crates/examples/chaos) | A chaotic drone: a `CuspN` oscillator through a resonant filter swept by a slow `LatoocarfianN` map (the chaotic generators `CuspN`/`QuadN`/`GbmanN`/`StandardN`/`LatoocarfianN`/`LinCongN`). |
-| [`example-hard-sync`](crates/examples/hard-sync) | A hard-sync lead: a `SyncSaw` whose saw frequency is swept by an LFO over a fixed pitch (the oscillators `LFTri`/`LFPar`/`LFCub`/`VarSaw`/`SyncSaw`/`FSinOsc`). |
-| [`example-bouncing-ball`](crates/examples/bouncing-ball) | Physical-model percussion: a `TBall` bouncing on an oscillating floor rings a `Ringz` resonator (the physical models `Spring`/`Ball`/`TBall`). |
-| [`example-comb-string`](crates/examples/comb-string) | Karplus-Strong plucked strings: periodic noise bursts excite a tuned `CombL` resonator (delay = one pitch period), diffused by an `AllpassC` (the recirculating delays `CombN/L/C`/`AllpassN/L/C` and interpolating `DelayL/C`). |
-| [`example-drunk-melody`](crates/examples/drunk-melody) | A self-driving drunk-walk melody: `Duty.kr` clocks a `Dibrown` integer random walk over MIDI notes (`midicps` + `Lag` glide), showcasing the generator demand sources `Dgeom`/`Diwhite`/`Dbrown`/`Dibrown`. |
-| [`example-pan`](crates/examples/pan) | A tone auto-panned across the stereo field with `Pan2`. |
-| [`example-envelope`](crates/examples/envelope) | Percussive plucks shaped by multi-segment `EnvGen` envelopes that free their own synths. |
-| [`example-osc`](crates/examples/osc) | Drives the engine through encoded SuperCollider OSC packets (no sockets) and prints the control commands and the replies/notifications that flow back. |
-| [`example-schedule`](crates/examples/schedule) | Sample-accurate rhythm: schedules time-tagged OSC bundles up front, each note onsetting on its exact sample via the engine's drift-corrected scheduler and `OffsetOut`. |
-| [`example-render`](crates/examples/render) | Offline (non-real-time) rendering: reads a binary OSC score and renders it to a WAV faster than real time and deterministically - plyphon's `scsynth -N`. |
+| [`motif`](crates/examples/motif) | A looping motif of self-freeing notes via `cpal`. |
+| [`sine`](crates/examples/sine) | The simplest example: a continuous sine. |
+| [`custom-unit`](crates/examples/custom-unit) | Implement a custom unit generator (a `tanh` saturator) and register it alongside the base set. |
+| [`routing`](crates/examples/routing) | Bus routing: an LFO-swept filter on noise, wired through audio and control buses. |
+| [`control`](crates/examples/control) | Host-driven control buses: an arpeggio steered by `/n_map` + `/c_set`. |
+| [`scgf`](crates/examples/scgf) | Loads a SuperCollider SCgf-compiled SynthDef and plays it. |
+| [`sampler`](crates/examples/sampler) | Implements a `BufferSource` that loads a checked-in WAV (filesystem natively, `fetch` on the web) and loops it with `PlayBuf`. |
+| [`stream`](crates/examples/stream) | Streams a WAV from storage in chunks via a `BufferStream`/`StreamFeeder` and plays it with `DiskIn`. |
+| [`waveforms`](crates/examples/waveforms) | Cycles through the oscillators (`Saw`/`Pulse`/`LFSaw`/`LFPulse`/`Impulse`) through a filter. |
+| [`operators`](crates/examples/operators) | A ring-modulated, soft-clipped bell tone built from `BinaryOpUGen`/`UnaryOpUGen` math operators (`midicps`, `midiratio`, ring modulation, `softclip`). |
+| [`filters`](crates/examples/filters) | A classic resonant low-pass sweep: a saw through an LFO-swept `RLPF` (one of the resonant biquads `RLPF`/`RHPF`/`BPF`/`BRF`/`Resonz`/`Ringz`). |
+| [`moog`](crates/examples/moog) | A resonant acid bassline: a saw through a `MoogFF` Moog-ladder filter with an LFO-swept cutoff and high feedback resonance (the filter additions `MoogFF`/`Formlet`/`MidEQ`/`SOS`/`Median`/`Lag2`/`Hilbert`/`FreqShift`). |
+| [`noise`](crates/examples/noise) | Metallic rain: `Dust2` impulses ring a `Ringz` resonator over a quiet `PinkNoise` bed (the noise family `WhiteNoise`/`ClipNoise`/`GrayNoise`/`PinkNoise`/`BrownNoise`/`Dust`/`Dust2`). |
+| [`wandering`](crates/examples/wandering) | A generative burble driven by the low-frequency/dynamic noise family: `LFNoise1` wanders the pitch, `LFNoise2` sweeps the filter, `LFDNoise3` shimmers the amplitude (`LFNoise0/1/2`/`LFClipNoise`/`LFDNoise0/1/3`/`LFDClipNoise`). |
+| [`sample-hold`](crates/examples/sample-hold) | A self-playing sample-and-hold sequence: an `Impulse` clock latches a pitch contour with `Latch` into a `Decay2`-plucked saw (the in-graph trigger units `Trig`/`Latch`/`Gate`/`ToggleFF`/`Stepper`/`Phasor`/...). |
+| [`auto-wah`](crates/examples/auto-wah) | An envelope-following auto-wah: a `PeakFollower` tracks a plucked source's amplitude and drives an `RLPF` cutoff (the signal-measurement units `Peak`/`RunningMin`/`RunningMax`/`PeakFollower`/`MostChange`/`LeastChange`/`LastValue`). |
+| [`scale-walk`](crates/examples/scale-walk) | A scale-quantised melodic walk: an `LFNoise1` indexes a scale buffer through `Index`, so a smooth wander always lands on in-scale notes (the selection/lookup units `Select`/`Index`/`IndexL`/`WrapIndex`/`FoldIndex`). |
+| [`bell`](crates/examples/bell) | Modal bell synthesis: an `Impulse` strikes a `Klank` bank of inharmonic resonators (tubular-bell ratios), ringing a struck-metal bell (the additive/modal banks `Klang`/`Klank`). |
+| [`wavetable`](crates/examples/wavetable) | A morphing wavetable drone: a `VOsc` sweeps its position through a bank of increasingly-bright wavetables, crossfading the timbre from a pure sine to a rich saw (the wavetable oscillators `Osc`/`OscN`/`COsc`/`VOsc`/`VOsc3`). |
+| [`vowel`](crates/examples/vowel) | A synthesized sung vowel: three `Formant` oscillators voice the formants of an "ah" over a vibrato'd fundamental, forming a vocal-like drone (`Formant`, alongside the batch's `SinOscFB`/`Blip`/`LFGauss`). |
+| [`granular`](crates/examples/granular) | A granular time-stretch: `Warp1` smears a short synthesized arpeggio into a slowly-morphing stereo pad, holding pitch while a slow pointer stretches time (the granular family `GrainSin`/`GrainFM`/`GrainIn`/`GrainBuf`/`TGrains`/`Warp1`). |
+| [`reverb`](crates/examples/reverb) | A cavernous space: two Karplus-Strong plucked strings on drifting clocks smear through a large `GVerb` FDN reverb (the delay/reverb family `BufDelay*`/`BufComb*`/`BufAllpass*`/`DelTapWr`/`DelTapRd`/`Pluck`/`PitchShift`/`FreeVerb`/`FreeVerb2`/`GVerb`). |
+| [`waveshaping`](crates/examples/waveshaping) | A wavefolder: a sine driven hard through `Fold` with an LFO-swept drive (the range shapers `Clip`/`Wrap`/`Fold`/`LinExp`/...). |
+| [`chaos`](crates/examples/chaos) | A chaotic drone: a `CuspN` oscillator through a resonant filter swept by a slow `LatoocarfianN` map (the chaotic generators `CuspN`/`QuadN`/`GbmanN`/`StandardN`/`LatoocarfianN`/`LinCongN`). |
+| [`hard-sync`](crates/examples/hard-sync) | A hard-sync lead: a `SyncSaw` whose saw frequency is swept by an LFO over a fixed pitch (the oscillators `LFTri`/`LFPar`/`LFCub`/`VarSaw`/`SyncSaw`/`FSinOsc`). |
+| [`bouncing-ball`](crates/examples/bouncing-ball) | Physical-model percussion: a `TBall` bouncing on an oscillating floor rings a `Ringz` resonator (the physical models `Spring`/`Ball`/`TBall`). |
+| [`comb-string`](crates/examples/comb-string) | Karplus-Strong plucked strings: periodic noise bursts excite a tuned `CombL` resonator (delay = one pitch period), diffused by an `AllpassC` (the recirculating delays `CombN/L/C`/`AllpassN/L/C` and interpolating `DelayL/C`). |
+| [`drunk-melody`](crates/examples/drunk-melody) | A self-driving drunk-walk melody: `Duty.kr` clocks a `Dibrown` integer random walk over MIDI notes (`midicps` + `Lag` glide), showcasing the generator demand sources `Dgeom`/`Diwhite`/`Dbrown`/`Dibrown`. |
+| [`pan`](crates/examples/pan) | A tone auto-panned across the stereo field with `Pan2`. |
+| [`envelope`](crates/examples/envelope) | Percussive plucks shaped by multi-segment `EnvGen` envelopes that free their own synths. |
+| [`osc`](crates/examples/osc) | Drives the engine through encoded SuperCollider OSC packets (no sockets) and prints the control commands and the replies/notifications that flow back. |
+| [`schedule`](crates/examples/schedule) | Sample-accurate rhythm: schedules time-tagged OSC bundles up front, each note onsetting on its exact sample via the engine's drift-corrected scheduler and `OffsetOut`. |
+| [`render`](crates/examples/render) | Offline (non-real-time) rendering: reads a binary OSC score and renders it to a WAV faster than real time and deterministically - plyphon's `scsynth -N`. |
 
 ## Building
 
@@ -76,7 +76,7 @@ wasm tooling) are provided by the Nix flake:
 nix develop                  # or `direnv allow` (uses ./.envrc)
 cargo build
 cargo test
-cargo run -p example-sine    # the simplest demo: a continuous sine
+cargo run --release -p example-sine    # the simplest demo: a continuous sine
 ```
 
 Each example is a `cargo run -p <name>` away - see the [Examples](#examples) table for the full set.
