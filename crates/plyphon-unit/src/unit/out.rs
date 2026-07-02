@@ -123,6 +123,71 @@ impl UnitDef for ReplaceOutCtor {
     }
 }
 
+/// `XOut.ar(bus, xfade, signals)` / `XOut.kr(...)`: crossfade each signal into a consecutive bus
+/// channel starting at `bus`, mixing with whatever earlier units wrote there this block -
+/// `bus = bus*(1-xfade) + signal*xfade`. Unlike [`ReplaceOut`] (which overwrites), `XOut` reads the
+/// current bus content, so `xfade = 0` leaves the bus unchanged and `xfade = 1` replaces it. The
+/// first writer of a channel this block clears it whole (as [`Out`] does) before crossfading, so
+/// the mix is always against this block's audio or silence - never stale prior-block audio,
+/// including each tick-slice under reblock/resample. `xfade` is read once per block
+/// (block-constant, matching plyphon's `Out`/pan convention).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct XOut {
+    /// `0`/`1`: whether this crossfades the audio or control bus bank.
+    audio: u32,
+}
+
+impl Unit for XOut {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // Needs at least `bus` and `xfade`.
+        if ctx.ins.len() < 2 {
+            return DoneAction::Nothing;
+        }
+        let base = ctx.ins.control(0) as usize;
+        let xfade = ctx.ins.control(1);
+        if self.audio != 0 {
+            let factor = ctx.resample_factor;
+            for k in 2..ctx.ins.len() {
+                let signal = ctx.ins.audio(k);
+                let out_samples = signal.len() / factor;
+                let offset = ctx.tick * out_samples;
+                unit::audio_crossfade(
+                    ctx.buses,
+                    ctx.buf_counter,
+                    base + (k - 2),
+                    offset,
+                    signal,
+                    factor,
+                    xfade,
+                );
+            }
+        } else {
+            for k in 2..ctx.ins.len() {
+                unit::control_crossfade(
+                    ctx.buses,
+                    ctx.buf_counter,
+                    base + (k - 2),
+                    ctx.ins.control(k),
+                    xfade,
+                );
+            }
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`XOut`].
+pub struct XOutCtor;
+
+impl UnitDef for XOutCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        Ok(unit_spec(XOut {
+            audio: (ctx.rate == Rate::Audio) as u32,
+        }))
+    }
+}
+
 /// `OffsetOut.ar(bus, signals)`: like [`Out`], but a synth created partway into a control block - by
 /// a scheduled, time-tagged command - has its whole output delayed by the creation offset, so it
 /// becomes audible at exactly the scheduled sample. plyphon's port of scsynth's `OffsetOut`.

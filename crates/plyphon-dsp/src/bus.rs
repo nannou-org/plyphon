@@ -150,6 +150,47 @@ impl AudioBus {
         }
     }
 
+    /// Crossfade `src` (decimated by `factor`) into channel `ch`'s samples `[offset, offset + len)`
+    /// for block `buf_counter`: `dst = dst*(1 - xfade) + src*xfade` - scsynth's `XOut`. The first
+    /// writer of the channel this block clears the **whole** channel before its own slice (exactly
+    /// as [`write_accumulate_decimated`](Self::write_accumulate_decimated) does), so a crossfade is
+    /// always against this block's audio or silence - never a prior block's - including every later
+    /// tick-slice under reblock. `offset == 0`, `factor == 1`, full-block `src` crossfades the whole
+    /// channel.
+    pub fn write_crossfade_decimated(
+        &mut self,
+        ch: usize,
+        buf_counter: u64,
+        offset: usize,
+        src: &[f32],
+        factor: usize,
+        xfade: f32,
+    ) {
+        if ch >= self.num_channels {
+            return;
+        }
+        let factor = factor.max(1);
+        let bs = self.block_size;
+        let first = self.touched[ch] != buf_counter;
+        self.touched[ch] = buf_counter;
+        let start = ch * bs;
+        let dst = &mut self.data[start..start + bs];
+        if first {
+            dst.fill(0.0);
+        }
+        let count = (src.len() / factor).min(bs.saturating_sub(offset));
+        if factor == 1 {
+            // The common (non-oversampled) case: a contiguous zip the compiler can vectorize.
+            for (d, &s) in dst[offset..offset + count].iter_mut().zip(src) {
+                *d = *d * (1.0 - xfade) + s * xfade;
+            }
+        } else {
+            for j in 0..count {
+                dst[offset + j] = dst[offset + j] * (1.0 - xfade) + src[j * factor] * xfade;
+            }
+        }
+    }
+
     /// Has channel `ch` been written during block `buf_counter`?
     pub fn is_touched(&self, ch: usize, buf_counter: u64) -> bool {
         self.touched[ch] == buf_counter
@@ -234,6 +275,22 @@ impl ControlBus {
             self.data[ch] = value;
             self.touched[ch] = buf_counter;
         }
+    }
+
+    /// Crossfade `value` into channel `ch` for block `buf_counter`: `ch = ch*(1-xfade) + value*xfade`
+    /// (scsynth's `XOut.kr`). The first writer of the channel this block treats the existing value as
+    /// zero (so it lands `value*xfade`) and marks the channel touched.
+    pub fn write_crossfade(&mut self, ch: usize, buf_counter: u64, value: f32, xfade: f32) {
+        if ch >= self.num_channels {
+            return;
+        }
+        let cur = if self.touched[ch] == buf_counter {
+            self.data[ch]
+        } else {
+            0.0
+        };
+        self.data[ch] = cur * (1.0 - xfade) + value * xfade;
+        self.touched[ch] = buf_counter;
     }
 
     /// Set channel `ch` to `value` (scsynth's `/c_set`): a persistent overwrite that does not mark

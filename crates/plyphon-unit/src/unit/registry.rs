@@ -86,7 +86,7 @@ use crate::unit::noise::{
     LogisticCtor, MantissaMaskCtor, PinkNoiseCtor, WhiteNoiseCtor,
 };
 use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
-use crate::unit::out::{OffsetOutCtor, OutCtor, ReplaceOutCtor};
+use crate::unit::out::{OffsetOutCtor, OutCtor, ReplaceOutCtor, XOutCtor};
 use crate::unit::pan::{
     Balance2Ctor, BiPanB2Ctor, DecodeB2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Pan4Ctor,
     PanAzCtor, PanB2Ctor, PanBCtor, Rotate2Ctor, XFade2Ctor,
@@ -215,6 +215,7 @@ impl UnitRegistry {
         registry.register("SinOsc", Box::new(SinOscCtor));
         registry.register("Out", Box::new(OutCtor));
         registry.register("ReplaceOut", Box::new(ReplaceOutCtor));
+        registry.register("XOut", Box::new(XOutCtor));
         registry.register("OffsetOut", Box::new(OffsetOutCtor));
         registry.register("In", Box::new(InCtor { feedback: false }));
         // The same unit with the touched check disabled: `InFeedback` reads a bus channel written

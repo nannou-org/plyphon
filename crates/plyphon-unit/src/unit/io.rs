@@ -74,6 +74,32 @@ pub fn audio_replace_decimated(
         .write_replace_decimated(ch, buf_counter, offset, src, factor);
 }
 
+/// Crossfade `src` (decimated by `factor`) into audio bus channel `ch` at sample `offset`:
+/// `dst = dst*(1-xfade) + src*xfade` (`XOut.ar`). The first writer of the block clears the whole
+/// channel first (as `Out` does), so the mix is against this block's audio or silence.
+/// `offset == 0`, `factor == 1` crossfades the whole channel. Out of range is a no-op.
+pub fn audio_crossfade(
+    buses: &mut Buses,
+    buf_counter: u64,
+    ch: usize,
+    offset: usize,
+    src: &[f32],
+    factor: usize,
+    xfade: f32,
+) {
+    buses
+        .audio_mut()
+        .write_crossfade_decimated(ch, buf_counter, offset, src, factor, xfade);
+}
+
+/// Crossfade `value` into control bus channel `ch`: `ch = ch*(1-xfade) + value*xfade` (`XOut.kr`).
+/// The first writer of the block treats the existing value as zero. Out of range is a no-op.
+pub fn control_crossfade(buses: &mut Buses, buf_counter: u64, ch: usize, value: f32, xfade: f32) {
+    buses
+        .control_mut()
+        .write_crossfade(ch, buf_counter, value, xfade);
+}
+
 /// Overwrite control bus channel `ch` with `value` for this block (`ReplaceOut.kr`). Out of range is
 /// a no-op.
 pub fn control_replace(buses: &mut Buses, buf_counter: u64, ch: usize, value: f32) {
