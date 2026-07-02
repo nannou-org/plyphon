@@ -1,8 +1,7 @@
-# The plyphon web demo (the default site that ships): every example built for cpal's AudioWorklet
+# The plyphon web demo (the site that ships): every example built for cpal's AudioWorklet
 # backend, which runs audio on a dedicated Web Audio thread via WASM threads (SharedArrayBuffer).
 # It needs a *nightly* toolchain (`-Z build-std` to recompile `std` with atomics) and the
-# shared-memory build flags from `wasm-threads-env.nix`. The legacy ScriptProcessor build is kept
-# as `plyphon-website-legacy` (stable, no cross-origin isolation needed) as a fallback.
+# shared-memory build flags from `wasm-threads-env.nix`.
 #
 # This is a plain `mkDerivation` rather than `buildRustPackage` because `-Z build-std` recompiles
 # `std` from the rust-src component, so `std`'s own crates.io deps must be vendored alongside the
@@ -19,7 +18,7 @@
   wasm-bindgen-cli,
 }:
 let
-  # Everything except build artifacts (mirrors pkgs/plyphon-website.nix).
+  # Everything except build artifacts (mirrors the src filter in pkgs/plyphon.nix).
   src = lib.cleanSourceWith {
     src = ../.;
     filter =
@@ -43,7 +42,7 @@ let
   stdDeps = rustPlatform.importCargoLock {
     lockFile = "${rustToolchainWasmNightly}/lib/rustlib/src/rust/library/Cargo.lock";
   };
-  cargoVendor = runCommand "plyphon-worklet-vendor" { } ''
+  cargoVendor = runCommand "plyphon-website-vendor" { } ''
     mkdir -p $out
     cp -r ${appDeps}/. $out/
     # Shared crate+version dirs are byte-identical, so skipping collisions is safe.
@@ -87,20 +86,19 @@ stdenv.mkDerivation (
     buildPhase = ''
       runHook preBuild
       mkdir -p $out
-      # Each example is its own wasm binary built to its own page under $out/<name>/. The worklet
-      # pages (web/worklet/*.html, generated from web/*.html by web/worklet/generate.sh) opt into
-      # cpal's `audioworklet` feature; the shared build flags (atomics + build-std) come from the
-      # derivation env below. The set is the worklet pages themselves, so a new example (added as a
-      # web/*.html page and regenerated) builds and links here automatically - no list to keep in sync.
-      for page in web/worklet/*.html; do
+      # Each example is its own wasm binary built to its own page under $out/<name>/. The example
+      # pages build on cpal's AudioWorklet backend; the shared build flags (atomics + build-std) come
+      # from the derivation env below. The set is the pages themselves, so a new example (added as a
+      # web/*.html page) builds and links here automatically - no list to keep in sync.
+      for page in web/*.html; do
         name=$(basename "$page" .html)
         [ "$name" = index ] && continue
-        trunk build --config Trunk.worklet.toml --release --dist $out/$name web/worklet/$name.html
+        trunk build --release --dist $out/$name web/$name.html
       done
 
       # Static landing page + stylesheet at the site root (a `trunk build --dist $out` would wipe
       # the example dirs). coi-serviceworker is copied next to each page by trunk.
-      cp web/worklet/index.html $out/index.html
+      cp web/index.html $out/index.html
       cp web/style.css $out/style.css
       runHook postBuild
     '';

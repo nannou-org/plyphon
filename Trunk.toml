@@ -1,10 +1,22 @@
-# The default `trunk build`/`trunk serve` target is the static landing page. To develop a single
-# example live, point trunk at its page instead: `trunk serve web/<name>.html`. The full multi-page
-# site (one wasm binary per example) is built by `nix build .#plyphon-website`.
+# Trunk config for the AudioWorklet web build (also used by pkgs/plyphon-website.nix). A post-build
+# hook prepends a TextEncoder/TextDecoder polyfill to the wasm-bindgen glue - cpal loads that glue on
+# the audio worklet thread, whose scope (notably in Firefox) lacks them.
+#
+# To develop a single example live, point trunk at its page: `trunk serve web/<name>.html` (from the
+# nightly `plyphon-web` dev shell). The full multi-page site is built by `nix build .#plyphon-website`.
 [build]
 target = "web/index.html"
 public_url = "./"
 filehash = false
+# The post-build hook below rewrites the wasm-bindgen glue (to add the TextEncoder/TextDecoder
+# polyfill) after Trunk computes subresource-integrity hashes, which would make the baked-in
+# `integrity` attributes mismatch and block loading. Disable SRI for this (same-origin) build.
+no_sri = true
+
+[[hooks]]
+stage = "post_build"
+command = "bash"
+command_arguments = ["web/prepend-polyfill.sh"]
 
 [serve]
 port = 8088
