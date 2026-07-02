@@ -153,7 +153,7 @@ impl Unit for DetectSilence {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let thresh = ctx.ins.control(Self::THRESH);
-        let end_counter = (ctx.audio.sample_rate as f32 * ctx.ins.control(Self::TIME)) as i32;
+        let end_counter = (ctx.own.sample_rate as f32 * ctx.ins.control(Self::TIME)) as i32;
         let input = sig(&ctx.ins, Self::IN);
         let mut counter = self.counter;
         let mut completed = false;

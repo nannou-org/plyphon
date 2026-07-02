@@ -300,7 +300,7 @@ impl Unit for Dust {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let density = ctx.ins.control(0);
-        let sample_dur = 1.0 / ctx.audio.sample_rate as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         let thresh = density * sample_dur;
         let scale = if thresh > 0.0 { 1.0 / thresh } else { 0.0 };
         let rng = &mut self.rng;
@@ -343,7 +343,7 @@ impl Unit for Dust2 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let density = ctx.ins.control(0);
-        let sample_dur = 1.0 / ctx.audio.sample_rate as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         let thresh = density * sample_dur;
         let scale = if thresh > 0.0 { 2.0 / thresh } else { 0.0 };
         let rng = &mut self.rng;
@@ -449,7 +449,7 @@ impl Unit for Logistic {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let param = ctx.ins.control(0) as f64;
         let freq = ctx.ins.control(1);
-        let sr = ctx.audio.sample_rate as f32;
+        let sr = ctx.own.sample_rate as f32;
         let audio = self.audio != 0;
         let mut y1 = self.y1;
         let mut counter = self.counter;

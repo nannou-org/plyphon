@@ -26,25 +26,6 @@ fn period(rate_sr: f32, freq: f32, floor: i32) -> i32 {
     ((rate_sr / freq.max(0.001)) as i32).max(floor)
 }
 
-/// The unit's own sample rate (audio rate for `.ar`, control rate for `.kr`), matching scsynth's
-/// `unit->mRate->mSampleRate`.
-fn rate_sr(ctx: &ProcessCtx<'_>, audio: bool) -> f32 {
-    if audio {
-        ctx.audio.sample_rate as f32
-    } else {
-        ctx.control.sample_rate as f32
-    }
-}
-
-/// The unit's own sample duration, matching scsynth's `SAMPLEDUR` (`unit->mRate->mSampleDur`).
-fn sample_dur(ctx: &ProcessCtx<'_>, audio: bool) -> f32 {
-    if audio {
-        ctx.audio.sample_dur as f32
-    } else {
-        ctx.control.sample_dur as f32
-    }
-}
-
 /// `LFNoise0.ar/kr(freq)`: a step of random values in `[-1, 1)`, a new value every `sr / freq`
 /// samples.
 #[repr(C)]
@@ -75,7 +56,7 @@ impl Unit for LFNoise0 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let freq = ctx.ins.control(0);
-        let sr = rate_sr(ctx, audio);
+        let sr = ctx.own.sample_rate as f32;
         drive(ctx, audio, |_| self.step(freq, sr));
         DoneAction::Nothing
     }
@@ -111,7 +92,7 @@ impl Unit for LFClipNoise {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let freq = ctx.ins.control(0);
-        let sr = rate_sr(ctx, audio);
+        let sr = ctx.own.sample_rate as f32;
         drive(ctx, audio, |_| self.step(freq, sr));
         DoneAction::Nothing
     }
@@ -153,7 +134,7 @@ impl Unit for LFNoise1 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let freq = ctx.ins.control(0);
-        let sr = rate_sr(ctx, audio);
+        let sr = ctx.own.sample_rate as f32;
         drive(ctx, audio, |_| self.step(freq, sr));
         DoneAction::Nothing
     }
@@ -207,7 +188,7 @@ impl Unit for LFNoise2 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let freq = ctx.ins.control(0);
-        let sr = rate_sr(ctx, audio);
+        let sr = ctx.own.sample_rate as f32;
         drive(ctx, audio, |_| self.step(freq, sr));
         DoneAction::Nothing
     }
@@ -244,7 +225,7 @@ impl Unit for LFDNoise0 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let freq = sig(&ctx.ins, 0);
-        let smpdur = sample_dur(ctx, audio);
+        let smpdur = ctx.own.sample_dur as f32;
         drive(ctx, audio, |i| self.step(freq.at(i), smpdur));
         DoneAction::Nothing
     }
@@ -280,7 +261,7 @@ impl Unit for LFDClipNoise {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let freq = sig(&ctx.ins, 0);
-        let smpdur = sample_dur(ctx, audio);
+        let smpdur = ctx.own.sample_dur as f32;
         drive(ctx, audio, |i| self.step(freq.at(i), smpdur));
         DoneAction::Nothing
     }
@@ -320,7 +301,7 @@ impl Unit for LFDNoise1 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let freq = sig(&ctx.ins, 0);
-        let smpdur = sample_dur(ctx, audio);
+        let smpdur = ctx.own.sample_dur as f32;
         drive(ctx, audio, |i| self.step(freq.at(i), smpdur));
         DoneAction::Nothing
     }
@@ -372,7 +353,7 @@ impl Unit for LFDNoise3 {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let freq = sig(&ctx.ins, 0);
-        let smpdur = sample_dur(ctx, audio);
+        let smpdur = ctx.own.sample_dur as f32;
         drive(ctx, audio, |i| self.step(freq.at(i), smpdur));
         DoneAction::Nothing
     }

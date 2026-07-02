@@ -86,7 +86,7 @@ impl Unit for Trig1 {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
         let dur = ctx.ins.control(1);
-        let sr = ctx.audio.sample_rate as f32;
+        let sr = ctx.own.sample_rate as f32;
         drive(ctx, audio_out, |i| self.step(trig.at(i), dur, sr));
         DoneAction::Nothing
     }
@@ -124,7 +124,7 @@ impl Unit for Trig {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
         let dur = ctx.ins.control(1);
-        let sr = ctx.audio.sample_rate as f32;
+        let sr = ctx.own.sample_rate as f32;
         drive(ctx, audio_out, |i| self.step(trig.at(i), dur, sr));
         DoneAction::Nothing
     }
@@ -163,7 +163,7 @@ impl Unit for TDelay {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
         let dur = ctx.ins.control(1);
-        let sr = ctx.audio.sample_rate as f32;
+        let sr = ctx.own.sample_rate as f32;
         drive(ctx, audio_out, |i| self.step(trig.at(i), dur, sr));
         DoneAction::Nothing
     }

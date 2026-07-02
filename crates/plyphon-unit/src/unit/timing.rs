@@ -170,7 +170,7 @@ impl Unit for ZeroCrossing {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let input = sig(&ctx.ins, 0);
-        let sr = ctx.audio.sample_rate as f32;
+        let sr = ctx.own.sample_rate as f32;
         drive(ctx, audio_out, |i| self.step(input.at(i), sr));
         DoneAction::Nothing
     }
@@ -205,7 +205,7 @@ impl Unit for Timer {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
-        let sample_dur = 1.0 / ctx.audio.sample_rate as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         drive(ctx, audio_out, |i| self.step(trig.at(i), sample_dur));
         DoneAction::Nothing
     }
@@ -240,7 +240,7 @@ impl Unit for Sweep {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
         let rate = sig(&ctx.ins, 1);
-        let sample_dur = 1.0 / ctx.audio.sample_rate as f32;
+        let sample_dur = ctx.own.sample_dur as f32;
         drive(ctx, audio_out, |i| {
             self.step(trig.at(i), rate.at(i), sample_dur)
         });
