@@ -43,10 +43,12 @@ impl Rng {
         self.s1 ^ self.s2 ^ self.s3
     }
 
-    /// A bipolar sample uniformly distributed in `[-1, 1)`.
+    /// A bipolar sample uniformly distributed in `[-1, 1)` - bit-exact with scsynth's
+    /// `RGen::frand2` (`0x40000000 | (trand() >> 9)` reinterpreted as a float in `[2, 4)`, minus
+    /// 3), so seeded noise renders match scsynth's under the same Taus88 state.
     #[inline]
     pub fn next_bipolar(&mut self) -> f32 {
-        (self.next_u32() as i32) as f32 * (1.0 / 2_147_483_648.0)
+        f32::from_bits(0x4000_0000 | (self.next_u32() >> 9)) - 3.0
     }
 
     /// A unipolar sample uniformly distributed in `[0, 1)` (scsynth's `RGen::frand`). Uses the top 23
@@ -95,5 +97,29 @@ mod tests {
         // Roughly zero-mean and clearly different streams for different seeds.
         assert!((sum / 10_000.0).abs() < 0.1);
         assert!(diff > 9_000);
+    }
+
+    #[test]
+    fn frand_bit_parity_with_scsynth() {
+        // `frand`/`frand2` must reproduce scsynth's mantissa bit-tricks exactly, so a seeded
+        // render matches scsynth's under the same Taus88 state.
+        let mut a = Rng::new(42);
+        for _ in 0..1_000 {
+            let mut word_rng = a; // `Rng` is `Copy`; peek the next word without advancing `a`.
+            let word = word_rng.next_u32();
+            let mut uni_rng = a;
+            let mut bi_rng = a;
+            assert_eq!(
+                uni_rng.next_unipolar().to_bits(),
+                (f32::from_bits(0x3F80_0000 | (word >> 9)) - 1.0).to_bits(),
+                "frand"
+            );
+            assert_eq!(
+                bi_rng.next_bipolar().to_bits(),
+                (f32::from_bits(0x4000_0000 | (word >> 9)) - 3.0).to_bits(),
+                "frand2"
+            );
+            a.next_u32();
+        }
     }
 }

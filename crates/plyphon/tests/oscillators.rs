@@ -64,6 +64,70 @@ fn render_osc(name: &str, inputs: Vec<InputRef>) -> Vec<f32> {
 }
 
 #[test]
+fn lfsaw_is_the_phase_from_iphase() {
+    // scsynth's LFSaw outputs the phase itself: iphase 0 starts at 0, ramps toward 1, wraps to -1
+    // (not a ramp starting at -1); iphase 1 starts at the -1 wrap point.
+    let hz = 46.875; // 1024 samples per cycle at 48 kHz
+    let out = render_osc(
+        "LFSaw",
+        vec![InputRef::Constant(hz), InputRef::Constant(0.0)],
+    );
+    assert!(
+        out[0].abs() < 1e-6,
+        "iphase 0 must start at 0, got {}",
+        out[0]
+    );
+    // Quarter cycle in: half way up the rise.
+    let q = out[256];
+    assert!(
+        (q - 0.5).abs() < 1e-3,
+        "quarter cycle should read 0.5, got {q}"
+    );
+    // Just past the half cycle: wrapped to the bottom of the ramp.
+    let w = out[513];
+    assert!(
+        (w + 1.0).abs() < 0.01,
+        "past the half cycle the ramp wraps to -1, got {w}"
+    );
+
+    let from_one = render_osc(
+        "LFSaw",
+        vec![InputRef::Constant(hz), InputRef::Constant(1.0)],
+    );
+    assert!(
+        (from_one[0] + 1.0).abs() < 1e-6,
+        "iphase 1 must start at -1, got {}",
+        from_one[0]
+    );
+}
+
+#[test]
+fn impulse_phase_offsets_the_first_fire() {
+    // Impulse(freq, 0.5) starts half way through its cycle: the first impulse lands half a period
+    // in, then every full period after.
+    let hz = 46.875; // 1024-sample period
+    let out = render_osc(
+        "Impulse",
+        vec![InputRef::Constant(hz), InputRef::Constant(0.5)],
+    );
+    let fires: Vec<usize> = out
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| **s > 0.5)
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        fires.first().copied(),
+        Some(512),
+        "first impulse should land half a period in"
+    );
+    assert!(
+        fires.windows(2).all(|w| w[1] - w[0] == 1024),
+        "impulses should then land every full period: {fires:?}"
+    );
+}
+
+#[test]
 fn oscillators_produce_their_fundamental() {
     let cases: [(&str, Vec<InputRef>); 5] = [
         ("LFSaw", vec![InputRef::Constant(FREQ)]),

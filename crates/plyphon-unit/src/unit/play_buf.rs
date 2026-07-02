@@ -5,11 +5,13 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, Inputs, Outputs, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::interp::cubicinterp;
 use plyphon_dsp::math;
 
 /// `PlayBuf.ar(numChannels, bufnum, rate, trigger, startPos, loop, doneAction)`: reads consecutive
 /// frames of buffer `bufnum`, one output per buffer channel, advancing the play head by `rate`
-/// frames per sample with linear interpolation. As in scsynth, `rate` is in buffer frames per server
+/// frames per sample with 4-point cubic interpolation (scsynth's `LOOP_BODY_4`). As in scsynth,
+/// `rate` is in buffer frames per server
 /// sample (multiply by a buffer-rate scale for natural-pitch playback of an off-rate buffer). On a
 /// rising `trigger` the head jumps to `startPos`; at the end it either wraps (`loop != 0`) or holds
 /// the last frame and fires `doneAction` once. Reading a missing buffer outputs silence.
@@ -84,16 +86,30 @@ impl Unit for PlayBuf {
         for i in 0..block {
             let floor = math::floor(self.phase);
             let frac = (self.phase - floor) as f32;
-            let i0 = floor as usize;
-            let i1 = if looping {
-                (i0 + 1) % frames
+            let i1 = floor as usize;
+            // 4-point cubic interpolation, scsynth's `LOOP_BODY_4`: taps wrap when looping, clamp
+            // to the buffer ends when not.
+            let (i0, i2, i3) = if looping {
+                (
+                    (i1 + frames - 1) % frames,
+                    (i1 + 1) % frames,
+                    (i1 + 2) % frames,
+                )
             } else {
-                (i0 + 1).min(frames - 1)
+                (
+                    i1.saturating_sub(1),
+                    (i1 + 1).min(frames - 1),
+                    (i1 + 2).min(frames - 1),
+                )
             };
             for ch in 0..self.num_channels as usize {
-                let a = buffer.sample(i0, ch);
-                let b = buffer.sample(i1, ch);
-                ctx.outs.audio(ch)[i] = a + (b - a) * frac;
+                ctx.outs.audio(ch)[i] = cubicinterp(
+                    frac,
+                    buffer.sample(i0, ch),
+                    buffer.sample(i1, ch),
+                    buffer.sample(i2, ch),
+                    buffer.sample(i3, ch),
+                );
             }
 
             self.phase += rate;

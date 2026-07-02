@@ -17,20 +17,45 @@ use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 
-/// `LFSaw.ar/kr(freq)`: a non-band-limited sawtooth ramping from -1 to 1 each cycle.
+/// `LFSaw.ar/kr(freq, iphase)`: a non-band-limited sawtooth. The output *is* the phase, ramping
+/// through `[-1, 1)` from `iphase` (scsynth's convention: `iphase` 0 starts at 0, rises to 1, wraps
+/// to -1 - not a ramp starting at -1).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFSaw {
-    phase: f32,
+    phase: f64,
+}
+
+impl LFSaw {
+    const FREQ: usize = 0;
+    const IPHASE: usize = 1;
 }
 
 impl Unit for LFSaw {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        // `iphase` is in cycles over `[0, 2)` (sclang's convention); map into the `[-1, 1)` ramp.
+        let iphase = if ctx.ins.len() > Self::IPHASE {
+            ctx.ins.control(Self::IPHASE) as f64
+        } else {
+            0.0
+        };
+        self.phase = math::rem_euclid(iphase + 1.0, 2.0) - 1.0;
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let inc = ctx.ins.control(0) * ctx.own.sample_dur as f32;
+        // scsynth's `mFreqMul`: 2 units of phase per cycle.
+        let inc = ctx.ins.control(Self::FREQ) as f64 * 2.0 * ctx.own.sample_dur;
+        let mut phase = self.phase;
         for o in ctx.outs.audio(0).iter_mut() {
-            *o = 2.0 * self.phase - 1.0;
-            self.phase = wrap(self.phase + inc);
+            *o = phase as f32;
+            phase += inc;
+            if phase >= 1.0 {
+                phase -= 2.0;
+            } else if phase <= -1.0 {
+                phase += 2.0;
+            }
         }
+        self.phase = phase;
         DoneAction::Nothing
     }
 }
@@ -45,30 +70,45 @@ impl UnitDef for LFSawCtor {
 }
 
 /// `LFPulse.ar/kr(freq, iphase, width)`: a non-band-limited pulse, output 0 or 1 with duty `width`
-/// (default 0.5). `iphase` is currently ignored.
+/// (default 0.5), starting `iphase` cycles into the waveform.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFPulse {
-    phase: f32,
+    phase: f64,
 }
 
 impl LFPulse {
     const FREQ: usize = 0;
+    const IPHASE: usize = 1;
     const WIDTH: usize = 2;
 }
 
 impl Unit for LFPulse {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        let iphase = if ctx.ins.len() > Self::IPHASE {
+            ctx.ins.control(Self::IPHASE) as f64
+        } else {
+            0.0
+        };
+        self.phase = math::rem_euclid(iphase, 1.0);
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let inc = ctx.ins.control(Self::FREQ) * ctx.own.sample_dur as f32;
+        let inc = ctx.ins.control(Self::FREQ) as f64 * ctx.own.sample_dur;
         let width = if ctx.ins.len() > Self::WIDTH {
             ctx.ins.control(Self::WIDTH)
         } else {
             0.5
-        };
+        } as f64;
+        let mut phase = self.phase;
         for o in ctx.outs.audio(0).iter_mut() {
-            *o = if self.phase < width { 1.0 } else { 0.0 };
-            self.phase = wrap(self.phase + inc);
+            *o = if phase < width { 1.0 } else { 0.0 };
+            phase += inc;
+            if phase >= 1.0 {
+                phase -= 1.0;
+            }
         }
+        self.phase = phase;
         DoneAction::Nothing
     }
 }
@@ -83,25 +123,45 @@ impl UnitDef for LFPulseCtor {
 }
 
 /// `Impulse.ar/kr(freq, phase)`: a single-sample impulse of 1.0 at the start of each period, 0
-/// otherwise. `phase` is currently ignored (it starts firing immediately).
+/// otherwise. `phase` is the starting phase in cycles: 0 (the default) fires immediately
+/// (scsynth special-cases it to 1), and e.g. 0.9 starts nine tenths through the cycle, firing
+/// after the remaining tenth.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Impulse {
-    phase: f32,
+    phase: f64,
+}
+
+impl Impulse {
+    const FREQ: usize = 0;
+    const PHASE: usize = 1;
 }
 
 impl Unit for Impulse {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        let iphase = if ctx.ins.len() > Self::PHASE {
+            ctx.ins.control(Self::PHASE) as f64
+        } else {
+            0.0
+        };
+        let p = math::rem_euclid(iphase, 1.0);
+        // Start at the cycle boundary when unphased, so the first sample is an impulse.
+        self.phase = if p == 0.0 { 1.0 } else { p };
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let inc = ctx.ins.control(0) * ctx.own.sample_dur as f32;
+        let inc = ctx.ins.control(Self::FREQ) as f64 * ctx.own.sample_dur;
+        let mut phase = self.phase;
         for o in ctx.outs.audio(0).iter_mut() {
-            if self.phase >= 1.0 {
-                self.phase -= 1.0;
+            if phase >= 1.0 {
+                phase -= 1.0;
                 *o = 1.0;
             } else {
                 *o = 0.0;
             }
-            self.phase += inc;
+            phase += inc;
         }
+        self.phase = phase;
         DoneAction::Nothing
     }
 }
@@ -111,7 +171,7 @@ pub struct ImpulseCtor;
 
 impl UnitDef for ImpulseCtor {
     fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        // Start at the cycle boundary so the first sample is an impulse.
+        // `init` seeds the phase; start at the cycle boundary for the un-phased default.
         Ok(unit_spec(Impulse { phase: 1.0 }))
     }
 }
@@ -431,17 +491,5 @@ fn read_input(ins: &crate::unit::Inputs<'_>, i: usize, default: f32) -> f32 {
         ins.control(i)
     } else {
         default
-    }
-}
-
-/// Wrap a phase into `[0, 1)` (assuming a single cycle's worth of drift at most).
-#[inline]
-fn wrap(phase: f32) -> f32 {
-    if phase >= 1.0 {
-        phase - 1.0
-    } else if phase < 0.0 {
-        phase + 1.0
-    } else {
-        phase
     }
 }

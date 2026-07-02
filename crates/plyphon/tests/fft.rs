@@ -47,6 +47,11 @@ fn goertzel(samples: &[f32], freq: f32) -> f32 {
 
 /// `SinOsc.ar(freq) * amp -> FFT(buf, _, 0.5, 0, 1, FFT_SIZE) -> IFFT(_, 0, FFT_SIZE) -> Out`.
 fn chain_def(freq: f32, amp: f32) -> SynthDef {
+    chain_def_winsize(freq, amp, FFT_SIZE as f32)
+}
+
+/// [`chain_def`] with an explicit `winsize` (0 = "use the chain buffer's size", sclang's default).
+fn chain_def_winsize(freq: f32, amp: f32, winsize: f32) -> SynthDef {
     SynthDef {
         name: "fft-chain".to_string(),
         params: vec![],
@@ -79,7 +84,7 @@ fn chain_def(freq: f32, amp: f32) -> SynthDef {
                     InputRef::Constant(0.5),
                     InputRef::Constant(0.0),
                     InputRef::Constant(1.0),
-                    InputRef::Constant(FFT_SIZE as f32),
+                    InputRef::Constant(winsize),
                 ],
                 1,
             ),
@@ -90,7 +95,7 @@ fn chain_def(freq: f32, amp: f32) -> SynthDef {
                 vec![
                     InputRef::Unit { unit: 2, output: 0 },
                     InputRef::Constant(0.0),
-                    InputRef::Constant(FFT_SIZE as f32),
+                    InputRef::Constant(winsize),
                 ],
                 1,
             ),
@@ -158,6 +163,29 @@ fn fft_ifft_reconstructs_a_sine() {
     assert!(
         (0.1..1.0).contains(&at),
         "reconstruction amplitude {at:.4} unreasonable for input amp {amp}"
+    );
+}
+
+#[test]
+fn fft_winsize_zero_resolves_from_the_chain_buffer() {
+    // sclang's FFT default passes winsize = 0 ("use the buffer size"); the chain must build and,
+    // once the FFT_SIZE chain buffer is installed, reconstruct the tone exactly as the explicit
+    // winsize does.
+    let bin = SR as f32 / FFT_SIZE as f32;
+    let freq = 20.0 * bin;
+    let (_c, mut world) = start(chain_def_winsize(freq, 0.5, 0.0));
+
+    let out = render(&mut world, 12_288);
+    let tail = &out[8_192..];
+    assert!(
+        tail.iter().any(|s| s.abs() > 0.05),
+        "winsize-0 resynthesis was silent"
+    );
+    let at = goertzel(tail, freq);
+    let off = goertzel(tail, freq * 2.0);
+    assert!(
+        at > 8.0 * off,
+        "expected {freq} Hz to dominate (at={at:.4}, off={off:.4})"
     );
 }
 

@@ -10,9 +10,11 @@
 //!
 //! Unlike scsynth - which `RTAlloc`s per-unit memory at the first call, when the chain buffer (hence
 //! the FFT size) is known - plyphon sizes a unit's `aux` at SynthDef-compile time. So the FFT size is
-//! taken from the **`winsize`** input, which must be a constant power of two in `[64, 16384]` (scsynth
-//! treats `winsize = 0` as "use the buffer size"); the chain buffer must be allocated to match. For the
-//! overlap-add to line up, `hop * fftsize` should be a whole number of control blocks.
+//! taken from the **`winsize`** input, a constant power of two in `[64, 16384]`; the chain buffer must
+//! be allocated to match. `winsize = 0` (sclang's default, "use the buffer size") is also accepted:
+//! the unit reserves aux for [`DEFAULT_MAX_FFT`] and resolves the actual size from the chain buffer at
+//! run time (idling silently until a suitably-sized buffer is installed), so stock `.scsyndef`s load.
+//! For the overlap-add to line up, `hop * fftsize` should be a whole number of control blocks.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -32,10 +34,13 @@ use plyphon_dsp::rate::Rate;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Fft {
-    /// FFT size (a supported power of two), baked from the constant `winsize` input.
+    /// FFT size (a supported power of two), baked from the constant `winsize` input; `0` until a
+    /// deferred (`winsize = 0`) size is resolved from the chain buffer at run time.
     fftsize: u32,
     /// Samples between frames, `round(hop * fftsize)`, baked from the constant `hop` input.
     hop_size: u32,
+    /// The `hop` fraction, kept so a deferred size can derive `hop_size` when it resolves.
+    hop_frac: f32,
     /// The window type code, baked from the constant `wintype` input.
     wintype: i32,
     /// Circular write head into the input ring.
@@ -44,6 +49,7 @@ pub struct Fft {
     counter: u32,
     /// `0` until the first block zeros the ring (the `aux` is not zeroed at instantiation).
     warmed: u32,
+    _pad: u32,
 }
 
 impl Fft {
@@ -57,11 +63,26 @@ impl Fft {
 
 impl Unit for Fft {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let n = self.fftsize as usize;
         let bs = ctx.audio.block_size;
         let ins = ctx.ins; // `Copy`; borrows the wires, not `ctx`.
         let bufnum = ins.control(Self::BUFFER).max(0.0) as usize;
         let active = ins.control(Self::ACTIVE) > 0.0;
+
+        // A deferred (`winsize = 0`) size resolves from the chain buffer once it is installed
+        // (scsynth reads the buffer size at first calc); until then the unit idles.
+        if self.fftsize == 0 {
+            match resolve_fftsize(ctx.buffers, bufnum) {
+                Some(n) => {
+                    self.fftsize = n as u32;
+                    self.hop_size = (math::floor(self.hop_frac * n as f32 + 0.5) as u32).max(1);
+                }
+                None => {
+                    *ctx.outs.control(0) = -1.0;
+                    return DoneAction::Nothing;
+                }
+            }
+        }
+        let n = self.fftsize as usize;
 
         let win = ctx
             .fft
@@ -71,7 +92,10 @@ impl Unit for Fft {
             aux.fill(0.0);
             self.warmed = 1;
         }
-        let (ring, windowed) = aux.split_at_mut(n);
+        // Trim the scratch to `n`: a deferred-size unit's aux reserves the runtime ceiling
+        // (`2 * DEFAULT_MAX_FFT >= 2 * n`), a baked one is exactly `2 * n`.
+        let (ring, rest) = aux.split_at_mut(n);
+        let windowed = &mut rest[..n];
 
         let mut out_val = -1.0f32;
         if active {
@@ -116,17 +140,20 @@ impl UnitDef for FftCtor {
         let hop_frac = ctx.const_input(Fft::HOP).unwrap_or(0.5);
         let hop_size = (math::floor((hop_frac * fftsize as f32) + 0.5) as u32).max(1);
         let wintype = ctx.const_input(Fft::WINTYPE).unwrap_or(0.0) as i32;
-        // aux = input ring + windowing scratch, both `fftsize` f32.
+        // aux = input ring + windowing scratch, both `fftsize` f32 (the runtime ceiling for a
+        // deferred `winsize = 0`).
         Ok(unit_spec_aux(
             Fft {
                 fftsize: fftsize as u32,
                 hop_size,
+                hop_frac,
                 wintype,
                 pos: 0,
                 counter: 0,
                 warmed: 0,
+                _pad: 0,
             },
-            2 * fftsize * core::mem::size_of::<f32>(),
+            2 * aux_fftsize(fftsize) * core::mem::size_of::<f32>(),
             core::mem::align_of::<f32>(),
         ))
     }
@@ -140,7 +167,8 @@ impl UnitDef for FftCtor {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Ifft {
-    /// FFT size, baked from the constant `winsize` input.
+    /// FFT size, baked from the constant `winsize` input; `0` until a deferred (`winsize = 0`)
+    /// size is resolved from the chain buffer at run time.
     fftsize: u32,
     /// The window type code, baked from the constant `wintype` input.
     wintype: i32,
@@ -158,9 +186,24 @@ impl Ifft {
 
 impl Unit for Ifft {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let n = self.fftsize as usize;
         let bs = ctx.audio.block_size;
         let fbufnum = ctx.ins.control(Self::BUFFER);
+
+        // A deferred (`winsize = 0`) size resolves from the first ready frame's chain buffer;
+        // until then the unit emits silence.
+        if self.fftsize == 0 {
+            match (fbufnum >= 0.0)
+                .then(|| resolve_fftsize(ctx.buffers, fbufnum as usize))
+                .flatten()
+            {
+                Some(n) => self.fftsize = n as u32,
+                None => {
+                    ctx.outs.audio(0).fill(0.0);
+                    return DoneAction::Nothing;
+                }
+            }
+        }
+        let n = self.fftsize as usize;
 
         let win = ctx
             .fft
@@ -170,7 +213,9 @@ impl Unit for Ifft {
             aux.fill(0.0);
             self.warmed = 1;
         }
-        let (ola, temp) = aux.split_at_mut(n);
+        // Trim the scratch to `n` (a deferred-size unit's aux reserves the runtime ceiling).
+        let (ola, rest) = aux.split_at_mut(n);
+        let temp = &mut rest[..n];
 
         // A ready frame (fbufnum >= 0): inverse-transform it and overlap-add into the ring at `pos`.
         if fbufnum >= 0.0 {
@@ -217,7 +262,7 @@ impl UnitDef for IfftCtor {
                 pos: 0,
                 warmed: 0,
             },
-            2 * fftsize * core::mem::size_of::<f32>(),
+            2 * aux_fftsize(fftsize) * core::mem::size_of::<f32>(),
             core::mem::align_of::<f32>(),
         ))
     }
@@ -233,13 +278,39 @@ fn sample_in(ins: &Inputs<'_>, i: usize, k: usize) -> f32 {
     }
 }
 
-/// The constant FFT size at input `winsize`, validated as a supported power of two.
+/// The largest FFT size a `winsize = 0` ("use the chain buffer's size", sclang's default) unit
+/// supports: its aux must be sized before the buffer is known, so it reserves `2 * this` samples
+/// and resolves the actual size from the buffer on the first frame. A def naming its `winsize`
+/// avoids the over-allocation and supports the full range.
+const DEFAULT_MAX_FFT: usize = 8192;
+
+/// The constant FFT size at input `winsize`, validated as a supported power of two. `0` - sclang's
+/// default, "use the chain buffer's size" - is accepted and resolved at run time (up to
+/// [`DEFAULT_MAX_FFT`]), since the buffer is not known at compile time.
 fn const_fftsize(ctx: &BuildContext<'_>, winsize: usize) -> Result<usize, BuildError> {
     let size = ctx
         .const_input(winsize)
         .ok_or(BuildError::AuxRequiresConstant { input: winsize })? as usize;
-    if !is_supported_size(size) {
+    if size != 0 && !is_supported_size(size) {
         return Err(BuildError::UnsupportedFftSize { size });
     }
     Ok(size)
+}
+
+/// The aux samples one ring/scratch region needs for a built `fftsize` (`0` reserves the runtime
+/// ceiling).
+fn aux_fftsize(fftsize: usize) -> usize {
+    if fftsize == 0 {
+        DEFAULT_MAX_FFT
+    } else {
+        fftsize
+    }
+}
+
+/// Resolve a deferred (`winsize = 0`) FFT size from the chain buffer's frame count: the buffer
+/// size, if it is a supported power of two within the reserved aux. `None` leaves the unit waiting
+/// (silent) until a suitably-sized buffer is installed.
+fn resolve_fftsize(buffers: &plyphon_dsp::buffer::BufferTable, bufnum: usize) -> Option<usize> {
+    let frames = unit::buffer_at(buffers, bufnum)?.num_frames();
+    (is_supported_size(frames) && frames <= DEFAULT_MAX_FFT).then_some(frames)
 }
