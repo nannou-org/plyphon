@@ -7,6 +7,7 @@ use crate::unit::io::sample_channel;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
+use plyphon_dsp::ops;
 use plyphon_dsp::rate::Rate;
 
 /// `ln(0.001)` - the decay target scsynth uses for its `-60 dB time` smoothing coefficients.
@@ -177,7 +178,7 @@ impl Unit for Lag {
                 *o = y;
             }
         }
-        self.y = y;
+        self.y = ops::zapgremlins(y);
         DoneAction::Nothing
     }
 }
@@ -243,8 +244,8 @@ impl Unit for Lag2 {
                 *o = y1b;
             }
         }
-        self.y1a = y1a;
-        self.y1b = y1b;
+        self.y1a = ops::zapgremlins(y1a);
+        self.y1b = ops::zapgremlins(y1b);
         DoneAction::Nothing
     }
 }
@@ -314,9 +315,9 @@ impl Unit for Lag3 {
                 *o = y1c;
             }
         }
-        self.y1a = y1a;
-        self.y1b = y1b;
-        self.y1c = y1c;
+        self.y1a = ops::zapgremlins(y1a);
+        self.y1b = ops::zapgremlins(y1b);
+        self.y1c = ops::zapgremlins(y1c);
         DoneAction::Nothing
     }
 }
@@ -390,7 +391,7 @@ impl Unit for LagUD {
                 *o = y1;
             }
         }
-        self.y1 = y1;
+        self.y1 = ops::zapgremlins(y1);
         DoneAction::Nothing
     }
 }
@@ -470,8 +471,8 @@ impl Unit for Lag2UD {
                 *o = y1b;
             }
         }
-        self.y1a = y1a;
-        self.y1b = y1b;
+        self.y1a = ops::zapgremlins(y1a);
+        self.y1b = ops::zapgremlins(y1b);
         DoneAction::Nothing
     }
 }
@@ -552,9 +553,9 @@ impl Unit for Lag3UD {
                 *o = lag3ud_step(&mut y1a, &mut y1b, &mut y1c, x, b1u, b1d);
             }
         }
-        self.y1a = y1a;
-        self.y1b = y1b;
-        self.y1c = y1c;
+        self.y1a = ops::zapgremlins(y1a);
+        self.y1b = ops::zapgremlins(y1b);
+        self.y1c = ops::zapgremlins(y1c);
         DoneAction::Nothing
     }
 }
@@ -659,7 +660,7 @@ impl Unit for Amplitude {
                 *o = prev;
             }
         }
-        self.prev = prev;
+        self.prev = ops::zapgremlins(prev);
         DoneAction::Nothing
     }
 }

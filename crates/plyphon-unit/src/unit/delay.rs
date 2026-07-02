@@ -28,6 +28,7 @@ use crate::unit::{
 };
 use plyphon_dsp::interp::{cubicinterp, lininterp};
 use plyphon_dsp::math;
+use plyphon_dsp::ops;
 use plyphon_dsp::rate::Rate;
 
 /// `ln(0.001)`, scsynth's `log001`, the decay a comb/allpass reaches over its `decaytime` (-60 dB).
@@ -204,6 +205,10 @@ fn delay_tick(
 /// One feedback (comb/allpass) sample: read the delayed value first, then write the recirculated
 /// input. A comb writes `x + feedbk * value` and outputs `value`; an allpass writes `x + feedbk *
 /// value` and outputs `value - feedbk * written`, cancelling the feed-forward path.
+///
+/// The recirculated write is zapped: on a decaying tail the whole line would otherwise fill with
+/// subnormals (scsynth is protected here by hardware flush-to-zero, which plyphon - notably on
+/// wasm - does not have).
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn feedback_tick(
@@ -220,11 +225,11 @@ fn feedback_tick(
 ) -> f32 {
     let value = read_delayed(buf, *iwrphase, mask, idsamp, frac, interp, warm);
     let out = if allpass {
-        let dwr = x + feedbk * value;
+        let dwr = ops::zapgremlins(x + feedbk * value);
         buf[(*iwrphase & mask) as usize] = dwr;
         value - feedbk * dwr
     } else {
-        buf[(*iwrphase & mask) as usize] = x + feedbk * value;
+        buf[(*iwrphase & mask) as usize] = ops::zapgremlins(x + feedbk * value);
         value
     };
     *iwrphase = iwrphase.wrapping_add(1);

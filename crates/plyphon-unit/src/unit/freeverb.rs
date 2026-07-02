@@ -17,6 +17,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec_aux};
+use plyphon_dsp::ops;
 use plyphon_dsp::rate::Rate;
 
 /// One bank's twelve line lengths: four series allpasses then eight parallel combs (the 44.1 kHz
@@ -65,7 +66,10 @@ fn process_bank(
         t[a] = buf[offsets[a] + iota[a] as usize];
     }
 
-    // Eight parallel damped combs; each delayed read R*_0 sums into the allpass input.
+    // Eight parallel damped combs; each delayed read R*_0 sums into the allpass input. The damper
+    // state is zapped: on a decaying tail both it and the recirculated line would otherwise fill
+    // with subnormals (scsynth is protected here by hardware flush-to-zero, which plyphon -
+    // notably on wasm - does not have).
     for cmb in 0..8 {
         let k = 4 + cmb;
         iota[k] += 1;
@@ -75,18 +79,19 @@ fn process_bank(
         let idx = offsets[k] + iota[k] as usize;
         let tc = buf[idx];
         let (re, ro) = (4 + 2 * cmb, 5 + 2 * cmb);
-        r0[ro] = damp1 * r0[re] + damp * r0[ro];
+        r0[ro] = ops::zapgremlins(damp1 * r0[re] + damp * r0[ro]);
         buf[idx] = scaled + feedback * r0[ro];
         r0[re] = tc;
     }
     let combsum = r0[4] + r0[6] + r0[8] + r0[10] + r0[12] + r0[14] + r0[16] + r0[18];
 
-    // Four series Schroeder allpasses (feedback 0.5); the last is fed by the comb sum.
-    buf[offsets[3] + iota[3] as usize] = 0.5 * r0[3] + combsum;
+    // Four series Schroeder allpasses (feedback 0.5); the last is fed by the comb sum. The
+    // recirculating writes are zapped like the combs' damper state above.
+    buf[offsets[3] + iota[3] as usize] = ops::zapgremlins(0.5 * r0[3] + combsum);
     r0[3] = t[3];
     r1[3] = r0[3] - combsum;
     for a in (0..3).rev() {
-        buf[offsets[a] + iota[a] as usize] = 0.5 * r0[a] + r1[a + 1];
+        buf[offsets[a] + iota[a] as usize] = ops::zapgremlins(0.5 * r0[a] + r1[a + 1]);
         r0[a] = t[a];
         r1[a] = r0[a] - r1[a + 1];
     }

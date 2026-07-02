@@ -465,6 +465,19 @@ pub fn wrap2(a: f32, b: f32) -> f32 {
     wrap(a, -b, b)
 }
 
+/// Flush denormals, NaNs and infinities to zero (scsynth's `zapgremlins`).
+///
+/// Applied to recursive `f32` state (one-pole followers, comb/allpass feedback) so a decaying tail
+/// snaps to exact zero instead of lingering in the subnormal range - a large CPU cliff on hosts
+/// without hardware flush-to-zero, and the only protection available on wasm, which mandates full
+/// subnormal arithmetic. scsynth pairs this with FTZ on the audio thread; plyphon relies on the
+/// zap alone, so every recursive `f32` path must apply it. (The `f64` filter state has its own
+/// twin in the unit crate; `f64` state at these thresholds never reaches subnormal range.)
+pub fn zapgremlins(x: f32) -> f32 {
+    let a = x.abs();
+    if a > 1e-15 && a < 1e15 { x } else { 0.0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
