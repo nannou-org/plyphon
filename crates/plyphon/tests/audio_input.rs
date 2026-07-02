@@ -87,3 +87,52 @@ fn in_ar_reads_hardware_input() {
         "expected the 440 Hz input at the output: m440={m440}, m880={m880}"
     );
 }
+
+#[test]
+fn fill_duplex_tolerates_short_input() {
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        block_size: BLOCK,
+        output_channels: 1,
+        input_channels: 1,
+        ..Options::default()
+    });
+    let thru = SynthDef {
+        name: "thru".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new("In", Rate::Audio, vec![InputRef::Constant(1.0)], 1),
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 0, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    };
+    controller.add_synthdef(thru);
+    controller
+        .synth_new("thru", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    world.fill(&mut [0.0f32; BLOCK], 1); // link the synth before the duplex call
+
+    // Fewer input frames than output frames in one call: the tail past the input must read as
+    // zero (not slice out of bounds). 100 frames of DC straddle a block boundary, so both the
+    // partial-block clamp (frames 64..100) and the empty clamp (128..) are exercised.
+    let out_frames = BLOCK * 3;
+    let in_frames = 100;
+    let input = vec![0.5f32; in_frames];
+    let mut out = vec![0.0f32; out_frames];
+    world.fill_duplex(&mut out, 1, &input, 1);
+
+    for (i, &s) in out.iter().enumerate() {
+        let expected = if i < in_frames { 0.5 } else { 0.0 };
+        assert!(
+            (s - expected).abs() < 1e-6,
+            "frame {i}: got {s}, expected {expected}"
+        );
+    }
+}

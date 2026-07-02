@@ -83,16 +83,26 @@ pub struct World {
     replies_tx: Producer<Reply>,
     triggers_tx: Producer<Trigger>,
     node_msgs_tx: Producer<NodeMsg>,
-    /// In-flight `/b_write` buffer copy-outs, advanced each block (pre-allocated to the buffer-table
-    /// size; one entry per buffer being snapshotted). Empty in the common case, so the per-block drive
-    /// is a no-op.
+    /// In-flight `/b_write` buffer copy-outs, advanced each block. Pre-allocated to the
+    /// buffer-table size, and `apply` refuses (trashes) a `/b_write` beyond that, so it never
+    /// reallocates at runtime. Empty in the common case, so the per-block drive is a no-op.
     pending_writes: Vec<BufferWriteOut>,
-    /// Freed items awaiting space in the trash ring (pre-allocated; never reallocates at runtime).
+    /// Freed items awaiting space in the trash ring. Pre-allocated to the provable worst case
+    /// while command intake is gated on an empty backlog (see `drain_commands`): one command's
+    /// largest burst (a `/clearSched` trashing every scheduled command) plus every box the
+    /// scheduler, the buffer-table slots, and the in-flight `/b_write` copies can hold - so it
+    /// never reallocates at runtime. Trash is never dropped here (that would free the `Box` on
+    /// the audio thread), so this backlog is retained, not capped.
     pending_trash: Vec<Trash>,
-    /// Events awaiting space in the events ring (pre-allocated; never reallocates at runtime).
+    /// Events awaiting space in the events ring (pre-allocated). Node notifications are
+    /// best-effort under a stalled NRT drain: beyond capacity the newest are dropped rather than
+    /// grown (scsynth's notification FIFO likewise drops when full), since events are generated
+    /// autonomously (self-freeing synths) even when no commands flow.
     pending_events: Vec<Event>,
-    /// Query answers awaiting space in the reply ring (pre-allocated; never reallocates at runtime).
-    /// A `VecDeque` so the FIFO order getters rely on survives a ring-full backlog.
+    /// Query answers awaiting space in the reply ring (pre-allocated; never reallocates at
+    /// runtime, since command intake is gated on this being empty and it is sized for the largest
+    /// single-block burst - a full `/g_queryTree` dump plus a full `/n_trace` dump). A `VecDeque`
+    /// so the FIFO order getters rely on survives a ring-full backlog.
     pending_replies: VecDeque<Reply>,
     /// Scratch the `/g_queryTree` walk fills before draining into the reply ring (pre-allocated).
     tree_scratch: Vec<Reply>,
@@ -189,9 +199,15 @@ impl World {
             triggers_tx,
             node_msgs_tx,
             pending_writes: Vec::with_capacity(options.max_buffers),
-            pending_trash: Vec::with_capacity(capacity),
+            // The provable bound on boxed items that can back up while intake is gated: one
+            // `/clearSched` burst (every scheduled command's box) + the scheduler refilling and
+            // draining once more + every buffer-table slot displaced + every in-flight `/b_write`
+            // recording completing.
+            pending_trash: Vec::with_capacity(2 * options.max_scheduled + 2 * options.max_buffers),
             pending_events: Vec::with_capacity(capacity),
-            pending_replies: VecDeque::with_capacity(tree_capacity),
+            // The largest single-block reply burst: a full `/g_queryTree` dump plus a full
+            // `/n_trace` dump can both land in the block that closes the intake gate.
+            pending_replies: VecDeque::with_capacity(2 * tree_capacity),
             tree_scratch: Vec::with_capacity(tree_capacity),
             trace_scratch: Vec::with_capacity(tree_capacity),
             trace_cap: tree_capacity,
@@ -280,7 +296,14 @@ impl World {
             if self.block_frames_emitted >= self.block_size {
                 if in_channels > 0 {
                     let avail = (frames - frame).min(self.block_size);
-                    let block_in = &input[frame * in_channels..(frame + avail) * in_channels];
+                    // Clamp to the input actually supplied: a host passing fewer input frames than
+                    // output frames deposits the short (possibly empty) tail - which `write_input`
+                    // zero-extends - rather than slicing out of bounds and panicking on the audio
+                    // thread.
+                    let in_frames = input.len().checked_div(in_channels).unwrap_or(0);
+                    let take = avail.min(in_frames.saturating_sub(frame));
+                    let offset = (frame * in_channels).min(input.len());
+                    let block_in = &input[offset..offset + take * in_channels];
                     self.buses.write_input(block_in, in_channels);
                 }
                 self.run_one_block();
@@ -481,10 +504,14 @@ impl World {
     /// offset 0.
     fn apply_due_scheduled(&mut self) {
         let deadline = self.clock.block_end();
-        while self
-            .scheduler
-            .next_time()
-            .is_some_and(|time| time <= deadline)
+        // Gated like `drain_commands`: while a backlog is stalled, due commands wait in the
+        // scheduler (bounded, already-owned) and apply late once the NRT drain recovers -
+        // degraded timing under a pathological stall, never a reallocation or a lost command.
+        while self.backlogs_flushed()
+            && self
+                .scheduler
+                .next_time()
+                .is_some_and(|time| time <= deadline)
         {
             let Some((time, command)) = self.scheduler.pop() else {
                 break;
@@ -526,7 +553,16 @@ impl World {
         self.flush_pending_trash();
         self.flush_pending_events();
         self.flush_pending_replies();
-        while let Ok(timed) = self.rx.pop() {
+        // Back-pressure: a trash or reply backlog that survived the flush means the NRT side is
+        // not draining its rings. Checked before *each* pop, so at most one command's burst can
+        // land in a backlog before intake stops; further commands stay in the (bounded) command
+        // ring, and once that fills the Controller sees `QueueFull` off the audio thread. This
+        // keeps the backlogs within their pre-allocated bounds - no reallocation here - at the
+        // cost of command latency while the NRT drain is stalled.
+        while self.backlogs_flushed() {
+            let Ok(timed) = self.rx.pop() else {
+                break;
+            };
             match timed.time {
                 CommandTime::Immediate => self.apply(timed.command),
                 // Hold a future command in the scheduler until its block. If the scheduler is full,
@@ -540,6 +576,13 @@ impl World {
                 }
             }
         }
+    }
+
+    /// Whether the trash and reply backlogs are empty, i.e. everything the NRT side must
+    /// eventually receive fits in its rings. While false, command intake pauses (see
+    /// `drain_commands`) so the backlogs stay within their pre-allocated bounds.
+    fn backlogs_flushed(&self) -> bool {
+        self.pending_trash.is_empty() && self.pending_replies.is_empty()
     }
 
     fn apply(&mut self, cmd: Command) {
@@ -624,12 +667,19 @@ impl World {
             Command::WriteBuffer { index, recording } => {
                 // Begin a copy-out without disturbing the slot: `drive_writes` copies the buffer's
                 // samples into `recording` over the following blocks (the buffer keeps serving RT
-                // readers). Pushes onto the pre-sized `pending_writes`; never replaces the buffer.
-                self.pending_writes.push(BufferWriteOut {
-                    src: index,
-                    recording,
-                    cursor: 0,
-                });
+                // readers); never replaces the buffer. `pending_writes` is pre-sized to the buffer
+                // table's slot count; at that many copies already in flight a further `/b_write` is
+                // refused - its recording trashed, which abandons the host's consumer so its drain
+                // terminates - rather than growing the Vec on the audio thread.
+                if self.pending_writes.len() < self.buffers.capacity() {
+                    self.pending_writes.push(BufferWriteOut {
+                        src: index,
+                        recording,
+                        cursor: 0,
+                    });
+                } else {
+                    self.trash(Trash::Recording(recording));
+                }
             }
             Command::SetBufferSample {
                 index,
@@ -973,19 +1023,26 @@ impl World {
             local_bytes,
             amap_bytes,
             lag_bytes,
-        ] = buf
-            .get_disjoint_mut([
-                layout.state.range(),
-                layout.demand_state.range(),
-                layout.aux.range(),
-                layout.control.range(),
-                layout.pmaps.range(),
-                layout.done_flags.range(),
-                layout.local.range(),
-                layout.amaps.range(),
-                layout.lag_state.range(),
-            ])
-            .expect("graph block layout spans are disjoint by construction");
+        ] = match buf.get_disjoint_mut([
+            layout.state.range(),
+            layout.demand_state.range(),
+            layout.aux.range(),
+            layout.control.range(),
+            layout.pmaps.range(),
+            layout.done_flags.range(),
+            layout.local.range(),
+            layout.amaps.range(),
+            layout.lag_state.range(),
+        ]) {
+            Ok(spans) => spans,
+            // Impossible for a compiler-produced layout, but fail this one `/s_new` (the caller
+            // emits `SynthFailed`) rather than panic on the audio thread - mirroring how
+            // `Graph::process` degrades on the same by-construction invariant.
+            Err(_) => {
+                self.pool.dealloc(region);
+                return None;
+            }
+        };
         state_arena.copy_from_slice(def.state_image());
         demand_state.copy_from_slice(def.demand_state_image());
         cast_slice_mut::<u8, f32>(ctrl_bytes).copy_from_slice(def.control_defaults());
@@ -1031,7 +1088,9 @@ impl World {
     }
 
     /// Route a freed `Box` back to the NRT side, retaining it for retry if the ring is full (never
-    /// dropped here on the audio thread).
+    /// dropped here on the audio thread). The backlog is pre-sized to the provable worst case
+    /// under the `drain_commands` intake gate, so this push never reallocates; were the bound ever
+    /// exceeded, reallocating is still preferred over dropping (freeing) the `Box` here.
     fn trash(&mut self, item: Trash) {
         if let Err(PushError::Full(item)) = self.trash_tx.push(item) {
             self.pending_trash.push(item);
@@ -1077,9 +1136,14 @@ impl World {
         }
     }
 
-    /// Send a notification to the NRT side, retaining it for retry if the ring is full.
+    /// Send a notification to the NRT side, retaining it for retry if the ring is full. Beyond
+    /// the backlog's pre-allocated capacity the event is dropped: notifications are generated
+    /// autonomously (a self-freeing synth emits `/n_end` with no command flowing), so no intake
+    /// gate can bound them - under a stalled NRT drain they are best-effort, as in scsynth.
     fn emit(&mut self, event: Event) {
-        if let Err(PushError::Full(event)) = self.events_tx.push(event) {
+        if let Err(PushError::Full(event)) = self.events_tx.push(event)
+            && self.pending_events.len() < self.pending_events.capacity()
+        {
             self.pending_events.push(event);
         }
     }

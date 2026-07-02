@@ -235,6 +235,70 @@ fn buffer_write_out_snapshots_the_whole_buffer() {
 }
 
 #[test]
+fn buffer_write_out_beyond_capacity_is_refused_not_grown() {
+    // A tiny buffer table so the in-flight copy-out cap (one per table slot) is easy to exceed.
+    let max_buffers = 4;
+    let (mut controller, mut nrt, mut world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 1,
+        max_buffers,
+        ..Options::default()
+    });
+    let frames = 1000;
+    let ramp: Vec<f32> = (0..frames).map(|f| f as f32).collect();
+    controller
+        .buffer_set(
+            0,
+            Box::new(Buffer::from_interleaved(ramp.clone(), 1, SR as f64)),
+        )
+        .unwrap();
+    world.fill(&mut [0.0f32; 64], 1);
+
+    // Cue twice as many copy-outs of the same buffer as the engine can hold in flight. The first
+    // `max_buffers` are accepted; the excess must be refused (trashed, abandoning the consumer)
+    // rather than growing `pending_writes` on the audio thread.
+    let mut consumers: Vec<_> = (0..max_buffers * 2)
+        .map(|_| {
+            controller
+                .buffer_write_out(0, 1, SR as f64, 64, 4)
+                .expect("cue the copy-out")
+        })
+        .collect();
+
+    // Drive every copy to its end, draining all consumers together (the refused ones finish
+    // immediately with no data once the trash drops).
+    let mut blk = [0.0f32; 64];
+    let mut got: Vec<Vec<f32>> = consumers.iter().map(|_| Vec::new()).collect();
+    for _ in 0..(frames + 256) {
+        world.fill(&mut blk, 1);
+        nrt.process();
+        for (consumer, out) in consumers.iter_mut().zip(&mut got) {
+            while let Some(chunk) = consumer.pop_filled() {
+                out.extend_from_slice(chunk.filled_samples());
+                consumer.recycle(chunk);
+            }
+        }
+        if consumers.iter().all(|c| c.is_finished()) {
+            break;
+        }
+    }
+    assert!(
+        consumers.iter().all(|c| c.is_finished()),
+        "every copy-out (accepted or refused) should terminate"
+    );
+    let full = got.iter().filter(|out| **out == ramp).count();
+    let empty = got.iter().filter(|out| out.is_empty()).count();
+    assert_eq!(
+        full, max_buffers,
+        "exactly the in-flight cap of copy-outs should complete in full"
+    );
+    assert_eq!(
+        empty, max_buffers,
+        "the excess copy-outs should be refused with no data"
+    );
+}
+
+#[test]
 fn buf_wr_writes_at_a_frame() {
     let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR as f64,
