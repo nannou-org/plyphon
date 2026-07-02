@@ -18,11 +18,11 @@ default-members = ["crates/plyphon-cli"]
 resolver = "3"
 
 [workspace.package]
-authors = ["mitchmindtree <mail@mitchellnordine.com>"]
+authors = ["nannou-org"]
 edition = "2024"
-homepage = "https://github.com/mitchmindtree/plyphon"
+homepage = "https://github.com/nannou-org/plyphon"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/mitchmindtree/plyphon"
+repository = "https://github.com/nannou-org/plyphon"
 
 [workspace.dependencies]
 # Internal crates. Default features (which include `std`) are disabled here so a dependent's

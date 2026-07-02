@@ -86,7 +86,7 @@ Each example is a `cargo run -p <name>` away - see the [Examples](#examples) tab
 Every example also runs in the browser - the same engine, compiled to `wasm32-unknown-unknown`. The
 web build is one site: a landing page linking to a page per example, each running that example's
 wasm. It is built by `nix build .#plyphon-website` and auto-deployed to
-[GitHub Pages](https://mitchmindtree.github.io/plyphon/) on every push to `main`.
+[GitHub Pages](https://nannou-org.github.io/plyphon/) on every push to `main`.
 
 ```console
 nix run .#serve-plyphon-website     # build the whole site and serve it on localhost:8088
@@ -106,7 +106,7 @@ plyphon is an early-stage research engine. That said, internals and OSC support
 should already be roughly on par with `scsynth`.
 
 ~1/3 UGens are yet to be ported (there's a LOT of them). See [this
-issue](https://github.com/mitchmindtree/plyphon/issues/4) for a living
+issue](https://github.com/nannou-org/plyphon/issues/4) for a living
 checklist.
 
 plyphon does *not* yet have a story for `.scx` plugin compatibility, though it

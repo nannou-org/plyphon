@@ -47,7 +47,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "An scsynth-compatible OSC synthesis server and offline renderer";
-    homepage = "https://github.com/mitchmindtree/plyphon";
+    homepage = "https://github.com/nannou-org/plyphon";
     license = lib.licenses.gpl3Plus;
     mainProgram = "plyphon";
   };
