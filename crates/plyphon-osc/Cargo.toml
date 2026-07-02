@@ -1,6 +1,6 @@
 [package]
 name = "plyphon-osc"
-version = "0.1.0"
+version = "0.1.1"
 description = "SuperCollider-compatible OSC command front-end for the plyphon engine."
 authors.workspace = true
 edition.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "plyphon"
-version = "0.1.0"
+version = "0.1.1"
 description = "A pure-Rust rewrite of SuperCollider's scsynth audio engine core."
 authors.workspace = true
 edition.workspace = true

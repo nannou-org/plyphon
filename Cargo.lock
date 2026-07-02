@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "plyphon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hashbrown",
  "plyphon-dsp",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "plyphon-buffers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "plyphon",
  "thiserror 2.0.18",
@@ -1472,7 +1472,7 @@ dependencies = [
 
 [[package]]
 name = "plyphon-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1498,7 +1498,7 @@ dependencies = [
 
 [[package]]
 name = "plyphon-osc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hashbrown",
  "plyphon",
@@ -1511,7 +1511,7 @@ dependencies = [
 
 [[package]]
 name = "plyphon-rt"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "hashbrown",
@@ -1523,7 +1523,7 @@ dependencies = [
 
 [[package]]
 name = "plyphon-unit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "hashbrown",
