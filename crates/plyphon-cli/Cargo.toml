@@ -1,6 +1,6 @@
 [package]
 name = "plyphon-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "An scsynth-compatible OSC synthesis server and offline renderer (the plyphon CLI)."
 authors.workspace = true
 edition.workspace = true
