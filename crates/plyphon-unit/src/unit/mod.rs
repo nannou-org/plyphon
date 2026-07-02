@@ -351,6 +351,12 @@ impl<'a> DoneState<'a> {
         *self.own = 1;
     }
 
+    /// Clear this unit's done flag (scsynth's `unit->mDone = false` on retrigger) - a retriggered
+    /// producer (e.g. `EnvGen` on a rising gate) is no longer done. Idempotent.
+    pub fn clear_done(&mut self) {
+        *self.own = 0;
+    }
+
     /// Whether calc unit `index` has finished (scsynth's `src->mDone`). Out of range reads `false`.
     pub fn is_done(&self, index: usize) -> bool {
         self.flags.get(index).is_some_and(|&flag| flag != 0)

@@ -5,8 +5,10 @@
 //! `initialLevel`, `numSegments`, `releaseNode`, `loopNode`, then four inputs per segment
 //! (`targetLevel`, `time`, `curveType`, `curveValue`). The generator walks the segments, shaping each
 //! by its curve; with a release node it sustains there until `gate` falls, then plays the remaining
-//! segments and fires its `doneAction`. Looping (`loopNode`) and gate retriggering are not yet
-//! handled.
+//! segments and fires its `doneAction`. The gate follows scsynth's `check_gate`: rising retriggers
+//! from the current level, `<= 0` releases, `<= -1` force-releases over `|gate| - 1` seconds. The
+//! gate is read once per block (audio-rate gates are block-quantised); looping (`loopNode`) is not
+//! yet handled.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -122,12 +124,44 @@ impl Unit for EnvGen {
             self.started = 1;
         }
 
-        // A falling gate begins the release phase: jump straight to the release segment (the segment
-        // leaving the release node), ramping down from wherever the envelope currently sits. Matches
-        // scsynth, where `check_gate` sets the stage to `releaseNode - 1` and the next step advances
-        // it to `releaseNode`.
-        if self.prev_gate >= 0.5
-            && gate < 0.5
+        // scsynth's `check_gate`, evaluated once per block (the gate is read at control rate;
+        // per-sample audio-rate gate checking is not modelled):
+        //
+        // 1. A rising gate (`<= 0` to `> 0`) *retriggers*: restart at segment 0 ramping from the
+        //    current level (no jump), clearing done-ness so a fresh done action can fire.
+        // 2. A gate falling to `<= -1` *force-releases*: a synthesized linear segment from the
+        //    current level to the envelope's final level over `|gate| - 1` seconds (unscaled by
+        //    `timeScale`, as in scsynth), regardless of the release node.
+        // 3. A gate falling to `<= 0` begins the normal release: jump straight to the release
+        //    segment (the segment leaving the release node), ramping down from wherever the
+        //    envelope currently sits (scsynth sets the stage to `releaseNode - 1` and the next
+        //    step advances it).
+        if self.prev_gate <= 0.0 && gate > 0.0 {
+            if num_segments > 0 {
+                self.load_segment(&ctx.ins, 0, sample_rate, time_scale);
+                self.phase = phase::ATTACK;
+                self.fired = 0;
+                ctx.done.clear_done();
+            }
+        } else if gate <= -1.0
+            && self.prev_gate > -1.0
+            && matches!(self.phase, phase::ATTACK | phase::SUSTAIN)
+        {
+            let final_level = if num_segments > 0 {
+                self.segment(&ctx.ins, num_segments - 1).0
+            } else {
+                self.level
+            };
+            self.seg = num_segments as u32; // past the last segment: completion goes to DONE
+            self.seg_start = self.level;
+            self.seg_end = final_level;
+            self.seg_dur = ((-gate - 1.0) as f64 * sample_rate).max(1.0);
+            self.seg_curve = 1; // linear
+            self.seg_curve_value = 0.0;
+            self.pos = 0.0;
+            self.phase = phase::RELEASE;
+        } else if self.prev_gate > 0.0
+            && gate <= 0.0
             && release_node >= 0
             && matches!(self.phase, phase::ATTACK | phase::SUSTAIN)
         {
@@ -224,11 +258,12 @@ fn get(ins: &Inputs<'_>, i: usize) -> f32 {
 
 /// Interpolate `start`..`end` at fraction `t` per a scsynth envelope curve type.
 fn shape(curve: i32, curve_value: f64, start: f64, end: f64, t: f64) -> f64 {
-    use core::f64::consts::PI;
+    use core::f64::consts::{FRAC_PI_2, PI};
     match curve {
         0 => {
-            // Step: hold the start, jump to the target at the end.
-            if t >= 1.0 { end } else { start }
+            // Step: the whole segment sits at the target (the jump happens at segment start) -
+            // scsynth's `shape_Step`.
+            end
         }
         2 => {
             // Exponential: a ratio sweep, with a small floor so a 0 endpoint stays finite.
@@ -248,6 +283,14 @@ fn shape(curve: i32, curve_value: f64, start: f64, end: f64, t: f64) -> f64 {
             // Sine: an ease-in-out S-curve.
             start + (end - start) * (0.5 - 0.5 * math::cos(PI * t))
         }
+        4 => {
+            // Welch: a quarter sine - convex rising, concave falling (scsynth's `shape_Welch`).
+            if start <= end {
+                start + (end - start) * math::sin(FRAC_PI_2 * t)
+            } else {
+                end - (end - start) * math::sin(FRAC_PI_2 - FRAC_PI_2 * t)
+            }
+        }
         5 => {
             // Custom curvature: `curve_value` 0 is linear, >0 eases out, <0 eases in.
             if curve_value.abs() < 0.001 {
@@ -257,6 +300,26 @@ fn shape(curve: i32, curve_value: f64, start: f64, end: f64, t: f64) -> f64 {
                     + (end - start) * (1.0 - math::exp(t * curve_value))
                         / (1.0 - math::exp(curve_value))
             }
+        }
+        6 => {
+            // Squared: linear in sqrt space (scsynth's `shape_Squared`).
+            let y1 = math::sqrt(start);
+            let y2 = math::sqrt(end);
+            let y = y1 + (y2 - y1) * t;
+            y * y
+        }
+        7 => {
+            // Cubed: linear in cube-root space (scsynth's `shape_Cubed`, which likewise takes
+            // `pow(level, 1/3)` - NaN for a negative level, as in scsynth).
+            let y1 = math::powf(start, 1.0 / 3.0);
+            let y2 = math::powf(end, 1.0 / 3.0);
+            let y = y1 + (y2 - y1) * t;
+            y * y * y
+        }
+        8 => {
+            // Hold: keep the start for the whole segment, jumping to the target at the end
+            // (scsynth's `shape_Hold`).
+            if t >= 1.0 { end } else { start }
         }
         // Linear (1) and anything unsupported.
         _ => start + (end - start) * t,
