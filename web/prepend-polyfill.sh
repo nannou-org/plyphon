@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Trunk post-build hook (see Trunk.worklet.toml): prepend the TextEncoder/TextDecoder polyfill to
+# Trunk post-build hook (see Trunk.toml): prepend the TextEncoder/TextDecoder polyfill to
 # the wasm-bindgen JS glue so it can load on the AudioWorklet thread (whose scope lacks them). The
 # glue is identified by its `initSync` export; a marker keeps the hook idempotent.
 set -euo pipefail

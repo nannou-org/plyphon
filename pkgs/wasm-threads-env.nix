@@ -9,7 +9,7 @@
 # worklet can be handed the *same* memory, and the `__tls_*` exports let wasm-bindgen's threading
 # transform set up per-thread state (without them it fails with "failed to find `__heap_base`").
 #
-# Shared by `pkgs/plyphon-website-worklet.nix` and the `plyphon-web` dev shell so the flags can't
+# Shared by `pkgs/plyphon-website.nix` and the `plyphon-web` dev shell so the flags can't
 # drift between the Nix build and local `trunk serve`.
 {
   RUSTFLAGS = builtins.concatStringsSep " " [

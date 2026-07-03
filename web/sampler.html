@@ -6,7 +6,9 @@
     <link rel="icon" href="data:," />
     <title>plyphon: sampler</title>
     <!-- Install the AudioContext-resume proxy before trunk's wasm module runs. -->
+    <script src="coi-serviceworker.min.js"></script>
     <script src="audio.js"></script>
+    <link data-trunk rel="copy-file" href="coi-serviceworker.min.js" />
     <link data-trunk rel="copy-file" href="audio.js" />
     <link data-trunk rel="copy-file" href="style.css" />
     <link rel="stylesheet" href="style.css" />
@@ -18,7 +20,7 @@
       data-bin="example-sampler"
       data-cargo-profile-release="wasm_release"
       data-wasm-opt="z"
-      data-wasm-opt-params="--enable-bulk-memory --enable-reference-types --enable-multivalue --enable-tail-call --enable-nontrapping-float-to-int"
+      data-wasm-opt-params="--enable-simd --enable-threads --enable-bulk-memory --enable-mutable-globals --enable-reference-types --enable-multivalue --enable-tail-call --enable-nontrapping-float-to-int"
       data-initializer="initializer.js"
     />
   </head>
