@@ -42,6 +42,33 @@ use plyphon_unit::unit::registry::UnitRegistry;
 #[error("command queue full")]
 pub struct QueueFull;
 
+/// A control command eligible for all-or-none batch submission via
+/// [`Controller::try_send_batch`].
+///
+/// The batch surface is deliberately restricted to the two commands an
+/// activation transition needs — freeing a superseded node and writing a
+/// control value — so a batch can never smuggle arbitrary real-time state
+/// changes across the ring. Each variant maps one-to-one to the corresponding
+/// single-command method ([`Controller::free`], [`Controller::set_control`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ControllerBatchCommand {
+    /// Free node `node` (deeply for a group), as [`Controller::free`].
+    FreeNode {
+        /// The node id to free.
+        node: i32,
+    },
+    /// Set control parameter `param` of node `node` to `value`, as
+    /// [`Controller::set_control`].
+    SetControl {
+        /// The target node id.
+        node: i32,
+        /// The control parameter index on `node`.
+        param: usize,
+        /// The value to write.
+        value: f32,
+    },
+}
+
 /// Failure to create a new synth.
 #[derive(Debug, Error)]
 pub enum SynthNewError {
@@ -467,6 +494,37 @@ impl Controller {
         self.send(Command::FreeNode { node })
     }
 
+    /// Enqueue `commands` all-or-none.
+    ///
+    /// If the command ring has room for the whole slice, every command is pushed
+    /// in order (at the controller's current schedule time) and `Ok(())` is
+    /// returned; otherwise nothing is enqueued and [`QueueFull`] is returned. The
+    /// ring capacity is checked once up front with [`Producer::slots`], which is a
+    /// conservative lower bound (the consumer only frees slots), so a successful
+    /// preflight guarantees every subsequent push succeeds.
+    ///
+    /// This lets a caller submit an activation transition — a set of old-node
+    /// frees followed by new-node control writes — as one atomic unit the RT side
+    /// drains within a single block, with no partial application under
+    /// backpressure. On [`QueueFull`] the caller can retry the whole batch on a
+    /// later block.
+    pub fn try_send_batch(&mut self, commands: &[ControllerBatchCommand]) -> Result<(), QueueFull> {
+        if self.tx.slots() < commands.len() {
+            return Err(QueueFull);
+        }
+        for command in commands {
+            let command = match *command {
+                ControllerBatchCommand::FreeNode { node } => Command::FreeNode { node },
+                ControllerBatchCommand::SetControl { node, param, value } => {
+                    Command::SetControl { node, param, value }
+                }
+            };
+            // Slot availability was preflighted above, so this push cannot fail.
+            self.send(command)?;
+        }
+        Ok(())
+    }
+
     /// Move node `node` to `target`/`action` (scsynth's `/g_head`, `/g_tail`, `/n_before`,
     /// `/n_after`).
     pub fn move_node(
@@ -794,5 +852,119 @@ impl Controller {
     /// the dispatcher routes to a host text sink; a group or unknown id is a no-op.
     pub fn trace_node(&mut self, node: i32) -> Result<(), QueueFull> {
         self.send_now(Command::TraceNode { node })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rtrb::{Consumer, RingBuffer};
+
+    /// Build a controller wired to a ring of the given capacity, returning the
+    /// consumer end so a test can observe exactly what crossed to the RT side.
+    fn test_controller(capacity: usize) -> (Controller, Consumer<TimedCommand>) {
+        let options = Options::default();
+        let audio = RateInfo::new(options.sample_rate, options.block_size);
+        let control = RateInfo::new(options.sample_rate / options.block_size as f64, 1);
+        let (tx, rx) = RingBuffer::<TimedCommand>::new(capacity);
+        (Controller::new(&options, audio, control, tx), rx)
+    }
+
+    #[test]
+    fn try_send_batch_enqueues_all_or_none() {
+        let (mut controller, mut rx) = test_controller(2);
+
+        // A batch larger than the ring capacity: nothing is enqueued.
+        let too_big = [
+            ControllerBatchCommand::FreeNode { node: 1000 },
+            ControllerBatchCommand::SetControl {
+                node: 1001,
+                param: 0,
+                value: 1.0,
+            },
+            ControllerBatchCommand::SetControl {
+                node: 1001,
+                param: 1,
+                value: 2.0,
+            },
+        ];
+        assert_eq!(controller.try_send_batch(&too_big), Err(QueueFull));
+        assert!(
+            rx.pop().is_err(),
+            "no command should have been enqueued on QueueFull"
+        );
+
+        // A batch that fits: every command is enqueued, in order.
+        let batch = [
+            ControllerBatchCommand::FreeNode { node: 1000 },
+            ControllerBatchCommand::SetControl {
+                node: 1001,
+                param: 3,
+                value: 0.5,
+            },
+        ];
+        assert_eq!(controller.try_send_batch(&batch), Ok(()));
+        match rx.pop().expect("first command present").command {
+            Command::FreeNode { node } => assert_eq!(node, 1000),
+            _ => panic!("expected FreeNode first"),
+        }
+        match rx.pop().expect("second command present").command {
+            Command::SetControl { node, param, value } => {
+                assert_eq!((node, param, value), (1001, 3, 0.5));
+            }
+            _ => panic!("expected SetControl second"),
+        }
+        assert!(
+            rx.pop().is_err(),
+            "ring should be empty after draining the batch"
+        );
+    }
+
+    #[test]
+    fn try_send_batch_partial_fit_enqueues_nothing() {
+        let (mut controller, mut rx) = test_controller(3);
+
+        // Consume two of the three slots with an accepted batch.
+        let seed = [
+            ControllerBatchCommand::FreeNode { node: 1000 },
+            ControllerBatchCommand::FreeNode { node: 1001 },
+        ];
+        assert_eq!(controller.try_send_batch(&seed), Ok(()));
+
+        // Only one slot remains; a two-command batch must not partially apply.
+        let overflow = [
+            ControllerBatchCommand::SetControl {
+                node: 1002,
+                param: 0,
+                value: 1.0,
+            },
+            ControllerBatchCommand::SetControl {
+                node: 1002,
+                param: 1,
+                value: 2.0,
+            },
+        ];
+        assert_eq!(controller.try_send_batch(&overflow), Err(QueueFull));
+
+        // Exactly the two seed commands are present; the overflow batch left no trace.
+        assert!(matches!(
+            rx.pop().unwrap().command,
+            Command::FreeNode { node: 1000 }
+        ));
+        assert!(matches!(
+            rx.pop().unwrap().command,
+            Command::FreeNode { node: 1001 }
+        ));
+        assert!(
+            rx.pop().is_err(),
+            "no partial overflow command should be enqueued"
+        );
+    }
+
+    #[test]
+    fn try_send_batch_empty_is_ok_noop() {
+        let (mut controller, mut rx) = test_controller(2);
+        assert_eq!(controller.try_send_batch(&[]), Ok(()));
+        assert!(rx.pop().is_err(), "an empty batch enqueues nothing");
     }
 }
