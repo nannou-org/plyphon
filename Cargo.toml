@@ -29,10 +29,10 @@ repository = "https://github.com/nannou-org/plyphon"
 # own `std` feature drives the whole graph: cargo forbids a member from disabling an inherited
 # dependency's default features, so the toggle has to live at the workspace level. Crates that
 # want `std` (the library crates by default, and every example) re-enable it via `<crate>/std`.
-plyphon = { version = "0.1.1", path = "crates/plyphon", default-features = false }
-plyphon-buffers = { version = "0.1.1", path = "crates/plyphon-buffers", default-features = false }
+plyphon = { version = "0.1.2", path = "crates/plyphon", default-features = false }
+plyphon-buffers = { version = "0.1.2", path = "crates/plyphon-buffers", default-features = false }
 plyphon-dsp = { version = "0.1.0", path = "crates/plyphon-dsp", default-features = false }
-plyphon-osc = { version = "0.1.1", path = "crates/plyphon-osc", default-features = false }
+plyphon-osc = { version = "0.1.2", path = "crates/plyphon-osc", default-features = false }
 plyphon-rt = { version = "0.1.1", path = "crates/plyphon-rt", default-features = false }
 plyphon-unit = { version = "0.1.1", path = "crates/plyphon-unit", default-features = false }
 rt-alloc = { version = "0.1.0", path = "crates/rt-alloc" }
