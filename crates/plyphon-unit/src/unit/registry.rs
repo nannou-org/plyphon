@@ -44,7 +44,7 @@ use crate::unit::disk_in::DiskInCtor;
 use crate::unit::disk_out::DiskOutCtor;
 use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor, LookAheadCtor, LookAheadMode};
 use crate::unit::env::EnvGenCtor;
-use crate::unit::eq::{FormletCtor, MidEQCtor};
+use crate::unit::eq::{BeqCtor, BeqKind, FormletCtor, MidEQCtor};
 #[cfg(feature = "fft")]
 use crate::unit::fft::{FftCtor, IfftCtor};
 use crate::unit::filter::{ButterCtor, Kind};
@@ -277,6 +277,13 @@ impl UnitRegistry {
         // Explicit-coefficient sections (the `B*` EQ macros feed these).
         registry.register("FOS", Box::new(FOSCtor));
         registry.register("SOS", Box::new(SOSCtor));
+        // BEQSuite RBJ biquads (one kernel, response selected per name).
+        registry.register("BLowPass", Box::new(BeqCtor(BeqKind::LowPass)));
+        registry.register("BHiPass", Box::new(BeqCtor(BeqKind::HighPass)));
+        registry.register("BBandPass", Box::new(BeqCtor(BeqKind::BandPass)));
+        registry.register("BPeakEQ", Box::new(BeqCtor(BeqKind::PeakEQ)));
+        registry.register("BLowShelf", Box::new(BeqCtor(BeqKind::LowShelf)));
+        registry.register("BHiShelf", Box::new(BeqCtor(BeqKind::HighShelf)));
         // Delay lines: plain (Delay*) and recirculating (Comb*/Allpass*), sharing one read kernel.
         registry.register("DelayN", Box::new(DelayCtor(Interp::None)));
         registry.register("DelayL", Box::new(DelayCtor(Interp::Lin)));
