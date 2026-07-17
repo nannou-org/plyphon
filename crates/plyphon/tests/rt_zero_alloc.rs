@@ -1,7 +1,10 @@
 //! Allocator-instrumented coverage for initialized creation and critical lifecycle emission.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use plyphon::{
     AddAction, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine,
@@ -11,6 +14,8 @@ use plyphon::{
 static TRACKING: AtomicBool = AtomicBool::new(false);
 /// Number of allocation/reallocation calls observed while [`TRACKING`] was enabled.
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+/// Serializes tests that share the process-global allocator counters.
+static MEASUREMENT_LOCK: Mutex<()> = Mutex::new(());
 
 /// System allocator wrapper used only by this integration-test executable.
 struct CountingAllocator;
@@ -82,6 +87,9 @@ fn idle_def() -> SynthDef {
 /// The measured RT call allocates a seeded synth and emits start/end without system allocation.
 #[test]
 fn initialized_create_and_critical_lifecycle_paths_are_rt_zero_alloc() {
+    let _measurement = MEASUREMENT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let (mut controller, _nrt, mut world) = engine(Options {
         block_size: 64,
         output_channels: 1,
@@ -112,6 +120,9 @@ fn initialized_create_and_critical_lifecycle_paths_are_rt_zero_alloc() {
 /// saturates its independent ring, without spilling either RT-side queue onto the heap.
 #[test]
 fn stalled_nrt_preserves_combined_four_m_wave_with_advisory_flood_without_rt_alloc() {
+    let _measurement = MEASUREMENT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     const MAX_NODES: usize = 8;
     const CRITICAL_CAPACITY: usize = 4 * MAX_NODES;
     const MISSING_TARGET: i32 = 999_999;
