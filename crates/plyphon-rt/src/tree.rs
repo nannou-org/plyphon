@@ -147,6 +147,9 @@ impl NodeTree {
         target: i32,
         action: AddAction,
     ) -> Result<(), Graph> {
+        if self.id_map.contains_key(&id) {
+            return Err(graph);
+        }
         let placement = match self.resolve_placement(target, action) {
             Some(p) => p,
             None => return Err(graph),
@@ -206,6 +209,9 @@ impl NodeTree {
         target: i32,
         sink: &mut Vec<FreedNode>,
     ) -> Result<(), Graph> {
+        if self.id_map.contains_key(&id) {
+            return Err(graph);
+        }
         let Some((idx, group, prev, next)) = self.vacate_for_replace(target, sink) else {
             return Err(graph);
         };

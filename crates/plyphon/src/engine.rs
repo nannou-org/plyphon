@@ -4,7 +4,10 @@
 use rtrb::RingBuffer;
 
 use plyphon_dsp::rate::RateInfo;
-use plyphon_rt::{Event, NodeMsg, Nrt, Options, Reply, TimedCommand, Trash, Trigger, World};
+use plyphon_rt::{
+    InitialControls, NodeMsg, Nrt, Options, Reply, StampedEvent, TimedCommand, Trash, Trigger,
+    World,
+};
 
 use crate::controller::Controller;
 
@@ -15,10 +18,17 @@ use crate::controller::Controller;
 /// the [`nrt`](plyphon_rt::nrt) module for the intended threading lifecycle.
 pub fn engine(options: Options) -> (Controller, Nrt, World) {
     let (cmd_tx, cmd_rx) = RingBuffer::<TimedCommand>::new(options.command_capacity.max(1));
+    // Initialized creation uses a parallel fixed-payload ring. The controller preflights and
+    // publishes a payload before its immediate command, making the pair indivisible to the RT side
+    // without making every ordinary command carry 128 control slots.
+    let (initial_tx, initial_rx) =
+        RingBuffer::<InitialControls>::new(options.command_capacity.max(1));
     // The trash ring carries freed/replaced buffers and streams (freed synths return to the pool
     // directly, on the audio thread, so they never trash).
     let (trash_tx, trash_rx) = RingBuffer::<Trash>::new(options.max_buffers.max(1));
-    let (events_tx, events_rx) = RingBuffer::<Event>::new(options.max_nodes.max(1));
+    let (critical_tx, critical_rx) =
+        RingBuffer::<StampedEvent>::new(options.critical_event_capacity.max(1));
+    let (advisory_tx, advisory_rx) = RingBuffer::<StampedEvent>::new(options.max_nodes.max(1));
     // The reply ring carries query answers (the getters) back for the dispatcher to reassemble. Size
     // it to hold a whole `/g_queryTree` dump in one block (the World caps a dump at this many records,
     // ~4 per node); a backlog beyond that queues in the World's `pending_replies`.
@@ -40,13 +50,22 @@ pub fn engine(options: Options) -> (Controller, Nrt, World) {
         &options,
         audio,
         cmd_rx,
+        initial_rx,
         trash_tx,
-        events_tx,
+        critical_tx,
+        advisory_tx,
         replies_tx,
         triggers_tx,
         node_msgs_tx,
     );
-    let nrt = Nrt::new(trash_rx, events_rx, replies_rx, triggers_rx, node_msgs_rx);
-    let controller = Controller::new(&options, audio, control, cmd_tx);
+    let nrt = Nrt::new(
+        trash_rx,
+        critical_rx,
+        advisory_rx,
+        replies_rx,
+        triggers_rx,
+        node_msgs_rx,
+    );
+    let controller = Controller::new(&options, audio, control, cmd_tx, initial_tx);
     (controller, nrt, world)
 }

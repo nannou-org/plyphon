@@ -16,6 +16,57 @@ use plyphon_dsp::buffer::Buffer;
 use plyphon_dsp::stream::{StreamPlayback, StreamRecording};
 use plyphon_unit::graphdef::GraphDef;
 
+/// Maximum number of parameter values that can be installed atomically when a synth is created.
+///
+/// The fixed bound keeps initialized creation allocation-free on both sides of the real-time
+/// boundary. Definitions with more controls remain usable through ordinary synth creation.
+pub const MAX_INITIAL_CONTROLS: usize = 128;
+
+/// A fixed-size initial-control payload paired with an initialized synth command.
+///
+/// This transport type is public only so the control-side `plyphon` crate can feed the dedicated
+/// SPSC payload ring. Hosts should use `Controller::synth_new_with_initial_controls` instead.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct InitialControls {
+    /// Number of populated entries at the beginning of `entries`.
+    len: u8,
+    /// Ordered parameter/value writes; duplicate parameters intentionally retain slice order.
+    entries: [(u32, f32); MAX_INITIAL_CONTROLS],
+}
+
+impl InitialControls {
+    /// Copy a bounded control slice into the fixed transport payload.
+    ///
+    /// Returns `None` when the slice exceeds [`MAX_INITIAL_CONTROLS`] or an index cannot be
+    /// represented by the compiled graph format. The controller performs the user-facing
+    /// validation before calling this transport constructor.
+    #[doc(hidden)]
+    pub fn new(controls: &[(usize, f32)]) -> Option<Self> {
+        if controls.len() > MAX_INITIAL_CONTROLS {
+            return None;
+        }
+        let mut payload = Self {
+            len: 0,
+            entries: [(0, 0.0); MAX_INITIAL_CONTROLS],
+        };
+        for (slot, &(param, value)) in payload.entries.iter_mut().zip(controls) {
+            slot.0 = u32::try_from(param).ok()?;
+            slot.1 = value;
+            payload.len += 1;
+        }
+        Some(payload)
+    }
+
+    /// Iterate over the populated entries in their original order.
+    #[doc(hidden)]
+    pub fn iter(&self) -> impl Iterator<Item = (usize, f32)> + '_ {
+        self.entries[..usize::from(self.len)]
+            .iter()
+            .map(|&(param, value)| (param as usize, value))
+    }
+}
+
 /// A command from the `Controller` to the
 /// [`World`](crate::world::World).
 pub enum Command {
@@ -36,6 +87,20 @@ pub enum Command {
     },
     /// Construct a synth from the def at `def_id` (on the audio thread) and link it under `target`.
     AddSynth {
+        /// Client id for the new synth.
+        id: i32,
+        /// The resident def to instantiate.
+        def_id: u32,
+        /// Target group's client id.
+        target: i32,
+        /// Placement within the target group.
+        action: AddAction,
+    },
+    /// Construct a synth using the next complete payload from the initialized-control ring.
+    ///
+    /// The controller always publishes that payload before this immediate command, after
+    /// preflighting both rings, so the RT side cannot observe a partially seeded creation.
+    AddSynthInitialized {
         /// Client id for the new synth.
         id: i32,
         /// The resident def to instantiate.
@@ -403,12 +468,24 @@ pub enum Event {
     NodeResumed(NodeNotify),
     /// A node was moved to a new tree position (`/n_move`).
     NodeMoved(NodeNotify),
-    /// An `s_new` could not be realised - the def-table slot was empty or the rt-pool was exhausted -
-    /// so no node with this id was created.
+    /// An accepted `s_new` could not be realised because its definition, memory, id, target,
+    /// placement, or node-table capacity was unavailable, so no new node with this id was created.
     SynthFailed {
         /// The client id that would have been assigned.
         id: i32,
     },
+}
+
+/// An event stamped at its RT emission point so split lifecycle rings can be merged losslessly.
+///
+/// This transport record is internal to engine wiring; hosts observe the contained [`Event`].
+#[doc(hidden)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct StampedEvent {
+    /// Monotonic engine-lifetime emission sequence.
+    pub sequence: u64,
+    /// The public lifecycle notification.
+    pub event: Event,
 }
 
 /// An answer to a query, flowing RT-side -> NRT-side over the reply ring, drained by

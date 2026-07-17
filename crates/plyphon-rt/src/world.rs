@@ -10,7 +10,8 @@
 //! `Graph_New`): one pool allocation, a few `memcpy`s, then linked into the tree. Freeing a synth
 //! returns its block to the pool (a cheap free-list op) - no trash. Buffers and streams still flow to
 //! the trash ring (drained by the [`Nrt`](crate::nrt::Nrt)) to drop off the audio thread, and node
-//! notifications go to the events ring. Done actions are applied here after the tree runs.
+//! notifications go to isolated critical/advisory event rings. Done actions are applied here after
+//! the tree runs.
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -20,7 +21,10 @@ use alloc::vec::Vec;
 use bytemuck::cast_slice_mut;
 use rtrb::{Consumer, Producer, PushError};
 
-use crate::command::{Command, CommandTime, Event, NodeNotify, Reply, TimedCommand, Trash};
+use crate::command::{
+    Command, CommandTime, Event, InitialControls, NodeNotify, Reply, StampedEvent, TimedCommand,
+    Trash,
+};
 use crate::graph::{Block, Graph, Pool};
 use crate::options::Options;
 use crate::sched::{Clock, Scheduler};
@@ -78,8 +82,15 @@ pub struct World {
     /// Per-instance RNG seed counter, advanced for each synth built.
     next_seed: u64,
     rx: Consumer<TimedCommand>,
+    /// Fixed payloads for immediate initialized synth creation, ordered with matching commands.
+    initial_rx: Consumer<InitialControls>,
     trash_tx: Producer<Trash>,
-    events_tx: Producer<Event>,
+    /// Lossless ownership-critical node lifecycle transport.
+    critical_tx: Producer<StampedEvent>,
+    /// Best-effort pause/resume/move transport.
+    advisory_tx: Producer<StampedEvent>,
+    /// Next lifecycle emission sequence used to reconstruct the merged public stream.
+    next_event_sequence: u64,
     replies_tx: Producer<Reply>,
     triggers_tx: Producer<Trigger>,
     node_msgs_tx: Producer<NodeMsg>,
@@ -94,11 +105,10 @@ pub struct World {
     /// never reallocates at runtime. Trash is never dropped here (that would free the `Box` on
     /// the audio thread), so this backlog is retained, not capped.
     pending_trash: Vec<Trash>,
-    /// Events awaiting space in the events ring (pre-allocated). Node notifications are
-    /// best-effort under a stalled NRT drain: beyond capacity the newest are dropped rather than
-    /// grown (scsynth's notification FIFO likewise drops when full), since events are generated
-    /// autonomously (self-freeing synths) even when no commands flow.
-    pending_events: Vec<Event>,
+    /// Critical events awaiting ring capacity, retained in FIFO order without allocation.
+    /// Command intake stops while this queue is non-empty; the configured capacity must cover the
+    /// host's maximum autonomous and single-command lifecycle wave.
+    pending_critical: VecDeque<StampedEvent>,
     /// Query answers awaiting space in the reply ring (pre-allocated; never reallocates at
     /// runtime, since command intake is gated on this being empty and it is sized for the largest
     /// single-block burst - a full `/g_queryTree` dump plus a full `/n_trace` dump). A `VecDeque`
@@ -151,15 +161,17 @@ pub struct World {
 }
 
 impl World {
-    // The command consumer plus the five RT->NRT producer rings the World writes to, wired once by
-    // the engine builder.
+    // The command and initialized-payload consumers plus the RT->NRT producer rings the World writes
+    // to, wired once by the engine builder.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         options: &Options,
         audio: RateInfo,
         rx: Consumer<TimedCommand>,
+        initial_rx: Consumer<InitialControls>,
         trash_tx: Producer<Trash>,
-        events_tx: Producer<Event>,
+        critical_tx: Producer<StampedEvent>,
+        advisory_tx: Producer<StampedEvent>,
         replies_tx: Producer<Reply>,
         triggers_tx: Producer<Trigger>,
         node_msgs_tx: Producer<NodeMsg>,
@@ -193,8 +205,11 @@ impl World {
             unit_scratch: vec![0.0f32; options.max_unit_outputs * bs].into_boxed_slice(),
             next_seed: SEED_INIT,
             rx,
+            initial_rx,
             trash_tx,
-            events_tx,
+            critical_tx,
+            advisory_tx,
+            next_event_sequence: 0,
             replies_tx,
             triggers_tx,
             node_msgs_tx,
@@ -204,7 +219,16 @@ impl World {
             // draining once more + every buffer-table slot displaced + every in-flight `/b_write`
             // recording completing.
             pending_trash: Vec::with_capacity(2 * options.max_scheduled + 2 * options.max_buffers),
-            pending_events: Vec::with_capacity(capacity),
+            // Once the ring first overflows, intake gates after the current command. That command
+            // can retire at most the whole tree, and the following autonomous walk can retire at
+            // most one further tree-sized cohort. Keep that invariant safe even for a host that
+            // configures a tiny public ring; the normal host budget is larger (`4 * max_nodes`).
+            pending_critical: VecDeque::with_capacity(
+                options
+                    .critical_event_capacity
+                    .max(capacity.saturating_mul(2))
+                    .max(1),
+            ),
             // The largest single-block reply burst: a full `/g_queryTree` dump plus a full
             // `/n_trace` dump can both land in the block that closes the intake gate.
             pending_replies: VecDeque::with_capacity(2 * tree_capacity),
@@ -554,9 +578,10 @@ impl World {
 
     fn drain_commands(&mut self) {
         self.flush_pending_trash();
-        self.flush_pending_events();
+        self.flush_pending_critical();
         self.flush_pending_replies();
-        // Back-pressure: a trash or reply backlog that survived the flush means the NRT side is
+        // Back-pressure: a trash, critical-lifecycle, or reply backlog that survived the flush means
+        // the NRT side is
         // not draining its rings. Checked before *each* pop, so at most one command's burst can
         // land in a backlog before intake stops; further commands stay in the (bounded) command
         // ring, and once that fills the Controller sees `QueueFull` off the audio thread. This
@@ -581,11 +606,13 @@ impl World {
         }
     }
 
-    /// Whether the trash and reply backlogs are empty, i.e. everything the NRT side must
-    /// eventually receive fits in its rings. While false, command intake pauses (see
-    /// `drain_commands`) so the backlogs stay within their pre-allocated bounds.
+    /// Whether the reliable trash, critical-event, and reply backlogs are empty.
+    ///
+    /// While false, command intake pauses so the backlogs stay within their preallocated bounds.
     fn backlogs_flushed(&self) -> bool {
-        self.pending_trash.is_empty() && self.pending_replies.is_empty()
+        self.pending_trash.is_empty()
+            && self.pending_critical.is_empty()
+            && self.pending_replies.is_empty()
     }
 
     fn apply(&mut self, cmd: Command) {
@@ -605,7 +632,21 @@ impl World {
                 def_id,
                 target,
                 action,
-            } => self.add_synth(id, def_id, target, action),
+            } => self.add_synth(id, def_id, target, action, None),
+            Command::AddSynthInitialized {
+                id,
+                def_id,
+                target,
+                action,
+            } => {
+                let Some(controls) = self.initial_rx.pop().ok() else {
+                    // Controller publication makes this unreachable. Treat a malformed transport
+                    // as a failed accepted id rather than constructing from defaults.
+                    self.emit(Event::SynthFailed { id });
+                    return;
+                };
+                self.add_synth(id, def_id, target, action, Some(&controls));
+            }
             Command::AddGroup { id, target, action } => {
                 if action == AddAction::Replace {
                     let mut sink = core::mem::take(&mut self.freed_nodes);
@@ -949,15 +990,23 @@ impl World {
         self.tree_scratch = scratch;
     }
 
-    /// Construct a synth from the resident def at `def_id` and link it into the tree. On a missing def
-    /// or pool exhaustion, emits [`Event::SynthFailed`] and creates no node (scsynth's
-    /// out-of-real-time-memory path).
-    fn add_synth(&mut self, id: i32, def_id: u32, target: i32, action: AddAction) {
+    /// Construct a synth from the resident def at `def_id` and link it into the tree.
+    ///
+    /// Every missing definition, pool failure, duplicate id, invalid placement, or full tree emits
+    /// one [`Event::SynthFailed`] and creates no node.
+    fn add_synth(
+        &mut self,
+        id: i32,
+        def_id: u32,
+        target: i32,
+        action: AddAction,
+        initial: Option<&InitialControls>,
+    ) {
         let Some(def) = self.def_table.get(def_id as usize).cloned().flatten() else {
             self.emit(Event::SynthFailed { id });
             return;
         };
-        let Some(graph) = self.build_graph(&def) else {
+        let Some(graph) = self.build_graph(&def, initial) else {
             self.emit(Event::SynthFailed { id });
             return;
         };
@@ -970,14 +1019,20 @@ impl World {
                     self.drain_freed(&mut sink);
                     self.emit_started(id);
                 }
-                Err(returned) => self.pool.dealloc(returned.into_block()),
+                Err(returned) => {
+                    self.pool.dealloc(returned.into_block());
+                    self.emit(Event::SynthFailed { id });
+                }
             }
             self.freed_nodes = sink;
             return;
         }
         match self.tree.add_synth(id, graph, target, action) {
             Ok(()) => self.emit_started(id),
-            Err(returned) => self.pool.dealloc(returned.into_block()),
+            Err(returned) => {
+                self.pool.dealloc(returned.into_block());
+                self.emit(Event::SynthFailed { id });
+            }
         }
     }
 
@@ -1003,7 +1058,11 @@ impl World {
     /// Allocate and initialise a synth's per-instance block from `def`: one pool allocation, then copy
     /// the state-arena image, seed the control wires from the defaults, set the param maps unmapped,
     /// and re-seed each unit's randomness for this instance. Returns `None` if the pool is exhausted.
-    fn build_graph(&mut self, def: &Arc<GraphDef>) -> Option<Graph> {
+    fn build_graph(
+        &mut self,
+        def: &Arc<GraphDef>,
+        initial: Option<&InitialControls>,
+    ) -> Option<Graph> {
         let layout = def.layout();
         let region = self.pool.alloc(layout.total)?;
         let seed = self.next_seed;
@@ -1048,7 +1107,17 @@ impl World {
         };
         state_arena.copy_from_slice(def.state_image());
         demand_state.copy_from_slice(def.demand_state_image());
-        cast_slice_mut::<u8, f32>(ctrl_bytes).copy_from_slice(def.control_defaults());
+        let controls = cast_slice_mut::<u8, f32>(ctrl_bytes);
+        controls.copy_from_slice(def.control_defaults());
+        if let Some(initial) = initial {
+            for (param, value) in initial.iter() {
+                if let Some(&wire) = def.param_wires().get(param)
+                    && let Some(slot) = controls.get_mut(wire as usize)
+                {
+                    *slot = value;
+                }
+            }
+        }
         for m in cast_slice_mut::<u8, u32>(pmap_bytes) {
             *m = u32::MAX;
         }
@@ -1065,7 +1134,7 @@ impl World {
         // (no ramp-from-zero click) - scsynth's `m_y1[i] = mapin[i][0]`.
         let lag_state = cast_slice_mut::<u8, f32>(lag_bytes);
         for (li, lp) in def.lag_params().iter().enumerate() {
-            lag_state[li] = def.control_defaults()[lp.value_slot as usize];
+            lag_state[li] = controls[lp.value_slot as usize];
         }
         // Re-seed each unit's randomness for this instance (calc units, then demand units, on one
         // continuing index so two instances of a def decorrelate reproducibly).
@@ -1139,16 +1208,42 @@ impl World {
         }
     }
 
-    /// Send a notification to the NRT side, retaining it for retry if the ring is full. Beyond
-    /// the backlog's pre-allocated capacity the event is dropped: notifications are generated
-    /// autonomously (a self-freeing synth emits `/n_end` with no command flowing), so no intake
-    /// gate can bound them - under a stalled NRT drain they are best-effort, as in scsynth.
+    /// Send a node notification to its isolated transport with one global emission sequence.
+    ///
+    /// Starts, synth failures, and ends are retained FIFO and gate command intake on overflow.
+    /// Pause, resume, and move notifications are best-effort and are dropped whenever a critical
+    /// backlog exists so advisory traffic cannot become observable ahead of ownership state.
     fn emit(&mut self, event: Event) {
-        if let Err(PushError::Full(event)) = self.events_tx.push(event)
-            && self.pending_events.len() < self.pending_events.capacity()
-        {
-            self.pending_events.push(event);
+        let stamped = StampedEvent {
+            sequence: self.next_event_sequence,
+            event,
+        };
+        self.next_event_sequence = self.next_event_sequence.wrapping_add(1);
+        match event {
+            Event::NodeStarted(_) | Event::NodeEnded(_) | Event::SynthFailed { .. } => {
+                if self.pending_critical.is_empty() {
+                    if let Err(PushError::Full(stamped)) = self.critical_tx.push(stamped) {
+                        self.push_pending_critical(stamped);
+                    }
+                } else {
+                    self.push_pending_critical(stamped);
+                }
+            }
+            Event::NodePaused(_) | Event::NodeResumed(_) | Event::NodeMoved(_) => {
+                if self.pending_critical.is_empty() {
+                    let _ = self.advisory_tx.push(stamped);
+                }
+            }
         }
+    }
+
+    /// Append one critical event to the preallocated FIFO.
+    fn push_pending_critical(&mut self, event: StampedEvent) {
+        debug_assert!(
+            self.pending_critical.len() < self.pending_critical.capacity(),
+            "the tree-wave critical backlog bound must hold"
+        );
+        self.pending_critical.push_back(event);
     }
 
     /// Send a query answer to the NRT side, preserving FIFO order (the dispatcher reassembles
@@ -1173,12 +1268,13 @@ impl World {
         }
     }
 
-    fn flush_pending_events(&mut self) {
-        while let Some(event) = self.pending_events.pop() {
-            if let Err(PushError::Full(event)) = self.events_tx.push(event) {
-                self.pending_events.push(event);
+    /// Move the oldest retained critical events into the critical ring while capacity is available.
+    fn flush_pending_critical(&mut self) {
+        while let Some(&event) = self.pending_critical.front() {
+            if self.critical_tx.push(event).is_err() {
                 break;
             }
+            self.pending_critical.pop_front();
         }
     }
 

@@ -31,7 +31,9 @@ use plyphon_dsp::buffer::Buffer;
 use plyphon_dsp::rate::RateInfo;
 use plyphon_dsp::stream::{StreamConsumer, StreamProducer, cue, cue_recording};
 use plyphon_rt::Options;
-use plyphon_rt::command::{Command, CommandTime, TimedCommand};
+use plyphon_rt::command::{
+    Command, CommandTime, InitialControls, MAX_INITIAL_CONTROLS, TimedCommand,
+};
 use plyphon_rt::tree::AddAction;
 use plyphon_unit::error::BuildError;
 use plyphon_unit::graphdef::GraphDef;
@@ -84,6 +86,37 @@ pub enum SynthNewError {
     /// The command ring was full.
     #[error("command queue full")]
     QueueFull,
+    /// The initialized-control slice exceeded the fixed atomic transport bound.
+    #[error("too many initial controls: {controls} (capacity {capacity})")]
+    InitialControlsCapacityExceeded {
+        /// Number of supplied parameter writes.
+        controls: usize,
+        /// Maximum number accepted by the atomic initialized-create API.
+        capacity: usize,
+    },
+    /// An initialized-control index was outside the definition's parameter table.
+    #[error("initial control {param} is out of range for {params} parameters")]
+    InitialControlOutOfRange {
+        /// Invalid supplied parameter index.
+        param: usize,
+        /// Number of parameters in the target definition.
+        params: usize,
+    },
+    /// The shared positive client-id allocator has consumed `i32::MAX`.
+    #[error("automatic node id space exhausted")]
+    NodeIdExhausted,
+}
+
+/// Failure to create a group with an automatically assigned node id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum GroupNewError {
+    /// The command ring was full, so no group command was published and the proposed id remains
+    /// available for retry.
+    #[error("command queue full")]
+    QueueFull,
+    /// The shared positive client-id allocator has consumed `i32::MAX`.
+    #[error("automatic node id space exhausted")]
+    NodeIdExhausted,
 }
 
 /// The control side of the engine.
@@ -109,10 +142,14 @@ pub struct Controller {
     max_wire_bufs: usize,
     max_unit_outputs: usize,
     tx: Producer<TimedCommand>,
+    /// Dedicated fixed-payload producer paired atomically with initialized-create commands.
+    initial_tx: Producer<InitialControls>,
     /// The time tag applied to commands while a scheduling window is open (see
     /// [`Controller::begin_scheduled`]); [`CommandTime::Immediate`] otherwise.
     schedule: CommandTime,
     next_id: i32,
+    /// Whether the final positive automatic id (`i32::MAX`) has been published successfully.
+    next_id_exhausted: bool,
 }
 
 impl Controller {
@@ -121,6 +158,7 @@ impl Controller {
         audio: RateInfo,
         control: RateInfo,
         tx: Producer<TimedCommand>,
+        initial_tx: Producer<InitialControls>,
     ) -> Self {
         Controller {
             registry: UnitRegistry::with_builtins(),
@@ -136,9 +174,11 @@ impl Controller {
             max_wire_bufs: options.max_wire_bufs,
             max_unit_outputs: options.max_unit_outputs,
             tx,
+            initial_tx,
             schedule: CommandTime::Immediate,
             // Client node ids start above the root group (id 0).
             next_id: 1000,
+            next_id_exhausted: false,
         }
     }
 
@@ -317,9 +357,63 @@ impl Controller {
         target: i32,
         action: AddAction,
     ) -> Result<i32, SynthNewError> {
-        let id = self.next_id;
+        let id = self.auto_id().map_err(|_| SynthNewError::NodeIdExhausted)?;
         self.synth_new_with_id(id, def_name, target, action)?;
-        self.next_id += 1;
+        self.consume_auto_id();
+        Ok(id)
+    }
+
+    /// Create a synth immediately with an ordered snapshot of initial parameter values.
+    ///
+    /// The whole fixed-size payload and its add command are preflighted and published as one
+    /// transaction. On [`SynthNewError::QueueFull`], invalid indices, capacity overflow, or id
+    /// exhaustion, no create command is published and the automatic id is not consumed. Supplied
+    /// values are installed before the synth's first unit initialization and process tick; duplicate
+    /// indices apply in slice order, so the last value wins. This method is always immediate and
+    /// leaves any surrounding scheduled-command window unchanged.
+    pub fn synth_new_with_initial_controls(
+        &mut self,
+        def_name: &str,
+        target: i32,
+        action: AddAction,
+        controls: &[(usize, f32)],
+    ) -> Result<i32, SynthNewError> {
+        let id = self.auto_id().map_err(|_| SynthNewError::NodeIdExhausted)?;
+        if controls.len() > MAX_INITIAL_CONTROLS {
+            return Err(SynthNewError::InitialControlsCapacityExceeded {
+                controls: controls.len(),
+                capacity: MAX_INITIAL_CONTROLS,
+            });
+        }
+        let params = self
+            .defs
+            .get(def_name)
+            .ok_or_else(|| SynthNewError::UnknownDef(def_name.to_string()))?
+            .params
+            .len();
+        if let Some(&(param, _)) = controls.iter().find(|(param, _)| *param >= params) {
+            return Err(SynthNewError::InitialControlOutOfRange { param, params });
+        }
+        let def_id = self.ensure_compiled(def_name)?;
+        if self.tx.slots() == 0 || self.initial_tx.slots() == 0 {
+            return Err(SynthNewError::QueueFull);
+        }
+        let payload = InitialControls::new(controls)
+            .expect("validated initial controls must fit the fixed transport payload");
+        self.initial_tx
+            .push(payload)
+            .expect("initialized payload ring was preflighted");
+        self.push(
+            CommandTime::Immediate,
+            Command::AddSynthInitialized {
+                id,
+                def_id,
+                target,
+                action,
+            },
+        )
+        .expect("initialized command ring was preflighted");
+        self.consume_auto_id();
         Ok(id)
     }
 
@@ -399,11 +493,30 @@ impl Controller {
     }
 
     /// Create an empty group under group `target`. Returns the new group's client id.
-    pub fn new_group(&mut self, target: i32, action: AddAction) -> Result<i32, QueueFull> {
-        let id = self.next_id;
-        self.new_group_with_id(id, target, action)?;
-        self.next_id += 1;
+    pub fn new_group(&mut self, target: i32, action: AddAction) -> Result<i32, GroupNewError> {
+        let id = self.auto_id().map_err(|_| GroupNewError::NodeIdExhausted)?;
+        self.new_group_with_id(id, target, action)
+            .map_err(|_| GroupNewError::QueueFull)?;
+        self.consume_auto_id();
         Ok(id)
+    }
+
+    /// Return the next shared positive automatic node id without consuming it.
+    fn auto_id(&self) -> Result<i32, ()> {
+        if self.next_id_exhausted {
+            Err(())
+        } else {
+            Ok(self.next_id)
+        }
+    }
+
+    /// Consume the current automatic id after a successful command publication.
+    fn consume_auto_id(&mut self) {
+        if self.next_id == i32::MAX {
+            self.next_id_exhausted = true;
+        } else {
+            self.next_id += 1;
+        }
     }
 
     /// Create an empty group with a caller-chosen client id (e.g. an id from an OSC `/g_new`).
@@ -867,7 +980,11 @@ mod tests {
         let audio = RateInfo::new(options.sample_rate, options.block_size);
         let control = RateInfo::new(options.sample_rate / options.block_size as f64, 1);
         let (tx, rx) = RingBuffer::<TimedCommand>::new(capacity);
-        (Controller::new(&options, audio, control, tx), rx)
+        let (initial_tx, _initial_rx) = RingBuffer::<InitialControls>::new(capacity);
+        (
+            Controller::new(&options, audio, control, tx, initial_tx),
+            rx,
+        )
     }
 
     #[test]
@@ -958,6 +1075,52 @@ mod tests {
         assert!(
             rx.pop().is_err(),
             "no partial overflow command should be enqueued"
+        );
+    }
+
+    /// The last positive id is shared and consumed exactly once across auto-id APIs.
+    #[test]
+    fn shared_auto_id_allocator_accepts_i32_max_once_across_group_and_synth_calls() {
+        let (mut controller, _rx) = test_controller(2);
+        controller.next_id = i32::MAX;
+
+        assert_eq!(
+            controller
+                .new_group(crate::ROOT_GROUP_ID, AddAction::Tail)
+                .unwrap(),
+            i32::MAX
+        );
+        assert!(matches!(
+            controller.synth_new("missing", crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(SynthNewError::NodeIdExhausted)
+        ));
+        assert_eq!(
+            controller.new_group(crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(GroupNewError::NodeIdExhausted)
+        );
+    }
+
+    /// Queue backpressure while proposing the last id leaves that id available for retry.
+    #[test]
+    fn shared_auto_id_queue_full_at_i32_max_does_not_exhaust_allocator() {
+        let (mut controller, mut rx) = test_controller(1);
+        controller.next_id = i32::MAX;
+        controller.free(123).unwrap();
+
+        assert_eq!(
+            controller.new_group(crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(GroupNewError::QueueFull)
+        );
+        let _ = rx.pop().expect("release the occupied command slot");
+        assert_eq!(
+            controller
+                .new_group(crate::ROOT_GROUP_ID, AddAction::Tail)
+                .unwrap(),
+            i32::MAX
+        );
+        assert_eq!(
+            controller.new_group(crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(GroupNewError::NodeIdExhausted)
         );
     }
 

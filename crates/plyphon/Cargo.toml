@@ -29,3 +29,6 @@ plyphon-unit.workspace = true
 rtrb.workspace = true
 scgf.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+bytemuck.workspace = true

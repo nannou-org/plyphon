@@ -20,6 +20,12 @@ pub struct Options {
     pub control_bus_channels: usize,
     /// Maximum number of live nodes (sizes the node arena and id map; never exceeded at runtime).
     pub max_nodes: usize,
+    /// Capacity of the lossless ownership-critical node-lifecycle ring and its RT FIFO backlog.
+    ///
+    /// This transport carries node start, synth failure, and node end events independently from
+    /// best-effort pause, resume, and move notifications. Hosts that retain ownership by node id
+    /// should size this for their maximum undrained lifecycle wave.
+    pub critical_event_capacity: usize,
     /// Number of buffer table slots (sizes the buffer table; indices `0..max_buffers` are valid).
     pub max_buffers: usize,
     /// Number of compiled-def table slots (sizes the resident def table; `def_id`s index it).
@@ -58,6 +64,7 @@ impl Default for Options {
             audio_bus_channels: 128,
             control_bus_channels: 4096,
             max_nodes: 1024,
+            critical_event_capacity: 4096,
             max_buffers: 1024,
             max_synthdefs: 1024,
             // 8 MiB, matching scsynth's default real-time memory size.

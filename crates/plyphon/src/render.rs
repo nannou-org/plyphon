@@ -174,8 +174,10 @@ impl Render {
         &self.out_block
     }
 
-    /// Drain the next node lifecycle [`Event`] (started/ended/paused/resumed), or `None`. Call in a
-    /// loop after each [`Render::step`] to observe or forward node notifications.
+    /// Drain the next merged node lifecycle [`Event`], or `None`.
+    ///
+    /// Call in a loop after each [`Render::step`] to observe start/failure/end ownership events and
+    /// best-effort pause/resume/move notifications without allowing the reliable stream to back up.
     pub fn poll(&mut self) -> Option<Event> {
         self.nrt.poll()
     }
@@ -303,6 +305,9 @@ mod tests {
         Options {
             sample_rate: SR,
             output_channels: 1,
+            // The long-score regression intentionally never drains lifecycle events while 3000
+            // first-block-free synths emit both start and end.
+            critical_event_capacity: 8192,
             ..Options::default()
         }
     }
