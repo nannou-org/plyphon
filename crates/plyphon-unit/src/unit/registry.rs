@@ -109,6 +109,9 @@ use crate::unit::pv_ops::{
     MagKind, PvBrickWallCtor, PvConjCtor, PvLocalMaxCtor, PvMagThreshCtor, PvPhaseQuarterCtor,
 };
 use crate::unit::ramp::{RampCtor, VarLagCtor};
+use crate::unit::rand::{
+    ExpRandCtor, RandCtor, RandIDCtor, RandSeedCtor, TExpRandCtor, TIRandCtor, TRandCtor,
+};
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
@@ -380,6 +383,15 @@ impl UnitRegistry {
         // GVerb: a large Griesinger-style FDN reverb.
         registry.register("GVerb", Box::new(GVerbCtor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
+        // The init/trigger-time randoms share the synth's RGen stream (see the `rand` module);
+        // the free-running noise generators above each embed their own.
+        registry.register("Rand", Box::new(RandCtor));
+        registry.register("ExpRand", Box::new(ExpRandCtor));
+        registry.register("TRand", Box::new(TRandCtor));
+        registry.register("TExpRand", Box::new(TExpRandCtor));
+        registry.register("TIRand", Box::new(TIRandCtor));
+        registry.register("RandSeed", Box::new(RandSeedCtor));
+        registry.register("RandID", Box::new(RandIDCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
         registry.register("GrayNoise", Box::new(GrayNoiseCtor));
         registry.register("PinkNoise", Box::new(PinkNoiseCtor));

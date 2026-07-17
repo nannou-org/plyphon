@@ -365,6 +365,16 @@ impl SynthDef {
             outputs_plan.push(wires.into_boxed_slice());
         }
 
+        // The wire count is final here, so reject an oversized def before building any unit state -
+        // a def thousands of wires over the cap would otherwise pay full graph construction (every
+        // unit's state image) just to be refused.
+        if num_audio_wires as usize > max_wire_bufs {
+            return Err(BuildError::TooManyWires {
+                needed: num_audio_wires as usize,
+                limit: max_wire_bufs,
+            });
+        }
+
         // Control-wire defaults: parameters at their defaults, the rest (control-rate unit outputs)
         // zeroed. These seed the per-graph control wires when an instance is built on the RT thread.
         let mut control_defaults = vec![0.0f32; num_control_wires as usize];
@@ -473,13 +483,8 @@ impl SynthDef {
         }
 
         // The shared-scratch capacities are fixed at boot; reject a def that would overflow them.
-        // Demand units have no wires or output scratch, so only the calc units count here.
-        if num_audio_wires as usize > max_wire_bufs {
-            return Err(BuildError::TooManyWires {
-                needed: num_audio_wires as usize,
-                limit: max_wire_bufs,
-            });
-        }
+        // Demand units have no wires or output scratch, so only the calc units count here (the
+        // audio-wire check ran before Pass 2, where the count was already final).
         if max_outputs > max_unit_outputs {
             return Err(BuildError::TooManyOutputs {
                 needed: max_outputs,

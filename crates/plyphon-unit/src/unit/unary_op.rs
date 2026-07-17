@@ -85,6 +85,8 @@ fn unary_op(index: i16) -> Option<fn(f32) -> f32> {
         1 => ops::not,                  // opNot
         4 => ops::bit_not,              // opBitNot
         5 => |a| a.abs(),               // opAbs
+        6 => |a| a,                     // opAsFloat (already a float; identity)
+        7 => math::trunc,               // opAsInt (C's float-to-int cast: truncate toward zero)
         8 => math::ceil,                // opCeil
         9 => math::floor,               // opFloor
         10 => |a| a - math::floor(a),   // opFrac

@@ -86,20 +86,68 @@ impl UnitDef for BinaryOpCtor {
         if ctx.input_rates.len() != 2 {
             return Err(BuildError::WrongInputCount);
         }
+        let a_audio = (ctx.input_rates[0] == Rate::Audio) as u32;
+        let b_audio = (ctx.input_rates[1] == Rate::Audio) as u32;
+        // The RNG-driven operators draw fresh randomness per frame, so they build into a
+        // stateful variant instead of the pure-fn table.
+        if matches!(ctx.special_index, 47 | 48) {
+            return Ok(unit_spec(RandBinaryOp {
+                exponential: (ctx.special_index == 48) as u32,
+                a_audio,
+                b_audio,
+            }));
+        }
         // Validate now so a bad operator fails at build, not silently at runtime.
         binary_op(ctx.special_index).ok_or(BuildError::UnsupportedOp(ctx.special_index))?;
         Ok(unit_spec(BinaryOp {
             op: ctx.special_index as u32,
-            a_audio: (ctx.input_rates[0] == Rate::Audio) as u32,
-            b_audio: (ctx.input_rates[1] == Rate::Audio) as u32,
+            a_audio,
+            b_audio,
         }))
+    }
+}
+
+/// The RNG-driven binary operators, `rrand` (special index 47) and `exprand` (48): a fresh random
+/// draw per output frame, scaled between the two inputs (ordered low-to-high), from the synth's
+/// shared random stream - scsynth's `rrand_1`/`exprand_1`, which read the graph's `RGen`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct RandBinaryOp {
+    /// `0` = uniform (`rrand`), `1` = equal-probability-per-octave (`exprand`).
+    exponential: u32,
+    a_audio: u32,
+    b_audio: u32,
+}
+
+impl Unit for RandBinaryOp {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let ProcessCtx {
+            ins, outs, rgen, ..
+        } = ctx;
+        let a_ctrl = ins.control(0);
+        let b_ctrl = ins.control(1);
+        let a_sig = (self.a_audio != 0).then(|| ins.audio(0));
+        let b_sig = (self.b_audio != 0).then(|| ins.audio(1));
+        let exponential = self.exponential != 0;
+        for (i, o) in outs.audio(0).iter_mut().enumerate() {
+            let xa = a_sig.map_or(a_ctrl, |s| s[i]);
+            let xb = b_sig.map_or(b_ctrl, |s| s[i]);
+            let (lo, hi) = if xb > xa { (xa, xb) } else { (xb, xa) };
+            *o = if exponential {
+                math::exp(math::ln(hi / lo) * rgen.next_unipolar()) * lo
+            } else {
+                lo + rgen.next_unipolar() * (hi - lo)
+            };
+        }
+        DoneAction::Nothing
     }
 }
 
 /// Map a SuperCollider binary operator index to its function (see SC's `opAdd`/`opMul`/... enum in
 /// `SpecialSelectorsOperatorsAndClasses.h`; kernels match the `*_1` calc functions in
-/// `BinaryOpUGens.cpp`). The RNG-driven ops (`opRandRange`, `opExpRandRange`) and the
-/// unimplemented-at-audio-rate ops (`opUnsignedShift`, `opFill`) are absent.
+/// `BinaryOpUGens.cpp`). The RNG-driven ops (`opRandRange` 47, `opExpRandRange` 48) build into the
+/// stateful [`RandBinaryOp`] instead; the unimplemented-at-audio-rate ops (`opUnsignedShift`,
+/// `opFill`) are absent.
 fn binary_op(index: i16) -> Option<fn(f32, f32) -> f32> {
     Some(match index {
         0 => |a, b| a + b,                           // opAdd

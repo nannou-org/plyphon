@@ -1087,11 +1087,14 @@ impl World {
             );
         }
 
+        // The graph's shared random stream gets its own seed, offset off the per-unit ladder so it
+        // never collides with any unit's reseed value above.
         Some(Graph::new(
             region,
             Arc::clone(def),
             self.current_sample_offset,
             self.current_subsample_offset,
+            seed.wrapping_sub(SEED_STEP),
         ))
     }
 

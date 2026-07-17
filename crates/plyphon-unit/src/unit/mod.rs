@@ -68,6 +68,7 @@ pub mod pv_mag_squared;
 #[cfg(feature = "fft")]
 pub mod pv_ops;
 pub mod ramp;
+pub mod rand;
 pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
@@ -97,6 +98,7 @@ use plyphon_dsp::buffer::BufferTable;
 use plyphon_dsp::bus::Buses;
 use plyphon_dsp::fft::FftTables;
 use plyphon_dsp::rate::{Rate, RateInfo};
+use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::Wavetables;
 
 /// What a unit asks the engine to do with its enclosing synth when it finishes - scsynth's full set
@@ -568,6 +570,12 @@ pub struct ProcessCtx<'a> {
     /// This unit's private auxiliary memory (a delay line). Empty for units that declared none; most
     /// units ignore it.
     pub aux: Aux<'a>,
+    /// The synth's shared random stream (scsynth's per-graph `RGen`, seeded per instance). The
+    /// `Rand` family draws from it so draws interleave deterministically across the units of one
+    /// synth, and `RandSeed` re-seeds it so those sequences restart together. Units with fully
+    /// private randomness (the noise generators) keep their own embedded
+    /// [`Rng`](plyphon_dsp::rng::Rng) and ignore this.
+    pub rgen: &'a mut Rng,
 }
 
 /// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].
