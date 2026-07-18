@@ -95,8 +95,8 @@ impl Unit for PvMagThresh {
         let kind = self.kind;
         let thresh = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::to_polar(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_polar(&mut buffer)
         {
             *spectrum.dc = MagKind::real(kind, *spectrum.dc, thresh);
             *spectrum.nyq = MagKind::real(kind, *spectrum.nyq, thresh);
@@ -134,8 +134,8 @@ impl Unit for PvLocalMax {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let thresh = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::to_polar(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_polar(&mut buffer)
         {
             let n = spectrum.bins.len();
             if n >= 2 {
@@ -198,8 +198,8 @@ impl Unit for PvPhaseQuarter {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let negate = self.negate != 0;
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::to_complex(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_complex(&mut buffer)
         {
             for bin in spectrum.bins.iter_mut() {
                 let (re, im) = (bin.x, bin.y);
@@ -244,8 +244,8 @@ impl Unit for PvBrickWall {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let wipe_frac = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::spectrum(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::spectrum(&mut buffer)
         {
             let numbins = spectrum.bins.len() as i32;
             let wipe = (wipe_frac * numbins as f32) as i32;
@@ -295,8 +295,8 @@ pub struct PvConj {
 impl Unit for PvConj {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::to_complex(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_complex(&mut buffer)
         {
             for bin in spectrum.bins.iter_mut() {
                 bin.y = -bin.y;

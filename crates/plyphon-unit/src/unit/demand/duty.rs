@@ -70,6 +70,7 @@ impl Unit for Duty {
         // all separate fields, so they coexist.
         let mut world = DemandWorld {
             buffers: &mut *ctx.buffers,
+            local_bufs: &mut ctx.local_bufs,
             node_id: ctx.node_id,
             node_msgs: &mut ctx.node_msgs,
         };

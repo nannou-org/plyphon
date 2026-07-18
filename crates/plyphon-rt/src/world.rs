@@ -1032,6 +1032,8 @@ impl World {
             pmap_bytes,
             done_bytes,
             local_bytes,
+            lbuf_coord_bytes,
+            lbuf_bytes,
             amap_bytes,
             _lag_bytes,
         ] = match buf.get_disjoint_mut([
@@ -1042,6 +1044,8 @@ impl World {
             layout.pmaps.range(),
             layout.done_flags.range(),
             layout.local.range(),
+            layout.local_buf_coords.range(),
+            layout.local_bufs.range(),
             layout.amaps.range(),
             layout.lag_state.range(),
         ]) {
@@ -1065,6 +1069,13 @@ impl World {
         // The feedback bus starts silent. Zeroed *once* here, never per block - it persists so a
         // `LocalIn` reads what a `LocalOut` wrote last block (the one-block feedback delay).
         local_bytes.fill(0);
+        // Graph-local buffers (`LocalBuf`) start silent, coord tags at Complex (tag 0). Zeroed once
+        // here, never per block. scsynth leaves this memory uninitialised (`RTAlloc` in
+        // `LocalBuf_Ctor`), so a scsynth local buffer starts with recycled pool content - zeroing is
+        // a deliberate, benign divergence: deterministic silence, one bounded memset per spawn (a
+        // local buffer's size is fixed at compile, unlike an unbounded delay-line aux).
+        lbuf_coord_bytes.fill(0);
+        lbuf_bytes.fill(0);
         // Every audio param starts unmapped (`/n_mapa`).
         for m in cast_slice_mut::<u8, u32>(amap_bytes) {
             *m = u32::MAX;

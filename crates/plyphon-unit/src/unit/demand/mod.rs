@@ -39,11 +39,11 @@ pub mod dxrand;
 use alloc::boxed::Box;
 
 use bytemuck::Pod;
-use plyphon_dsp::buffer::{Buffer, BufferTable};
+use plyphon_dsp::buffer::{BufView, BufViewMut, BufferTable};
 
 use crate::unit::{
-    InputSource, Inputs, MAX_LABEL, MAX_VALUES, NodeMsg, NodeMsgKind, NodeMsgSink, ReseedFn,
-    buffer_at, buffer_at_mut,
+    InputSource, Inputs, LocalBufs, MAX_LABEL, MAX_VALUES, NodeMsg, NodeMsgKind, NodeMsgSink,
+    ReseedFn, buffer_at, buffer_at_mut,
 };
 
 pub use dbrown::Dbrown;
@@ -185,6 +185,10 @@ pub struct DemandWorld<'w, 's> {
     /// The World's shared buffer table (`Dbufrd`/`Dbufwr`), reached via [`DemandCtx::buffer`] /
     /// [`DemandCtx::buffer_mut`].
     pub buffers: &'w mut BufferTable,
+    /// The synth's graph-local buffers (`LocalBuf`): [`DemandCtx::buffer`] and
+    /// [`DemandCtx::buffer_mut`] resolve a past-capacity buffer number here, as the calc-side io
+    /// fns do.
+    pub local_bufs: &'w mut LocalBufs<'s>,
     /// The enclosing synth's node id (`Dpoll` tags its post with it).
     pub node_id: i32,
     /// Sink for host messages (`Dpoll` posts here, via [`DemandCtx::post`]).
@@ -203,6 +207,7 @@ pub struct DemandCtx<'a> {
     control_wires: &'a [f32],
     block_size: usize,
     buffers: &'a mut BufferTable,
+    local_bufs: LocalBufs<'a>,
     node_id: i32,
     node_msgs: NodeMsgSink<'a>,
 }
@@ -234,6 +239,7 @@ impl DemandCtx<'_> {
                 self.block_size,
                 &mut DemandWorld {
                     buffers: &mut *self.buffers,
+                    local_bufs: &mut self.local_bufs,
                     node_id: self.node_id,
                     node_msgs: &mut self.node_msgs,
                 },
@@ -258,6 +264,7 @@ impl DemandCtx<'_> {
                 self.block_size,
                 &mut DemandWorld {
                     buffers: &mut *self.buffers,
+                    local_bufs: &mut self.local_bufs,
                     node_id: self.node_id,
                     node_msgs: &mut self.node_msgs,
                 },
@@ -268,14 +275,16 @@ impl DemandCtx<'_> {
     }
 
     /// The flat buffer at `index`, if one is installed - for a demand-rate reader (`Dbufrd`).
-    /// RT-safe (no panic; a stream/empty/out-of-range slot yields `None`).
-    pub fn buffer(&self, index: usize) -> Option<&Buffer> {
-        buffer_at(self.buffers, index)
+    /// RT-safe (no panic; a stream/empty/out-of-range slot yields `None`). A past-capacity `index`
+    /// resolves to the synth's graph-local buffers, as in [`buffer_at`].
+    pub fn buffer(&self, index: usize) -> Option<BufView<'_>> {
+        buffer_at(self.buffers, &self.local_bufs, index)
     }
 
-    /// The flat buffer at `index`, mutably - for a demand-rate writer (`Dbufwr`). RT-safe (no panic).
-    pub fn buffer_mut(&mut self, index: usize) -> Option<&mut Buffer> {
-        buffer_at_mut(self.buffers, index)
+    /// The flat buffer at `index`, mutably - for a demand-rate writer (`Dbufwr`). RT-safe (no panic);
+    /// past-capacity indices resolve to the graph-local buffers, as in [`buffer_at_mut`].
+    pub fn buffer_mut(&mut self, index: usize) -> Option<BufViewMut<'_>> {
+        buffer_at_mut(self.buffers, &mut self.local_bufs, index)
     }
 
     /// The enclosing synth's node id, for a source that tags an emitted message (`Dpoll`).
@@ -342,6 +351,7 @@ fn pull(
             // Reborrow the world for this level; the inner `node_msgs` sink is reborrowed by value so
             // `DemandCtx` keeps a single lifetime while still being able to recurse.
             buffers: &mut *world.buffers,
+            local_bufs: world.local_bufs.reborrow(),
             node_id: world.node_id,
             node_msgs: world.node_msgs.reborrow(),
         };

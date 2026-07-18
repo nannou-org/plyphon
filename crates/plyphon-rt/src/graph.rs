@@ -32,7 +32,7 @@ use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
 use plyphon_unit::unit::{
-    self, Aux, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBus, NodeMsg,
+    self, Aux, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBufs, LocalBus, NodeMsg,
     NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger, TriggerSink,
 };
 
@@ -169,6 +169,8 @@ impl Graph {
                 pmap_bytes,
                 done_bytes,
                 local_bytes,
+                lbuf_coord_bytes,
+                lbuf_bytes,
                 amap_bytes,
                 lag_bytes,
             ],
@@ -180,6 +182,8 @@ impl Graph {
             layout.pmaps.range(),
             layout.done_flags.range(),
             layout.local.range(),
+            layout.local_buf_coords.range(),
+            layout.local_bufs.range(),
             layout.amaps.range(),
             layout.lag_state.range(),
         ])
@@ -195,6 +199,10 @@ impl Graph {
         // The synth's private feedback bus (`LocalIn`/`LocalOut`); persists across blocks (never
         // cleared here), which is what gives the one-block feedback delay.
         let local = cast_slice_mut::<u8, f32>(local_bytes);
+        // The synth's graph-local buffers (`LocalBuf`): the per-buffer coord tags and the packed
+        // sample storage. Both persist across blocks; the shapes come from the def's specs.
+        let lbuf_coords = cast_slice_mut::<u8, u32>(lbuf_coord_bytes);
+        let lbuf_samples = cast_slice_mut::<u8, f32>(lbuf_bytes);
         // Per-parameter audio-bus maps (`/n_mapa`); read for audio params in the lift below.
         let amaps = cast_slice::<u8, u32>(amap_bytes);
         // Per-lag-param one-pole state (`LagControl`); seeded at build, updated each block below.
@@ -349,6 +357,12 @@ impl Graph {
                         ins,
                         buses: &*block.buses,
                         buffers: &*block.buffers,
+                        local_bufs: LocalBufs::new(
+                            def.local_buf_specs(),
+                            &mut *lbuf_samples,
+                            &mut *lbuf_coords,
+                            def.audio_rate().sample_rate,
+                        ),
                         buf_counter: block.buf_counter,
                     };
                     (v.init)(state, &init_ctx);
@@ -386,6 +400,14 @@ impl Graph {
                         done: DoneState::new(&*done_flags, &mut done_flag),
                         node_ops: NodeOpSink::new(&mut *block.node_ops, block.node_op_cap),
                         local: LocalBus::new(&mut *local, bs),
+                        // A local buffer's own sample rate is the graph's audio rate (scsynth's
+                        // `FULLRATE`).
+                        local_bufs: LocalBufs::new(
+                            def.local_buf_specs(),
+                            &mut *lbuf_samples,
+                            &mut *lbuf_coords,
+                            def.audio_rate().sample_rate,
+                        ),
                         aux: Aux::new(aux),
                         rgen: &mut *rgen,
                     };

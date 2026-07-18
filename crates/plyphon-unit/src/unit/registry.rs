@@ -70,6 +70,7 @@ use crate::unit::lf_noise::{
     LFNoise1Ctor, LFNoise2Ctor,
 };
 use crate::unit::line::{LineCtor, XLineCtor};
+use crate::unit::local_buf::{ClearBufCtor, LocalBufCtor, MaxLocalBufsCtor, SetBufCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
 use crate::unit::measure::{
     LastValueCtor, LeastChangeCtor, MostChangeCtor, PeakCtor, PeakFollowerCtor, RunningMaxCtor,
@@ -168,6 +169,10 @@ pub struct BuildContext<'a> {
     pub special_index: i16,
     /// A seed for this unit's random number generator (distinct per unit and per synth instance).
     pub seed: u64,
+    /// How many graph-local buffers earlier units of this def have declared - the next `LocalBuf`'s
+    /// declaration index (scsynth's running `parent->localBufNum`). The compile loop advances it per
+    /// built unit that declares one; every other unit ignores it.
+    pub local_bufs_so_far: usize,
 }
 
 impl BuildContext<'_> {
@@ -440,6 +445,12 @@ impl UnitRegistry {
         registry.register("DegreeToKey", Box::new(DegreeToKeyCtor));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
         registry.register("BufWr", Box::new(BufWrCtor));
+        // Graph-owned buffers: a synth-private buffer addressed past the table capacity, plus the
+        // declaration and one-shot fill/clear helpers sclang emits alongside it.
+        registry.register("LocalBuf", Box::new(LocalBufCtor));
+        registry.register("MaxLocalBufs", Box::new(MaxLocalBufsCtor));
+        registry.register("SetBuf", Box::new(SetBufCtor));
+        registry.register("ClearBuf", Box::new(ClearBufCtor));
         registry.register("LFSaw", Box::new(LFSawCtor));
         registry.register("LFPulse", Box::new(LFPulseCtor));
         registry.register("Impulse", Box::new(ImpulseCtor));

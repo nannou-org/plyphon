@@ -18,7 +18,9 @@ use hashbrown::HashMap;
 use plyphon_dsp::math;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_unit::error::BuildError;
-use plyphon_unit::graphdef::{AudioParam, GraphDef, LagParam, OutputWire, UnitVtbl, build_layout};
+use plyphon_unit::graphdef::{
+    AudioParam, GraphDef, LagParam, LocalBufSpec, OutputWire, UnitVtbl, build_layout,
+};
 use plyphon_unit::unit::demand::{BuiltDemandUnit, DemandVtbl, MAX_DEMAND_DEPTH, MAX_DEMAND_STATE};
 use plyphon_unit::unit::registry::{BuildContext, UnitRegistry};
 use plyphon_unit::unit::{BuiltUnit, InputSource};
@@ -392,6 +394,11 @@ impl SynthDef {
         let mut demand_built: Vec<BuiltDemandUnit> = Vec::new();
         let mut demand_inputs: Vec<Box<[InputSource]>> = Vec::new();
         let mut max_outputs = 0usize;
+        // Graph-local buffers (`LocalBuf`), collected in unit order: each built unit that declares
+        // one gets the next declaration index (which the unit baked into its state from
+        // `local_bufs_so_far`) and the next sample offset in the block's local-buffer span.
+        let mut local_buf_specs: Vec<LocalBufSpec> = Vec::new();
+        let mut local_buf_samples = 0usize;
         for (u, spec) in self.units.iter().enumerate() {
             let mut sources = Vec::with_capacity(spec.inputs.len());
             for input in &spec.inputs {
@@ -454,6 +461,7 @@ impl SynthDef {
                 num_outputs: spec.num_outputs,
                 special_index: spec.special_index,
                 seed: (u as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                local_bufs_so_far: local_buf_specs.len(),
             };
 
             if spec.rate == Rate::Demand {
@@ -474,7 +482,18 @@ impl SynthDef {
                 let def = registry
                     .get(&spec.name)
                     .ok_or_else(|| BuildError::UnknownUnit(spec.name.clone()))?;
-                calc_built.push(def.build(&build_ctx)?);
+                let built = def.build(&build_ctx)?;
+                // Collect a graph-local buffer declaration (`LocalBuf`), advancing the running
+                // declaration index (`local_bufs_so_far` above) and the sample offset.
+                if let Some((channels, frames)) = built.local_buf {
+                    local_buf_specs.push(LocalBufSpec {
+                        channels: channels as u32,
+                        frames: frames as u32,
+                        offset: local_buf_samples,
+                    });
+                    local_buf_samples += channels * frames;
+                }
+                calc_built.push(built);
                 calc_inputs.push(sources.into_boxed_slice());
                 calc_outputs.push(outputs_plan[u].clone());
                 calc_rates.push(spec.rate);
@@ -531,6 +550,8 @@ impl SynthDef {
             num_control_wires as usize,
             num_params,
             num_local_channels,
+            local_buf_specs.len(),
+            local_buf_samples,
             lag_params.len(),
             block_size,
         );
@@ -591,6 +612,7 @@ impl SynthDef {
             audio_params.into_boxed_slice(),
             trig_params.into_boxed_slice(),
             lag_params.into_boxed_slice(),
+            local_buf_specs.into_boxed_slice(),
             num_params,
             graph_audio,
             graph_control,

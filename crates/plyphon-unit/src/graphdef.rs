@@ -81,6 +81,20 @@ pub struct UnitVtbl {
     pub aux_size: usize,
 }
 
+/// The compiled shape of one graph-local buffer (a `LocalBuf`), indexed by declaration order.
+/// The sample storage itself lives in the per-graph block's `local_bufs` span; this records where and
+/// how big. A local buffer's number as seen by consumers is `buffer-table capacity + index`
+/// (scsynth's `world->mNumSndBufs + i`), and its sample rate is the graph's audio rate.
+#[derive(Copy, Clone, Debug)]
+pub struct LocalBufSpec {
+    /// Number of interleaved channels.
+    pub channels: u32,
+    /// Number of frames (samples per channel).
+    pub frames: u32,
+    /// Offset in `f32` samples within the block's `local_bufs` span.
+    pub offset: usize,
+}
+
 /// A byte sub-range within the per-graph pool block.
 #[derive(Copy, Clone, Debug)]
 pub struct Span {
@@ -104,7 +118,9 @@ impl Span {
 /// Laid out so every span is correctly aligned given a 64-byte-aligned block base: the two state
 /// arenas (alignment up to 8, for `f64` state) come first, then the 8-byte-aligned `aux` arena, then
 /// the 4-byte-aligned `f32` control
-/// wires, `u32` param maps, `u32` done flags, the `f32` local feedback bus, the `u32` audio-bus maps, and the `f32` lag state. The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
+/// wires, `u32` param maps, `u32` done flags, the `f32` local feedback bus, the `u32` local-buffer
+/// coord tags, the `f32` local-buffer samples, the `u32` audio-bus maps, and the `f32` lag state.
+/// The spans are contiguous, hence disjoint - so `get_disjoint_mut` over
 /// them never fails, and the `bytemuck` casts never hit an alignment error. The calc-unit and
 /// demand-unit state are *separate* spans so the audio thread can hold a calc unit's `&mut` state
 /// slot and the `&mut` demand arena at once (the latter is pulled re-entrantly while the former runs).
@@ -135,6 +151,14 @@ pub struct BlockLayout {
     /// `LocalIn` reads the value the `LocalOut` wrote last block (a one-block feedback delay). Empty
     /// when the def has no `LocalIn`/`LocalOut`.
     pub local: Span,
+    /// One `u32` coordinate tag (see `SpectrumCoord::to_tag`) per graph-local buffer (`LocalBuf`),
+    /// indexed by declaration order - a local buffer's stand-in for `Buffer`'s coord field, so the
+    /// FFT chain can run over local buffers. Empty when the def has no `LocalBuf`.
+    pub local_buf_coords: Span,
+    /// Graph-local buffer samples (`f32`, interleaved frame-major): each `LocalBuf`'s storage at the
+    /// offset its [`LocalBufSpec`] records. Persists across blocks. Empty when the def has no
+    /// `LocalBuf`.
+    pub local_bufs: Span,
     /// Per-parameter audio-bus map (`u32`; `u32::MAX` = unmapped) for `/n_mapa`. Only audio-rate
     /// parameters read their slot; control params' slots are unused.
     pub amaps: Span,
@@ -176,6 +200,9 @@ pub struct GraphDef {
     /// Lagged parameters (`LagControl`): each one's `(value_slot, lagged_wire, b1)`. Indexed by
     /// position into the `lag_state` span (one `f32` of one-pole state per lag param).
     lag_params: Box<[LagParam]>,
+    /// The graph-local buffers (`LocalBuf`), in declaration order: each one's shape and its sample
+    /// offset within the block's `local_bufs` span. Empty when the def has no `LocalBuf`.
+    local_bufs: Box<[LocalBufSpec]>,
     /// Number of control parameters.
     num_params: usize,
     /// The graph's audio-rate timing. The World's rate for an ordinary def; for a reblocked/resampled
@@ -203,6 +230,7 @@ impl GraphDef {
         audio_params: Box<[AudioParam]>,
         trig_params: Box<[u32]>,
         lag_params: Box<[LagParam]>,
+        local_bufs: Box<[LocalBufSpec]>,
         num_params: usize,
         audio: RateInfo,
         control: RateInfo,
@@ -218,6 +246,7 @@ impl GraphDef {
             audio_params,
             trig_params,
             lag_params,
+            local_bufs,
             num_params,
             audio,
             control,
@@ -275,6 +304,11 @@ impl GraphDef {
         &self.lag_params
     }
 
+    /// The graph-local buffers (`LocalBuf`), in declaration order.
+    pub fn local_buf_specs(&self) -> &[LocalBufSpec] {
+        &self.local_bufs
+    }
+
     /// Number of control parameters.
     pub fn num_params(&self) -> usize {
         self.num_params
@@ -317,6 +351,8 @@ pub fn build_layout(
     num_control_wires: usize,
     num_params: usize,
     num_local_channels: usize,
+    num_local_bufs: usize,
+    local_buf_samples: usize,
     num_lag_params: usize,
     block_size: usize,
 ) -> (BlockLayout, Vec<usize>, Vec<usize>, Vec<usize>) {
@@ -369,9 +405,20 @@ pub fn build_layout(
         off: done_flags.off + done_flags.len,
         len: num_local_channels * block_size * 4,
     };
-    // One `u32` audio-bus map per parameter (`/n_mapa`), `u32`-aligned after the local bus.
-    let amaps = Span {
+    // One `u32` coord tag per graph-local buffer (`LocalBuf`), `u32`-aligned after the local bus.
+    let local_buf_coords = Span {
         off: local.off + local.len,
+        len: num_local_bufs * 4,
+    };
+    // The graph-local buffer samples: `local_buf_samples` `f32`s, each buffer at its spec's offset,
+    // 4-byte-aligned after the coord tags.
+    let local_bufs = Span {
+        off: local_buf_coords.off + local_buf_coords.len,
+        len: local_buf_samples * 4,
+    };
+    // One `u32` audio-bus map per parameter (`/n_mapa`), `u32`-aligned after the local buffers.
+    let amaps = Span {
+        off: local_bufs.off + local_bufs.len,
         len: num_params * 4,
     };
     // One `f32` one-pole state per lagged param (`LagControl`), 4-byte-aligned after the audio maps.
@@ -389,6 +436,8 @@ pub fn build_layout(
             pmaps,
             done_flags,
             local,
+            local_buf_coords,
+            local_bufs,
             amaps,
             lag_state,
             total,
@@ -406,7 +455,8 @@ mod tests {
     /// Lay out a block with a single 8-byte state slot and the given aux slots, returning the layout
     /// and the per-unit aux offsets. Everything but `aux_slots` is held fixed.
     fn layout(aux_slots: &[(usize, usize)]) -> (super::BlockLayout, alloc::vec::Vec<usize>) {
-        let (l, _state, _demand, aux) = build_layout(&[(8, 4)], &[], aux_slots, 4, 1, 0, 0, 64);
+        let (l, _state, _demand, aux) =
+            build_layout(&[(8, 4)], &[], aux_slots, 4, 1, 0, 0, 0, 0, 64);
         (l, aux)
     }
 

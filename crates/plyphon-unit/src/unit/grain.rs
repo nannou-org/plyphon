@@ -16,6 +16,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
+use crate::unit::LocalBufs;
 use crate::unit::io::{buffer_at, sample_channel};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{
@@ -181,9 +182,13 @@ fn pan_out(
 }
 
 /// The env (window) buffer for `envbufnum` (`< 0` -> the default window, `None`).
-fn env_buffer(buffers: &BufferTable, envbufnum: f32) -> Option<&[f32]> {
+fn env_buffer<'a>(
+    buffers: &'a BufferTable,
+    local: &'a LocalBufs<'_>,
+    envbufnum: f32,
+) -> Option<&'a [f32]> {
     if envbufnum >= 0.0 {
-        buffer_at(buffers, envbufnum as usize).map(|b| b.data())
+        buffer_at(buffers, local, envbufnum as usize).map(|b| b.data())
     } else {
         None
     }
@@ -348,7 +353,7 @@ impl Unit for GrainSin {
         let sample_rate = ctx.own.sample_rate;
         let table = ctx.wavetables.sine();
         let ins = ctx.ins;
-        let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
+        let win = env_buffer(ctx.buffers, &ctx.local_bufs, ins.control(Self::ENVBUF));
 
         // Advance every active grain from the block start; remove finished grains by swapping the last
         // active grain into the vacated slot.
@@ -560,7 +565,7 @@ impl Unit for GrainFM {
         let sample_dur = ctx.own.sample_dur;
         let table = ctx.wavetables.sine();
         let ins = ctx.ins;
-        let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
+        let win = env_buffer(ctx.buffers, &ctx.local_bufs, ins.control(Self::ENVBUF));
 
         let mut k = 0;
         while k < self.num_active as usize {
@@ -730,7 +735,7 @@ impl Unit for GrainIn {
         }
         let sample_rate = ctx.own.sample_rate;
         let ins = ctx.ins;
-        let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
+        let win = env_buffer(ctx.buffers, &ctx.local_bufs, ins.control(Self::ENVBUF));
         let input = ins.audio(Self::IN);
 
         let mut k = 0;
@@ -783,8 +788,13 @@ impl UnitDef for GrainInCtor {
 }
 
 /// The `(num_frames, sample_rate)` of the buffer at `bufnum`, or `(0, sample_rate)` if absent.
-fn buffer_info(buffers: &BufferTable, bufnum: i32, sample_rate: f64) -> (usize, f64) {
-    match buffer_at(buffers, bufnum.max(0) as usize) {
+fn buffer_info(
+    buffers: &BufferTable,
+    local: &LocalBufs<'_>,
+    bufnum: i32,
+    sample_rate: f64,
+) -> (usize, f64) {
+    match buffer_at(buffers, local, bufnum.max(0) as usize) {
         Some(b) if bufnum >= 0 => (b.num_frames(), b.sample_rate()),
         _ => (0, sample_rate),
     }
@@ -812,19 +822,21 @@ struct GrainBufG {
 }
 
 impl GrainBufG {
+    #[allow(clippy::too_many_arguments)]
     fn render(
         &mut self,
         outs: &mut Outputs<'_>,
         block: usize,
         off: usize,
         buffers: &BufferTable,
+        local: &LocalBufs<'_>,
         win: Option<&[f32]>,
         num_out: usize,
     ) -> bool {
         let n = (block - off).min(self.counter.max(0) as usize);
         let chan = self.chan as usize;
         let (ch1, mut ch2) = pan_channels(outs, chan, num_out);
-        let snd = buffer_at(buffers, self.bufnum.max(0) as usize).map(|b| b.data());
+        let snd = buffer_at(buffers, local, self.bufnum.max(0) as usize).map(|b| b.data());
         for j in off..off + n {
             let sample = snd.map_or(0.0, |b| read_buffer(b, self.phase, self.interp));
             let amp = window_amp(
@@ -875,6 +887,7 @@ impl GrainBuf {
         ins: &Inputs<'_>,
         outs: &mut Outputs<'_>,
         buffers: &BufferTable,
+        local: &LocalBufs<'_>,
         block: usize,
         off: usize,
         win: Option<&[f32]>,
@@ -891,7 +904,7 @@ impl GrainBuf {
         let interp = sample_channel(ins, Self::INTERP, off) as i32;
         let pan = sample_channel(ins, Self::PAN, off);
         let win_type = ins.control(Self::ENVBUF);
-        let (buf_frames, buf_sr) = buffer_info(buffers, bufnum, sample_rate);
+        let (buf_frames, buf_sr) = buffer_info(buffers, local, bufnum, sample_rate);
         let (b1, y1, y2, win_pos, win_inc) = init_window(win_type, counter, win);
         let (chan, pan1, pan2) = grain_pan(pan, num_out);
         let mut grain = GrainBufG {
@@ -911,7 +924,7 @@ impl GrainBuf {
             win_type,
             _pad: 0,
         };
-        if !grain.render(outs, block, off, buffers, win, num_out) {
+        if !grain.render(outs, block, off, buffers, local, win, num_out) {
             self.grains[self.num_active as usize] = grain;
             self.num_active += 1;
         }
@@ -927,11 +940,19 @@ impl Unit for GrainBuf {
         }
         let sample_rate = ctx.own.sample_rate;
         let ins = ctx.ins;
-        let win = env_buffer(ctx.buffers, ins.control(Self::ENVBUF));
+        let win = env_buffer(ctx.buffers, &ctx.local_bufs, ins.control(Self::ENVBUF));
 
         let mut k = 0;
         while k < self.num_active as usize {
-            if self.grains[k].render(&mut ctx.outs, block, 0, ctx.buffers, win, num_out) {
+            if self.grains[k].render(
+                &mut ctx.outs,
+                block,
+                0,
+                ctx.buffers,
+                &ctx.local_bufs,
+                win,
+                num_out,
+            ) {
                 self.num_active -= 1;
                 self.grains[k] = self.grains[self.num_active as usize];
             } else {
@@ -955,6 +976,7 @@ impl Unit for GrainBuf {
                     &ins,
                     &mut ctx.outs,
                     ctx.buffers,
+                    &ctx.local_bufs,
                     block,
                     off,
                     win,
@@ -1010,12 +1032,13 @@ impl TGrainG {
         block: usize,
         off: usize,
         buffers: &BufferTable,
+        local: &LocalBufs<'_>,
         num_out: usize,
     ) -> bool {
         let n = (block - off).min(self.counter.max(0) as usize);
         let chan = self.chan as usize;
         let (ch1, mut ch2) = pan_channels(outs, chan, num_out);
-        let snd = buffer_at(buffers, self.bufnum.max(0) as usize).map(|b| b.data());
+        let snd = buffer_at(buffers, local, self.bufnum.max(0) as usize).map(|b| b.data());
         for j in off..off + n {
             let sample = snd.map_or(0.0, |b| read_buffer(b, self.phase, self.interp));
             let amp = default_window_amp(self.b1, &mut self.y1, &mut self.y2);
@@ -1057,6 +1080,7 @@ impl TGrains {
         ins: &Inputs<'_>,
         outs: &mut Outputs<'_>,
         buffers: &BufferTable,
+        local: &LocalBufs<'_>,
         block: usize,
         off: usize,
         sample_rate: f64,
@@ -1072,7 +1096,7 @@ impl TGrains {
         let pan = sample_channel(ins, Self::PAN, off);
         let amp = sample_channel(ins, Self::AMP, off);
         let interp = sample_channel(ins, Self::INTERP, off) as i32;
-        let (_buf_frames, buf_sr) = buffer_info(buffers, bufnum, sample_rate);
+        let (_buf_frames, buf_sr) = buffer_info(buffers, local, bufnum, sample_rate);
         let rate = rate_in as f64 * buf_sr / sample_rate;
         // The grain is centred on `centerPos` seconds, so it starts half a grain before it.
         let phase = center as f64 * buf_sr - 0.5 * counter as f64 * rate;
@@ -1091,7 +1115,7 @@ impl TGrains {
             chan: chan as i32,
             interp,
         };
-        if !grain.render(outs, block, off, buffers, num_out) {
+        if !grain.render(outs, block, off, buffers, local, num_out) {
             self.grains[self.num_active as usize] = grain;
             self.num_active += 1;
         }
@@ -1110,7 +1134,14 @@ impl Unit for TGrains {
 
         let mut k = 0;
         while k < self.num_active as usize {
-            if self.grains[k].render(&mut ctx.outs, block, 0, ctx.buffers, num_out) {
+            if self.grains[k].render(
+                &mut ctx.outs,
+                block,
+                0,
+                ctx.buffers,
+                &ctx.local_bufs,
+                num_out,
+            ) {
                 self.num_active -= 1;
                 self.grains[k] = self.grains[self.num_active as usize];
             } else {
@@ -1130,7 +1161,15 @@ impl Unit for TGrains {
             ins.control(Self::TRIG),
             audio,
             |off| {
-                self.spawn(&ins, &mut ctx.outs, ctx.buffers, block, off, sample_rate);
+                self.spawn(
+                    &ins,
+                    &mut ctx.outs,
+                    ctx.buffers,
+                    &ctx.local_bufs,
+                    block,
+                    off,
+                    sample_rate,
+                );
             },
         );
         DoneAction::Nothing
@@ -1184,9 +1223,10 @@ impl WarpG {
         off: usize,
         snd: &[f32],
         buffers: &BufferTable,
+        local: &LocalBufs<'_>,
     ) -> bool {
         let n = (block - off).min(self.counter.max(0) as usize);
-        let win = env_buffer(buffers, self.win_type);
+        let win = env_buffer(buffers, local, self.win_type);
         for o in out.iter_mut().take(off + n).skip(off) {
             let sample = read_buffer(snd, self.phase, self.interp);
             let amp = window_amp(
@@ -1251,10 +1291,11 @@ impl Unit for Warp1 {
 
         // The sound buffer is resolved once from `bufnum` (scsynth reads it per block, not per grain).
         let bufnum = ins.control(Self::BUFNUM) as i32;
-        let (snd, buf_frames, buf_sr) = match buffer_at(ctx.buffers, bufnum.max(0) as usize) {
-            Some(b) if bufnum >= 0 => (b.data(), b.num_frames(), b.sample_rate()),
-            _ => return DoneAction::Nothing,
-        };
+        let (snd, buf_frames, buf_sr) =
+            match buffer_at(ctx.buffers, &ctx.local_bufs, bufnum.max(0) as usize) {
+                Some(b) if bufnum >= 0 => (b.data(), b.num_frames(), b.sample_rate()),
+                _ => return DoneAction::Nothing,
+            };
         let buf_rate_scale = buf_sr * sample_dur;
 
         let grains = ctx.aux.cast_mut::<WarpG>();
@@ -1267,7 +1308,7 @@ impl Unit for Warp1 {
             while i < self.num_active[n] as usize {
                 let done = {
                     let out = ctx.outs.audio(n);
-                    bank[i].render(out, block, 0, snd, ctx.buffers)
+                    bank[i].render(out, block, 0, snd, ctx.buffers, &ctx.local_bufs)
                 };
                 if done {
                     self.num_active[n] -= 1;
@@ -1295,7 +1336,7 @@ impl Unit for Warp1 {
                 next_grain = (counter as f32 / overlaps) as i32;
 
                 let win_type = sample_channel(&ins, Self::ENVBUF, smp);
-                let win = env_buffer(ctx.buffers, win_type);
+                let win = env_buffer(ctx.buffers, &ctx.local_bufs, win_type);
                 let (b1, y1, y2, win_pos, win_inc) = init_window(win_type, counter, win);
                 let idx = base + self.num_active[n] as usize;
                 grains[idx] = WarpG {
@@ -1314,7 +1355,7 @@ impl Unit for Warp1 {
                 self.num_active[n] += 1;
                 let done = {
                     let out = ctx.outs.audio(n);
-                    grains[idx].render(out, block, smp, snd, ctx.buffers)
+                    grains[idx].render(out, block, smp, snd, ctx.buffers, &ctx.local_bufs)
                 };
                 if done {
                     self.num_active[n] -= 1;

@@ -50,7 +50,7 @@ impl PlayBuf {
 impl Unit for PlayBuf {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
-        let buffer = match unit::buffer_at(ctx.buffers, bufnum) {
+        let buffer = match unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum) {
             Some(buffer) if buffer.num_frames() > 0 => buffer,
             _ => {
                 self.silence(&mut ctx.outs);

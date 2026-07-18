@@ -188,7 +188,7 @@ impl Unit for BufInfo {
         let kind = BufInfoKind::from_tag(self.kind);
         let index = ctx.ins.control(Self::BUF).max(0.0) as usize;
         let engine_sr = ctx.audio.sample_rate;
-        let value = match unit::buffer_at(ctx.buffers, index) {
+        let value = match unit::buffer_at(ctx.buffers, &ctx.local_bufs, index) {
             Some(buf) => {
                 let frames = buf.num_frames();
                 let channels = buf.num_channels();

@@ -12,7 +12,7 @@ use crate::error::BuildError;
 use crate::unit::io::buffer_at;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, Outputs, ProcessCtx, Unit, unit_spec};
-use plyphon_dsp::buffer::{Buffer, sc_loop};
+use plyphon_dsp::buffer::{BufView, sc_loop};
 use plyphon_dsp::interp::{cubicinterp, lininterp};
 use plyphon_dsp::rate::Rate;
 
@@ -24,7 +24,7 @@ const INTERP: usize = 3;
 /// Read channel `ch` of `buf` (of `frames` frames) at integer frame `iphase` + `frac`, interpolating
 /// per `interp` (`4` cubic, `2` linear, else none). Neighbour frames wrap (`looping`) or clamp.
 fn read_frame(
-    buf: &Buffer,
+    buf: BufView<'_>,
     iphase: i64,
     frac: f32,
     ch: usize,
@@ -80,7 +80,7 @@ impl Unit for BufRd {
         let interp = self.interp;
         let num_out = self.num_channels as usize;
 
-        let buffer = match buffer_at(ctx.buffers, bufnum) {
+        let buffer = match buffer_at(ctx.buffers, &ctx.local_bufs, bufnum) {
             Some(b) if b.num_frames() > 0 => b,
             _ => {
                 self.silence(&mut ctx.outs);

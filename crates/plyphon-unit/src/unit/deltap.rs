@@ -17,7 +17,9 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, buffer_at_mut, unit_spec};
+use crate::unit::{
+    BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, buffer_at, buffer_at_mut, unit_spec,
+};
 use plyphon_dsp::interp::{cubicinterp, lininterp};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
@@ -67,8 +69,8 @@ impl Unit for DelTapWr {
         let bufnum = ins.control(Self::BUFNUM).max(0.0) as usize;
 
         let out = ctx.outs.audio(0);
-        let buf = match buffer_at_mut(ctx.buffers, bufnum) {
-            Some(b) if b.num_channels() == 1 && !b.data().is_empty() => b.data_mut(),
+        let buf = match buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum) {
+            Some(b) if b.num_channels() == 1 && !b.data().is_empty() => b.into_data(),
             _ => {
                 out.fill(0.0);
                 return DoneAction::Nothing;
@@ -156,7 +158,8 @@ impl Unit for DelTapRd {
         let dt_ctrl = ins.control(Self::DELTIME);
 
         let out = ctx.outs.audio(0);
-        let buf = match buffer_at_mut(ctx.buffers, ins.control(Self::BUFNUM).max(0.0) as usize) {
+        let bufnum = ins.control(Self::BUFNUM).max(0.0) as usize;
+        let buf = match buffer_at(ctx.buffers, &ctx.local_bufs, bufnum) {
             Some(b) if b.num_channels() == 1 && !b.data().is_empty() => b.data(),
             _ => {
                 out.fill(0.0);
