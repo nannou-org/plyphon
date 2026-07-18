@@ -34,6 +34,7 @@ pub mod filter;
 pub mod filter_simple;
 pub mod formant;
 pub mod freeverb;
+pub mod gendy;
 pub mod grain;
 pub mod gverb;
 pub mod hilbert;

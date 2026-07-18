@@ -67,8 +67,8 @@ fn melody_def(channels: usize) -> SynthDef {
                 vec![
                     InputRef::Unit { unit: 1, output: 0 },
                     InputRef::Constant(0.0),
-                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 1,
             ),

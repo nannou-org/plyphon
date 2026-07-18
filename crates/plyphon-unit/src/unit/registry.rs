@@ -37,13 +37,13 @@ use crate::unit::demand::drand::DrandCtor;
 use crate::unit::demand::dseq::DseqCtor;
 use crate::unit::demand::dser::DserCtor;
 use crate::unit::demand::dseries::DseriesCtor;
-use crate::unit::demand::duty::DutyCtor;
+use crate::unit::demand::duty::{DutyCtor, TDutyCtor};
 use crate::unit::demand::dwhite::DwhiteCtor;
 use crate::unit::demand::dxrand::DxrandCtor;
 use crate::unit::disk_in::DiskInCtor;
 use crate::unit::disk_out::DiskOutCtor;
 use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor, LookAheadCtor, LookAheadMode};
-use crate::unit::env::EnvGenCtor;
+use crate::unit::env::{EnvGenCtor, IEnvGenCtor};
 use crate::unit::eq::{BeqCtor, BeqKind, FormletCtor, MidEQCtor};
 #[cfg(feature = "fft")]
 use crate::unit::fft::{FftCtor, IfftCtor};
@@ -54,6 +54,7 @@ use crate::unit::filter_simple::{
 };
 use crate::unit::formant::FormantCtor;
 use crate::unit::freeverb::{FreeVerb2Ctor, FreeVerbCtor};
+use crate::unit::gendy::Gendy1Ctor;
 use crate::unit::grain::{
     GrainBufCtor, GrainFMCtor, GrainInCtor, GrainSinCtor, TGrainsCtor, Warp1Ctor,
 };
@@ -107,7 +108,8 @@ use crate::unit::pv_mag_mul::PvMagMulCtor;
 use crate::unit::pv_mag_squared::PvMagSquaredCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_ops::{
-    MagKind, PvBrickWallCtor, PvConjCtor, PvLocalMaxCtor, PvMagThreshCtor, PvPhaseQuarterCtor,
+    MagKind, PvBrickWallCtor, PvConjCtor, PvDiffuserCtor, PvLocalMaxCtor, PvMagThreshCtor,
+    PvPhaseQuarterCtor,
 };
 use crate::unit::ramp::{RampCtor, VarLagCtor};
 use crate::unit::rand::{
@@ -394,6 +396,8 @@ impl UnitRegistry {
         registry.register("FreeVerb2", Box::new(FreeVerb2Ctor));
         // GVerb: a large Griesinger-style FDN reverb.
         registry.register("GVerb", Box::new(GVerbCtor));
+        // Gendy1: Xenakis dynamic stochastic synthesis.
+        registry.register("Gendy1", Box::new(Gendy1Ctor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         // The init/trigger-time randoms share the synth's RGen stream (see the `rand` module);
         // the free-running noise generators above each embed their own.
@@ -518,6 +522,7 @@ impl UnitRegistry {
             Box::new(LookAheadCtor(LookAheadMode::Normalizer)),
         );
         registry.register("EnvGen", Box::new(EnvGenCtor));
+        registry.register("IEnvGen", Box::new(IEnvGenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
         registry.register("Poll", Box::new(PollCtor));
         registry.register("Trig", Box::new(TrigCtor));
@@ -600,6 +605,7 @@ impl UnitRegistry {
         registry.register("Sanitize", Box::new(SanitizeCtor));
         // Demand-rate consumers (normal calc-rate units that pull from the demand plan).
         registry.register("Duty", Box::new(DutyCtor));
+        registry.register("TDuty", Box::new(TDutyCtor));
         registry.register("Demand", Box::new(DemandCtor));
         // Demand-rate sources (the demand plan).
         registry.register_demand("Dseq", Box::new(DseqCtor));
@@ -630,6 +636,7 @@ impl UnitRegistry {
             registry.register("PV_PhaseShift270", Box::new(PvPhaseQuarterCtor(true)));
             registry.register("PV_BrickWall", Box::new(PvBrickWallCtor));
             registry.register("PV_Conj", Box::new(PvConjCtor));
+            registry.register("PV_Diffuser", Box::new(PvDiffuserCtor));
             registry.register("PV_Add", Box::new(PvComplexCtor(ComplexKind::Add)));
             registry.register("PV_Mul", Box::new(PvComplexCtor(ComplexKind::Mul)));
             registry.register("PV_Div", Box::new(PvComplexCtor(ComplexKind::Div)));

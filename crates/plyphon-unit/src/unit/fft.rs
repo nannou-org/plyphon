@@ -283,7 +283,7 @@ fn sample_in(ins: &Inputs<'_>, i: usize, k: usize) -> f32 {
 /// supports: its aux must be sized before the buffer is known, so it reserves `2 * this` samples
 /// and resolves the actual size from the buffer on the first frame. A def naming its `winsize`
 /// avoids the over-allocation and supports the full range.
-const DEFAULT_MAX_FFT: usize = 8192;
+pub(crate) const DEFAULT_MAX_FFT: usize = 8192;
 
 /// The constant FFT size at input `winsize`, validated as a supported power of two. `0` - sclang's
 /// default, "use the chain buffer's size" - is accepted and resolved at run time (up to
@@ -311,7 +311,7 @@ fn aux_fftsize(fftsize: usize) -> usize {
 /// Resolve a deferred (`winsize = 0`) FFT size from the chain buffer's frame count: the buffer
 /// size, if it is a supported power of two within the reserved aux. `None` leaves the unit waiting
 /// (silent) until a suitably-sized buffer is installed.
-fn resolve_fftsize(
+pub(crate) fn resolve_fftsize(
     buffers: &plyphon_dsp::buffer::BufferTable,
     local: &crate::unit::LocalBufs<'_>,
     bufnum: usize,

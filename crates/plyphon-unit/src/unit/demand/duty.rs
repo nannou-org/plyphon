@@ -15,6 +15,10 @@ use plyphon_dsp::rate::Rate;
 /// `doneAction`; a `NaN` level holds the previous value. A rising `reset` resets the `dur`/`level`
 /// sources and restarts the count.
 ///
+/// The compiled input order is `[dur, reset, doneAction, level]`: the `.ar`/`.kr` methods take
+/// `(dur, reset, level, doneAction)` but pass `doneAction` before `level` to the UGen, so `level`
+/// (a demand source) is the last input.
+///
 /// This is a normal (pushed) [`Unit`]; the pulling of `dur`/`level` is what makes it demand-driven.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -34,8 +38,8 @@ pub struct Duty {
 impl Duty {
     const DUR: usize = 0;
     const RESET: usize = 1;
-    const LEVEL: usize = 2;
-    const DONE: usize = 3;
+    const DONE: usize = 2;
+    const LEVEL: usize = 3;
 
     /// Demand the next duration (in frames) and level when the count elapses. Returns the done action
     /// to apply if the duration source is exhausted. Takes `ins`/`demand`/`world` as disjoint borrows
@@ -118,6 +122,135 @@ impl UnitDef for DutyCtor {
             prev_reset: 0.0,
             audio: (ctx.rate == Rate::Audio) as u32,
             _pad: 0,
+        }))
+    }
+}
+
+/// `TDuty.kr/ar(dur, reset, level, doneAction, gapFirst)`: a self-clocking *trigger* sequencer.
+/// Like [`Duty`] it counts down `dur` seconds demanded from its `dur` source, but at each boundary
+/// it emits the demanded `level` for a single frame (a one-frame impulse) and `0` in between,
+/// rather than holding the level. `gapFirst = 0` fires the first impulse immediately; a non-zero
+/// `gapFirst` waits one demanded duration before it. A `NaN` duration triggers `doneAction`; a
+/// `NaN` level emits `0`. A rising `reset` resets the sources and restarts the count.
+///
+/// Input order matches [`Duty`] with `gapFirst` appended: `[dur, reset, doneAction, level,
+/// gapFirst]`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct TDuty {
+    /// Frames remaining until the next demand (fractional remainder preserved for sample accuracy).
+    count: f64,
+    /// Previous `reset` value, for rising-edge detection.
+    prev_reset: f32,
+    /// `0`/`1`: control-rate (one value per block) vs audio-rate (a full block).
+    audio: u32,
+    /// Non-zero if the first impulse waits one demanded duration (scsynth's `gapFirst`).
+    gap_first: u32,
+    /// `0` until the first block establishes the (optional) initial gap.
+    warmed: u32,
+}
+
+impl TDuty {
+    const DUR: usize = 0;
+    const RESET: usize = 1;
+    const DONE: usize = 2;
+    const LEVEL: usize = 3;
+    const GAP_FIRST: usize = 4;
+
+    /// Demand the next duration (in frames) and level at a boundary, emitting the level as a
+    /// one-frame impulse. Returns the done action if the duration source is exhausted.
+    fn fire(
+        &mut self,
+        ins: &Inputs<'_>,
+        demand: &mut DemandAccess<'_>,
+        world: &mut DemandWorld<'_, '_>,
+        frame_rate: f64,
+    ) -> (f32, DoneAction) {
+        let mut done = DoneAction::Nothing;
+        let dur = demand_next(ins, demand, world, Self::DUR);
+        if dur.is_nan() {
+            done = DoneAction::from_code(ins.control(Self::DONE));
+        } else {
+            self.count += dur as f64 * frame_rate;
+        }
+        let level = demand_next(ins, demand, world, Self::LEVEL);
+        (if level.is_nan() { 0.0 } else { level }, done)
+    }
+}
+
+impl Unit for TDuty {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let mut done = DoneAction::Nothing;
+        let mut world = DemandWorld {
+            buffers: &mut *ctx.buffers,
+            local_bufs: &mut ctx.local_bufs,
+            node_id: ctx.node_id,
+            node_msgs: &mut ctx.node_msgs,
+        };
+        let frame_rate = if self.audio != 0 {
+            ctx.audio.sample_rate
+        } else {
+            ctx.control.sample_rate
+        };
+
+        // A `gapFirst` synth demands one duration up front so the first impulse is delayed by it.
+        if self.warmed == 0 {
+            if self.gap_first != 0 {
+                let dur = demand_next(&ctx.ins, &mut ctx.demand, &mut world, Self::DUR);
+                if !dur.is_nan() {
+                    self.count = dur as f64 * frame_rate;
+                }
+            }
+            self.warmed = 1;
+        }
+
+        let reset = ctx.ins.control(Self::RESET);
+        if reset > 0.0 && self.prev_reset <= 0.0 {
+            demand_reset(&ctx.ins, &mut ctx.demand, &mut world, Self::LEVEL);
+            demand_reset(&ctx.ins, &mut ctx.demand, &mut world, Self::DUR);
+            self.count = 0.0;
+        }
+        self.prev_reset = reset;
+
+        if self.audio != 0 {
+            let out = ctx.outs.audio(0);
+            for o in out.iter_mut() {
+                *o = if self.count <= 0.0 {
+                    let (level, action) =
+                        self.fire(&ctx.ins, &mut ctx.demand, &mut world, frame_rate);
+                    done = done.max(action);
+                    level
+                } else {
+                    0.0
+                };
+                self.count -= 1.0;
+            }
+        } else {
+            *ctx.outs.control(0) = if self.count <= 0.0 {
+                let (level, action) = self.fire(&ctx.ins, &mut ctx.demand, &mut world, frame_rate);
+                done = done.max(action);
+                level
+            } else {
+                0.0
+            };
+            self.count -= 1.0;
+        }
+        done
+    }
+}
+
+/// Constructor for [`TDuty`]: bakes the `gapFirst` flag from its constant input.
+pub struct TDutyCtor;
+
+impl UnitDef for TDutyCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        let gap_first = ctx.const_input(TDuty::GAP_FIRST).unwrap_or(0.0) != 0.0;
+        Ok(unit_spec(TDuty {
+            count: 0.0,
+            prev_reset: 0.0,
+            audio: (ctx.rate == Rate::Audio) as u32,
+            gap_first: gap_first as u32,
+            warmed: 0,
         }))
     }
 }

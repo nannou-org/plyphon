@@ -42,8 +42,8 @@ fn drive(source: UnitSpec) -> (Controller, Nrt, World) {
         vec![
             InputRef::Constant(SEG_DUR),
             InputRef::Constant(0.0),
-            InputRef::Unit { unit: 0, output: 0 },
             InputRef::Constant(0.0),
+            InputRef::Unit { unit: 0, output: 0 },
         ],
         1,
     );

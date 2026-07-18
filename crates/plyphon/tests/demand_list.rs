@@ -41,8 +41,8 @@ fn drive(source: UnitSpec) -> (Controller, Nrt, World) {
         vec![
             InputRef::Constant(SEG_DUR),
             InputRef::Constant(0.0),
-            InputRef::Unit { unit: 0, output: 0 },
             InputRef::Constant(0.0),
+            InputRef::Unit { unit: 0, output: 0 },
         ],
         1,
     );
@@ -155,8 +155,8 @@ fn nested_dser_in_dseq_flattens() {
         vec![
             InputRef::Constant(SEG_DUR),
             InputRef::Constant(0.0),
-            InputRef::Unit { unit: 1, output: 0 },
             InputRef::Constant(0.0),
+            InputRef::Unit { unit: 1, output: 0 },
         ],
         1,
     );

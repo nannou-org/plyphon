@@ -50,11 +50,11 @@ fn duty_def(name: &str, sources: Vec<UnitSpec>, done: f32) -> SynthDef {
         vec![
             InputRef::Constant(SEG_DUR),
             InputRef::Constant(0.0),
+            InputRef::Constant(done),
             InputRef::Unit {
                 unit: level_unit,
                 output: 0,
             },
-            InputRef::Constant(done),
         ],
         1,
     ));
@@ -178,8 +178,8 @@ fn duty_done_action_frees_synth_when_durations_run_out() {
         vec![
             InputRef::Unit { unit: 0, output: 0 },
             InputRef::Constant(0.0),
-            InputRef::Unit { unit: 1, output: 0 },
             InputRef::Constant(2.0),
+            InputRef::Unit { unit: 1, output: 0 },
         ],
         1,
     );
@@ -247,8 +247,8 @@ fn dwhite_is_bounded_and_decorrelates_across_instances() {
                 vec![
                     InputRef::Constant(SEG_DUR),
                     InputRef::Constant(0.0),
-                    InputRef::Unit { unit: 0, output: 0 },
                     InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 0, output: 0 },
                 ],
                 1,
             ),
