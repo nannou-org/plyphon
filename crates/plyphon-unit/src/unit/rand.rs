@@ -139,6 +139,8 @@ struct TrigRand {
 }
 
 impl TrigRand {
+    /// A fresh trigger-random body that draws on its first block; `audio` selects a full-block
+    /// output vs a single control value.
     fn new(audio: bool) -> Self {
         TrigRand {
             value: 0.0,
