@@ -84,6 +84,25 @@ pub enum SynthNewError {
     /// The command ring was full.
     #[error("command queue full")]
     QueueFull,
+    /// The automatic client node id space is exhausted (ids are engine-lifetime and never
+    /// reclaimed). A host needing id reuse manages its own ids via
+    /// [`Controller::synth_new_with_id`].
+    #[error("automatic node id space exhausted")]
+    NodeIdExhausted,
+}
+
+/// Failure to create a group with an automatically assigned node id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum GroupNewError {
+    /// The command ring was full. Nothing was published and the id was not consumed, so the call
+    /// can be retried.
+    #[error("command queue full")]
+    QueueFull,
+    /// The automatic client node id space is exhausted (ids are engine-lifetime and never
+    /// reclaimed). A host needing id reuse manages its own ids via
+    /// [`Controller::new_group_with_id`].
+    #[error("automatic node id space exhausted")]
+    NodeIdExhausted,
 }
 
 /// The control side of the engine.
@@ -310,14 +329,15 @@ impl Controller {
     /// Create a synth from definition `def_name` and link it under group `target`.
     ///
     /// The def is compiled (and installed in the `World`'s def table) on first use; the synth itself
-    /// is constructed on the audio thread. Returns the new synth's client id.
+    /// is constructed on the audio thread. Returns the new synth's client id. On any error nothing
+    /// is published and the automatic id is not consumed, so the call can be retried.
     pub fn synth_new(
         &mut self,
         def_name: &str,
         target: i32,
         action: AddAction,
     ) -> Result<i32, SynthNewError> {
-        let id = self.next_id;
+        let id = self.auto_id().ok_or(SynthNewError::NodeIdExhausted)?;
         self.synth_new_with_id(id, def_name, target, action)?;
         self.next_id += 1;
         Ok(id)
@@ -398,12 +418,21 @@ impl Controller {
         Ok(def_id)
     }
 
-    /// Create an empty group under group `target`. Returns the new group's client id.
-    pub fn new_group(&mut self, target: i32, action: AddAction) -> Result<i32, QueueFull> {
-        let id = self.next_id;
-        self.new_group_with_id(id, target, action)?;
+    /// Create an empty group under group `target`. Returns the new group's client id. On any error
+    /// nothing is published and the automatic id is not consumed, so the call can be retried.
+    pub fn new_group(&mut self, target: i32, action: AddAction) -> Result<i32, GroupNewError> {
+        let id = self.auto_id().ok_or(GroupNewError::NodeIdExhausted)?;
+        self.new_group_with_id(id, target, action)
+            .map_err(|QueueFull| GroupNewError::QueueFull)?;
         self.next_id += 1;
         Ok(id)
+    }
+
+    /// The next automatic client node id, or `None` once the positive id space is exhausted.
+    /// `i32::MAX` itself is never allocated, so a successful use can always advance without
+    /// overflow.
+    fn auto_id(&self) -> Option<i32> {
+        (self.next_id != i32::MAX).then_some(self.next_id)
     }
 
     /// Create an empty group with a caller-chosen client id (e.g. an id from an OSC `/g_new`).
@@ -966,5 +995,39 @@ mod tests {
         let (mut controller, mut rx) = test_controller(2);
         assert_eq!(controller.try_send_batch(&[]), Ok(()));
         assert!(rx.pop().is_err(), "an empty batch enqueues nothing");
+    }
+
+    #[test]
+    fn auto_id_exhaustion_errors_without_publishing() {
+        let (mut controller, mut rx) = test_controller(4);
+        controller.next_id = i32::MAX;
+        assert!(matches!(
+            controller.new_group(crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(GroupNewError::NodeIdExhausted)
+        ));
+        // The exhaustion guard precedes def resolution, so even an unknown def reports it.
+        assert!(matches!(
+            controller.synth_new("missing", crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(SynthNewError::NodeIdExhausted)
+        ));
+        assert!(rx.pop().is_err(), "nothing crossed the ring");
+    }
+
+    #[test]
+    fn new_group_queue_full_does_not_consume_the_auto_id() {
+        let (mut controller, mut rx) = test_controller(1);
+        controller.free(1).unwrap(); // Occupy the single command slot.
+        assert_eq!(
+            controller.new_group(crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(GroupNewError::QueueFull)
+        );
+        let _ = rx.pop().expect("release the occupied slot");
+        assert_eq!(
+            controller
+                .new_group(crate::ROOT_GROUP_ID, AddAction::Tail)
+                .unwrap(),
+            1000,
+            "the failed attempt must not consume the id"
+        );
     }
 }

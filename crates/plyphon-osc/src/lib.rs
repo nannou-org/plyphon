@@ -89,7 +89,7 @@ use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
-use plyphon::controller::SynthNewError;
+use plyphon::controller::{GroupNewError, SynthNewError};
 use plyphon::synthdef::read::ReadError;
 use plyphon::{
     AddAction, CommandTime, Controller, Event, NodeMsg, Rate, Render, RenderUntil, Reply, Trigger,
@@ -131,6 +131,9 @@ pub enum OscError {
     /// A command ring was full.
     #[error("command queue full")]
     QueueFull,
+    /// The controller's automatic node id space was exhausted.
+    #[error("automatic node id space exhausted")]
+    NodeIdExhausted,
     /// A control name was not found on the target node's SynthDef.
     #[error("unknown control: {0}")]
     UnknownParam(String),
@@ -1505,9 +1508,10 @@ impl OscDispatcher {
             let action = add_action(int_arg(&triple[1])?)?;
             let target = int_arg(&triple[2])?;
             if id < 0 {
-                controller
-                    .new_group(target, action)
-                    .map_err(|_| OscError::QueueFull)?;
+                controller.new_group(target, action).map_err(|e| match e {
+                    GroupNewError::QueueFull => OscError::QueueFull,
+                    GroupNewError::NodeIdExhausted => OscError::NodeIdExhausted,
+                })?;
             } else {
                 controller
                     .new_group_with_id(id, target, action)
