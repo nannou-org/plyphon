@@ -105,7 +105,7 @@ fn tail_rms(freq: f32, pv: &str, extra: Vec<InputRef>) -> f32 {
         ],
     });
     controller
-        .synth_new("pvc", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("pvc", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let out = render(&mut world, 12_288);
     rms(&out[8_192..])

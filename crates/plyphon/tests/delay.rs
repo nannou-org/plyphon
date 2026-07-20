@@ -180,7 +180,7 @@ fn delays_dc_by_n_samples_across_blocks() {
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(delay_def("d", 1.0, 0.01, delay_secs));
     controller
-        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let total = 3 * BLOCK;
@@ -211,7 +211,7 @@ fn cold_start_clean_over_recycled_memory() {
     controller.add_synthdef(delay_def("d", 1.0, 0.01, delay_secs));
 
     let id1 = controller
-        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     // 40 blocks (2560 samples) >> the 1024-sample line: every slot is overwritten with 1.0.
     let mut sink = vec![0.0f32; BLOCK];
@@ -220,7 +220,7 @@ fn cold_start_clean_over_recycled_memory() {
     }
     controller.free(id1).unwrap();
     controller
-        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // This fill processes the free (dealloc) then the new synth (realloc of the same-sized, dirty
@@ -250,7 +250,7 @@ fn freeing_a_delay_returns_all_its_memory() {
     let baseline = world.rt_memory_used();
 
     let id = controller
-        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let mut sink = vec![0.0f32; BLOCK];
     world.fill(&mut sink, 1);

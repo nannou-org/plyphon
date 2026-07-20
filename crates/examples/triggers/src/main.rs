@@ -84,7 +84,10 @@ impl Controls {
             return;
         };
         self.voice_groups.insert(group);
-        if let Ok(note) = self.controller.synth_new("note", group, AddAction::Tail) {
+        if let Ok(note) = self
+            .controller
+            .synth_new("note", group, AddAction::Tail, &[])
+        {
             let _ = self.controller.set_control(note, 0, freq); // parameter 0 = freq
         }
         println!(
@@ -196,7 +199,7 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
 
     // Start the clock, then move it to the head of the root group so it runs before the voices we
     // append at the tail. The reorder is reported as a `/n_move`.
-    if let Ok(clock_node) = controller.synth_new("clock", ROOT_GROUP_ID, AddAction::Tail) {
+    if let Ok(clock_node) = controller.synth_new("clock", ROOT_GROUP_ID, AddAction::Tail, &[]) {
         let _ = controller.move_node(clock_node, ROOT_GROUP_ID, AddAction::Head);
     }
 

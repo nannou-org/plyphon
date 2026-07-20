@@ -57,7 +57,7 @@ fn main() {
         .expect("failed to cue the scope stream");
     controller.add_synthdef(tone_def(channels));
     controller
-        .synth_new("scope", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("scope", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("failed to start the synth");
 
     // Drain the scope stream on a background thread and draw a peak meter from the streamed samples.
@@ -218,7 +218,7 @@ mod tests {
             .unwrap();
         controller.add_synthdef(tone_def(1));
         controller
-            .synth_new("scope", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("scope", ROOT_GROUP_ID, AddAction::Tail, &[])
             .unwrap();
 
         // Render a couple of seconds (enough to see the tremolo), draining as we go so nothing overruns.

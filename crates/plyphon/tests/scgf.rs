@@ -114,7 +114,7 @@ fn scgf_folds_control_into_param_and_plays() {
     });
     controller.add_synthdef(def.clone());
     let node = controller
-        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let a = render(&mut world, SR as usize / 2);

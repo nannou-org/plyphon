@@ -73,8 +73,12 @@ fn lifecycle_notifications_carry_full_position() {
     let g = controller
         .new_group(ROOT_GROUP_ID, AddAction::Tail)
         .unwrap();
-    let a = controller.synth_new("sine", g, AddAction::Tail).unwrap();
-    let b = controller.synth_new("sine", g, AddAction::Tail).unwrap();
+    let a = controller
+        .synth_new("sine", g, AddAction::Tail, &[])
+        .unwrap();
+    let b = controller
+        .synth_new("sine", g, AddAction::Tail, &[])
+        .unwrap();
     render(&mut world, 512);
     let go = drain(&mut nrt);
 

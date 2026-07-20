@@ -247,7 +247,7 @@ fn b_read_leave_open_streams_through_diskin_then_b_close() {
     );
 
     controller
-        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("start DiskIn");
 
     // Play the stream, topping the queue up each tick; collect the output.
@@ -325,7 +325,7 @@ fn b_read_channel_leave_open_streams_only_the_selected_channel() {
     );
 
     controller
-        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("start DiskIn");
 
     let mut out = Vec::new();

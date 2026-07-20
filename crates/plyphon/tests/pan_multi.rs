@@ -25,7 +25,7 @@ fn channel_rms(units: Vec<UnitSpec>, channels: usize) -> Vec<f32> {
         units,
     });
     controller
-        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let frames = 512;
     let mut out = vec![0.0f32; frames * channels];

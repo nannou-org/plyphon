@@ -64,7 +64,7 @@ fn offset_out_writes_like_out_at_offset_zero() {
         ],
     });
     controller
-        .synth_new("offset", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("offset", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let out = render(&mut world, SR as usize / 4);

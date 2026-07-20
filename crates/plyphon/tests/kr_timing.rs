@@ -70,7 +70,7 @@ fn trig1_kr_holds_dur_seconds() {
     // One trigger at t=0 (0.1 Hz never refires within the render), held for 0.1 s.
     controller.add_synthdef(kr_via_k2a("t", "Trig1", 0.1, &[0.1]));
     controller
-        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let out = render(&mut world, (SR * 0.3) as usize);
     let held = out.iter().filter(|s| **s > 0.5).count();
@@ -108,7 +108,7 @@ fn dust_kr_fires_at_density_per_second() {
         ],
     });
     controller
-        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     // Count quiet->loud transitions (K2A's ramp smears each event across two blocks, so raw
     // nonzero-block counting would double-count; back-to-back events merge, slightly
@@ -209,7 +209,7 @@ fn lfsaw_kr_matches_ar_at_block_starts() {
         ],
     });
     controller
-        .synth_new("pair", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("pair", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let frames = (SR * 0.2) as usize;
     let mut out = vec![0.0f32; frames * 2];
@@ -237,7 +237,7 @@ fn impulse_kr_emits_one_impulse_per_period() {
         vec![InputRef::Constant(10.0), InputRef::Constant(0.0)],
     ));
     controller
-        .synth_new("imp", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("imp", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let out = render(&mut world, SR as usize * 2);
     let ones = out
@@ -283,7 +283,7 @@ fn lag_kr_settles_in_lag_time() {
         ],
     });
     let node = controller
-        .synth_new("lag", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("lag", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let _ = render(&mut world, BLOCK); // seed the lag at the initial 0
     controller.set_control(node, 0, 1.0).unwrap();
@@ -338,7 +338,7 @@ fn timer_kr_measures_seconds_between_triggers() {
         ],
     });
     controller
-        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let out = render(&mut world, (SR * 0.5) as usize);
     let last = *out.last().unwrap();
@@ -392,7 +392,7 @@ fn amplitude_kr_consumes_the_whole_audio_block() {
         ],
     });
     controller
-        .synth_new("amp", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("amp", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let out = render(&mut world, (SR * 0.5) as usize);
     let last = *out.last().unwrap();
@@ -436,7 +436,7 @@ fn detect_silence_kr_frees_after_time_seconds() {
         ],
     });
     let node = controller
-        .synth_new("ds", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("ds", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     // 0.12 s comfortably covers sound + silence window; the audio-rate bug needed ~3.2 s.
     let _ = render(&mut world, (SR * 0.12) as usize);

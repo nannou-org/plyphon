@@ -65,7 +65,7 @@ fn render_section(name: &str, coefs: &[f32], sig_freq: f32, frames: usize) -> Ve
         units,
     });
     controller
-        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     render(&mut world, frames)
 }

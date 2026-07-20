@@ -411,7 +411,7 @@ mod tests {
             let (mut controller, nrt, world) = engine(opts);
             controller.add_synthdef(noise_def());
             controller
-                .synth_new("noise", ROOT_GROUP_ID, AddAction::Tail)
+                .synth_new("noise", ROOT_GROUP_ID, AddAction::Tail, &[])
                 .expect("noise");
             let mut render = Render::new(world, nrt, &opts);
             let mut out = Vec::new();

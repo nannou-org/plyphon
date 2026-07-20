@@ -136,9 +136,9 @@ fn build(sample_rate: f32, channels: usize) -> World {
     // Order matters: the LFO and source must run before the filter within a block, so the filter
     // reads this block's cutoff and noise. Adding each at the tail yields process order
     // lfo -> source -> filter.
-    let _ = controller.synth_new("lfo", ROOT_GROUP_ID, AddAction::Tail);
-    let _ = controller.synth_new("source", ROOT_GROUP_ID, AddAction::Tail);
-    let _ = controller.synth_new("filter", ROOT_GROUP_ID, AddAction::Tail);
+    let _ = controller.synth_new("lfo", ROOT_GROUP_ID, AddAction::Tail, &[]);
+    let _ = controller.synth_new("source", ROOT_GROUP_ID, AddAction::Tail, &[]);
+    let _ = controller.synth_new("filter", ROOT_GROUP_ID, AddAction::Tail, &[]);
 
     // The graph plays forever and never frees, so there is no NRT cleanup: drop the `Controller`
     // and `Nrt`, keeping only the `World`.

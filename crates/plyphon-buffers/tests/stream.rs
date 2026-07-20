@@ -101,7 +101,7 @@ fn stream_feeder_drives_disk_in() {
 
     controller.add_synthdef(disk_in_def());
     controller
-        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let mut out = Vec::new();

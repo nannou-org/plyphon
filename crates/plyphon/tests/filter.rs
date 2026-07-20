@@ -95,7 +95,7 @@ fn render_filtered(filter: &str) -> Vec<f32> {
     });
     controller.add_synthdef(filtered_mix(filter));
     controller
-        .synth_new("filtered", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("filtered", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     // Skip the filter's start-up transient, then analyse.
     let _ = render(&mut world, SR as usize / 20);

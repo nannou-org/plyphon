@@ -104,13 +104,13 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
     // id - the whole point of the demo: a node controlling another node by id.
     let mut drones = Vec::with_capacity(DRONES.len());
     for (freq, rate) in DRONES {
-        let Ok(drone) = controller.synth_new("drone", ROOT_GROUP_ID, AddAction::Tail) else {
+        let Ok(drone) = controller.synth_new("drone", ROOT_GROUP_ID, AddAction::Tail, &[]) else {
             continue;
         };
         let _ = controller.set_control(drone, 0, freq); // parameter 0 = freq
         drones.push((drone, freq));
 
-        if let Ok(gater) = controller.synth_new("gater", ROOT_GROUP_ID, AddAction::Tail) {
+        if let Ok(gater) = controller.synth_new("gater", ROOT_GROUP_ID, AddAction::Tail, &[]) {
             let _ = controller.set_control(gater, 0, rate); // parameter 0 = gate rate
             let _ = controller.set_control(gater, 1, drone as f32); // parameter 1 = target id
         }

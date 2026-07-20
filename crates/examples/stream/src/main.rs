@@ -140,7 +140,7 @@ async fn setup(
     }
 
     controller.add_synthdef(disk_in_def(channels, device_channels));
-    let _ = controller.synth_new("stream", ROOT_GROUP_ID, AddAction::Tail);
+    let _ = controller.synth_new("stream", ROOT_GROUP_ID, AddAction::Tail, &[]);
     Some((feeder, wav))
 }
 

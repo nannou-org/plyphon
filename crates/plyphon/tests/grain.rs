@@ -42,7 +42,7 @@ fn render(units: Vec<UnitSpec>, channels: usize, frames: usize) -> Vec<f32> {
         units,
     });
     controller
-        .synth_new("g", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("g", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut out = vec![0.0f32; frames * channels];
     world.fill(&mut out, channels);
@@ -71,7 +71,7 @@ fn render_with_buffer(
         units,
     });
     controller
-        .synth_new("g", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("g", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut out = vec![0.0f32; frames * channels];
     world.fill(&mut out, channels);

@@ -142,10 +142,10 @@ fn audio_bus_routes_between_synths() {
     // Order matters: the writer must run before the reader within a block (add it first, at the
     // tail), so the reader sees this block's signal rather than the previous block's.
     controller
-        .synth_new("writer", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("writer", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     controller
-        .synth_new("reader", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("reader", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let out = render(&mut world, SR as usize / 4);
@@ -174,10 +174,10 @@ fn control_bus_routes_out_kr_to_in_kr() {
     controller.add_synthdef(producer);
     controller.add_synthdef(control_reader("kreader", 5.0));
     controller
-        .synth_new("kwriter", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("kwriter", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     controller
-        .synth_new("kreader", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("kreader", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let out = render(&mut world, SR as usize / 4);
@@ -189,7 +189,7 @@ fn c_set_drives_in_kr() {
     let (mut controller, _nrt, mut world) = engine(options());
     controller.add_synthdef(control_reader("creader", 9.0));
     controller
-        .synth_new("creader", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("creader", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // /c_set the frequency bus to 440, render, expect 440 Hz.
@@ -231,7 +231,7 @@ fn n_map_maps_control_to_bus() {
     };
     controller.add_synthdef(def);
     let node = controller
-        .synth_new("mapped", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("mapped", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // Map the freq control to bus 7 and drive that bus: the synth now ignores its 440 default.

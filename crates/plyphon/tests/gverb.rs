@@ -62,7 +62,7 @@ fn render(dry: f32, revtime: f32, frames: usize) -> Vec<f32> {
         ],
     });
     controller
-        .synth_new("g", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("g", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut out = vec![0.0f32; frames * 2];
     world.fill(&mut out, 2);

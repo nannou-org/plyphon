@@ -139,7 +139,7 @@ fn build(sample_rate: f64, channels: usize) -> (Nrt, World) {
     });
     controller.add_synthdef(seq_def(channels));
     controller
-        .synth_new("duty-seq", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("duty-seq", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     (nrt, world)
 }

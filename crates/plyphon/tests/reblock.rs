@@ -63,13 +63,15 @@ fn reblock_is_transparent_for_a_linear_chain() {
     let plain = {
         let (mut c, _nrt, mut world) = engine(opts());
         c.add_synthdef(sine_def());
-        c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail).unwrap();
+        c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
+            .unwrap();
         render(&mut world, 4096)
     };
     let reblocked = {
         let (mut c, _nrt, mut world) = engine(opts());
         c.add_synthdef_reblocked(sine_def(), 16);
-        c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail).unwrap();
+        c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
+            .unwrap();
         render(&mut world, 4096)
     };
 
@@ -96,7 +98,7 @@ fn invalid_reblock_block_sizes_are_rejected() {
         let (mut c, _nrt, _world) = engine(opts());
         c.add_synthdef_reblocked(sine_def(), bad);
         let err = c
-            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
             .expect_err("an invalid reblock size must be rejected");
         assert!(
             matches!(err, SynthNewError::Build(BuildError::InvalidReblock { .. })),
@@ -111,7 +113,8 @@ fn a_power_of_two_reblock_runs_and_sounds() {
     // the boundary slicing carry the signal end to end.
     let (mut c, _nrt, mut world) = engine(opts());
     c.add_synthdef_reblocked(sine_def(), 8);
-    c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail).unwrap();
+    c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
+        .unwrap();
     let out = render(&mut world, 4096);
     assert!(
         out.iter().all(|s| s.is_finite()),

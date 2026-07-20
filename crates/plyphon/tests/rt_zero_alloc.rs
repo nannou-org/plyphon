@@ -102,7 +102,7 @@ fn initialized_create_and_critical_lifecycle_paths_are_rt_zero_alloc() {
     let mut output = [0.0; 64];
     world.fill(&mut output, 1);
     controller
-        .synth_new_with_initial_controls("first-block-free", ROOT_GROUP_ID, AddAction::Tail, &[])
+        .synth_new("first-block-free", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     ALLOCATIONS.store(0, Ordering::Relaxed);
@@ -148,7 +148,7 @@ fn stalled_nrt_preserves_combined_four_m_wave_with_advisory_flood_without_rt_all
     let tree_synths = (0..MAX_NODES - 4)
         .map(|_| {
             controller
-                .synth_new("idle", group_a, AddAction::Tail)
+                .synth_new("idle", group_a, AddAction::Tail, &[])
                 .unwrap()
         })
         .collect::<Vec<_>>();
@@ -173,14 +173,14 @@ fn stalled_nrt_preserves_combined_four_m_wave_with_advisory_flood_without_rt_all
     let general_failures = (0..MAX_NODES)
         .map(|_| {
             controller
-                .synth_new("idle", MISSING_TARGET, AddAction::Tail)
+                .synth_new("idle", MISSING_TARGET, AddAction::Tail, &[])
                 .unwrap()
         })
         .collect::<Vec<_>>();
     let event_failures = (0..MAX_NODES)
         .map(|_| {
             controller
-                .synth_new_with_initial_controls("idle", MISSING_TARGET, AddAction::Tail, &[])
+                .synth_new("idle", MISSING_TARGET, AddAction::Tail, &[])
                 .unwrap()
         })
         .collect::<Vec<_>>();

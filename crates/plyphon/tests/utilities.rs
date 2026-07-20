@@ -15,7 +15,7 @@ fn engine_with(def: SynthDef, channels: usize) -> World {
     });
     controller.add_synthdef(def);
     controller
-        .synth_new("test", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("test", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     world
 }
@@ -61,7 +61,7 @@ fn lag_seeds_to_its_input_on_the_first_block() {
     });
     controller.add_synthdef(def);
     let node = controller
-        .synth_new("test", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("test", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     controller.set_control(node, 0, 5.0).unwrap();
     // The very first block must already sit at the input value, not ramp from zero.
@@ -181,7 +181,7 @@ fn lag_smooths_a_step() {
     });
     controller.add_synthdef(def);
     let node = controller
-        .synth_new("test", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("test", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // Seeded at the initial input (0): silent before the step.

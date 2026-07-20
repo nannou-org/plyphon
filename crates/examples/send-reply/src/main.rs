@@ -143,7 +143,7 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
         ],
     };
     controller.add_synthdef(def);
-    let _ = controller.synth_new("amp", ROOT_GROUP_ID, AddAction::Tail);
+    let _ = controller.synth_new("amp", ROOT_GROUP_ID, AddAction::Tail, &[]);
 
     (Controls { controller, nrt }, world)
 }

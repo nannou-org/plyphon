@@ -65,7 +65,7 @@ fn initialized_create_is_indivisible_when_lifecycle_ring_is_full() {
     render(&mut world);
 
     let synth = controller
-        .synth_new_with_initial_controls("idle", group, AddAction::Tail, &[])
+        .synth_new("idle", group, AddAction::Tail, &[])
         .unwrap();
     render(&mut world);
     assert!(matches!(
@@ -85,13 +85,13 @@ fn full_tree_and_missing_target_emit_exactly_one_synth_failed() {
     let (mut controller, mut nrt, mut world) = engine(options(2, 16));
     controller.add_synthdef(idle_def());
     let live = controller
-        .synth_new_with_initial_controls("idle", ROOT_GROUP_ID, AddAction::Tail, &[])
+        .synth_new("idle", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let full = controller
-        .synth_new_with_initial_controls("idle", ROOT_GROUP_ID, AddAction::Tail, &[])
+        .synth_new("idle", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let missing = controller
-        .synth_new_with_initial_controls("idle", 999_999, AddAction::Tail, &[])
+        .synth_new("idle", 999_999, AddAction::Tail, &[])
         .unwrap();
     render(&mut world);
 
@@ -126,7 +126,7 @@ fn caller_chosen_duplicate_id_emits_one_synth_failed_and_preserves_the_live_node
     let (mut controller, mut nrt, mut world) = engine(options(4, 16));
     controller.add_synthdef(idle_def());
     let live = controller
-        .synth_new_with_initial_controls("idle", ROOT_GROUP_ID, AddAction::Tail, &[])
+        .synth_new("idle", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     render(&mut world);
     while nrt.poll_critical().is_some() {}
@@ -158,7 +158,7 @@ fn lifecycle_backlog_is_fifo_for_first_block_self_free() {
     let (mut controller, mut nrt, mut world) = engine(options(4, 1));
     controller.add_synthdef(first_block_free_def());
     let id = controller
-        .synth_new_with_initial_controls("first-block-free", ROOT_GROUP_ID, AddAction::Tail, &[])
+        .synth_new("first-block-free", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     render(&mut world);
     assert!(matches!(
@@ -183,7 +183,7 @@ fn stalled_nrt_preserves_full_start_terminal_and_group_retire_wave() {
     let ids = (0..4)
         .map(|_| {
             controller
-                .synth_new_with_initial_controls("idle", group, AddAction::Tail, &[])
+                .synth_new("idle", group, AddAction::Tail, &[])
                 .unwrap()
         })
         .collect::<Vec<_>>();
@@ -222,7 +222,7 @@ fn advisory_move_pause_flood_cannot_starve_or_drop_critical_lifecycle_events() {
         .new_group(ROOT_GROUP_ID, AddAction::Tail)
         .unwrap();
     let id = controller
-        .synth_new_with_initial_controls("idle", a, AddAction::Tail, &[])
+        .synth_new("idle", a, AddAction::Tail, &[])
         .unwrap();
     render(&mut world);
     while nrt.poll_critical().is_some() {}
@@ -255,7 +255,7 @@ fn merged_poll_preserves_move_pause_then_end_emission_order() {
         .new_group(ROOT_GROUP_ID, AddAction::Tail)
         .unwrap();
     let id = controller
-        .synth_new_with_initial_controls("idle", a, AddAction::Tail, &[])
+        .synth_new("idle", a, AddAction::Tail, &[])
         .unwrap();
     render(&mut world);
     while nrt.poll().is_some() {}

@@ -77,13 +77,15 @@ fn resample_is_transparent_for_a_band_limited_chain() {
     let plain = {
         let (mut c, _nrt, mut world) = engine(opts());
         c.add_synthdef(sine_def());
-        c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail).unwrap();
+        c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
+            .unwrap();
         render(&mut world, 4096)
     };
     let resampled = {
         let (mut c, _nrt, mut world) = engine(opts());
         c.add_synthdef_resampled(sine_def(), 2);
-        c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail).unwrap();
+        c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
+            .unwrap();
         render(&mut world, 4096)
     };
 
@@ -113,7 +115,7 @@ fn invalid_resample_factors_are_rejected() {
         let (mut c, _nrt, _world) = engine(opts());
         c.add_synthdef_resampled(sine_def(), bad);
         let err = c
-            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
             .expect_err("an invalid resample factor must be rejected");
         assert!(
             matches!(
@@ -131,7 +133,8 @@ fn a_resampled_synth_runs_and_sounds_at_pitch() {
     // sub-block loop, ZOH and decimate carry the signal end to end.
     let (mut c, _nrt, mut world) = engine(opts());
     c.add_synthdef_resampled(sine_def(), 4);
-    c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail).unwrap();
+    c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
+        .unwrap();
     let out = render(&mut world, 8192);
     assert!(
         out.iter().all(|s| s.is_finite()),

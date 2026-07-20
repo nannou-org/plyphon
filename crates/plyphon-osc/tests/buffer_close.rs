@@ -152,7 +152,7 @@ fn b_write_leave_open_streams_diskout_then_b_close() {
     )
     .expect("/b_write");
     controller
-        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("start DiskOut");
 
     // Stream for a while: each tick the engine writes a block and the dispatcher drains it to the sink.

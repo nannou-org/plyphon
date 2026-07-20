@@ -41,7 +41,7 @@ fn run(units: Vec<UnitSpec>, table: Option<&[f32]>) -> f32 {
         units,
     });
     controller
-        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut buf = vec![0.0f32; 64];
     world.fill(&mut buf, 1);

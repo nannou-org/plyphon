@@ -73,7 +73,8 @@ fn run_parsed(blob: &[u8]) -> Vec<f32> {
     for (def, reblock, resample) in parse(blob).expect("parse") {
         c.add_synthdef_rate(def, reblock, resample);
     }
-    c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail).unwrap();
+    c.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
+        .unwrap();
     render(&mut world, 4096)
 }
 

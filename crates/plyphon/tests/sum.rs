@@ -59,7 +59,7 @@ fn render_synth(mut units: Vec<UnitSpec>, out_src: u32, frames: usize) -> Vec<f3
         units,
     });
     controller
-        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     render(&mut world, frames)
 }

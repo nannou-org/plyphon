@@ -58,7 +58,7 @@ fn free_self_frees_on_trigger() {
     controller.add_synthdef(def("fs", "FreeSelf"));
     controller.set_control_bus(0, 0.0).unwrap();
     controller
-        .synth_new("fs", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("fs", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert_eq!(one(&mut world), 1.0, "running synth outputs the constant");
@@ -75,7 +75,7 @@ fn pause_self_pauses_and_resumes() {
     controller.add_synthdef(def("ps", "PauseSelf"));
     controller.set_control_bus(0, 0.0).unwrap();
     let node = controller
-        .synth_new("ps", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("ps", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert_eq!(one(&mut world), 1.0, "running synth outputs the constant");
@@ -146,7 +146,7 @@ fn done_reports_source_completion() {
         ],
     });
     controller
-        .synth_new("done", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("done", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert_eq!(one(&mut world), 0.0, "Done is 0 while the source runs");
@@ -186,7 +186,7 @@ fn free_self_when_done_frees_at_source_completion() {
         ],
     });
     controller
-        .synth_new("fswd", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("fswd", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let blocks = many(&mut world, 20);
@@ -223,7 +223,7 @@ fn free_frees_another_node_by_id() {
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(victim_def("victim"));
     let victim = controller
-        .synth_new("victim", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("victim", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     // A controller node: In.kr(bus 0) -> Free.kr(trig, victim id). Added at the tail, so it runs
     // after the victim each block.
@@ -245,7 +245,7 @@ fn free_frees_another_node_by_id() {
     });
     controller.set_control_bus(0, 0.0).unwrap();
     controller
-        .synth_new("freer", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("freer", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert_eq!(one(&mut world), 1.0, "victim runs");
@@ -264,7 +264,7 @@ fn pause_pauses_and_resumes_another_node_by_id() {
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(victim_def("victim"));
     let victim = controller
-        .synth_new("victim", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("victim", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     // Pause.kr(gate, victim id): pauses on a falling gate, resumes on a rising one.
     controller.add_synthdef(SynthDef {
@@ -285,7 +285,7 @@ fn pause_pauses_and_resumes_another_node_by_id() {
     });
     controller.set_control_bus(0, 1.0).unwrap();
     controller
-        .synth_new("pauser", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("pauser", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert_eq!(one(&mut world), 1.0, "victim runs (gate high)");

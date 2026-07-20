@@ -90,7 +90,7 @@ fn freeing_a_synth_returns_its_state_to_the_pool() {
 
     // Spawn and apply: the synth's state block is now allocated in the pool.
     let node = controller
-        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     render(&mut world, 256);
     let used_live = world.rt_memory_used();
@@ -109,7 +109,7 @@ fn freeing_a_synth_returns_its_state_to_the_pool() {
     // coalescing).
     for _ in 0..64 {
         let n = controller
-            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
             .unwrap();
         render(&mut world, 64);
         controller.free(n).unwrap();
@@ -132,7 +132,7 @@ fn pool_exhaustion_reports_synth_failed_then_recovers() {
     for _ in 0..64 {
         nodes.push(
             controller
-                .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+                .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
                 .unwrap(),
         );
     }
@@ -160,7 +160,7 @@ fn pool_exhaustion_reports_synth_failed_then_recovers() {
 
     // There is room again: a fresh synth starts.
     let node = controller
-        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     render(&mut world, 256);
     assert!(
@@ -181,7 +181,7 @@ fn a_def_exceeding_the_wire_cap_fails_to_compile() {
     controller.add_synthdef(wide_def(3));
 
     let err = controller
-        .synth_new("wide", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("wide", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect_err("a def needing 3 wires must fail under a 2-wire cap");
     assert!(
         matches!(

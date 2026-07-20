@@ -132,7 +132,7 @@ fn build(sample_rate: f32, channels: usize) -> World {
         ],
     };
     controller.add_synthdef(def);
-    let _ = controller.synth_new("operators", ROOT_GROUP_ID, AddAction::Tail);
+    let _ = controller.synth_new("operators", ROOT_GROUP_ID, AddAction::Tail, &[]);
 
     world
 }

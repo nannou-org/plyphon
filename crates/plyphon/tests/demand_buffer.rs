@@ -136,7 +136,7 @@ fn start(def: SynthDef) -> (plyphon::Controller, Nrt, World, i32) {
     let name = def.name.clone();
     controller.add_synthdef(def);
     let node = controller
-        .synth_new(&name, ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new(&name, ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     (controller, nrt, world, node)
 }
@@ -175,7 +175,7 @@ fn dbufrd_reads_a_prefilled_buffer_and_loops() {
         .unwrap();
     controller.add_synthdef(def);
     controller
-        .synth_new("rd", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rd", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let out = render(&mut world, SEG * 6);
@@ -228,7 +228,7 @@ fn dbufwr_writes_a_sequence_then_reads_back_through_play_buf() {
         .unwrap();
     controller.add_synthdef(def);
     let wr = controller
-        .synth_new("wr", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("wr", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // Drive with block-aligned fills (one control block each) so the buffer readback stays aligned;
@@ -243,7 +243,7 @@ fn dbufwr_writes_a_sequence_then_reads_back_through_play_buf() {
     // Read the buffer back: PlayBuf at rate 1 over the 8-frame loop yields buffer[i % 8] each sample.
     controller.add_synthdef(play_def("play"));
     controller
-        .synth_new("play", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("play", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     world.fill(&mut blk, 1);
     let expected = [0.5f32, 0.6, 0.7, 0.0, 0.0, 0.0, 0.0, 0.0];

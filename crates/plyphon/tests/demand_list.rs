@@ -66,7 +66,7 @@ fn drive(source: UnitSpec) -> (Controller, Nrt, World) {
         units: vec![source, duty, out],
     });
     controller
-        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     (controller, nrt, world)
 }
@@ -180,7 +180,7 @@ fn nested_dser_in_dseq_flattens() {
         units: vec![inner, outer, duty, out],
     });
     controller
-        .synth_new("nested", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("nested", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let out = render(&mut world, SEG * 6);
     for (k, e) in [0.1f32, 0.2, 0.9, 0.1, 0.2, 0.9].into_iter().enumerate() {

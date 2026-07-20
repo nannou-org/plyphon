@@ -90,7 +90,7 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
 
     controller.add_synthdef(glider_def(channels));
     let node = controller
-        .synth_new("glider", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("glider", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap_or(-1);
     schedule_phrase(&mut controller, node);
 

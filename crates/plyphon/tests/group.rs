@@ -78,10 +78,10 @@ fn freeing_a_group_frees_its_subtree() {
         .new_group(ROOT_GROUP_ID, AddAction::Tail)
         .unwrap();
     let a = controller
-        .synth_new("sine440", group, AddAction::Tail)
+        .synth_new("sine440", group, AddAction::Tail, &[])
         .unwrap();
     let b = controller
-        .synth_new("sine440", group, AddAction::Tail)
+        .synth_new("sine440", group, AddAction::Tail, &[])
         .unwrap();
 
     let _ = render(&mut world, 512);
@@ -119,7 +119,7 @@ fn free_all_empties_a_group_but_keeps_it() {
         .new_group(ROOT_GROUP_ID, AddAction::Tail)
         .unwrap();
     let a = controller
-        .synth_new("sine440", group, AddAction::Tail)
+        .synth_new("sine440", group, AddAction::Tail, &[])
         .unwrap();
 
     controller.free_all(group).unwrap();
@@ -140,7 +140,7 @@ fn free_all_empties_a_group_but_keeps_it() {
 
     // The group is still usable: add a fresh synth to it and confirm it plays.
     controller
-        .synth_new("sine440", group, AddAction::Tail)
+        .synth_new("sine440", group, AddAction::Tail, &[])
         .unwrap();
     let _ = render(&mut world, 512);
     let out = render(&mut world, SR as usize / 8);
@@ -162,7 +162,7 @@ fn moving_a_synth_out_of_a_group_lets_it_survive() {
         .new_group(ROOT_GROUP_ID, AddAction::Tail)
         .unwrap();
     let synth = controller
-        .synth_new("sine440", group, AddAction::Tail)
+        .synth_new("sine440", group, AddAction::Tail, &[])
         .unwrap();
 
     // Move the synth out to the root group, then free the (now empty) group.

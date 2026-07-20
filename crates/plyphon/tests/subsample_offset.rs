@@ -65,7 +65,7 @@ fn scheduled_synth_reports_its_subsample_offset() {
     let delta = (10.3 * units_per_sample()) as u64;
     controller.begin_scheduled(CommandTime::At(base + delta));
     controller
-        .synth_new("sub", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sub", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     controller.end_scheduled();
 
@@ -94,7 +94,7 @@ fn immediate_synth_reports_zero_subsample_offset() {
     let (mut controller, _nrt, mut world) = engine_64();
     controller.add_synthdef(sub_def());
     controller
-        .synth_new("sub", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sub", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let mut buf = vec![0.0f32; BLOCK];
@@ -118,7 +118,7 @@ fn subsample_offset_is_stable_across_blocks() {
     let delta = (25.6 * units_per_sample()) as u64;
     controller.begin_scheduled(CommandTime::At(base + delta));
     controller
-        .synth_new("sub", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sub", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     controller.end_scheduled();
 

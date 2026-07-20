@@ -90,7 +90,7 @@ fn render(rate: f32) -> Vec<f32> {
         ],
     });
     controller
-        .synth_new("vd", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("vd", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let mut out = Vec::new();

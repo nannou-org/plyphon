@@ -35,7 +35,7 @@ impl Controls {
         self.step += 1;
         self.current = self
             .controller
-            .synth_new(wave, ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new(wave, ROOT_GROUP_ID, AddAction::Tail, &[])
             .ok();
         #[cfg(not(target_arch = "wasm32"))]
         println!("playing {wave}");

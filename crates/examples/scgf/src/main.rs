@@ -108,7 +108,7 @@ fn build(sample_rate: f32, channels: usize) -> World {
     for (def, reblock, resample) in defs {
         controller.add_synthdef_rate(def, reblock, resample);
     }
-    let _ = controller.synth_new("loaded", ROOT_GROUP_ID, AddAction::Tail);
+    let _ = controller.synth_new("loaded", ROOT_GROUP_ID, AddAction::Tail, &[]);
 
     world
 }

@@ -228,7 +228,7 @@ mod tests {
         };
         controller.add_synthdef(thru);
         controller
-            .synth_new("thru", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("thru", ROOT_GROUP_ID, AddAction::Tail, &[])
             .unwrap();
 
         // Push a 440 Hz tone into the capture ring as "hardware input".

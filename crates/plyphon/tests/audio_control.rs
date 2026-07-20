@@ -44,7 +44,7 @@ fn audio_control_lifts_value_to_an_audio_wire() {
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(audio_param_def());
     let node = controller
-        .synth_new("ac", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("ac", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert!(
@@ -63,7 +63,7 @@ fn audio_control_follows_n_map() {
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(audio_param_def());
     let node = controller
-        .synth_new("ac", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("ac", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     // /n_map the audio param to control bus 0: the bus fills the value slot, which fills the wire.
     controller.set_control_bus(0, 0.5).unwrap();
@@ -110,10 +110,10 @@ fn n_mapa_maps_an_audio_param_to_an_audio_bus() {
     controller.add_synthdef(audio_param_def());
     // The writer must run before the reader, so it is at the head.
     controller
-        .synth_new("writer", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("writer", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let ac = controller
-        .synth_new("ac", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("ac", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert!(

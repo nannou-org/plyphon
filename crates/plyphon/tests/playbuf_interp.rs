@@ -59,7 +59,7 @@ fn playbuf_reads_with_cubic_interpolation() {
         ],
     });
     controller
-        .synth_new("play", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("play", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let mut out = [0.0f32; 64];
     world.fill(&mut out, 1);

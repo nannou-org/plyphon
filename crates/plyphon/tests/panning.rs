@@ -23,7 +23,7 @@ fn steady(units: Vec<UnitSpec>, channels: usize) -> Vec<f32> {
         units,
     });
     controller
-        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut buf = vec![0.0f32; 256 * channels];
     world.fill(&mut buf, channels);

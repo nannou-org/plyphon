@@ -54,7 +54,7 @@ fn render(freq: f32, trig_hz: f32, decay: f32, coef: f32, frames: usize) -> Vec<
         ],
     });
     controller
-        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut out = vec![0.0f32; frames];
     world.fill(&mut out, 1);
@@ -119,7 +119,7 @@ fn render_no_trig(freq: f32, decay: f32, coef: f32, frames: usize) -> Vec<f32> {
         ],
     });
     controller
-        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut out = vec![0.0f32; frames];
     world.fill(&mut out, 1);

@@ -88,7 +88,7 @@ fn drain(nrt: &mut plyphon::Nrt) -> Vec<Event> {
 
 /// Queue rejection leaves both transport rings and the automatic id unchanged.
 #[test]
-fn synth_new_with_initial_controls_is_all_or_none_and_preserves_id_on_queue_full() {
+fn synth_new_with_controls_is_all_or_none_and_preserves_id_on_queue_full() {
     let (mut controller, _nrt, mut world) = engine(Options {
         command_capacity: 1,
         ..options()
@@ -99,17 +99,12 @@ fn synth_new_with_initial_controls_is_all_or_none_and_preserves_id_on_queue_full
 
     controller.free(999_999).unwrap();
     assert!(matches!(
-        controller.synth_new_with_initial_controls(
-            "signal",
-            ROOT_GROUP_ID,
-            AddAction::Tail,
-            &[(0, 0.25)]
-        ),
+        controller.synth_new("signal", ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.25)]),
         Err(SynthNewError::QueueFull)
     ));
     let _ = block(&mut world);
     let id = controller
-        .synth_new_with_initial_controls("signal", ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.25)])
+        .synth_new("signal", ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.25)])
         .unwrap();
     assert_eq!(id, 1000, "the failed publication must not consume an id");
 }
@@ -130,7 +125,7 @@ fn initial_controls_are_visible_to_first_init_and_first_process() {
             .register("InitProbe", Box::new(InitProbeCtor));
         controller.add_synthdef(signal_def(name, param, "InitProbe"));
         controller
-            .synth_new_with_initial_controls(name, ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.625)])
+            .synth_new(name, ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.625)])
             .unwrap();
 
         let output = block(&mut world);
@@ -147,7 +142,7 @@ fn initial_trig_control_fires_once_on_first_block() {
     let (mut controller, _nrt, mut world) = engine(options());
     controller.add_synthdef(dc_def("trig", Param::trig("trigger", 0.0)));
     controller
-        .synth_new_with_initial_controls("trig", ROOT_GROUP_ID, AddAction::Tail, &[(0, 1.0)])
+        .synth_new("trig", ROOT_GROUP_ID, AddAction::Tail, &[(0, 1.0)])
         .unwrap();
 
     assert!(block(&mut world).iter().all(|sample| *sample == 1.0));
@@ -160,7 +155,7 @@ fn initial_lag_control_starts_at_supplied_value_without_default_ramp() {
     let (mut controller, _nrt, mut world) = engine(options());
     controller.add_synthdef(dc_def("lag", Param::lag("value", 0.0, 1.0)));
     controller
-        .synth_new_with_initial_controls("lag", ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.875)])
+        .synth_new("lag", ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.875)])
         .unwrap();
 
     let output = block(&mut world);
@@ -177,10 +172,10 @@ fn initialized_create_is_immediate_and_preserves_ambient_schedule_window() {
 
     controller.begin_scheduled(CommandTime::At(u64::MAX));
     let immediate = controller
-        .synth_new_with_initial_controls("signal", ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.5)])
+        .synth_new("signal", ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.5)])
         .unwrap();
     let scheduled = controller
-        .synth_new("signal", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("signal", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let _ = block(&mut world);
     let events = drain(&mut nrt);
@@ -202,7 +197,7 @@ fn initial_control_duplicates_are_ordered_and_out_of_range_is_preflighted() {
     let (mut controller, _nrt, mut world) = engine(options());
     controller.add_synthdef(dc_def("signal", Param::control("value", 0.0)));
     let id = controller
-        .synth_new_with_initial_controls(
+        .synth_new(
             "signal",
             ROOT_GROUP_ID,
             AddAction::Tail,
@@ -213,12 +208,7 @@ fn initial_control_duplicates_are_ordered_and_out_of_range_is_preflighted() {
     assert!(block(&mut world).iter().all(|sample| *sample == 0.75));
 
     assert!(matches!(
-        controller.synth_new_with_initial_controls(
-            "signal",
-            ROOT_GROUP_ID,
-            AddAction::Tail,
-            &[(1, 1.0)]
-        ),
+        controller.synth_new("signal", ROOT_GROUP_ID, AddAction::Tail, &[(1, 1.0)]),
         Err(SynthNewError::InitialControlOutOfRange {
             param: 1,
             params: 1
@@ -242,7 +232,7 @@ fn initialized_create_over_capacity_is_atomic_and_preserves_id() {
         .map(|index| (index, index as f32))
         .collect::<Vec<_>>();
     assert!(matches!(
-        controller.synth_new_with_initial_controls(
+        controller.synth_new(
             "wide-controls",
             ROOT_GROUP_ID,
             AddAction::Tail,
@@ -255,7 +245,7 @@ fn initialized_create_over_capacity_is_atomic_and_preserves_id() {
     ));
     assert_eq!(
         controller
-            .synth_new_with_initial_controls(
+            .synth_new(
                 "wide-controls",
                 ROOT_GROUP_ID,
                 AddAction::Tail,

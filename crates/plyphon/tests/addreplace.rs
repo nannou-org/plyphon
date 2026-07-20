@@ -86,19 +86,21 @@ fn s_new_replace_takes_the_targets_slot() {
 
     // root -> [a, b, c].
     let a = controller
-        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let b = controller
-        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let c = controller
-        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     render(&mut world, 256);
     let _ = drain(&mut nrt);
 
     // Replace b: the new synth d takes b's slot between a and c.
-    let d = controller.synth_new("sine", b, AddAction::Replace).unwrap();
+    let d = controller
+        .synth_new("sine", b, AddAction::Replace, &[])
+        .unwrap();
     render(&mut world, 256);
     let events = drain(&mut nrt);
 
@@ -131,7 +133,9 @@ fn g_new_replace_deep_frees_the_target_subtree() {
     let g = controller
         .new_group(ROOT_GROUP_ID, AddAction::Tail)
         .unwrap();
-    let s = controller.synth_new("sine", g, AddAction::Tail).unwrap();
+    let s = controller
+        .synth_new("sine", g, AddAction::Tail, &[])
+        .unwrap();
     render(&mut world, 256);
     let _ = drain(&mut nrt);
 
@@ -170,7 +174,7 @@ fn replacing_the_root_group_is_a_no_op_and_reclaims_the_graph() {
     // Targeting the root with addReplace must fail cleanly: the built graph is reclaimed, and no
     // node is created or freed.
     let ghost = controller
-        .synth_new("sine", ROOT_GROUP_ID, AddAction::Replace)
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Replace, &[])
         .unwrap();
     render(&mut world, 256);
     let events = drain(&mut nrt);

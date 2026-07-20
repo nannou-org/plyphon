@@ -47,7 +47,7 @@ fn run(name: &str, tail: Vec<InputRef>, total: usize) -> Vec<f32> {
         ],
     });
     controller
-        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut buf = vec![0.0f32; total];
     world.fill(&mut buf, 1);

@@ -45,7 +45,7 @@ fn send_trig_fires_one_tr_per_rising_edge() {
     // Impulse every 48 samples (1000 Hz at 48 kHz).
     controller.add_synthdef(send_trig_def(1000.0, 7.0, 0.5));
     let node = controller
-        .synth_new("trig", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("trig", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // 40 whole control blocks = 2560 samples -> an impulse at 0, 48, 96, ... 2544: 54 rising edges.

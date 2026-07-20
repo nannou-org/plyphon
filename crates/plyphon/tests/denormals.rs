@@ -42,7 +42,7 @@ fn impulse_through(units: Vec<UnitSpec>, secs: f64) -> Vec<f32> {
         units,
     });
     controller
-        .synth_new("tail", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("tail", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     render(&mut world, (SR * secs) as usize)
 }

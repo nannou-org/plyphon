@@ -164,7 +164,7 @@ fn build(sample_rate: f32, channels: usize) -> World {
         ],
     };
     controller.add_synthdef(def);
-    let _ = controller.synth_new("distorted", ROOT_GROUP_ID, AddAction::Tail);
+    let _ = controller.synth_new("distorted", ROOT_GROUP_ID, AddAction::Tail, &[]);
 
     // The synth plays forever and never frees, so there is no NRT cleanup: drop the `Controller` and
     // `Nrt`, keep only the `World`. (Keep the `Controller` and call `set_control` to sweep `drive`.)

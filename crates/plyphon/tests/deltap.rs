@@ -47,7 +47,7 @@ fn render(units: Vec<UnitSpec>, frames_out: usize, buf_frames: usize) -> Vec<f32
         units,
     });
     controller
-        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut out = vec![0.0f32; frames_out];
     world.fill(&mut out, 1);

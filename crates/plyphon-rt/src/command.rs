@@ -25,7 +25,8 @@ pub const MAX_INITIAL_CONTROLS: usize = 128;
 /// A fixed-size initial-control payload paired with an initialized synth command.
 ///
 /// This transport type is public only so the control-side `plyphon` crate can feed the dedicated
-/// SPSC payload ring. Hosts should use `Controller::synth_new_with_initial_controls` instead.
+/// SPSC payload ring. Hosts should use `Controller::synth_new` with a non-empty controls slice
+/// instead.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug)]
 pub struct InitialControls {

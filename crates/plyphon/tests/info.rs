@@ -79,7 +79,7 @@ fn engine_constants() {
         ],
     ));
     controller
-        .synth_new("consts", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("consts", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let f = one_frame(&mut world);
@@ -119,7 +119,7 @@ fn buffer_info() {
         ],
     ));
     controller
-        .synth_new("bufinfo", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("bufinfo", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let f = one_frame(&mut world);
@@ -169,7 +169,7 @@ fn num_running_synths_and_buffers() {
     }
 
     controller
-        .synth_new("meter", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("meter", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("meter");
     let f = read(&mut world);
     approx(f[0], 1.0, "NumRunningSynths (meter only)");
@@ -180,10 +180,10 @@ fn num_running_synths_and_buffers() {
         .new_group(ROOT_GROUP_ID, AddAction::Tail)
         .expect("group");
     let e1 = controller
-        .synth_new("extra", g, AddAction::Tail)
+        .synth_new("extra", g, AddAction::Tail, &[])
         .expect("e1");
     controller
-        .synth_new("extra", g, AddAction::Tail)
+        .synth_new("extra", g, AddAction::Tail, &[])
         .expect("e2");
     approx(read(&mut world)[0], 3.0, "NumRunningSynths (meter + 2)");
 

@@ -43,7 +43,7 @@ fn run(trigid: f32, value: f32) -> (i32, Vec<f32>, Vec<plyphon::NodeMsg>, Vec<Tr
         ],
     });
     let node = controller
-        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("p", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let mut out = Vec::new();

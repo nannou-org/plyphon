@@ -67,7 +67,7 @@ fn drive(source: UnitSpec) -> (Controller, Nrt, World) {
         units: vec![source, duty, out],
     });
     controller
-        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     (controller, nrt, world)
 }

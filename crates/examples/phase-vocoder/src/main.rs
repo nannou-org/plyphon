@@ -109,7 +109,7 @@ fn build(sample_rate: f64, channels: usize) -> (Controller, Nrt, World, i32) {
         .expect("chain buffer");
     controller.add_synthdef(pvoc_def(channels));
     let node = controller
-        .synth_new("pvoc", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("pvoc", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     (controller, nrt, world, node)
 }
@@ -243,7 +243,8 @@ mod tests {
             ..Options::default()
         });
         dc.add_synthdef(dry_saw_def());
-        dc.synth_new("dry", ROOT_GROUP_ID, AddAction::Tail).unwrap();
+        dc.synth_new("dry", ROOT_GROUP_ID, AddAction::Tail, &[])
+            .unwrap();
         let dry = render_tail(&mut dworld, 8_192, 8_192);
 
         let wet_ratio = goertzel(&wet, h5) / goertzel(&wet, h1).max(1e-9);

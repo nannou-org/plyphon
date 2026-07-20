@@ -45,7 +45,7 @@ impl Controls {
         if recorder_ended && !self.playing {
             let _ = self
                 .controller
-                .synth_new("play", ROOT_GROUP_ID, AddAction::Tail);
+                .synth_new("play", ROOT_GROUP_ID, AddAction::Tail, &[]);
             self.playing = true;
             #[cfg(not(target_arch = "wasm32"))]
             println!("recording finished - looping it back");
@@ -165,7 +165,7 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
     controller.add_synthdef(record_def(channels));
     controller.add_synthdef(play_def(channels));
     let recorder = controller
-        .synth_new("record", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("record", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap_or(-1);
 
     (

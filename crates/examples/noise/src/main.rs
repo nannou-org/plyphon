@@ -82,7 +82,7 @@ fn build(sample_rate: f32, channels: usize) -> World {
         params: vec![],
         units,
     });
-    let _ = controller.synth_new("noise", ROOT_GROUP_ID, AddAction::Tail);
+    let _ = controller.synth_new("noise", ROOT_GROUP_ID, AddAction::Tail, &[]);
 
     world
 }

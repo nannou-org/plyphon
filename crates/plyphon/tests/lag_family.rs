@@ -65,7 +65,7 @@ fn render_filter(name: &str, sig_freq: f32, coefs: &[f32]) -> Vec<f32> {
         units,
     });
     controller
-        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     render(&mut world, SR as usize / 4)
 }

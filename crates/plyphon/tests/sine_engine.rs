@@ -75,7 +75,7 @@ fn sine_engine_plays_and_responds_to_n_set() {
     });
     controller.add_synthdef(sine_def());
     let node = controller
-        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // Render ~0.5 s at the default 440 Hz across varying buffer sizes.

@@ -85,7 +85,7 @@ fn control_rate_line_glides_sine_frequency() {
     });
     controller.add_synthdef(glide_def());
     controller
-        .synth_new("glide", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("glide", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // A short window near the start: the ramp is still near 220 Hz.

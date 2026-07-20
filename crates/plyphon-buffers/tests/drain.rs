@@ -111,7 +111,7 @@ fn stream_drainer_drains_disk_out() {
 
     controller.add_synthdef(disk_out_def());
     controller
-        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // Render in 512-sample blocks, draining after each so the bounded chunk queue never overruns.

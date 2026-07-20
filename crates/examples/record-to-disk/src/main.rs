@@ -68,7 +68,7 @@ fn main() {
         .expect("failed to cue the recording buffer");
     controller.add_synthdef(tone_def(channels));
     controller
-        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("failed to start the recording synth");
 
     // Drain the recorder to a WAV on a background thread (scsynth's NRT disk thread).
@@ -259,7 +259,7 @@ mod tests {
             .unwrap();
         controller.add_synthdef(tone_def(1));
         controller
-            .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail, &[])
             .unwrap();
 
         let path = std::env::temp_dir().join(format!("plyphon-rec-{}.wav", std::process::id()));

@@ -101,7 +101,7 @@ fn op_block(special_index: i16, a: f32, b: Option<f32>) -> f32 {
     });
     controller.add_synthdef(def);
     controller
-        .synth_new("op", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("op", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let mut blk = [0.0f32; 64];
     world.fill(&mut blk, 1);
@@ -160,7 +160,7 @@ fn binary_op_multiply_scales_amplitude() {
     });
     controller.add_synthdef(amped_sine());
     let node = controller
-        .synth_new("amped", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("amped", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let a = render(&mut world, SR as usize / 8);
@@ -211,7 +211,7 @@ fn unary_op_abs_rectifies() {
     });
     controller.add_synthdef(def);
     controller
-        .synth_new("rect", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rect", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let out = render(&mut world, SR as usize / 8);
@@ -260,7 +260,7 @@ fn unary_op_midicps_converts_constant() {
     });
     controller.add_synthdef(def);
     controller
-        .synth_new("mc", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("mc", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let out = render(&mut world, 512);
@@ -323,7 +323,7 @@ fn binary_op_clip2_bounds_a_loud_sine() {
     });
     controller.add_synthdef(def);
     controller
-        .synth_new("clipped", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("clipped", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let out = render(&mut world, SR as usize / 8);
@@ -355,7 +355,7 @@ fn unsupported_op_is_rejected() {
     };
     let (mut controller, _nrt, _world) = engine(Options::default());
     controller.add_synthdef(def);
-    let result = controller.synth_new("bad", ROOT_GROUP_ID, AddAction::Tail);
+    let result = controller.synth_new("bad", ROOT_GROUP_ID, AddAction::Tail, &[]);
     assert!(matches!(
         result,
         Err(SynthNewError::Build(BuildError::UnsupportedOp(999)))

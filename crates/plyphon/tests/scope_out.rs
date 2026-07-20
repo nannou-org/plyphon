@@ -77,7 +77,7 @@ fn scope_streams_every_input_sample() {
         ],
     });
     controller
-        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let blocks = 10;
@@ -116,7 +116,7 @@ fn scope_interleaves_multiple_channels() {
         units: vec![dc(0.25), dc(-0.5), scope_out(0.0, &[(0, 0), (1, 0)])],
     });
     controller
-        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let mut buf = vec![0.0f32; BLOCK * 2];
@@ -157,7 +157,7 @@ fn multiple_scope_taps_stream_independently() {
         ],
     });
     controller
-        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let mut buf = vec![0.0f32; BLOCK * 2];
@@ -205,7 +205,7 @@ fn scope_overruns_without_panic_when_undrained() {
         ],
     });
     controller
-        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     let mut buf = vec![0.0f32; BLOCK * 2];

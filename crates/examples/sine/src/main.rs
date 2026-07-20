@@ -45,7 +45,7 @@ fn build(sample_rate: f32, channels: usize) -> World {
         ],
     };
     controller.add_synthdef(def);
-    let _ = controller.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail);
+    let _ = controller.synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[]);
 
     // The queued synth plays forever and never frees, so there is no NRT cleanup to do: drop the
     // `Controller` and `Nrt` and keep only the `World`.

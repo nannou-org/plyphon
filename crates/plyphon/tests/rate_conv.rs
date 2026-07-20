@@ -53,7 +53,7 @@ fn dc_is_constant() {
         ],
     });
     controller
-        .synth_new("dc", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("dc", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     for x in one_block(&mut world) {
@@ -90,7 +90,7 @@ fn a2k_takes_first_sample() {
         ],
     });
     controller
-        .synth_new("a2k", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("a2k", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     for x in one_block(&mut world) {
@@ -116,7 +116,7 @@ fn t2a_places_trigger_at_offset() {
         ],
     });
     controller
-        .synth_new("t2a", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("t2a", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // First block: rising edge (prev 0 -> 1) fires once, at `offset`.
@@ -171,7 +171,7 @@ fn t2k_takes_block_maximum() {
         ],
     });
     controller
-        .synth_new("t2k", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("t2k", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // First block: the spike at sample 5 becomes the block max, so the control value is 1.0.
@@ -211,7 +211,7 @@ fn k2a_interpolates_control_step() {
     });
     controller.set_control_bus(0, 0.0).expect("set bus");
     controller
-        .synth_new("k2a", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("k2a", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // Bus held at 0: silent (K2A seeds prev = 0 on the first block).

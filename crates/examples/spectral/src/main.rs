@@ -144,7 +144,7 @@ fn build(sample_rate: f64, channels: usize) -> (Controller, Nrt, World) {
         .expect("mask buffer");
     controller.add_synthdef(spectral_def(channels));
     controller
-        .synth_new("spectral", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("spectral", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     (controller, nrt, world)
 }

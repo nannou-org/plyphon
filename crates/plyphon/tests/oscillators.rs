@@ -58,7 +58,7 @@ fn render_osc(name: &str, inputs: Vec<InputRef>) -> Vec<f32> {
         ],
     });
     controller
-        .synth_new("osc", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("osc", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     render(&mut world, SR as usize / 4)
 }

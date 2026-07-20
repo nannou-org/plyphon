@@ -66,7 +66,7 @@ fn in_ar_reads_hardware_input() {
     };
     controller.add_synthdef(reader);
     controller
-        .synth_new("thru", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("thru", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // A 440 Hz tone presented as "hardware input".
@@ -115,7 +115,7 @@ fn fill_duplex_tolerates_short_input() {
     };
     controller.add_synthdef(thru);
     controller
-        .synth_new("thru", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("thru", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     world.fill(&mut [0.0f32; BLOCK], 1); // link the synth before the duplex call
 

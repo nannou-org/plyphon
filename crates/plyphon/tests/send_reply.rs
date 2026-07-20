@@ -56,7 +56,7 @@ fn emits_one_reply_per_rising_edge() {
         ],
     });
     let node = controller
-        .synth_new("rep", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rep", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // 40 control blocks = 2560 samples -> impulses at 0, 48, ... 2544: ~54 rising edges.

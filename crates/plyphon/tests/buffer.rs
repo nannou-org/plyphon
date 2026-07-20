@@ -92,7 +92,7 @@ fn play_buf_loops_a_buffer() {
         .unwrap();
     controller.add_synthdef(play_buf_def("loop", 1.0, 1.0, 0.0));
     controller
-        .synth_new("loop", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("loop", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let out = render(&mut world, SR as usize / 4);
@@ -119,7 +119,7 @@ fn play_buf_done_action_frees_synth() {
         .unwrap();
     controller.add_synthdef(play_buf_def("once", 1.0, 0.0, 2.0));
     let node = controller
-        .synth_new("once", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("once", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // The 240-frame buffer ends within a few blocks; flush past it and confirm the synth freed.

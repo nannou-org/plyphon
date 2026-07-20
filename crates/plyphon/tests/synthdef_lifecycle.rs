@@ -62,7 +62,7 @@ fn redefining_a_name_does_not_leak_retired_defs() {
 
     for i in 0..32 {
         let node = controller
-            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
             .unwrap();
         render(&mut world, 64); // install the def + build the synth
         controller.free(node).unwrap();
@@ -100,7 +100,7 @@ fn a_live_synth_pins_exactly_its_def() {
 
     // A long-lived synth on the original def.
     let pinned = controller
-        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     render(&mut world, 64);
 
@@ -109,7 +109,7 @@ fn a_live_synth_pins_exactly_its_def() {
     for _ in 0..16 {
         controller.add_synthdef(sine_def());
         let tmp = controller
-            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail, &[])
             .unwrap();
         render(&mut world, 64);
         controller.free(tmp).unwrap();

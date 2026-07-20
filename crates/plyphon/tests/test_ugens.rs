@@ -63,7 +63,7 @@ fn check(value: f32) -> f32 {
         ],
     });
     controller
-        .synth_new("c", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("c", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     first_sample(&mut world)
 }
@@ -99,7 +99,7 @@ fn sanitize(value: f32, replace: f32) -> f32 {
         ],
     });
     controller
-        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("s", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     first_sample(&mut world)
 }

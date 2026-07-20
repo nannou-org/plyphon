@@ -88,7 +88,7 @@ fn feedback_comb_decays_by_coef() {
     });
     controller.set_control_bus(0, 1.0).unwrap(); // inject 1.0
     controller
-        .synth_new("comb", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("comb", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // Block 1: LocalIn reads silence -> sum = injection = 1.0.
@@ -199,7 +199,7 @@ fn in_feedback_reads_a_bus() {
         ],
     });
     controller
-        .synth_new("fb", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("fb", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let mut buf = vec![0.0f32; BLOCK * 2];
@@ -267,10 +267,10 @@ fn in_before_writer_reads_silence() {
     controller.add_synthdef(reader_def("read", "In", 1.0));
     controller.add_synthdef(writer_def("write", 0.8, 1.0));
     controller
-        .synth_new("read", ROOT_GROUP_ID, AddAction::Head)
+        .synth_new("read", ROOT_GROUP_ID, AddAction::Head, &[])
         .unwrap();
     controller
-        .synth_new("write", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("write", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     for block in 0..4 {
         let got = one(&mut world);
@@ -289,10 +289,10 @@ fn in_feedback_before_writer_reads_last_block() {
     controller.add_synthdef(reader_def("read", "InFeedback", 1.0));
     controller.add_synthdef(writer_def("write", 0.8, 1.0));
     controller
-        .synth_new("read", ROOT_GROUP_ID, AddAction::Head)
+        .synth_new("read", ROOT_GROUP_ID, AddAction::Head, &[])
         .unwrap();
     controller
-        .synth_new("write", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("write", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let first = one(&mut world);
     assert!(
@@ -315,10 +315,10 @@ fn in_after_writer_reads_live() {
     controller.add_synthdef(reader_def("read", "In", 1.0));
     controller.add_synthdef(writer_def("write", 0.8, 1.0));
     controller
-        .synth_new("write", ROOT_GROUP_ID, AddAction::Head)
+        .synth_new("write", ROOT_GROUP_ID, AddAction::Head, &[])
         .unwrap();
     controller
-        .synth_new("read", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("read", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let got = one(&mut world);
     assert!(
@@ -335,10 +335,10 @@ fn in_goes_silent_when_writer_freed() {
     controller.add_synthdef(reader_def("read", "In", 1.0));
     controller.add_synthdef(writer_def("write", 0.8, 1.0));
     controller
-        .synth_new("write", ROOT_GROUP_ID, AddAction::Head)
+        .synth_new("write", ROOT_GROUP_ID, AddAction::Head, &[])
         .unwrap();
     controller
-        .synth_new("read", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("read", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let live = one(&mut world);
     assert!((live - 0.8).abs() < 1e-6, "live read, got {live}");
@@ -346,7 +346,7 @@ fn in_goes_silent_when_writer_freed() {
     controller.free_all(ROOT_GROUP_ID).unwrap();
     controller.add_synthdef(reader_def("read2", "In", 1.0));
     controller
-        .synth_new("read2", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("read2", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let got = one(&mut world);
     assert!(

@@ -147,7 +147,7 @@ fn combined(pv: &str, freq_a: f32, freq_b: f32) -> Vec<f32> {
         units,
     });
     controller
-        .synth_new("pvc", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("pvc", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let out = render(&mut world, 12_288);
     out[8_192..].to_vec()

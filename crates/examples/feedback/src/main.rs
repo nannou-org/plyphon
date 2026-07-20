@@ -46,7 +46,7 @@ fn build(sample_rate: f32, channels: usize) -> World {
 
     controller.add_synthdef(fbvoice_def(channels));
     for (freq, lfo) in VOICES {
-        if let Ok(voice) = controller.synth_new("fbvoice", ROOT_GROUP_ID, AddAction::Tail) {
+        if let Ok(voice) = controller.synth_new("fbvoice", ROOT_GROUP_ID, AddAction::Tail, &[]) {
             let _ = controller.set_control(voice, 0, freq); // parameter 0 = freq
             let _ = controller.set_control(voice, 1, lfo); // parameter 1 = LFO rate
         }

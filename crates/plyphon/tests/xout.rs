@@ -40,10 +40,10 @@ fn out_then_xout(a: f32, b: f32, xfade: f32) -> f32 {
         ],
     });
     controller
-        .synth_new("a", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("a", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     controller
-        .synth_new("b", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("b", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let mut buf = [0.0f32; 64];
     world.fill(&mut buf, 1);
@@ -89,7 +89,7 @@ fn xout_alone_is_first_writer() {
         ],
     });
     controller
-        .synth_new("x", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("x", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let mut buf = [0.0f32; 64];
     world.fill(&mut buf, 1);
@@ -121,7 +121,7 @@ fn lone_reblocked_xout_never_mixes_stale_audio() {
         ],
     });
     let w = controller
-        .synth_new("w", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("w", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let mut buf = [0.0f32; 64];
     world.fill(&mut buf, 1);
@@ -149,10 +149,10 @@ fn lone_reblocked_xout_never_mixes_stale_audio() {
         ],
     });
     controller
-        .synth_new("x", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("x", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     controller
-        .synth_new("r", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("r", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     world.fill(&mut buf, 1);
     for (i, &s) in buf.iter().enumerate() {

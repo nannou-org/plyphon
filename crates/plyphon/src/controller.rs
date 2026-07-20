@@ -347,37 +347,36 @@ impl Controller {
         self.retiring.len()
     }
 
-    /// Create a synth from definition `def_name` and link it under group `target`.
+    /// Create a synth from definition `def_name`, link it under group `target`, and optionally set
+    /// an ordered snapshot of initial parameter values as the node is created.
     ///
-    /// The def is compiled (and installed in the `World`'s def table) on first use; the synth itself
-    /// is constructed on the audio thread. Returns the new synth's client id.
+    /// This mirrors `/s_new <def> <id> <action> <target> [<control> <value>]...`: the trailing
+    /// control pairs are optional and applied while the node is instantiated, before its first
+    /// process block. The def is compiled (and installed in the `World`'s def table) on first use;
+    /// the synth itself is constructed on the audio thread. Returns the new synth's client id.
+    ///
+    /// Passing `&[]` is a plain create at the def's default control values (a single
+    /// [`Command::AddSynth`] that consumes no initial-controls transport slot). A non-empty
+    /// `controls` slice takes the atomic path: the whole fixed-size payload and its add command are
+    /// preflighted and published as one transaction. On [`SynthNewError::QueueFull`], invalid
+    /// indices, capacity overflow, or id exhaustion, no create command is published and the
+    /// automatic id is not consumed. Supplied values are installed before the synth's first unit
+    /// initialization and process tick; duplicate indices apply in slice order, so the last value
+    /// wins. This method is always immediate and leaves any surrounding scheduled-command window
+    /// unchanged.
     pub fn synth_new(
-        &mut self,
-        def_name: &str,
-        target: i32,
-        action: AddAction,
-    ) -> Result<i32, SynthNewError> {
-        let id = self.auto_id().map_err(|_| SynthNewError::NodeIdExhausted)?;
-        self.synth_new_with_id(id, def_name, target, action)?;
-        self.consume_auto_id();
-        Ok(id)
-    }
-
-    /// Create a synth immediately with an ordered snapshot of initial parameter values.
-    ///
-    /// The whole fixed-size payload and its add command are preflighted and published as one
-    /// transaction. On [`SynthNewError::QueueFull`], invalid indices, capacity overflow, or id
-    /// exhaustion, no create command is published and the automatic id is not consumed. Supplied
-    /// values are installed before the synth's first unit initialization and process tick; duplicate
-    /// indices apply in slice order, so the last value wins. This method is always immediate and
-    /// leaves any surrounding scheduled-command window unchanged.
-    pub fn synth_new_with_initial_controls(
         &mut self,
         def_name: &str,
         target: i32,
         action: AddAction,
         controls: &[(usize, f32)],
     ) -> Result<i32, SynthNewError> {
+        if controls.is_empty() {
+            let id = self.auto_id().map_err(|_| SynthNewError::NodeIdExhausted)?;
+            self.synth_new_with_id(id, def_name, target, action)?;
+            self.consume_auto_id();
+            return Ok(id);
+        }
         let id = self.auto_id().map_err(|_| SynthNewError::NodeIdExhausted)?;
         if controls.len() > MAX_INITIAL_CONTROLS {
             return Err(SynthNewError::InitialControlsCapacityExceeded {
@@ -1091,7 +1090,7 @@ mod tests {
             i32::MAX
         );
         assert!(matches!(
-            controller.synth_new("missing", crate::ROOT_GROUP_ID, AddAction::Tail),
+            controller.synth_new("missing", crate::ROOT_GROUP_ID, AddAction::Tail, &[]),
             Err(SynthNewError::NodeIdExhausted)
         ));
         assert_eq!(

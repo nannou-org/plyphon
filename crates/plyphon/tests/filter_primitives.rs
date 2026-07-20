@@ -51,7 +51,7 @@ fn run(units: Vec<UnitSpec>) -> Vec<f32> {
         units,
     });
     controller
-        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let _ = render(&mut world, SR as usize / 20);
     render(&mut world, SR as usize / 5)

@@ -122,7 +122,7 @@ fn record_buf_round_trips_through_play_buf() {
         .unwrap();
     controller.add_synthdef(record_def("rec", 440.0, 1.0, 0.0));
     let rec = controller
-        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // Fill the whole buffer with the recorded 440 Hz sine, then free the recorder.
@@ -133,7 +133,7 @@ fn record_buf_round_trips_through_play_buf() {
     // Play the recorded buffer back and confirm it is a 440 Hz tone.
     controller.add_synthdef(play_def("play"));
     controller
-        .synth_new("play", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("play", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let out = render(&mut world, SR as usize / 4);
     assert!(
@@ -159,7 +159,7 @@ fn record_buf_done_action_frees_synth() {
         .unwrap();
     controller.add_synthdef(record_def("once", 440.0, 0.0, 2.0));
     let node = controller
-        .synth_new("once", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("once", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let _ = render(&mut world, 2048); // past the 240-frame buffer
@@ -328,7 +328,7 @@ fn buf_wr_writes_at_a_frame() {
         ],
     });
     let wr = controller
-        .synth_new("wr", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("wr", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     // Block-aligned fills (one 64-sample control block each) so each command takes effect cleanly
     // with no reblocking leftover carried between calls.
@@ -340,7 +340,7 @@ fn buf_wr_writes_at_a_frame() {
     // Read it back: PlayBuf at rate 1 over the 8-frame loop yields buffer[i % 8] each sample.
     controller.add_synthdef(play_def("play"));
     controller
-        .synth_new("play", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("play", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     world.fill(&mut blk, 1);
     for (i, &s) in blk.iter().enumerate() {

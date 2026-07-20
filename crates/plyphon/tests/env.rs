@@ -140,7 +140,7 @@ fn perc_envelope_shapes_a_note_then_frees_it() {
     });
     controller.add_synthdef(def);
     let node = controller
-        .synth_new("perc", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("perc", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // Early in the decay the note is clearly audible.
@@ -190,7 +190,7 @@ fn adsr_sustains_until_the_gate_falls() {
     });
     controller.add_synthdef(def);
     let node = controller
-        .synth_new("adsr", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("adsr", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // Let the attack+decay (~0.11 s) finish, then sample the sustain: 0.5 * a unit sine, rms ~0.35.
@@ -246,7 +246,7 @@ fn partial_gate_sustains() {
     });
     controller.add_synthdef(def);
     let node = controller
-        .synth_new("partial", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("partial", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let _ = render(&mut world, (SR * 0.1) as usize); // reach the sustain
     controller.set_control(node, 0, 0.4).unwrap();
@@ -274,7 +274,7 @@ fn rising_gate_retriggers_from_current_level() {
     });
     controller.add_synthdef(def);
     let node = controller
-        .synth_new("retrig", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("retrig", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let _ = render(&mut world, (SR * 0.1) as usize); // sustain at 0.5
     controller.set_control(node, 0, 0.0).unwrap();
@@ -321,7 +321,7 @@ fn gate_below_minus_one_forces_a_timed_release() {
     });
     controller.add_synthdef(def);
     let node = controller
-        .synth_new("cutoff", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("cutoff", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let _ = render(&mut world, (SR * 0.1) as usize); // sustain at 0.5
     controller.set_control(node, 0, -1.5).unwrap();
@@ -361,7 +361,7 @@ fn curve_value_at_half(curve_type: f32, curve_value: f32) -> f32 {
     });
     controller.add_synthdef(def);
     controller
-        .synth_new("curve", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("curve", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     let out = render(&mut world, (SR * 0.05) as usize);
     *out.last().unwrap()

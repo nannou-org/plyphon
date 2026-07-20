@@ -1390,7 +1390,7 @@ impl OscDispatcher {
 
         let id = if id < 0 {
             controller
-                .synth_new(&name, target, action)
+                .synth_new(&name, target, action, &[])
                 .map_err(OscError::SynthNew)?
         } else {
             controller

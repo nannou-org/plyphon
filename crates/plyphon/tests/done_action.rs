@@ -137,7 +137,7 @@ fn line_done_action_frees_synth() {
     });
     controller.add_synthdef(enveloped_sine());
     let node = controller
-        .synth_new("env", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("env", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
 
     // It plays before the 0.1 s envelope completes.
@@ -191,10 +191,10 @@ fn done_action_3_frees_self_and_prev() {
     c.add_synthdef(done_synth("d3", 3.0));
     // root -> [a, b]; b's done action frees b and its preceding sibling a.
     let a = c
-        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("a");
     let b = c
-        .synth_new("d3", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d3", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("b");
 
     let _ = render(&mut world, (SR * 0.2) as usize);
@@ -214,10 +214,10 @@ fn done_action_4_frees_self_and_next() {
     c.add_synthdef(done_synth("d4", 4.0));
     // root -> [b, a]; b frees b and its following sibling a.
     let b = c
-        .synth_new("d4", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d4", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("b");
     let a = c
-        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("a");
 
     let _ = render(&mut world, (SR * 0.2) as usize);
@@ -235,13 +235,13 @@ fn done_action_7_frees_self_to_head() {
     c.add_synthdef(done_synth("d7", 7.0));
     // root -> [a, b, d]; d frees itself and all preceding siblings.
     let a = c
-        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("a");
     let b = c
-        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("b");
     let d = c
-        .synth_new("d7", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d7", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("d");
 
     let _ = render(&mut world, (SR * 0.2) as usize);
@@ -261,10 +261,10 @@ fn done_action_9_frees_self_and_pauses_prev() {
     c.add_synthdef(done_synth("d9", 9.0));
     // root -> [a, b]; b frees itself and pauses its preceding sibling a.
     let a = c
-        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("plain", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("a");
     let b = c
-        .synth_new("d9", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("d9", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("b");
 
     let _ = render(&mut world, (SR * 0.2) as usize);
@@ -285,8 +285,8 @@ fn done_action_13_frees_all_in_group() {
     c.add_synthdef(plain_sine("plain"));
     c.add_synthdef(done_synth("d13", 13.0));
     let g = c.new_group(ROOT_GROUP_ID, AddAction::Tail).expect("g");
-    let a = c.synth_new("plain", g, AddAction::Tail).expect("a");
-    let b = c.synth_new("d13", g, AddAction::Tail).expect("b");
+    let a = c.synth_new("plain", g, AddAction::Tail, &[]).expect("a");
+    let b = c.synth_new("d13", g, AddAction::Tail, &[]).expect("b");
 
     let _ = render(&mut world, (SR * 0.2) as usize);
 
@@ -306,8 +306,8 @@ fn done_action_14_frees_enclosing_group() {
     c.add_synthdef(plain_sine("plain"));
     c.add_synthdef(done_synth("d14", 14.0));
     let g = c.new_group(ROOT_GROUP_ID, AddAction::Tail).expect("g");
-    let a = c.synth_new("plain", g, AddAction::Tail).expect("a");
-    let b = c.synth_new("d14", g, AddAction::Tail).expect("b");
+    let a = c.synth_new("plain", g, AddAction::Tail, &[]).expect("a");
+    let b = c.synth_new("d14", g, AddAction::Tail, &[]).expect("b");
 
     let _ = render(&mut world, (SR * 0.2) as usize);
 

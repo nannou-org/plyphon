@@ -92,7 +92,7 @@ fn start(def: SynthDef) -> (plyphon::Controller, plyphon::Nrt, World, i32) {
     let name = def.name.clone();
     controller.add_synthdef(def);
     let node = controller
-        .synth_new(&name, ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new(&name, ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     (controller, nrt, world, node)
 }
@@ -275,10 +275,10 @@ fn dwhite_is_bounded_and_decorrelates_across_instances() {
     controller.add_synthdef(a);
     controller.add_synthdef(b);
     controller
-        .synth_new("rand_a", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rand_a", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     controller
-        .synth_new("rand_b", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rand_b", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let out = render(&mut world, 2, SEG * 8);

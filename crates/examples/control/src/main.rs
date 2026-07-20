@@ -96,7 +96,7 @@ fn build(sample_rate: f32, channels: usize) -> (Controls, World) {
 
     // Two voices, an octave apart, both reading frequency from the shared control bus.
     for ratio in [1.0, 2.0] {
-        if let Ok(node) = controller.synth_new("voice", ROOT_GROUP_ID, AddAction::Tail) {
+        if let Ok(node) = controller.synth_new("voice", ROOT_GROUP_ID, AddAction::Tail, &[]) {
             let _ = controller.set_control(node, PARAM_RATIO, ratio);
             let _ = controller.map_control(node, PARAM_FREQ, Some(FREQ_BUS));
         }

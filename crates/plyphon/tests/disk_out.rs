@@ -83,7 +83,7 @@ fn disk_out_records_a_tone() {
         .unwrap();
     controller.add_synthdef(tone_def("rec", 440.0));
     controller
-        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rec", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // 4608 = 18 whole chunks of 256: a clean tone with every frame flushed.
@@ -133,7 +133,7 @@ fn disk_out_preserves_channels_and_samples_exactly() {
         ],
     });
     controller
-        .synth_new("rec2", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("rec2", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let recorded = record(&mut world, &mut consumer, 512);

@@ -128,7 +128,7 @@ fn start(def: SynthDef) -> (plyphon::Controller, World) {
         .unwrap();
     controller.add_synthdef(def);
     controller
-        .synth_new("fft-chain", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("fft-chain", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
     (controller, world)
 }
@@ -226,7 +226,7 @@ fn unsupported_fft_size_is_rejected_at_build() {
     // A def naming an uncompilable unit fails when a synth is created from it.
     assert!(
         controller
-            .synth_new("bad-fft", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("bad-fft", ROOT_GROUP_ID, AddAction::Tail, &[])
             .is_err(),
         "an unsupported FFT size should be rejected"
     );
@@ -326,7 +326,7 @@ fn pv_magmul_filters_a_tone_through_the_chain() {
         .unwrap();
     controller.add_synthdef(def);
     controller
-        .synth_new("pv-chain", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("pv-chain", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let out = render(&mut world, 12_288);
@@ -430,7 +430,7 @@ fn pv_magsquared_keeps_the_tone_through_the_polar_path() {
         .unwrap();
     controller.add_synthdef(def);
     controller
-        .synth_new("pv-sq", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("pv-sq", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     let out = render(&mut world, 12_288);

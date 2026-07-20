@@ -66,7 +66,7 @@ impl Controls {
         self.next_freq += 1;
         if let Ok(node) = self
             .controller
-            .synth_new("note", ROOT_GROUP_ID, AddAction::Tail)
+            .synth_new("note", ROOT_GROUP_ID, AddAction::Tail, &[])
         {
             let _ = self.controller.set_control(node, 0, freq); // parameter 0 = freq
         }

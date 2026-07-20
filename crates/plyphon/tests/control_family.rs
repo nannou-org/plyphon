@@ -47,7 +47,7 @@ fn trig_control_pulses_one_block() {
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(def("t", Param::trig("t", 0.0)));
     let node = controller
-        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert_eq!(one(&mut world), 0.0, "default 0: no pulse");
@@ -66,7 +66,7 @@ fn trig_control_default_fires_on_first_block() {
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(def("t2", Param::trig("t", 1.0)));
     controller
-        .synth_new("t2", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("t2", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert_eq!(
@@ -83,7 +83,7 @@ fn lag_control_dezippers_a_step() {
     let lag = 0.01; // seconds
     controller.add_synthdef(def("lag", Param::lag("f", 0.0, lag)));
     let node = controller
-        .synth_new("lag", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("lag", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert_eq!(one(&mut world), 0.0, "holds at the seeded default");
@@ -114,7 +114,7 @@ fn lag_control_zero_lag_is_instant() {
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(def("lag0", Param::lag("f", 0.0, 0.0)));
     let node = controller
-        .synth_new("lag0", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("lag0", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     assert_eq!(one(&mut world), 0.0, "holds at the default");

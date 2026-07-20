@@ -28,7 +28,7 @@ fn value(unit: UnitSpec) -> f32 {
         ],
     });
     controller
-        .synth_new("a", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("a", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut out = vec![0.0f32; 64];
     world.fill(&mut out, 1);

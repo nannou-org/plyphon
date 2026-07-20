@@ -30,7 +30,7 @@ fn render_synth(def: SynthDef, frames: usize, settle: usize) -> Vec<f32> {
     let name = def.name.clone();
     controller.add_synthdef(def);
     controller
-        .synth_new(&name, ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new(&name, ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut out = Vec::with_capacity(frames + settle + 512);
     let mut buf = Vec::new();

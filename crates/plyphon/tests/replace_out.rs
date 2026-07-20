@@ -43,7 +43,7 @@ fn two_writers(second: &str) -> f32 {
         ],
     });
     controller
-        .synth_new("w", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("w", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut buf = vec![0.0f32; 128];
     world.fill(&mut buf, 1);

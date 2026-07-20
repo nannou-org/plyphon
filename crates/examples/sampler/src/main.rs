@@ -115,7 +115,7 @@ async fn load_and_play(
             let rate = (data.sample_rate / engine_sample_rate as f64) as f32;
             let _ = controller.buffer_set(0, Box::new(data.into()));
             controller.add_synthdef(player_def(channels, rate));
-            let _ = controller.synth_new("player", ROOT_GROUP_ID, AddAction::Tail);
+            let _ = controller.synth_new("player", ROOT_GROUP_ID, AddAction::Tail, &[]);
         }
         // On the web this prints to nowhere; a real app would log via the console.
         Err(err) => eprintln!("failed to load {SAMPLE}: {err}"),

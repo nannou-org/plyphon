@@ -87,7 +87,7 @@ fn disk_in_plays_a_streamed_tone() {
 
     controller.add_synthdef(disk_in_def());
     controller
-        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail, &[])
         .unwrap();
 
     // Render ~0.25 s, topping the queue up before each block (the feeder keeps ahead of playback).

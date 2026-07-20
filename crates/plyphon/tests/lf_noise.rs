@@ -21,7 +21,7 @@ fn render(units: Vec<UnitSpec>, frames: usize, settle: usize) -> Vec<f32> {
         units,
     });
     controller
-        .synth_new("n", ROOT_GROUP_ID, AddAction::Tail)
+        .synth_new("n", ROOT_GROUP_ID, AddAction::Tail, &[])
         .expect("synth_new");
     let mut out = Vec::with_capacity(frames + settle + 512);
     let mut buf = Vec::new();
