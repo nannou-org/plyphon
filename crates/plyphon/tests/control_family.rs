@@ -109,6 +109,27 @@ fn lag_control_dezippers_a_step() {
     );
 }
 
+/// A lagged control set between creation and the first block starts at the set value. The one-pole
+/// state seeds from the live value slot at first calc (scsynth's `LagControl_Ctor` reads the
+/// control *after* `/s_new`'s pairs or a same-block `/n_set` landed), so a create+set pair holds
+/// the target from sample 0 rather than ramping from the default.
+#[test]
+fn lag_control_set_before_first_block_starts_at_set_value() {
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller.add_synthdef(def("lag-init", Param::lag("f", 0.0, 1.0)));
+    let node = controller
+        .synth_new("lag-init", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    controller.set_control(node, 0, 0.875).unwrap();
+
+    assert_eq!(
+        one(&mut world),
+        0.875,
+        "the first block holds the value set before it, not a ramp from the default"
+    );
+    assert_eq!(one(&mut world), 0.875, "and holds steady after");
+}
+
 #[test]
 fn lag_control_zero_lag_is_instant() {
     let (mut controller, _nrt, mut world) = engine(opts());
