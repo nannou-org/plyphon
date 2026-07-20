@@ -949,9 +949,11 @@ impl World {
         self.tree_scratch = scratch;
     }
 
-    /// Construct a synth from the resident def at `def_id` and link it into the tree. On a missing def
-    /// or pool exhaustion, emits [`Event::SynthFailed`] and creates no node (scsynth's
-    /// out-of-real-time-memory path).
+    /// Construct a synth from the resident def at `def_id` and link it into the tree. Every
+    /// failure (a missing def, pool exhaustion, a duplicate node id, an unresolvable target, or a
+    /// full tree) emits [`Event::SynthFailed`] and creates no node (scsynth's `/fail` reply
+    /// paths), so each accepted create reaches exactly one terminal: `NodeStarted` or
+    /// `SynthFailed`.
     fn add_synth(&mut self, id: i32, def_id: u32, target: i32, action: AddAction) {
         let Some(def) = self.def_table.get(def_id as usize).cloned().flatten() else {
             self.emit(Event::SynthFailed { id });
@@ -970,14 +972,20 @@ impl World {
                     self.drain_freed(&mut sink);
                     self.emit_started(id);
                 }
-                Err(returned) => self.pool.dealloc(returned.into_block()),
+                Err(returned) => {
+                    self.pool.dealloc(returned.into_block());
+                    self.emit(Event::SynthFailed { id });
+                }
             }
             self.freed_nodes = sink;
             return;
         }
         match self.tree.add_synth(id, graph, target, action) {
             Ok(()) => self.emit_started(id),
-            Err(returned) => self.pool.dealloc(returned.into_block()),
+            Err(returned) => {
+                self.pool.dealloc(returned.into_block());
+                self.emit(Event::SynthFailed { id });
+            }
         }
     }
 
