@@ -43,7 +43,7 @@ pub use plyphon_unit::{
     ProcessCtx, Unit, UnitDef, UnitRegistry, unit_spec, unit_spec_aux,
 };
 
-pub use controller::{Controller, GroupNewError, QueueFull, SynthNewError};
+pub use controller::{Controller, ControllerBatchCommand, GroupNewError, QueueFull, SynthNewError};
 pub use engine::engine;
 pub use render::{Render, RenderUntil};
 pub use synthdef::{InputRef, Param, SynthDef, UnitSpec};
