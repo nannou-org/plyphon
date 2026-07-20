@@ -949,9 +949,11 @@ impl World {
         self.tree_scratch = scratch;
     }
 
-    /// Construct a synth from the resident def at `def_id` and link it into the tree. On a missing def
-    /// or pool exhaustion, emits [`Event::SynthFailed`] and creates no node (scsynth's
-    /// out-of-real-time-memory path).
+    /// Construct a synth from the resident def at `def_id` and link it into the tree. Every
+    /// failure (a missing def, pool exhaustion, a duplicate node id, an unresolvable target, or a
+    /// full tree) emits [`Event::SynthFailed`] and creates no node (scsynth's `/fail` reply
+    /// paths), so each accepted create reaches exactly one terminal: `NodeStarted` or
+    /// `SynthFailed`.
     fn add_synth(&mut self, id: i32, def_id: u32, target: i32, action: AddAction) {
         let Some(def) = self.def_table.get(def_id as usize).cloned().flatten() else {
             self.emit(Event::SynthFailed { id });
@@ -970,14 +972,20 @@ impl World {
                     self.drain_freed(&mut sink);
                     self.emit_started(id);
                 }
-                Err(returned) => self.pool.dealloc(returned.into_block()),
+                Err(returned) => {
+                    self.pool.dealloc(returned.into_block());
+                    self.emit(Event::SynthFailed { id });
+                }
             }
             self.freed_nodes = sink;
             return;
         }
         match self.tree.add_synth(id, graph, target, action) {
             Ok(()) => self.emit_started(id),
-            Err(returned) => self.pool.dealloc(returned.into_block()),
+            Err(returned) => {
+                self.pool.dealloc(returned.into_block());
+                self.emit(Event::SynthFailed { id });
+            }
         }
     }
 
@@ -1025,7 +1033,7 @@ impl World {
             done_bytes,
             local_bytes,
             amap_bytes,
-            lag_bytes,
+            _lag_bytes,
         ] = match buf.get_disjoint_mut([
             layout.state.range(),
             layout.demand_state.range(),
@@ -1061,12 +1069,9 @@ impl World {
         for m in cast_slice_mut::<u8, u32>(amap_bytes) {
             *m = u32::MAX;
         }
-        // Seed each lag param's one-pole state to its default, so the first block holds steady
-        // (no ramp-from-zero click) - scsynth's `m_y1[i] = mapin[i][0]`.
-        let lag_state = cast_slice_mut::<u8, f32>(lag_bytes);
-        for (li, lp) in def.lag_params().iter().enumerate() {
-            lag_state[li] = def.control_defaults()[lp.value_slot as usize];
-        }
+        // Lag one-pole state (`_lag_bytes`) is deliberately not seeded here: the graph's first tick
+        // seeds it from the live value slot (scsynth's `LagControl_Ctor` runs at first calc), so a
+        // control set between creation and the first block starts already-lagged to its target.
         // Re-seed each unit's randomness for this instance (calc units, then demand units, on one
         // continuing index so two instances of a def decorrelate reproducibly).
         for (u, v) in def.units().iter().enumerate() {

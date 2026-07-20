@@ -138,8 +138,9 @@ impl NodeTree {
 
     /// Link a freshly built graph into the tree at `target`/`action`.
     ///
-    /// On failure (unresolvable placement, or the tree is full) the graph is returned so the caller
-    /// can reclaim its pool block.
+    /// On failure (a live node already holds `id` - scsynth's `kSCErr_DuplicateNodeID` - an
+    /// unresolvable placement, or the tree is full) the graph is returned so the caller can
+    /// reclaim its pool block.
     pub(crate) fn add_synth(
         &mut self,
         id: i32,
@@ -147,6 +148,9 @@ impl NodeTree {
         target: i32,
         action: AddAction,
     ) -> Result<(), Graph> {
+        if self.id_map.contains_key(&id) {
+            return Err(graph);
+        }
         let placement = match self.resolve_placement(target, action) {
             Some(p) => p,
             None => return Err(graph),
@@ -169,8 +173,13 @@ impl NodeTree {
         Ok(())
     }
 
-    /// Create an empty group at `target`/`action`. Returns `false` if it could not be added.
+    /// Create an empty group at `target`/`action`. Returns `false` if it could not be added,
+    /// including when a live node already holds `id` (scsynth's `/g_new` tolerates the duplicate
+    /// as an idempotent no-op: the existing node stays, nothing new is created).
     pub fn add_group(&mut self, id: i32, target: i32, action: AddAction) -> bool {
+        if self.id_map.contains_key(&id) {
+            return false;
+        }
         let placement = match self.resolve_placement(target, action) {
             Some(p) => p,
             None => return false,
@@ -197,8 +206,10 @@ impl NodeTree {
 
     /// Replace `target` with the freshly built synth `graph` (scsynth's `/s_new` `addReplace`): the
     /// new synth `id` takes `target`'s exact slot, and `target` (with its subtree) is freed into
-    /// `sink`. The new node keeps its own `id`. On failure (target unknown, target is the root, or the
-    /// tree is full) the graph is returned for reclamation and nothing is freed.
+    /// `sink`. The new node keeps its own `id`. On failure (a live node already holds `id`, target
+    /// unknown, target is the root, or the tree is full) the graph is returned for reclamation and
+    /// nothing is freed. The duplicate check precedes the vacate (scsynth's `Node_New` runs before
+    /// `Node_Replace`), so replacing a node with its own id fails rather than half-applying.
     pub(crate) fn replace_with_synth(
         &mut self,
         id: i32,
@@ -206,6 +217,9 @@ impl NodeTree {
         target: i32,
         sink: &mut Vec<FreedNode>,
     ) -> Result<(), Graph> {
+        if self.id_map.contains_key(&id) {
+            return Err(graph);
+        }
         let Some((idx, group, prev, next)) = self.vacate_for_replace(target, sink) else {
             return Err(graph);
         };
@@ -225,8 +239,12 @@ impl NodeTree {
 
     /// Replace `target` with a fresh empty group `id` (scsynth's `/g_new` `addReplace`): the new group
     /// takes `target`'s slot, and `target` (with its subtree) is freed into `sink`. Returns `false`
-    /// if `target` is unknown, is the root, or the tree is full (in which case nothing is freed).
+    /// if a live node already holds `id`, `target` is unknown, is the root, or the tree is full (in
+    /// which case nothing is freed - the duplicate check precedes the vacate).
     pub fn replace_with_group(&mut self, id: i32, target: i32, sink: &mut Vec<FreedNode>) -> bool {
+        if self.id_map.contains_key(&id) {
+            return false;
+        }
         let Some((idx, group, prev, next)) = self.vacate_for_replace(target, sink) else {
             return false;
         };

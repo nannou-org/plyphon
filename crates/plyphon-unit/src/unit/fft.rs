@@ -12,7 +12,7 @@
 //! the FFT size) is known - plyphon sizes a unit's `aux` at SynthDef-compile time. So the FFT size is
 //! taken from the **`winsize`** input, a constant power of two in `[64, 16384]`; the chain buffer must
 //! be allocated to match. `winsize = 0` (sclang's default, "use the buffer size") is also accepted:
-//! the unit reserves aux for [`DEFAULT_MAX_FFT`] and resolves the actual size from the chain buffer at
+//! the unit reserves aux for `DEFAULT_MAX_FFT` and resolves the actual size from the chain buffer at
 //! run time (idling silently until a suitably-sized buffer is installed), so stock `.scsyndef`s load.
 //! For the overlap-add to line up, `hop * fftsize` should be a whole number of control blocks.
 

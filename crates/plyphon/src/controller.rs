@@ -45,17 +45,31 @@ pub struct QueueFull;
 /// A control command eligible for all-or-none batch submission via
 /// [`Controller::try_send_batch`].
 ///
-/// The batch surface is deliberately restricted to the two commands an
-/// activation transition needs — freeing a superseded node and writing a
-/// control value — so a batch can never smuggle arbitrary real-time state
-/// changes across the ring. Each variant maps one-to-one to the corresponding
-/// single-command method ([`Controller::free`], [`Controller::set_control`]).
+/// The batch surface is deliberately restricted to the commands a node-activation transition
+/// needs - freeing superseded nodes, creating replacement synths, and writing control values - so
+/// a batch cannot smuggle arbitrary real-time state changes across the ring. Each variant maps
+/// one-to-one to the corresponding single-command method ([`Controller::free`],
+/// [`Controller::synth_new_with_id`], [`Controller::set_control`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ControllerBatchCommand {
     /// Free node `node` (deeply for a group), as [`Controller::free`].
     FreeNode {
         /// The node id to free.
         node: i32,
+    },
+    /// Create a synth from the compiled def `def_id` with a caller-chosen client id, as
+    /// [`Controller::synth_new_with_id`]. Obtain `def_id` up front from
+    /// [`Controller::ensure_compiled`], which also installs the def in the `World`'s table ahead
+    /// of the batch.
+    AddSynth {
+        /// The caller-chosen client id for the new synth.
+        id: i32,
+        /// The compiled def's id, from [`Controller::ensure_compiled`].
+        def_id: u32,
+        /// The node the add action is relative to.
+        target: i32,
+        /// Where to place the new synth relative to `target`.
+        action: AddAction,
     },
     /// Set control parameter `param` of node `node` to `value`, as
     /// [`Controller::set_control`].
@@ -84,6 +98,25 @@ pub enum SynthNewError {
     /// The command ring was full.
     #[error("command queue full")]
     QueueFull,
+    /// The automatic client node id space is exhausted (ids are engine-lifetime and never
+    /// reclaimed). A host needing id reuse manages its own ids via
+    /// [`Controller::synth_new_with_id`].
+    #[error("automatic node id space exhausted")]
+    NodeIdExhausted,
+}
+
+/// Failure to create a group with an automatically assigned node id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum GroupNewError {
+    /// The command ring was full. Nothing was published and the id was not consumed, so the call
+    /// can be retried.
+    #[error("command queue full")]
+    QueueFull,
+    /// The automatic client node id space is exhausted (ids are engine-lifetime and never
+    /// reclaimed). A host needing id reuse manages its own ids via
+    /// [`Controller::new_group_with_id`].
+    #[error("automatic node id space exhausted")]
+    NodeIdExhausted,
 }
 
 /// The control side of the engine.
@@ -310,14 +343,22 @@ impl Controller {
     /// Create a synth from definition `def_name` and link it under group `target`.
     ///
     /// The def is compiled (and installed in the `World`'s def table) on first use; the synth itself
-    /// is constructed on the audio thread. Returns the new synth's client id.
+    /// is constructed on the audio thread. Returns the new synth's client id. On any error nothing
+    /// is published and the automatic id is not consumed, so the call can be retried.
+    ///
+    /// To apply initial control values before the synth's first block (scsynth's `/s_new` trailing
+    /// `[control, value]` pairs), pick an id and submit the create together with its control
+    /// writes via [`Controller::try_send_batch`], or issue the create and
+    /// [`set_control`](Controller::set_control)s inside one scheduled window
+    /// ([`Controller::begin_scheduled`]): commands drained in the same block apply before the
+    /// synth's first tick, and unit `init` runs on that first tick reading the live values.
     pub fn synth_new(
         &mut self,
         def_name: &str,
         target: i32,
         action: AddAction,
     ) -> Result<i32, SynthNewError> {
-        let id = self.next_id;
+        let id = self.auto_id().ok_or(SynthNewError::NodeIdExhausted)?;
         self.synth_new_with_id(id, def_name, target, action)?;
         self.next_id += 1;
         Ok(id)
@@ -398,12 +439,21 @@ impl Controller {
         Ok(def_id)
     }
 
-    /// Create an empty group under group `target`. Returns the new group's client id.
-    pub fn new_group(&mut self, target: i32, action: AddAction) -> Result<i32, QueueFull> {
-        let id = self.next_id;
-        self.new_group_with_id(id, target, action)?;
+    /// Create an empty group under group `target`. Returns the new group's client id. On any error
+    /// nothing is published and the automatic id is not consumed, so the call can be retried.
+    pub fn new_group(&mut self, target: i32, action: AddAction) -> Result<i32, GroupNewError> {
+        let id = self.auto_id().ok_or(GroupNewError::NodeIdExhausted)?;
+        self.new_group_with_id(id, target, action)
+            .map_err(|QueueFull| GroupNewError::QueueFull)?;
         self.next_id += 1;
         Ok(id)
+    }
+
+    /// The next automatic client node id, or `None` once the positive id space is exhausted.
+    /// `i32::MAX` itself is never allocated, so a successful use can always advance without
+    /// overflow.
+    fn auto_id(&self) -> Option<i32> {
+        (self.next_id != i32::MAX).then_some(self.next_id)
     }
 
     /// Create an empty group with a caller-chosen client id (e.g. an id from an OSC `/g_new`).
@@ -496,32 +546,46 @@ impl Controller {
 
     /// Enqueue `commands` all-or-none.
     ///
-    /// If the command ring has room for the whole slice, every command is pushed
-    /// in order (at the controller's current schedule time) and `Ok(())` is
-    /// returned; otherwise nothing is enqueued and [`QueueFull`] is returned. The
-    /// ring capacity is checked once up front with [`Producer::slots`], which is a
-    /// conservative lower bound (the consumer only frees slots), so a successful
-    /// preflight guarantees every subsequent push succeeds.
+    /// If the command ring has room for the whole slice, every command is enqueued in order (at
+    /// the controller's current schedule time) and `Ok(())` is returned; otherwise nothing is
+    /// enqueued and [`QueueFull`] is returned. The whole batch is published with a single
+    /// write-index commit, so the RT side can never drain a prefix of it: the batch lands in one
+    /// block's command drain, with no partial application under backpressure.
     ///
-    /// This lets a caller submit an activation transition — a set of old-node
-    /// frees followed by new-node control writes — as one atomic unit the RT side
-    /// drains within a single block, with no partial application under
-    /// backpressure. On [`QueueFull`] the caller can retry the whole batch on a
-    /// later block.
+    /// This is also the `/s_new`-with-controls recipe. scsynth applies `/s_new`'s trailing
+    /// `[control, value]` pairs through the same path as `/n_set`, on creation, before the node's
+    /// first calc - so batching an [`AddSynth`](ControllerBatchCommand::AddSynth) with its
+    /// [`SetControl`](ControllerBatchCommand::SetControl)s puts the values in place before the
+    /// synth's first `init`/`process` tick, exactly as `/s_new <def> <id> ... [<control> <value>]...`
+    /// does. It equally covers an activation transition - old-node frees followed by new-node
+    /// control writes - as one atomic unit. On [`QueueFull`] the caller can retry the whole batch
+    /// on a later block.
     pub fn try_send_batch(&mut self, commands: &[ControllerBatchCommand]) -> Result<(), QueueFull> {
-        if self.tx.slots() < commands.len() {
-            return Err(QueueFull);
-        }
-        for command in commands {
+        let time = self.schedule;
+        let chunk = self
+            .tx
+            .write_chunk_uninit(commands.len())
+            .map_err(|_| QueueFull)?;
+        chunk.fill_from_iter(commands.iter().map(|command| {
             let command = match *command {
                 ControllerBatchCommand::FreeNode { node } => Command::FreeNode { node },
+                ControllerBatchCommand::AddSynth {
+                    id,
+                    def_id,
+                    target,
+                    action,
+                } => Command::AddSynth {
+                    id,
+                    def_id,
+                    target,
+                    action,
+                },
                 ControllerBatchCommand::SetControl { node, param, value } => {
                     Command::SetControl { node, param, value }
                 }
             };
-            // Slot availability was preflighted above, so this push cannot fail.
-            self.send(command)?;
-        }
+            TimedCommand { time, command }
+        }));
         Ok(())
     }
 
@@ -966,5 +1030,74 @@ mod tests {
         let (mut controller, mut rx) = test_controller(2);
         assert_eq!(controller.try_send_batch(&[]), Ok(()));
         assert!(rx.pop().is_err(), "an empty batch enqueues nothing");
+    }
+
+    #[test]
+    fn try_send_batch_add_synth_maps_to_the_add_command() {
+        let (mut controller, mut rx) = test_controller(2);
+        let batch = [
+            ControllerBatchCommand::AddSynth {
+                id: 7,
+                def_id: 3,
+                target: crate::ROOT_GROUP_ID,
+                action: AddAction::Tail,
+            },
+            ControllerBatchCommand::SetControl {
+                node: 7,
+                param: 0,
+                value: 1.5,
+            },
+        ];
+        controller.try_send_batch(&batch).unwrap();
+        match rx.pop().expect("first command present").command {
+            Command::AddSynth {
+                id,
+                def_id,
+                target,
+                action,
+            } => assert_eq!(
+                (id, def_id, target, action),
+                (7, 3, crate::ROOT_GROUP_ID, AddAction::Tail)
+            ),
+            _ => panic!("expected AddSynth first"),
+        }
+        assert!(matches!(
+            rx.pop().expect("second command present").command,
+            Command::SetControl { node: 7, .. }
+        ));
+    }
+
+    #[test]
+    fn auto_id_exhaustion_errors_without_publishing() {
+        let (mut controller, mut rx) = test_controller(4);
+        controller.next_id = i32::MAX;
+        assert!(matches!(
+            controller.new_group(crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(GroupNewError::NodeIdExhausted)
+        ));
+        // The exhaustion guard precedes def resolution, so even an unknown def reports it.
+        assert!(matches!(
+            controller.synth_new("missing", crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(SynthNewError::NodeIdExhausted)
+        ));
+        assert!(rx.pop().is_err(), "nothing crossed the ring");
+    }
+
+    #[test]
+    fn new_group_queue_full_does_not_consume_the_auto_id() {
+        let (mut controller, mut rx) = test_controller(1);
+        controller.free(1).unwrap(); // Occupy the single command slot.
+        assert_eq!(
+            controller.new_group(crate::ROOT_GROUP_ID, AddAction::Tail),
+            Err(GroupNewError::QueueFull)
+        );
+        let _ = rx.pop().expect("release the occupied slot");
+        assert_eq!(
+            controller
+                .new_group(crate::ROOT_GROUP_ID, AddAction::Tail)
+                .unwrap(),
+            1000,
+            "the failed attempt must not consume the id"
+        );
     }
 }

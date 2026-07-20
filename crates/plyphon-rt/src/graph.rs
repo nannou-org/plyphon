@@ -264,10 +264,16 @@ impl Graph {
                 }
             }
             // De-zipper each lagged param (`LagControl`): one one-pole step per control tick from its
-            // value slot (possibly just `/n_map`'d) into its lagged output wire. The state was seeded
-            // to the default at build, so the first tick holds steady.
+            // value slot (possibly just `/n_map`'d) into its lagged output wire. On the first tick
+            // the state seeds from the live value slot - scsynth's `LagControl_Ctor`
+            // (`m_y1[i] = mapin[i][0]`) runs at first calc, after `/s_new`'s control pairs or a
+            // pre-first-block `/n_set`/`/n_map` landed - so the first tick holds steady at the
+            // current value with no ramp from the default.
             for (li, lp) in def.lag_params().iter().enumerate() {
                 let x = ctrl[lp.value_slot as usize];
+                if first {
+                    lag_state[li] = x;
+                }
                 let y = x + lp.b1 * (lag_state[li] - x);
                 lag_state[li] = y;
                 ctrl[lp.wire as usize] = y;

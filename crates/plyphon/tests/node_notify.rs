@@ -123,3 +123,126 @@ fn lifecycle_notifications_carry_full_position() {
         (ROOT_GROUP_ID, 1, -1, -1)
     );
 }
+
+/// Count the `SynthFailed` terminals for `id`.
+fn fails(events: &[Event], id: i32) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e, Event::SynthFailed { id: f } if *f == id))
+        .count()
+}
+
+/// Count the `/n_end`s for `id`.
+fn ends(events: &[Event], id: i32) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e, Event::NodeEnded(n) if n.node == id))
+        .count()
+}
+
+/// A duplicate node id fails the create (scsynth's `kSCErr_DuplicateNodeID`), a missing target
+/// group fails it too (scsynth's `/fail`), and each failure emits exactly one `SynthFailed`
+/// terminal while the live node keeps its slot and identity.
+#[test]
+fn duplicate_id_and_bad_target_fail_the_create_and_preserve_the_live_node() {
+    let opts = Options {
+        sample_rate: SR,
+        output_channels: 1,
+        ..Options::default()
+    };
+    let (mut controller, mut nrt, mut world) = engine(opts);
+    controller.add_synthdef(sine_def());
+    let live = controller
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    render(&mut world, 256);
+    started(&drain(&mut nrt), live);
+
+    // Duplicate id, plain add.
+    controller
+        .synth_new_with_id(live, "sine", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    // Duplicate id, replace-with-own-id: the duplicate check precedes the vacate, so nothing is
+    // freed (scsynth's Node_New runs before Node_Replace).
+    controller
+        .synth_new_with_id(live, "sine", live, AddAction::Replace)
+        .unwrap();
+    // Missing target group.
+    let bad_target = controller
+        .synth_new("sine", 999_999, AddAction::Tail)
+        .unwrap();
+    render(&mut world, 256);
+    let events = drain(&mut nrt);
+    assert_eq!(fails(&events, live), 2, "each duplicate create fails once");
+    assert_eq!(fails(&events, bad_target), 1, "bad target fails once");
+    assert_eq!(ends(&events, live), 0, "the live node was not disturbed");
+    assert_eq!(ends(&events, bad_target), 0, "a failed id never ends");
+
+    // The original node is still linked and reachable by its id.
+    controller.free(live).unwrap();
+    render(&mut world, 256);
+    assert_eq!(ends(&drain(&mut nrt), live), 1);
+}
+
+/// A full tree fails the create with a `SynthFailed` terminal rather than silently dropping it.
+#[test]
+fn full_tree_emits_synth_failed() {
+    let opts = Options {
+        sample_rate: SR,
+        output_channels: 1,
+        // Root plus one synth: the second concurrent synth finds the tree full.
+        max_nodes: 2,
+        ..Options::default()
+    };
+    let (mut controller, mut nrt, mut world) = engine(opts);
+    controller.add_synthdef(sine_def());
+    let live = controller
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    let full = controller
+        .synth_new("sine", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    render(&mut world, 256);
+    let events = drain(&mut nrt);
+    started(&events, live);
+    assert_eq!(fails(&events, full), 1);
+    assert_eq!(ends(&events, full), 0);
+}
+
+/// A duplicate group id is an idempotent no-op (scsynth's `/g_new` tolerates
+/// `kSCErr_DuplicateNodeID`): no second group is created, no second `/n_go` is sent, and the
+/// original stays linked and reachable.
+#[test]
+fn duplicate_group_id_is_an_idempotent_noop() {
+    let opts = Options {
+        sample_rate: SR,
+        output_channels: 1,
+        ..Options::default()
+    };
+    let (mut controller, mut nrt, mut world) = engine(opts);
+    let g = controller
+        .new_group(ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    render(&mut world, 256);
+    started(&drain(&mut nrt), g);
+
+    controller
+        .new_group_with_id(g, ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    render(&mut world, 256);
+    let events = drain(&mut nrt);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::NodeStarted(n) if n.node == g)),
+        "no second /n_go for the duplicate group"
+    );
+
+    controller.free(g).unwrap();
+    render(&mut world, 256);
+    assert_eq!(
+        ends(&drain(&mut nrt), g),
+        1,
+        "exactly one group remains to end"
+    );
+}
