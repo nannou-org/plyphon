@@ -365,7 +365,7 @@ impl Unit for PvDiffuser {
             return DoneAction::Nothing;
         };
         // The bin count is fixed by the chain buffer's size; resolve it once, capped at the aux
-        // reservation. A newly-installed (or resized) buffer re-randomises from scratch.
+        // reservation, randomising the table on first resolve.
         if self.numbins == 0 {
             match resolve_fftsize(ctx.buffers, &ctx.local_bufs, bufnum) {
                 Some(n) => {
@@ -374,6 +374,12 @@ impl Unit for PvDiffuser {
                 }
                 None => return DoneAction::Nothing,
             }
+        } else if unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum)
+            .is_none_or(|b| (b.num_frames().saturating_sub(2)) / 2 != self.numbins as usize)
+        {
+            // A frame of a different size passes through untouched - scsynth's
+            // `numbins != m_numbins` bail - and processing resumes if the original size returns.
+            return DoneAction::Nothing;
         }
         let numbins = self.numbins as usize;
 
