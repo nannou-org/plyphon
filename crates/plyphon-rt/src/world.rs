@@ -1098,14 +1098,16 @@ impl World {
             );
         }
 
-        // The graph's shared random stream gets its own seed, offset off the per-unit ladder so it
-        // never collides with any unit's reseed value above.
+        // The graph's shared random stream gets its own seed, displaced off the ladder by an
+        // unrelated odd constant. A plain `seed - SEED_STEP` would equal the *previous* spawn's
+        // unit-0 reseed value (`next_seed` advances one step per spawn), replaying that unit's
+        // stream in this graph's Rand draws; the XOR lands far from every nearby ladder value.
         Some(Graph::new(
             region,
             Arc::clone(def),
             self.current_sample_offset,
             self.current_subsample_offset,
-            seed.wrapping_sub(SEED_STEP),
+            seed ^ 0x517c_c1b7_2722_0a95,
         ))
     }
 

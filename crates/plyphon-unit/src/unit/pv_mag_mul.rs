@@ -39,6 +39,9 @@ impl Unit for PvMagMul {
             && let Some((mut buf_a, buf_b)) =
                 unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, fbuf_b as usize)
             && buf_a.num_frames() == buf_b.num_frames()
+            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
+            // must not panic the audio thread on the raw reads below.
+            && buf_b.data().len() >= 2
         {
             // Read `B`'s real DC/Nyquist and its bins without converting it.
             let coord_b = buf_b.coord();

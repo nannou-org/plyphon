@@ -265,7 +265,11 @@ fn get(ins: &Inputs<'_>, i: usize) -> f32 {
 ///
 /// The segment values are read live from the inputs (they are constants in a baked def), so no
 /// per-unit envelope copy is kept; the last computed level is cached and reused while the index is
-/// unchanged, as scsynth does.
+/// unchanged, as scsynth does. Two deliberate divergences from scsynth: there the envelope is
+/// copied once at ctor and never re-read, so wiring a *changing* signal into an envelope slot
+/// diverges (constant-baked defs agree), and scsynth's Hold shape (8) outputs a stale cached
+/// level and then stores the segment's end level - stateful in scan order - where plyphon
+/// outputs the segment's start level throughout, the shape's evident intent.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct IEnvGen {
@@ -359,7 +363,11 @@ impl Unit for IEnvGen {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ins = ctx.ins;
         let offset = get(&ins, Self::OFFSET);
-        let num_segments = get(&ins, Self::NUM_SEGMENTS) as usize;
+        // Clamp the declared stage count to the segments the inputs actually carry (four inputs
+        // per segment after the header), so a malformed def cannot spin the segment walk beyond
+        // the input list on the audio thread. scsynth walks its ctor-copied array unchecked.
+        let num_segments =
+            (get(&ins, Self::NUM_SEGMENTS) as usize).min(ins.len().saturating_sub(5) / 4);
         let total_dur = get(&ins, Self::TOTAL_DUR);
 
         if self.audio != 0 {

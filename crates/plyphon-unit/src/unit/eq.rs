@@ -7,11 +7,13 @@
 //! one biquad kernel ([`Beq`]) and differ only in how [`BeqKind`] derives the coefficients - the
 //! RBJ audio-EQ-cookbook formulas, matching scsynth's per-class math exactly.
 //!
-//! All units derive their `f64` coefficients from the (control-rate) parameters once per block,
-//! recomputing only on a change (plyphon's block-rate convention; scsynth additionally
-//! `CALCSLOPE`-interpolates the recomputed coefficients across the transition block, so only that
-//! one block differs - the steady-state responses are identical), and flush their feedback state
-//! with the shared `zap`.
+//! All units derive their `f64` coefficients from their parameters once per block, recomputing
+//! only on a change, and flush their feedback state with the shared `zap`. This is plyphon's
+//! block-rate convention, and it diverges from scsynth in two ways: for control-rate parameters
+//! scsynth `CALCSLOPE`-interpolates the recomputed coefficients across the transition block (so
+//! only that one block differs - the steady-state responses are identical), and for *audio-rate*
+//! parameters scsynth's `_aa` variants recompute the coefficients per sample, where plyphon reads
+//! the modulator at the block's first sample and holds it, like every other filter in the crate.
 
 use core::f64::consts::{LN_2, LN_10};
 

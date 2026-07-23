@@ -93,6 +93,7 @@ impl UnitDef for BinaryOpCtor {
         if matches!(ctx.special_index, 47 | 48) {
             return Ok(unit_spec(RandBinaryOp {
                 exponential: (ctx.special_index == 48) as u32,
+                audio: (ctx.rate == Rate::Audio) as u32,
                 a_audio,
                 b_audio,
             }));
@@ -110,11 +111,20 @@ impl UnitDef for BinaryOpCtor {
 /// The RNG-driven binary operators, `rrand` (special index 47) and `exprand` (48): a fresh random
 /// draw per output frame, scaled between the two inputs (ordered low-to-high), from the synth's
 /// shared random stream - scsynth's `rrand_1`/`exprand_1`, which read the graph's `RGen`.
+///
+/// At audio rate scsynth's `rrand` variants (`rrand_aa`/`_ak`/...) draw with the *bipolar*
+/// `frand2`, giving `lo + frand2 * (hi - lo)` - uniform over `[2*lo - hi, hi)`, twice the
+/// requested width and extending below `lo`. Almost certainly a bug upstream, but shipped
+/// behaviour that defs may lean on, so it is reproduced; the single-sample `rrand_1` (control
+/// rate here) and every `exprand` variant stay unipolar.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct RandBinaryOp {
     /// `0` = uniform (`rrand`), `1` = equal-probability-per-octave (`exprand`).
     exponential: u32,
+    /// `0`/`1`: control-rate (scsynth's `rrand_1`, unipolar) vs audio-rate (`rrand_aa` family,
+    /// bipolar).
+    audio: u32,
     a_audio: u32,
     b_audio: u32,
 }
@@ -129,12 +139,15 @@ impl Unit for RandBinaryOp {
         let a_sig = (self.a_audio != 0).then(|| ins.audio(0));
         let b_sig = (self.b_audio != 0).then(|| ins.audio(1));
         let exponential = self.exponential != 0;
+        let bipolar = self.audio != 0 && !exponential;
         for (i, o) in outs.audio(0).iter_mut().enumerate() {
             let xa = a_sig.map_or(a_ctrl, |s| s[i]);
             let xb = b_sig.map_or(b_ctrl, |s| s[i]);
             let (lo, hi) = if xb > xa { (xa, xb) } else { (xb, xa) };
             *o = if exponential {
                 math::exp(math::ln(hi / lo) * rgen.next_unipolar()) * lo
+            } else if bipolar {
+                lo + rgen.next_bipolar() * (hi - lo)
             } else {
                 lo + rgen.next_unipolar() * (hi - lo)
             };

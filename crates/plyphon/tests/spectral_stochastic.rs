@@ -61,13 +61,14 @@ fn goertzel(samples: &[f32], freq: f32) -> f32 {
 // PV_Diffuser
 // ---------------------------------------------------------------------------
 
-/// The FFT chain `IFFT(PV_Diffuser(FFT(LocalBuf(n), in), trig))`: the diffuser adds a fixed random
-/// phase per bin. Building the chain with a given diffuser trigger, rendered `blocks` blocks.
-fn diffuser_chain(trig: f32, blocks: usize) -> Vec<f32> {
+/// The FFT chain `IFFT(PV_Diffuser(FFT(LocalBuf(n), tone), trig))` with a sine at bin
+/// `bin_index`, or the same chain without the diffuser when `trig` is `None`. The diffuser adds a
+/// fixed random phase to the first `trig * numbins` bins.
+fn diffuser_chain(trig: Option<f32>, bin_index: f32, blocks: usize) -> Vec<f32> {
     const FFT_SIZE: usize = 1024;
     let bin = SR as f32 / FFT_SIZE as f32;
-    let freq = 20.0 * bin;
-    let units = vec![
+    let freq = bin_index * bin;
+    let mut units = vec![
         UnitSpec::new(
             "LocalBuf",
             Rate::Scalar,
@@ -88,16 +89,26 @@ fn diffuser_chain(trig: f32, blocks: usize) -> Vec<f32> {
             vec![u(0), u(2), c(0.5), c(0.0), c(1.0), c(FFT_SIZE as f32)],
             1,
         ),
-        // PV_Diffuser(fbufnum, trig).
-        UnitSpec::new("PV_Diffuser", Rate::Control, vec![u(3), c(trig)], 1),
-        UnitSpec::new(
-            "IFFT",
-            Rate::Audio,
-            vec![u(4), c(0.0), c(FFT_SIZE as f32)],
-            1,
-        ),
-        out(5),
     ];
+    let chain = if let Some(trig) = trig {
+        // PV_Diffuser(fbufnum, trig).
+        units.push(UnitSpec::new(
+            "PV_Diffuser",
+            Rate::Control,
+            vec![u(3), c(trig)],
+            1,
+        ));
+        4
+    } else {
+        3
+    };
+    units.push(UnitSpec::new(
+        "IFFT",
+        Rate::Audio,
+        vec![u(chain), c(0.0), c(FFT_SIZE as f32)],
+        1,
+    ));
+    units.push(out(chain + 1));
     render(units, blocks)
 }
 
@@ -106,7 +117,7 @@ fn pv_diffuser_preserves_magnitude_but_alters_the_waveform() {
     const FFT_SIZE: usize = 1024;
     let bin = SR as f32 / FFT_SIZE as f32;
     let freq = 20.0 * bin;
-    let diffused = diffuser_chain(0.0, 12_288 / BLOCK);
+    let diffused = diffuser_chain(Some(1.0), 20.0, 12_288 / BLOCK);
     let tail = &diffused[8_192..];
 
     assert!(
@@ -124,38 +135,7 @@ fn pv_diffuser_preserves_magnitude_but_alters_the_waveform() {
 
     // The plain reconstruction (no diffuser) at the same bin: the diffuser changes the waveform
     // (per-bin phase shift) so the two time series differ, even though both hold the tone.
-    let plain = {
-        let units = vec![
-            UnitSpec::new(
-                "LocalBuf",
-                Rate::Scalar,
-                vec![c(1.0), c(FFT_SIZE as f32)],
-                1,
-            ),
-            UnitSpec::new("SinOsc", Rate::Audio, vec![c(freq), c(0.0)], 1),
-            UnitSpec {
-                name: "BinaryOpUGen".to_string(),
-                rate: Rate::Audio,
-                inputs: vec![u(1), c(0.5)],
-                num_outputs: 1,
-                special_index: 2,
-            },
-            UnitSpec::new(
-                "FFT",
-                Rate::Control,
-                vec![u(0), u(2), c(0.5), c(0.0), c(1.0), c(FFT_SIZE as f32)],
-                1,
-            ),
-            UnitSpec::new(
-                "IFFT",
-                Rate::Audio,
-                vec![u(3), c(0.0), c(FFT_SIZE as f32)],
-                1,
-            ),
-            out(4),
-        ];
-        render(units, 12_288 / BLOCK)
-    };
+    let plain = diffuser_chain(None, 20.0, 12_288 / BLOCK);
     let plain_tail = &plain[8_192..];
     let diff: f32 = tail
         .iter()
@@ -168,11 +148,54 @@ fn pv_diffuser_preserves_magnitude_but_alters_the_waveform() {
     );
 }
 
+/// scsynth's `PV_Diffuser_next` shifts only the first `clip(trig * numbins, 0, numbins)` bins, so
+/// a zero trig leaves every phase untouched: the chain reconstructs the same waveform as one with
+/// no diffuser at all (up to the polar round-trip's float error).
+#[test]
+fn pv_diffuser_zero_trig_passes_the_frame_through() {
+    let diffused = diffuser_chain(Some(0.0), 20.0, 12_288 / BLOCK);
+    let plain = diffuser_chain(None, 20.0, 12_288 / BLOCK);
+    for (i, (a, b)) in diffused[8_192..].iter().zip(&plain[8_192..]).enumerate() {
+        assert!(
+            (a - b).abs() < 1e-4,
+            "zero-trig diffuser altered sample {i}: {a} vs {b}"
+        );
+    }
+}
+
+/// A `0.5` trig shifts only the lower half of the spectrum: a tone in an upper bin passes through
+/// unshifted, while the same partial trig does alter a low-bin tone.
+#[test]
+fn pv_diffuser_partial_trig_shifts_only_the_lower_bins() {
+    // Bin 400 of 511 lies above `0.5 * numbins`, so its phase is never offset.
+    let high = diffuser_chain(Some(0.5), 400.0, 12_288 / BLOCK);
+    let high_plain = diffuser_chain(None, 400.0, 12_288 / BLOCK);
+    for (i, (a, b)) in high[8_192..].iter().zip(&high_plain[8_192..]).enumerate() {
+        assert!(
+            (a - b).abs() < 1e-4,
+            "high-bin tone altered by half-trig diffuser at sample {i}: {a} vs {b}"
+        );
+    }
+
+    // Bin 20 lies below the cut, so the half-trig diffuser still shifts it.
+    let low = diffuser_chain(Some(0.5), 20.0, 12_288 / BLOCK);
+    let low_plain = diffuser_chain(None, 20.0, 12_288 / BLOCK);
+    let diff: f32 = low[8_192..]
+        .iter()
+        .zip(&low_plain[8_192..])
+        .map(|(a, b)| (a - b).abs())
+        .sum();
+    assert!(
+        diff > 1.0,
+        "half-trig diffuser did not alter a low-bin tone (diff={diff:.4})"
+    );
+}
+
 #[test]
 fn pv_diffuser_is_deterministic_under_the_same_seed() {
     // Two fresh engines render bit-identically: the per-bin phases come from the seeded stream.
-    let a = diffuser_chain(0.0, 12_288 / BLOCK);
-    let b = diffuser_chain(0.0, 12_288 / BLOCK);
+    let a = diffuser_chain(Some(1.0), 20.0, 12_288 / BLOCK);
+    let b = diffuser_chain(Some(1.0), 20.0, 12_288 / BLOCK);
     assert_eq!(a, b, "diffuser output should reproduce across engines");
 }
 
@@ -324,5 +347,79 @@ fn tduty_gap_first_delays_the_first_impulse() {
         (output[BLOCK] - 1.0).abs() < 1e-5,
         "gap-first's first impulse should be at sample {BLOCK}, got {}",
         output[BLOCK]
+    );
+}
+
+#[test]
+fn gendy1_rejects_a_non_constant_init_cps() {
+    // The breakpoint arrays are aux memory sized at compile, so a wired `initCPs` input must be
+    // refused like any other non-constant aux size (a delay's `maxdelaytime`).
+    use plyphon::{BuildError, UnitRegistry};
+    use plyphon_dsp::rate::RateInfo;
+    let dc = UnitSpec::new("DC", Rate::Scalar, vec![c(12.0)], 1);
+    let mut inputs = vec![
+        c(1.0),
+        c(1.0),
+        c(1.0),
+        c(1.0),
+        c(440.0),
+        c(660.0),
+        c(0.5),
+        c(0.5),
+    ];
+    inputs.push(u(0)); // initCPs wired to the DC unit.
+    inputs.push(c(12.0)); // knum.
+    let gendy = UnitSpec::new("Gendy1", Rate::Audio, inputs, 1);
+    let def = SynthDef {
+        name: "bad_gendy".to_string(),
+        params: vec![],
+        units: vec![dc, gendy, out(1)],
+    };
+    let rate = RateInfo::new(SR, BLOCK);
+    let result = def.compile(
+        &UnitRegistry::with_builtins(),
+        &rate,
+        &rate,
+        64,
+        32,
+        None,
+        1,
+    );
+    assert!(
+        matches!(
+            result.as_ref().map(|_| ()),
+            Err(BuildError::AuxRequiresConstant { input: 8 })
+        ),
+        "expected AuxRequiresConstant for a wired initCPs"
+    );
+}
+
+#[test]
+fn ienvgen_clamps_an_oversized_stage_count_to_its_inputs() {
+    // A def declaring a huge numSegments with only one actual segment must clamp the walk to the
+    // inputs it carries (the pre-clamp code spun the search a billion iterations per sample).
+    let units = vec![
+        UnitSpec::new(
+            "IEnvGen",
+            Rate::Audio,
+            vec![
+                c(0.5), // index: halfway up the one real segment
+                c(0.0),
+                c(0.0),
+                c(1.0e9), // numSegments, absurdly oversized
+                c(1.0),   // totalDur
+                c(1.0),
+                c(1.0),
+                c(0.0),
+                c(1.0), // seg0: dur=1, shape=lin, curve=0, endLevel=1
+            ],
+            1,
+        ),
+        out(0),
+    ];
+    let got = render(units, 1)[0];
+    assert!(
+        (got - 0.5).abs() < 1e-4,
+        "clamped walk should still read the real segment, got {got}"
     );
 }

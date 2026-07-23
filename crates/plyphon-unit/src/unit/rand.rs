@@ -4,7 +4,10 @@
 //! Unlike the noise generators (each with a private [`Rng`] embedded in its own state), this
 //! family draws from the synth's shared random stream ([`ProcessCtx::rgen`]) - the analogue of
 //! scsynth's per-graph `RGen` - so draws interleave deterministically across the units of one
-//! synth and a `RandSeed` re-seed restarts every unit's sequence together.
+//! synth and a `RandSeed` re-seed restarts every *Rand-family* sequence together. That scope is
+//! narrower than scsynth's: there the noise generators draw from the same graph `RGen`, so a
+//! `RandSeed` restarts `WhiteNoise` and friends too, an idiom plyphon's private per-unit streams
+//! do not support.
 //!
 //! Scope divergence from scsynth: there, the `RGen`s live in a World-level array and `RandID`
 //! repoints a synth at a numbered stream shared with other synths; here each graph instance owns

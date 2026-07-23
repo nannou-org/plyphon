@@ -11,9 +11,10 @@ use plyphon_dsp::rate::Rate;
 /// `Duty.kr/ar(dur, reset, level, doneAction)`: a self-clocking sequencer. It counts down `dur`
 /// seconds (demanded from the `dur` input), then demands the next `level` and holds it for the next
 /// `dur`. `dur` and `level` are typically demand sources (e.g. `Dseq`), so `Duty` drives a sequence
-/// entirely on the audio thread with no control-plane messages. A `NaN` duration triggers
-/// `doneAction`; a `NaN` level holds the previous value. A rising `reset` resets the `dur`/`level`
-/// sources and restarts the count.
+/// entirely on the audio thread with no control-plane messages. An exhausted (`NaN`) duration
+/// fires `doneAction` once and freezes the unit on its held level (scsynth's `NaN` count) until a
+/// rising `reset` revives it; an exhausted (`NaN`) level holds the previous value and fires
+/// `doneAction` too. A rising `reset` resets the `dur`/`level` sources and restarts the count.
 ///
 /// The compiled input order is `[dur, reset, doneAction, level]`: the `.ar`/`.kr` methods take
 /// `(dur, reset, level, doneAction)` but pass `doneAction` before `level` to the UGen, so `level`
@@ -32,7 +33,10 @@ pub struct Duty {
     /// `0`/`1`: control-rate (one value per block, counts in control frames) vs audio-rate (a full
     /// block, counts in samples).
     audio: u32,
-    _pad: u32,
+    /// `0` until the first refill has run. The first refill stands in for scsynth's ctor-time
+    /// `DEMANDINPUT` poll, which cannot fire `doneAction`, so a dur stream that is empty from the
+    /// very start freezes silently.
+    primed: u32,
 }
 
 impl Duty {
@@ -54,14 +58,30 @@ impl Duty {
         let mut done = DoneAction::Nothing;
         let dur = demand_next(ins, demand, world, Self::DUR);
         if dur.is_nan() {
-            done = DoneAction::from_code(ins.control(Self::DONE));
+            // An exhausted dur stream poisons the count like scsynth's `count = dur*sr + count`:
+            // `count <= 0` is never true again, so the unit freezes on its held level and
+            // `doneAction` fires exactly once. Only a rising reset (`count = 0`) revives it. On
+            // the first refill (scsynth's ctor poll) it freezes without firing.
+            self.count = f64::NAN;
+            if self.primed != 0 {
+                done = DoneAction::from_code(ins.control(Self::DONE));
+            }
         } else {
             self.count += dur as f64 * frame_rate;
         }
+        // The level is still pulled (and output) on the exhausting refill, as in scsynth.
         let level = demand_next(ins, demand, world, Self::LEVEL);
-        if !level.is_nan() {
+        if level.is_nan() {
+            // An exhausted level stream holds the previous value and *also* fires `doneAction`
+            // (scsynth's `if (sc_isnan(x)) { x = prevout; DoneAction(...); }`), again excepting
+            // the ctor-poll stand-in.
+            if self.primed != 0 {
+                done = done.max(DoneAction::from_code(ins.control(Self::DONE)));
+            }
+        } else {
             self.level = level;
         }
+        self.primed = 1;
         done
     }
 }
@@ -121,7 +141,7 @@ impl UnitDef for DutyCtor {
             level: 0.0,
             prev_reset: 0.0,
             audio: (ctx.rate == Rate::Audio) as u32,
-            _pad: 0,
+            primed: 0,
         }))
     }
 }
@@ -130,8 +150,9 @@ impl UnitDef for DutyCtor {
 /// Like [`Duty`] it counts down `dur` seconds demanded from its `dur` source, but at each boundary
 /// it emits the demanded `level` for a single frame (a one-frame impulse) and `0` in between,
 /// rather than holding the level. `gapFirst = 0` fires the first impulse immediately; a non-zero
-/// `gapFirst` waits one demanded duration before it. A `NaN` duration triggers `doneAction`; a
-/// `NaN` level emits `0`. A rising `reset` resets the sources and restarts the count.
+/// `gapFirst` waits one demanded duration before it. An exhausted (`NaN`) duration fires
+/// `doneAction` once and freezes the unit at `0` until a rising `reset` revives it; a `NaN` level
+/// emits `0`. A rising `reset` resets the sources and restarts the count.
 ///
 /// Input order matches [`Duty`] with `gapFirst` appended: `[dur, reset, doneAction, level,
 /// gapFirst]`.
@@ -169,6 +190,11 @@ impl TDuty {
         let mut done = DoneAction::Nothing;
         let dur = demand_next(ins, demand, world, Self::DUR);
         if dur.is_nan() {
+            // As in [`Duty::refill`], an exhausted dur stream poisons the count so the unit
+            // freezes (emitting `0`) after firing `doneAction` once; a rising reset revives it.
+            // Unlike `Duty`, scsynth's `TDuty_Ctor` polls nothing up front, so the very first
+            // boundary fires `doneAction` too.
+            self.count = f64::NAN;
             done = DoneAction::from_code(ins.control(Self::DONE));
         } else {
             self.count += dur as f64 * frame_rate;
@@ -194,12 +220,16 @@ impl Unit for TDuty {
         };
 
         // A `gapFirst` synth demands one duration up front so the first impulse is delayed by it.
+        // A dur stream already exhausted here freezes the unit silently - scsynth's ctor-time
+        // `m_count = DEMANDINPUT(dur) * sr` going `NaN` before any calc can fire `doneAction`.
         if self.warmed == 0 {
             if self.gap_first != 0 {
                 let dur = demand_next(&ctx.ins, &mut ctx.demand, &mut world, Self::DUR);
-                if !dur.is_nan() {
-                    self.count = dur as f64 * frame_rate;
-                }
+                self.count = if dur.is_nan() {
+                    f64::NAN
+                } else {
+                    dur as f64 * frame_rate
+                };
             }
             self.warmed = 1;
         }

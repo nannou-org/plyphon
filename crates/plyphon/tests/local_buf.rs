@@ -170,7 +170,8 @@ fn set_buf_values_read_back_at_the_offset() {
 fn clear_buf_after_set_buf_yields_zeros() {
     // SetBuf earlier in the unit list, ClearBuf later: on the first block the writes land in unit
     // order (as scsynth's ctors run in unit order), so the clear wins and the read-back is silent.
-    // BufRd takes its buffer number from ClearBuf's output, proving the chained bufnum resolves.
+    // BufRd takes its buffer number from the LocalBuf itself, as sclang's `.set`/`.clear` chaining
+    // does (SetBuf/ClearBuf output a constant 0, like scsynth).
     let buf = render(
         vec![
             local_buf(1.0, 8.0),
@@ -182,7 +183,7 @@ fn clear_buf_after_set_buf_yields_zeros() {
             ),
             UnitSpec::new("ClearBuf", Rate::Scalar, vec![u(0)], 1),
             frame_phasor(8.0),
-            buf_rd(u(2), u(3)),
+            buf_rd(u(0), u(3)),
             out(4),
         ],
         2,
@@ -414,4 +415,45 @@ fn fft_ifft_reconstructs_a_sine_over_a_local_buf() {
         (0.1..1.0).contains(&at),
         "reconstruction amplitude {at:.4} unreasonable for input amp 0.5"
     );
+}
+
+#[test]
+fn set_buf_and_clear_buf_output_zero() {
+    // scsynth writes `OUT0(0) = 0.f` for both units; consumers take the buffer number from the
+    // LocalBuf itself.
+    let writer = |name: &str, inputs: Vec<InputRef>| {
+        let buf = render(
+            vec![
+                local_buf(1.0, 8.0),
+                UnitSpec::new(name, Rate::Scalar, inputs, 1),
+                UnitSpec::new("K2A", Rate::Audio, vec![u(1)], 1),
+                out(2),
+            ],
+            1,
+        );
+        assert!(
+            buf.iter().all(|&s| s == 0.0),
+            "{name} must output a constant 0, got {buf:?}"
+        );
+    };
+    writer("ClearBuf", vec![u(0)]);
+    writer("SetBuf", vec![u(0), c(0.0), c(1.0), c(0.5)]);
+}
+
+#[test]
+fn two_buffer_pv_ops_tolerate_a_one_sample_buffer() {
+    // A hand-built def can wire two `LocalBuf(1, 1)` numbers straight into a two-buffer PV_* unit:
+    // any non-negative input-0 signal reads as a ready frame, and both sides have equal frame
+    // counts, so the op reaches its header reads. A one-sample frame has no `[dc, nyq]` header;
+    // the op must skip it rather than panic the audio thread. Rendering is the assertion: the
+    // pre-guard code panicked on `data()[1]` in the very first block.
+    let units = vec![
+        local_buf(1.0, 1.0),
+        local_buf(1.0, 1.0),
+        UnitSpec::new("PV_Add", Rate::Control, vec![u(0), u(1)], 1),
+        UnitSpec::new("K2A", Rate::Audio, vec![u(2)], 1),
+        out(3),
+    ];
+    let buf = render(units, 2);
+    assert_eq!(buf.len(), 2 * BLOCK);
 }

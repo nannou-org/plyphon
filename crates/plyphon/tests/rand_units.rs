@@ -243,11 +243,14 @@ fn rand_id_consumes_input_and_outputs_zero() {
 }
 
 #[test]
-fn unary_as_int_truncates_toward_zero_and_as_float_is_identity() {
+fn unary_as_int_and_as_float_pass_through_like_scsynth() {
+    // scsynth's server implements neither: both fall to the `thru` default in UnaryOpUGens.cpp,
+    // so `asInteger` does *not* truncate on the server even though sclang's number semantics
+    // suggest it would.
     for (index, input, expected) in [
-        (7, 2.7f32, 2.0f32),
-        (7, -2.7, -2.0),
-        (7, 0.9, 0.0),
+        (7, 2.7f32, 2.7f32),
+        (7, -2.7, -2.7),
+        (7, 0.9, 0.9),
         (6, 2.7, 2.7),
         (6, -0.25, -0.25),
     ] {
@@ -271,11 +274,14 @@ fn unary_as_int_truncates_toward_zero_and_as_float_is_identity() {
 
 #[test]
 fn binary_rand_ops_draw_between_inputs_per_sample() {
-    for (index, lo, hi) in [(47i16, 100.0f32, 200.0f32), (48, 100.0, 200.0)] {
+    // Audio-rate ranges follow scsynth's calc variants: `rrand_aa` draws with the *bipolar*
+    // `frand2`, so `rrand(100, 200).ar` is uniform over [0, 200) (twice the requested width,
+    // extending below lo - shipped scsynth behaviour); `exprand_aa` stays within [100, 200).
+    for (index, range, below_lo) in [(47i16, 0.0f32..200.0f32, true), (48, 100.0..200.0, false)] {
         let buf = render(
             vec![
-                UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(lo)], 1),
-                UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(hi)], 1),
+                UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(100.0)], 1),
+                UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(200.0)], 1),
                 UnitSpec {
                     name: "BinaryOpUGen".to_string(),
                     rate: Rate::Audio,
@@ -288,15 +294,20 @@ fn binary_rand_ops_draw_between_inputs_per_sample() {
                 },
                 out(2),
             ],
-            2,
+            4,
         );
         assert!(
-            buf.iter().all(|&s| (100.0..200.0).contains(&s)),
-            "op {index} stays in range"
+            buf.iter().all(|s| range.contains(s)),
+            "op {index} stays in {range:?}"
         );
         assert!(
             buf.windows(2).any(|w| w[0] != w[1]),
             "op {index} draws fresh values per sample"
+        );
+        assert_eq!(
+            buf.iter().any(|&s| s < 100.0),
+            below_lo,
+            "op {index}: bipolar draws land below lo iff rrand at audio rate"
         );
     }
 }
@@ -344,4 +355,84 @@ fn first_sample(world: &mut World) -> f32 {
     let mut buf = vec![0.0f32; BLOCK];
     world.fill(&mut buf, 1);
     buf[0]
+}
+
+#[test]
+fn a_spawn_does_not_replay_the_previous_spawns_first_unit_stream() {
+    // The graph's shared-stream seed must stay off the per-unit reseed ladder of *neighbouring*
+    // spawns too: with the old `base - SEED_STEP` seed it equalled the previous spawn's unit-0
+    // value, so a WhiteNoise there and this graph's rrand draws replayed one underlying stream.
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR,
+        output_channels: 2,
+        ..Options::default()
+    });
+    controller.add_synthdef(SynthDef {
+        name: "noise".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new("WhiteNoise", Rate::Audio, vec![], 1),
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 0, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    });
+    controller.add_synthdef(SynthDef {
+        name: "stream".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(0.0)], 1),
+            UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(1.0)], 1),
+            UnitSpec {
+                name: "BinaryOpUGen".to_string(),
+                rate: Rate::Audio,
+                inputs: vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
+                ],
+                num_outputs: 1,
+                special_index: 47, // rrand
+            },
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(1.0),
+                    InputRef::Unit { unit: 2, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    });
+    controller
+        .synth_new("noise", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("noise synth");
+    controller
+        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("stream synth");
+    let mut buf = vec![0.0f32; BLOCK * 2];
+    world.fill(&mut buf, 2);
+    let noise: Vec<f32> = buf.iter().step_by(2).copied().collect();
+    let stream: Vec<f32> = buf.iter().skip(1).step_by(2).copied().collect();
+    // WhiteNoise emits the bipolar `frand2` map of its stream. A replayed stream would make the
+    // rrand(0, 1) output match under the unipolar map (`(noise + 1) / 2`) or the bipolar one
+    // (`noise` itself), depending on the rrand draw convention.
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-7;
+    assert!(
+        !noise
+            .iter()
+            .zip(&stream)
+            .all(|(n, s)| close((n + 1.0) * 0.5, *s)),
+        "graph stream replays the previous spawn's unit-0 stream (unipolar map)"
+    );
+    assert!(
+        !noise.iter().zip(&stream).all(|(n, s)| close(*n, *s)),
+        "graph stream replays the previous spawn's unit-0 stream (bipolar map)"
+    );
 }

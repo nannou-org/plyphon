@@ -349,3 +349,304 @@ fn demand_pulls_one_value_per_trigger() {
         );
     }
 }
+
+/// `Out.ar(0, TDuty.ar(dur: <unit 0>, 0, level: <unit 1>, doneAction, gapFirst))` after `sources`.
+fn tduty_def(name: &str, sources: Vec<UnitSpec>, done: f32, gap_first: f32) -> SynthDef {
+    let level_unit = (sources.len() - 1) as u32;
+    let tduty = sources.len() as u32;
+    let mut units = sources;
+    units.push(UnitSpec::new(
+        "TDuty",
+        Rate::Audio,
+        vec![
+            InputRef::Unit { unit: 0, output: 0 },
+            InputRef::Constant(0.0),
+            InputRef::Constant(done),
+            InputRef::Unit {
+                unit: level_unit,
+                output: 0,
+            },
+            InputRef::Constant(gap_first),
+        ],
+        1,
+    ));
+    units.push(UnitSpec::new(
+        "Out",
+        Rate::Audio,
+        vec![
+            InputRef::Constant(0.0),
+            InputRef::Unit {
+                unit: tduty,
+                output: 0,
+            },
+        ],
+        0,
+    ));
+    SynthDef {
+        name: name.to_string(),
+        params: vec![],
+        units,
+    }
+}
+
+#[test]
+fn duty_freezes_holding_its_level_after_the_dur_stream_ends() {
+    // dur = Dseq([SEG_DUR, SEG_DUR], 1) exhausts after two segments. level = Dwhite(inf): if the
+    // frozen unit kept pulling (the pre-freeze bug), the tail would vary per sample; scsynth's NaN
+    // count freezes it on the level pulled by the exhausting refill.
+    let dur = dseq(&[SEG_DUR, SEG_DUR], 1.0);
+    let level = UnitSpec::new(
+        "Dwhite",
+        Rate::Demand,
+        vec![
+            InputRef::Constant(f32::INFINITY),
+            InputRef::Constant(0.2),
+            InputRef::Constant(0.8),
+        ],
+        1,
+    );
+    let duty = UnitSpec::new(
+        "Duty",
+        Rate::Audio,
+        vec![
+            InputRef::Unit { unit: 0, output: 0 },
+            InputRef::Constant(0.0),
+            InputRef::Constant(0.0),
+            InputRef::Unit { unit: 1, output: 0 },
+        ],
+        1,
+    );
+    let out_unit = UnitSpec::new(
+        "Out",
+        Rate::Audio,
+        vec![
+            InputRef::Constant(0.0),
+            InputRef::Unit { unit: 2, output: 0 },
+        ],
+        0,
+    );
+    let def = SynthDef {
+        name: "freeze".to_string(),
+        params: vec![],
+        units: vec![dur, level, duty, out_unit],
+    };
+    let (_c, _n, mut world, _node) = start(def);
+    let out = render(&mut world, 1, SEG * 6);
+    let frozen = out[SEG * 2 + MID];
+    assert!(
+        (0.2..0.8).contains(&frozen),
+        "frozen level {frozen} out of the Dwhite range"
+    );
+    for (i, &s) in out[(SEG * 2 + MID)..].iter().enumerate() {
+        assert!(
+            s == frozen,
+            "sample {i} after the freeze changed: {s} vs {frozen}"
+        );
+    }
+}
+
+#[test]
+fn duty_empty_dur_stream_freezes_without_done_action() {
+    // A dur stream that is empty from the very first pull matches scsynth's ctor-time poll: the
+    // count goes NaN before any calc, so doneAction (here 2 = free) never fires and the unit holds
+    // the level pulled alongside it.
+    let dur = dseq(&[SEG_DUR], 0.0);
+    let level = dseq(&[0.7], f32::INFINITY);
+    let duty = UnitSpec::new(
+        "Duty",
+        Rate::Audio,
+        vec![
+            InputRef::Unit { unit: 0, output: 0 },
+            InputRef::Constant(0.0),
+            InputRef::Constant(2.0),
+            InputRef::Unit { unit: 1, output: 0 },
+        ],
+        1,
+    );
+    let out_unit = UnitSpec::new(
+        "Out",
+        Rate::Audio,
+        vec![
+            InputRef::Constant(0.0),
+            InputRef::Unit { unit: 2, output: 0 },
+        ],
+        0,
+    );
+    let def = SynthDef {
+        name: "empty".to_string(),
+        params: vec![],
+        units: vec![dur, level, duty, out_unit],
+    };
+    let (_c, mut nrt, mut world, node) = start(def);
+    let out = render(&mut world, 1, SEG * 4);
+    assert!(
+        out.iter().all(|&s| approx(s, 0.7)),
+        "expected the held level 0.7 throughout"
+    );
+    nrt.process();
+    while let Some(event) = nrt.poll() {
+        assert!(
+            !matches!(event, Event::NodeEnded(n) if n.node == node),
+            "an empty-from-start dur stream must not fire doneAction"
+        );
+    }
+}
+
+#[test]
+fn duty_reset_revives_a_frozen_sequence() {
+    // reset = Impulse.ar(SR / 512): edges at samples 0 and 512 (block boundaries, since a
+    // control-read reset is block-granular). The dur stream exhausts at sample ~192; the impulse at
+    // 512 sets the count back to 0 and resets both streams, restarting the sequence - scsynth's
+    // revival of a NaN count via `count = 0`.
+    let reset = UnitSpec::new(
+        "Impulse",
+        Rate::Audio,
+        vec![
+            InputRef::Constant(SR as f32 / 512.0),
+            InputRef::Constant(0.0),
+        ],
+        1,
+    );
+    let dur = dseq(&[SEG_DUR, SEG_DUR], 1.0);
+    let level = dseq(&[0.5, 0.6], f32::INFINITY);
+    let duty = UnitSpec::new(
+        "Duty",
+        Rate::Audio,
+        vec![
+            InputRef::Unit { unit: 1, output: 0 },
+            InputRef::Unit { unit: 0, output: 0 },
+            InputRef::Constant(0.0),
+            InputRef::Unit { unit: 2, output: 0 },
+        ],
+        1,
+    );
+    let out_unit = UnitSpec::new(
+        "Out",
+        Rate::Audio,
+        vec![
+            InputRef::Constant(0.0),
+            InputRef::Unit { unit: 3, output: 0 },
+        ],
+        0,
+    );
+    let def = SynthDef {
+        name: "revive".to_string(),
+        params: vec![],
+        units: vec![reset, dur, level, duty, out_unit],
+    };
+    let (_c, _n, mut world, _node) = start(def);
+    let out = render(&mut world, 1, SEG * 8);
+    // Before the revival: two live segments, then frozen on the exhausting refill's level (the
+    // looping level stream wraps back to 0.5).
+    assert!(approx(out[MID], 0.5), "segment 0 should be 0.5");
+    assert!(approx(out[SEG + MID], 0.6), "segment 1 should be 0.6");
+    assert!(
+        approx(out[SEG * 2 + MID], 0.5),
+        "frozen level should be 0.5"
+    );
+    assert!(approx(out[500], 0.5), "still frozen just before the reset");
+    // After the reset at 512 the sequence restarts.
+    assert!(approx(out[512 + MID], 0.5), "revived segment should be 0.5");
+    assert!(
+        approx(out[512 + SEG + MID], 0.6),
+        "second revived segment should be 0.6"
+    );
+}
+
+#[test]
+fn tduty_empty_dur_stream_fires_done_action_immediately() {
+    // Unlike Duty, scsynth's TDuty_Ctor polls nothing, so a dur stream that is already exhausted
+    // fires doneAction at the very first boundary.
+    let dur = dseq(&[SEG_DUR], 0.0);
+    let level = dseq(&[0.7], f32::INFINITY);
+    let def = tduty_def("tduty_empty", vec![dur, level], 2.0, 0.0);
+    let (_c, mut nrt, mut world, node) = start(def);
+    let _ = render(&mut world, 1, SEG * 2);
+    nrt.process();
+    let mut ended = false;
+    while let Some(event) = nrt.poll() {
+        if matches!(event, Event::NodeEnded(n) if n.node == node) {
+            ended = true;
+        }
+    }
+    assert!(ended, "expected TDuty's doneAction to free the synth");
+}
+
+#[test]
+fn tduty_freezes_after_the_dur_stream_ends() {
+    // dur = Dseq([SEG_DUR], 1): one impulse at sample 0, and the exhaustion at ~SEG emits one final
+    // level before the count goes NaN. The pre-freeze bug re-fired every sample thereafter.
+    let dur = dseq(&[SEG_DUR], 1.0);
+    let level = dseq(&[0.7], f32::INFINITY);
+    let def = tduty_def("tduty_freeze", vec![dur, level], 0.0, 0.0);
+    let (_c, _n, mut world, _node) = start(def);
+    let out = render(&mut world, 1, SEG * 4);
+    let firing: Vec<usize> = out
+        .iter()
+        .enumerate()
+        .filter(|&(_, &s)| s != 0.0)
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        firing.len(),
+        2,
+        "expected exactly the initial impulse and the exhausting one, got {firing:?}"
+    );
+    assert_eq!(firing[0], 0, "first impulse at sample 0");
+    assert!(
+        (SEG - 2..=SEG + 2).contains(&firing[1]),
+        "exhausting impulse near sample {SEG}, got {}",
+        firing[1]
+    );
+}
+
+#[test]
+fn tduty_gap_first_with_an_empty_dur_stream_freezes_silently() {
+    // With gapFirst set, scsynth's ctor consumes the first duration; a NaN there leaves the count
+    // NaN before any calc, so nothing fires - not even doneAction.
+    let dur = dseq(&[SEG_DUR], 0.0);
+    let level = dseq(&[0.7], f32::INFINITY);
+    let def = tduty_def("tduty_gap_empty", vec![dur, level], 2.0, 1.0);
+    let (_c, mut nrt, mut world, node) = start(def);
+    let out = render(&mut world, 1, SEG * 2);
+    assert!(
+        out.iter().all(|&s| s == 0.0),
+        "a silently-frozen TDuty must output zeros"
+    );
+    nrt.process();
+    while let Some(event) = nrt.poll() {
+        assert!(
+            !matches!(event, Event::NodeEnded(n) if n.node == node),
+            "gapFirst with an empty dur stream must not fire doneAction"
+        );
+    }
+}
+
+#[test]
+fn duty_done_action_fires_when_the_level_stream_ends() {
+    // dur is a constant (never exhausts) while level = Dseq([0.5, 0.6], 1) runs out on the third
+    // refill: scsynth holds the previous value and fires doneAction from the NaN level too.
+    let level = dseq(&[0.5, 0.6], 1.0);
+    let (_c, mut nrt, mut world, node) = start(duty_def("level_done", vec![level], 2.0));
+    let out = render(&mut world, 1, SEG * 5);
+    assert!(approx(segment(&out, 0), 0.5), "first segment should be 0.5");
+    assert!(
+        approx(segment(&out, 1), 0.6),
+        "second segment should be 0.6"
+    );
+    assert!(
+        out[(SEG * 4)..].iter().all(|s| s.abs() < 1e-6),
+        "synth should be silent after the level stream's doneAction frees it"
+    );
+    nrt.process();
+    let mut ended = false;
+    while let Some(event) = nrt.poll() {
+        if matches!(event, Event::NodeEnded(n) if n.node == node) {
+            ended = true;
+        }
+    }
+    assert!(
+        ended,
+        "expected a NodeEnded notification from the NaN level"
+    );
+}

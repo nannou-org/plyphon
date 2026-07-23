@@ -703,7 +703,7 @@ pub struct ProcessCtx<'a> {
     /// `Rand` family draws from it so draws interleave deterministically across the units of one
     /// synth, and `RandSeed` re-seeds it so those sequences restart together. Units with fully
     /// private randomness (the noise generators) keep their own embedded
-    /// [`Rng`](plyphon_dsp::rng::Rng) and ignore this.
+    /// [`Rng`] and ignore this.
     pub rgen: &'a mut Rng,
 }
 
@@ -897,7 +897,7 @@ impl<'a> Outputs<'a> {
 pub trait Unit: Pod {
     /// Re-seed any per-instance randomness from `seed`, called once when the synth is constructed on
     /// the audio thread (before the first block). The default is a no-op; units with an
-    /// [`Rng`](plyphon_dsp::rng::Rng) override it so that two instances of the same def decorrelate -
+    /// [`Rng`] override it so that two instances of the same def decorrelate -
     /// plyphon's stand-in for scsynth seeding each `Graph`'s `RGen`. Must not allocate or block.
     fn reseed(&mut self, _seed: u64) {}
 
