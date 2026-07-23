@@ -204,10 +204,14 @@ impl UnitDef for Gendy1Ctor {
         if ctx.input_rates.len() <= Gendy1::KNUM {
             return Err(BuildError::WrongInputCount);
         }
+        // The breakpoint arrays are aux memory, so `initCPs` must be a compile-time constant like
+        // every other aux-sized input (a delay's `maxdelaytime`); scsynth reads it once at ctor.
         let memory_size = ctx
             .const_input(Gendy1::INIT_CPS)
             .map(|cps| (cps as i32).max(1) as usize)
-            .unwrap_or(12);
+            .ok_or(BuildError::AuxRequiresConstant {
+                input: Gendy1::INIT_CPS,
+            })?;
         Ok(unit_spec_aux(
             Gendy1 {
                 phase: 1.0,
