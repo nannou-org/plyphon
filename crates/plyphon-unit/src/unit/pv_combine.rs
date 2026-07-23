@@ -70,13 +70,17 @@ impl Unit for PvComplex {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let kind = self.kind;
         if let Some((a_idx, b_idx)) = frame_pair(ctx)
-            && let Some((buf_a, buf_b)) = unit::buffer_pair_mut(ctx.buffers, a_idx, b_idx)
+            && let Some((mut buf_a, buf_b)) =
+                unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, b_idx)
             && buf_a.num_frames() == buf_b.num_frames()
+            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
+            // must not panic the audio thread on the raw reads below.
+            && buf_b.data().len() >= 2
         {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
             let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_complex(buf_a) {
+            if let Some(a) = pv::to_complex(&mut buf_a) {
                 match kind {
                     1 => {
                         *a.dc *= b_dc;
@@ -141,13 +145,17 @@ impl Unit for PvPolar {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let is_min = self.kind == 1;
         if let Some((a_idx, b_idx)) = frame_pair(ctx)
-            && let Some((buf_a, buf_b)) = unit::buffer_pair_mut(ctx.buffers, a_idx, b_idx)
+            && let Some((mut buf_a, buf_b)) =
+                unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, b_idx)
             && buf_a.num_frames() == buf_b.num_frames()
+            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
+            // must not panic the audio thread on the raw reads below.
+            && buf_b.data().len() >= 2
         {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
             let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_polar(buf_a) {
+            if let Some(a) = pv::to_polar(&mut buf_a) {
                 // `dc`/`nyq` compare by absolute value; bins by (non-negative) magnitude.
                 let pick_real = |pv: f32, qv: f32| {
                     let take = if is_min {
@@ -196,13 +204,17 @@ pub struct PvCopyPhase {
 impl Unit for PvCopyPhase {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if let Some((a_idx, b_idx)) = frame_pair(ctx)
-            && let Some((buf_a, buf_b)) = unit::buffer_pair_mut(ctx.buffers, a_idx, b_idx)
+            && let Some((mut buf_a, buf_b)) =
+                unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, b_idx)
             && buf_a.num_frames() == buf_b.num_frames()
+            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
+            // must not panic the audio thread on the raw reads below.
+            && buf_b.data().len() >= 2
         {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
             let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_polar(buf_a) {
+            if let Some(a) = pv::to_polar(&mut buf_a) {
                 // scsynth flips A's real DC/Nyquist sign to agree with B's.
                 if (*a.dc > 0.0) == (b_dc < 0.0) {
                     *a.dc = -*a.dc;
@@ -253,8 +265,12 @@ impl Unit for PvCopy {
         // pairing - then overwrite B's samples and coordinate form with A's.
         if fbuf_a >= 0.0
             && fbuf_b >= 0.0
-            && let Some((buf_b, buf_a)) =
-                unit::buffer_pair_mut(ctx.buffers, fbuf_b as usize, fbuf_a as usize)
+            && let Some((mut buf_b, buf_a)) = unit::buffer_pair_mut(
+                ctx.buffers,
+                &mut ctx.local_bufs,
+                fbuf_b as usize,
+                fbuf_a as usize,
+            )
             && buf_a.data().len() == buf_b.data().len()
         {
             let coord = buf_a.coord();

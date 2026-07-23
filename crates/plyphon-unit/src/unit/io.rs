@@ -10,12 +10,12 @@
 //! [`ProcessCtx`]: crate::unit::ProcessCtx
 //! [`InitCtx`]: crate::unit::InitCtx
 
-use plyphon_dsp::buffer::{Buffer, BufferTable};
+use plyphon_dsp::buffer::{BufView, BufViewMut, BufferTable};
 use plyphon_dsp::bus::Buses;
 use plyphon_dsp::rate::Rate;
 use plyphon_dsp::stream::{StreamPlayback, StreamRecording};
 
-use crate::unit::{Inputs, LocalBus};
+use crate::unit::{Inputs, LocalBufs, LocalBus};
 
 /// Audio bus channel `ch` for this block (an empty slice if `ch` is out of range), for `In.ar`.
 pub fn audio_in(buses: &Buses, ch: usize) -> &[f32] {
@@ -158,25 +158,66 @@ pub fn num_buffers(buffers: &BufferTable) -> usize {
 }
 
 /// The (flat, in-memory) buffer at `index`, if one is installed, for `PlayBuf`.
-pub fn buffer_at(buffers: &BufferTable, index: usize) -> Option<&Buffer> {
-    buffers.get(index)
+///
+/// An `index` at or past the table's capacity is a graph-local buffer number (`capacity + i`, the
+/// number a `LocalBuf` outputs - scsynth's `world->mNumSndBufs + i`) and resolves into `local`
+/// instead, so every buffer consumer reads local buffers with no special-casing. Where scsynth's
+/// `CTOR_GET_BUF` falls back to world buffer 0 for an out-of-range local number, plyphon treats it
+/// as missing (`None`).
+pub fn buffer_at<'a>(
+    buffers: &'a BufferTable,
+    local: &'a LocalBufs<'_>,
+    index: usize,
+) -> Option<BufView<'a>> {
+    let capacity = buffers.capacity();
+    if index >= capacity {
+        local.view(index - capacity)
+    } else {
+        buffers.get(index).map(|buffer| buffer.view())
+    }
 }
 
 /// The (flat, in-memory) buffer at `index`, mutably, for units that write samples from the audio
-/// thread (`RecordBuf`/`BufWr`). Wraps the RT-safe `BufferTable::get_mut`; a stream/empty/out-of-range
-/// slot yields `None`.
-pub fn buffer_at_mut(buffers: &mut BufferTable, index: usize) -> Option<&mut Buffer> {
-    buffers.get_mut(index)
+/// thread (`RecordBuf`/`BufWr`). A stream/empty/out-of-range slot yields `None`; a past-capacity
+/// `index` resolves to the graph-local buffers, as in [`buffer_at`].
+pub fn buffer_at_mut<'a>(
+    buffers: &'a mut BufferTable,
+    local: &'a mut LocalBufs<'_>,
+    index: usize,
+) -> Option<BufViewMut<'a>> {
+    let capacity = buffers.capacity();
+    if index >= capacity {
+        local.view_mut(index - capacity)
+    } else {
+        buffers.get_mut(index).map(|buffer| buffer.view_mut())
+    }
 }
 
 /// Buffer `a` mutably and buffer `b` immutably as disjoint borrows, for a two-buffer spectral op (a
-/// `PV_*` unit reading `b` while rewriting `a`). `None` unless `a != b` and both are loaded buffers.
-pub fn buffer_pair_mut(
-    buffers: &mut BufferTable,
+/// `PV_*` unit reading `b` while rewriting `a`). `None` unless `a != b` and both resolve. Each side
+/// resolves independently - world table or graph-local per [`buffer_at`] - so a chain may pair a
+/// world buffer with a `LocalBuf` in either role.
+pub fn buffer_pair_mut<'a>(
+    buffers: &'a mut BufferTable,
+    local: &'a mut LocalBufs<'_>,
     a: usize,
     b: usize,
-) -> Option<(&mut Buffer, &Buffer)> {
-    buffers.pair_mut(a, b)
+) -> Option<(BufViewMut<'a>, BufView<'a>)> {
+    let capacity = buffers.capacity();
+    match (a < capacity, b < capacity) {
+        (true, true) => buffers
+            .pair_mut(a, b)
+            .map(|(a, b)| (a.view_mut(), b.view())),
+        (true, false) => {
+            let b = local.view(b - capacity)?;
+            Some((buffers.get_mut(a)?.view_mut(), b))
+        }
+        (false, true) => {
+            let a = local.view_mut(a - capacity)?;
+            Some((a, buffers.get(b)?.view()))
+        }
+        (false, false) => local.pair_mut(a - capacity, b - capacity),
+    }
 }
 
 /// The streaming endpoint at `index`, mutably (to pull chunks), for `DiskIn`.

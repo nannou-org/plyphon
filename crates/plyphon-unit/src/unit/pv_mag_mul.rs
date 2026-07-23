@@ -36,14 +36,18 @@ impl Unit for PvMagMul {
         let fbuf_b = ctx.ins.control(Self::BUFFER_B);
         if let Some(a_idx) = pv::pv_frame(ctx)
             && fbuf_b >= 0.0
-            && let Some((buf_a, buf_b)) = unit::buffer_pair_mut(ctx.buffers, a_idx, fbuf_b as usize)
+            && let Some((mut buf_a, buf_b)) =
+                unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, fbuf_b as usize)
             && buf_a.num_frames() == buf_b.num_frames()
+            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
+            // must not panic the audio thread on the raw reads below.
+            && buf_b.data().len() >= 2
         {
             // Read `B`'s real DC/Nyquist and its bins without converting it.
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
             let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_polar(buf_a) {
+            if let Some(a) = pv::to_polar(&mut buf_a) {
                 *a.dc *= b_dc;
                 *a.nyq *= b_nyq;
                 for (a_bin, &b_bin) in a.bins.iter_mut().zip(b_bins) {

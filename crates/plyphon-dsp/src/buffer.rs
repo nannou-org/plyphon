@@ -27,6 +27,27 @@ pub enum SpectrumCoord {
     Polar,
 }
 
+impl SpectrumCoord {
+    /// Encode as a small integer tag, so storage that must be `Pod` (a graph-local buffer's header
+    /// word) can carry the coordinate form.
+    pub fn to_tag(self) -> u32 {
+        match self {
+            SpectrumCoord::Complex => 0,
+            SpectrumCoord::Polar => 1,
+        }
+    }
+
+    /// Decode a tag produced by [`SpectrumCoord::to_tag`] (any tag other than `1` reads as
+    /// [`Complex`](Self::Complex), the zeroed-storage default).
+    pub fn from_tag(tag: u32) -> SpectrumCoord {
+        if tag == 1 {
+            SpectrumCoord::Polar
+        } else {
+            SpectrumCoord::Complex
+        }
+    }
+}
+
 /// A bank of interleaved audio samples (scsynth's `SndBuf`).
 ///
 /// Samples are stored frame-major: frame `f`'s channels occupy `data[f*ch .. (f+1)*ch]`.
@@ -166,6 +187,200 @@ impl Buffer {
         }
         self.data[dst_start..dst_start + count]
             .copy_from_slice(&src.data[src_start..src_start + count]);
+    }
+
+    /// A read-only [`BufView`] of this buffer.
+    pub fn view(&self) -> BufView<'_> {
+        BufView {
+            data: &self.data,
+            num_frames: self.num_frames,
+            num_channels: self.num_channels,
+            sample_rate: self.sample_rate,
+            coord: self.coord,
+        }
+    }
+
+    /// A mutable [`BufViewMut`] of this buffer (splitting the sample and coord borrows so the view
+    /// can hand both out).
+    pub fn view_mut(&mut self) -> BufViewMut<'_> {
+        BufViewMut {
+            data: &mut self.data,
+            num_frames: self.num_frames,
+            num_channels: self.num_channels,
+            sample_rate: self.sample_rate,
+            coord: CoordSlot::Enum(&mut self.coord),
+        }
+    }
+}
+
+/// A read-only borrowed view of buffer-shaped sample storage - the uniform shape every buffer
+/// consumer (`PlayBuf`, `BufRd`, the `BufInfo` units, ...) reads through, whether the samples live in
+/// a table-owned [`Buffer`] or in a graph-local buffer span (a `LocalBuf`). `Copy`, so it passes by
+/// value like the `&Buffer` it replaces; its accessors mirror [`Buffer`]'s read API.
+#[derive(Copy, Clone)]
+pub struct BufView<'a> {
+    data: &'a [f32],
+    num_frames: usize,
+    num_channels: usize,
+    sample_rate: f64,
+    coord: SpectrumCoord,
+}
+
+impl<'a> BufView<'a> {
+    /// View raw interleaved sample storage as a buffer of the given shape (how a graph-local buffer
+    /// presents itself). `data` must hold `num_frames * num_channels` samples, frame-major.
+    pub fn from_parts(
+        data: &'a [f32],
+        num_frames: usize,
+        num_channels: usize,
+        sample_rate: f64,
+        coord: SpectrumCoord,
+    ) -> Self {
+        BufView {
+            data,
+            num_frames,
+            num_channels,
+            sample_rate,
+            coord,
+        }
+    }
+
+    /// Number of frames (samples per channel).
+    pub fn num_frames(&self) -> usize {
+        self.num_frames
+    }
+
+    /// Number of channels.
+    pub fn num_channels(&self) -> usize {
+        self.num_channels
+    }
+
+    /// The buffer's own sample rate in Hz.
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    /// All samples, interleaved (frame-major). Returns the underlying storage's lifetime (not the
+    /// view's), so the slice can outlive a temporary view.
+    pub fn data(self) -> &'a [f32] {
+        self.data
+    }
+
+    /// The bin interpretation when this buffer holds an FFT-chain frame.
+    pub fn coord(&self) -> SpectrumCoord {
+        self.coord
+    }
+
+    /// Sample at `frame`, `channel`. Returns 0.0 for an out-of-range index, so RT readers never panic.
+    pub fn sample(&self, frame: usize, channel: usize) -> f32 {
+        if frame >= self.num_frames || channel >= self.num_channels {
+            return 0.0;
+        }
+        self.data[frame * self.num_channels + channel]
+    }
+}
+
+/// Where a [`BufViewMut`]'s coordinate flag lives: the [`SpectrumCoord`] field of a table-owned
+/// [`Buffer`], or the `u32` tag word of a graph-local buffer (which must be `Pod` storage).
+enum CoordSlot<'a> {
+    /// A table-owned buffer's coord field.
+    Enum(&'a mut SpectrumCoord),
+    /// A graph-local buffer's coord tag word (see [`SpectrumCoord::to_tag`]).
+    Tag(&'a mut u32),
+}
+
+/// The mutable counterpart of [`BufView`] - what the writing buffer consumers (`BufWr`, `RecordBuf`,
+/// `FFT` and the `PV_*` chain, ...) work through, whether the samples live in a table-owned
+/// [`Buffer`] or in a graph-local buffer span. Its accessors mirror [`Buffer`]'s API.
+pub struct BufViewMut<'a> {
+    data: &'a mut [f32],
+    num_frames: usize,
+    num_channels: usize,
+    sample_rate: f64,
+    coord: CoordSlot<'a>,
+}
+
+impl<'a> BufViewMut<'a> {
+    /// View raw interleaved sample storage, with its coordinate flag in a separate `u32` tag word
+    /// (how a graph-local buffer presents itself). `data` must hold `num_frames * num_channels`
+    /// samples, frame-major.
+    pub fn from_tagged_parts(
+        data: &'a mut [f32],
+        num_frames: usize,
+        num_channels: usize,
+        sample_rate: f64,
+        coord_tag: &'a mut u32,
+    ) -> Self {
+        BufViewMut {
+            data,
+            num_frames,
+            num_channels,
+            sample_rate,
+            coord: CoordSlot::Tag(coord_tag),
+        }
+    }
+
+    /// Number of frames (samples per channel).
+    pub fn num_frames(&self) -> usize {
+        self.num_frames
+    }
+
+    /// Number of channels.
+    pub fn num_channels(&self) -> usize {
+        self.num_channels
+    }
+
+    /// The buffer's own sample rate in Hz.
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    /// All samples, interleaved (frame-major).
+    pub fn data(&self) -> &[f32] {
+        self.data
+    }
+
+    /// All samples, interleaved, mutably.
+    pub fn data_mut(&mut self) -> &mut [f32] {
+        self.data
+    }
+
+    /// Consume the view, returning the samples at the underlying storage's lifetime - for a consumer
+    /// (a buffer-backed delay) that resolves the view once and then works on the bare slice.
+    pub fn into_data(self) -> &'a mut [f32] {
+        self.data
+    }
+
+    /// The bin interpretation when this buffer holds an FFT-chain frame.
+    pub fn coord(&self) -> SpectrumCoord {
+        match &self.coord {
+            CoordSlot::Enum(coord) => **coord,
+            CoordSlot::Tag(tag) => SpectrumCoord::from_tag(**tag),
+        }
+    }
+
+    /// Record this buffer's bin interpretation (an `FFT` write or a `PV_*` conversion sets it).
+    pub fn set_coord(&mut self, coord: SpectrumCoord) {
+        match &mut self.coord {
+            CoordSlot::Enum(slot) => **slot = coord,
+            CoordSlot::Tag(tag) => **tag = coord.to_tag(),
+        }
+    }
+
+    /// Sample at `frame`, `channel`. Returns 0.0 for an out-of-range index, so RT readers never panic.
+    pub fn sample(&self, frame: usize, channel: usize) -> f32 {
+        if frame >= self.num_frames || channel >= self.num_channels {
+            return 0.0;
+        }
+        self.data[frame * self.num_channels + channel]
+    }
+
+    /// Overwrite the sample at flat (interleaved) index `index` (`frame * num_channels + channel`).
+    /// No-op if out of range, RT-safe.
+    pub fn set_flat(&mut self, index: usize, value: f32) {
+        if let Some(slot) = self.data.get_mut(index) {
+            *slot = value;
+        }
     }
 }
 

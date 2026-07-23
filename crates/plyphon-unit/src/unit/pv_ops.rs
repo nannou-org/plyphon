@@ -10,8 +10,10 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
+use crate::unit::fft::{DEFAULT_MAX_FFT, resolve_fftsize};
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, pv, unit_spec};
+use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, pv, unit_spec, unit_spec_aux};
+use core::f32::consts::TAU;
 
 /// Which magnitude-threshold operation a [`PvMagThresh`] applies.
 #[derive(Copy, Clone)]
@@ -95,8 +97,8 @@ impl Unit for PvMagThresh {
         let kind = self.kind;
         let thresh = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::to_polar(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_polar(&mut buffer)
         {
             *spectrum.dc = MagKind::real(kind, *spectrum.dc, thresh);
             *spectrum.nyq = MagKind::real(kind, *spectrum.nyq, thresh);
@@ -134,8 +136,8 @@ impl Unit for PvLocalMax {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let thresh = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::to_polar(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_polar(&mut buffer)
         {
             let n = spectrum.bins.len();
             if n >= 2 {
@@ -198,8 +200,8 @@ impl Unit for PvPhaseQuarter {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let negate = self.negate != 0;
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::to_complex(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_complex(&mut buffer)
         {
             for bin in spectrum.bins.iter_mut() {
                 let (re, im) = (bin.x, bin.y);
@@ -244,8 +246,8 @@ impl Unit for PvBrickWall {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let wipe_frac = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::spectrum(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::spectrum(&mut buffer)
         {
             let numbins = spectrum.bins.len() as i32;
             let wipe = (wipe_frac * numbins as f32) as i32;
@@ -295,8 +297,8 @@ pub struct PvConj {
 impl Unit for PvConj {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::to_complex(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_complex(&mut buffer)
         {
             for bin in spectrum.bins.iter_mut() {
                 bin.y = -bin.y;
@@ -321,4 +323,105 @@ impl UnitDef for PvConjCtor {
 /// A zeroed bin.
 fn zero() -> pv::Bin {
     pv::Bin { x: 0.0, y: 0.0 }
+}
+
+/// The most bins a deferred-size [`PvDiffuser`] reserves phase state for: one per bin of the largest
+/// supported FFT (`[dc, nyq, bins...]` packs `(N - 2) / 2` bins).
+const MAX_DIFFUSER_BINS: usize = (DEFAULT_MAX_FFT - 2) / 2;
+
+/// `PV_Diffuser(buffer, trig)`: add a fixed, random phase offset per bin, re-randomising the
+/// offsets on each rising `trig`. Smears transients over time (each bin's phase is decorrelated)
+/// while leaving magnitudes untouched, so a steady tone is unchanged but an impulse is diffused.
+///
+/// `trig` doubles as the shifted-bin fraction: each frame offsets only the first
+/// `clip(trig * numbins, 0, numbins)` bins (scsynth's `PV_Diffuser_next`), so `0` leaves every
+/// phase untouched, `0.5` diffuses the lower half of the spectrum and `>= 1` the whole frame.
+///
+/// The offsets are drawn from the synth's shared random stream, held in `aux` (one `f32` per bin),
+/// and reserved for the largest supported FFT since the chain buffer - hence the bin count - is not
+/// known until the first frame. scsynth's `PV_Diffuser`, which lazily allocates the same table.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct PvDiffuser {
+    /// Number of bins the offset table currently covers; `0` until the first frame resolves it.
+    numbins: u32,
+    /// Previous-block `trig` value, for rising-edge detection across blocks.
+    prev_trig: f32,
+    /// `1` once a rising `trig` has been seen since the last frame applied the offsets.
+    retrigger: u32,
+}
+
+impl Unit for PvDiffuser {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // Sample the trigger every block (frames are intermittent), latching a rising edge to
+        // re-randomise on the next ready frame - scsynth's `m_prevtrig`/`m_triggered`.
+        let trig = ctx.ins.control(1);
+        if self.prev_trig <= 0.0 && trig > 0.0 {
+            self.retrigger = 1;
+        }
+        self.prev_trig = trig;
+
+        let Some(bufnum) = pv::pv_frame(ctx) else {
+            return DoneAction::Nothing;
+        };
+        // The bin count is fixed by the chain buffer's size; resolve it once, capped at the aux
+        // reservation, randomising the table on first resolve.
+        if self.numbins == 0 {
+            match resolve_fftsize(ctx.buffers, &ctx.local_bufs, bufnum) {
+                Some(n) => {
+                    self.numbins = ((n.saturating_sub(2)) / 2).min(MAX_DIFFUSER_BINS) as u32;
+                    self.retrigger = 1;
+                }
+                None => return DoneAction::Nothing,
+            }
+        } else if unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum)
+            .is_none_or(|b| (b.num_frames().saturating_sub(2)) / 2 != self.numbins as usize)
+        {
+            // A frame of a different size passes through untouched - scsynth's
+            // `numbins != m_numbins` bail - and processing resumes if the original size returns.
+            return DoneAction::Nothing;
+        }
+        let numbins = self.numbins as usize;
+
+        let shifts = &mut ctx.aux.f32_mut()[..numbins];
+        if self.retrigger != 0 {
+            for shift in shifts.iter_mut() {
+                *shift = ctx.rgen.next_unipolar() * TAU;
+            }
+            self.retrigger = 0;
+        }
+        // The trigger level also scales how many bins are offset - scsynth's
+        // `n = sc_clip((int)(trig * numbins), 0, numbins)` - so a zero trig converts the frame to
+        // polar but shifts nothing.
+        let n = ((trig * numbins as f32) as i32).clamp(0, numbins as i32) as usize;
+        if let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_polar(&mut buffer)
+        {
+            for (bin, &shift) in spectrum.bins.iter_mut().zip(shifts.iter()).take(n) {
+                bin.y += shift;
+            }
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`PvDiffuser`]: reserves phase state for the largest supported FFT, since the
+/// chain buffer's size is not known until the first frame.
+pub struct PvDiffuserCtor;
+
+impl UnitDef for PvDiffuserCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 2 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec_aux(
+            PvDiffuser {
+                numbins: 0,
+                prev_trig: 0.0,
+                retrigger: 0,
+            },
+            MAX_DIFFUSER_BINS * core::mem::size_of::<f32>(),
+            core::mem::align_of::<f32>(),
+        ))
+    }
 }

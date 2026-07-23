@@ -20,8 +20,8 @@ pub struct PvMagSquared {
 impl Unit for PvMagSquared {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if let Some(bufnum) = pv::pv_frame(ctx)
-            && let Some(buffer) = unit::buffer_at_mut(ctx.buffers, bufnum)
-            && let Some(spectrum) = pv::to_polar(buffer)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_polar(&mut buffer)
         {
             // DC and Nyquist are real magnitudes; the bins carry (mag, phase) in polar form.
             *spectrum.dc *= *spectrum.dc;

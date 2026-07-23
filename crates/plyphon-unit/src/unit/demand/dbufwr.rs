@@ -45,7 +45,7 @@ impl DemandUnit for Dbufwr {
             return f32::NAN;
         }
         let bufnum = bufnum.max(0.0) as usize;
-        if let Some(buffer) = ctx.buffer_mut(bufnum).filter(|b| b.num_frames() > 0) {
+        if let Some(mut buffer) = ctx.buffer_mut(bufnum).filter(|b| b.num_frames() > 0) {
             // `loopMax`: whole buffer when looping, last frame when not (scsynth's bound).
             let loop_max = (buffer.num_frames() - usize::from(!looping)) as f64;
             let (index, _) = sc_loop(phase as f64, loop_max, looping);

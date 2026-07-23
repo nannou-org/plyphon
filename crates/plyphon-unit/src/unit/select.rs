@@ -136,7 +136,7 @@ impl Unit for Index {
         let idx = sig(&ins, Self::INDEX);
         // The table (`ctx.buffers`) and the output (`ctx.outs`) are disjoint `ctx` fields, so both
         // borrows coexist; a missing buffer yields an empty table (silent output).
-        let table = buffer_at(ctx.buffers, bufnum)
+        let table = buffer_at(ctx.buffers, &ctx.local_bufs, bufnum)
             .map(|b| b.data())
             .unwrap_or(&[]);
         if audio {
@@ -186,7 +186,7 @@ impl Unit for Shaper {
         let ins = ctx.ins;
         let bufnum = ins.control(Self::BUF).max(0.0) as usize;
         let input = sig(&ins, Self::IN);
-        let table = buffer_at(ctx.buffers, bufnum)
+        let table = buffer_at(ctx.buffers, &ctx.local_bufs, bufnum)
             .map(|b| b.data())
             .unwrap_or(&[]);
         if audio {
@@ -255,7 +255,7 @@ impl Unit for DegreeToKey {
             12.0
         };
         let degree = sig(&ins, Self::IN);
-        let table = buffer_at(ctx.buffers, bufnum)
+        let table = buffer_at(ctx.buffers, &ctx.local_bufs, bufnum)
             .map(|b| b.data())
             .unwrap_or(&[]);
         if audio {

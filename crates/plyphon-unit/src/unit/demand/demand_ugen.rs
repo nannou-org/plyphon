@@ -52,6 +52,7 @@ impl Demand {
     fn reset_sources(&mut self, ctx: &mut ProcessCtx<'_>) {
         let mut world = DemandWorld {
             buffers: &mut *ctx.buffers,
+            local_bufs: &mut ctx.local_bufs,
             node_id: ctx.node_id,
             node_msgs: &mut ctx.node_msgs,
         };
@@ -70,6 +71,7 @@ impl Demand {
     fn pull_all(&mut self, ctx: &mut ProcessCtx<'_>) {
         let mut world = DemandWorld {
             buffers: &mut *ctx.buffers,
+            local_bufs: &mut ctx.local_bufs,
             node_id: ctx.node_id,
             node_msgs: &mut ctx.node_msgs,
         };

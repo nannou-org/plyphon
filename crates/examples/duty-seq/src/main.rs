@@ -95,8 +95,8 @@ fn seq_def(channels: usize) -> SynthDef {
                 vec![
                     InputRef::Unit { unit: 3, output: 0 },
                     InputRef::Constant(0.0),
-                    InputRef::Unit { unit: 2, output: 0 },
                     InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 2, output: 0 },
                 ],
                 1,
             ),

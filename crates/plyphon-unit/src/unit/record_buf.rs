@@ -6,7 +6,7 @@ use crate::error::BuildError;
 use crate::unit::io::sample_channel;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, Inputs, ProcessCtx, Unit, unit_spec};
-use plyphon_dsp::buffer::Buffer;
+use plyphon_dsp::buffer::BufViewMut;
 
 /// `RecordBuf.ar(inputArray, bufnum, offset, recLevel, preLevel, run, loop, trigger, doneAction)`:
 /// records its input channels into buffer `bufnum` through a write head, mixing into what is already
@@ -57,7 +57,7 @@ impl RecordBuf {
     #[allow(clippy::too_many_arguments)]
     fn write_frame(
         &self,
-        buffer: &mut Buffer,
+        buffer: &mut BufViewMut<'_>,
         pos: i32,
         ins: &Inputs<'_>,
         k: usize,
@@ -108,7 +108,8 @@ impl Unit for RecordBuf {
         // `CALCSLOPE`: one ramp step per sample over the block (audio-rate slope factor = 1/block).
         let slope = ctx.audio.slope_factor as f32;
 
-        let buffer = match crate::unit::buffer_at_mut(ctx.buffers, bufnum) {
+        let mut buffer = match crate::unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+        {
             Some(buffer) if buffer.num_frames() > 0 => buffer,
             _ => {
                 // No buffer: do nothing (scsynth clears outputs and returns).
@@ -140,7 +141,7 @@ impl Unit for RecordBuf {
             }
             if run > 0.0 {
                 for k in 0..block {
-                    self.write_frame(buffer, write_pos, &ins, k, rec, pre);
+                    self.write_frame(&mut buffer, write_pos, &ins, k, rec, pre);
                     write_pos += stride;
                     if write_pos >= buf_samples {
                         write_pos = 0;
@@ -150,7 +151,7 @@ impl Unit for RecordBuf {
                 }
             } else if run < 0.0 {
                 for k in 0..block {
-                    self.write_frame(buffer, write_pos, &ins, k, rec, pre);
+                    self.write_frame(&mut buffer, write_pos, &ins, k, rec, pre);
                     write_pos -= stride;
                     if write_pos < 0 {
                         write_pos = buf_samples - stride;
@@ -167,7 +168,7 @@ impl Unit for RecordBuf {
             if run > 0.0 {
                 let nsmps = (buf_samples - write_pos).clamp(0, block as i32 * stride);
                 for k in 0..(nsmps / stride) as usize {
-                    self.write_frame(buffer, write_pos, &ins, k, rec, pre);
+                    self.write_frame(&mut buffer, write_pos, &ins, k, rec, pre);
                     write_pos += stride;
                     rec += rec_slope;
                     pre += pre_slope;
@@ -175,7 +176,7 @@ impl Unit for RecordBuf {
             } else if run < 0.0 {
                 let nsmps = write_pos.clamp(0, block as i32 * stride);
                 for k in 0..(nsmps / stride) as usize {
-                    self.write_frame(buffer, write_pos, &ins, k, rec, pre);
+                    self.write_frame(&mut buffer, write_pos, &ins, k, rec, pre);
                     write_pos -= stride;
                     rec += rec_slope;
                     pre += pre_slope;

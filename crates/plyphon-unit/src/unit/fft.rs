@@ -71,7 +71,7 @@ impl Unit for Fft {
         // A deferred (`winsize = 0`) size resolves from the chain buffer once it is installed
         // (scsynth reads the buffer size at first calc); until then the unit idles.
         if self.fftsize == 0 {
-            match resolve_fftsize(ctx.buffers, bufnum) {
+            match resolve_fftsize(ctx.buffers, &ctx.local_bufs, bufnum) {
                 Some(n) => {
                     self.fftsize = n as u32;
                     self.hop_size = (math::floor(self.hop_frac * n as f32 + 0.5) as u32).max(1);
@@ -112,8 +112,9 @@ impl Unit for Fft {
                     let s = ring[(self.pos as usize + j) % n];
                     *w = s * win.get(j).copied().unwrap_or(1.0);
                 }
-                if let Some(buffer) =
-                    unit::buffer_at_mut(ctx.buffers, bufnum).filter(|b| b.num_frames() == n)
+                if let Some(mut buffer) =
+                    unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+                        .filter(|b| b.num_frames() == n)
                     && ctx.fft.forward(n, windowed, buffer.data_mut())
                 {
                     // The forward transform writes the Cartesian packed spectrum (scsynth sets
@@ -193,7 +194,7 @@ impl Unit for Ifft {
         // until then the unit emits silence.
         if self.fftsize == 0 {
             match (fbufnum >= 0.0)
-                .then(|| resolve_fftsize(ctx.buffers, fbufnum as usize))
+                .then(|| resolve_fftsize(ctx.buffers, &ctx.local_bufs, fbufnum as usize))
                 .flatten()
             {
                 Some(n) => self.fftsize = n as u32,
@@ -220,12 +221,12 @@ impl Unit for Ifft {
         // A ready frame (fbufnum >= 0): inverse-transform it and overlap-add into the ring at `pos`.
         if fbufnum >= 0.0 {
             let bufnum = fbufnum as usize;
-            if let Some(buffer) =
-                unit::buffer_at_mut(ctx.buffers, bufnum).filter(|b| b.num_frames() == n)
+            if let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+                .filter(|b| b.num_frames() == n)
             {
                 // A polar `PV_*` unit may have left the frame in polar form; restore Cartesian
                 // before the inverse transform (scsynth's `ToComplexApx` in `IFFT_next`).
-                pv::to_complex(buffer);
+                pv::to_complex(&mut buffer);
                 if ctx.fft.inverse(n, &buffer.data()[..n], temp) {
                     for (j, w) in win.iter().enumerate().take(n) {
                         ola[(self.pos as usize + j) % n] += temp[j] * w;
@@ -282,7 +283,7 @@ fn sample_in(ins: &Inputs<'_>, i: usize, k: usize) -> f32 {
 /// supports: its aux must be sized before the buffer is known, so it reserves `2 * this` samples
 /// and resolves the actual size from the buffer on the first frame. A def naming its `winsize`
 /// avoids the over-allocation and supports the full range.
-const DEFAULT_MAX_FFT: usize = 8192;
+pub(crate) const DEFAULT_MAX_FFT: usize = 8192;
 
 /// The constant FFT size at input `winsize`, validated as a supported power of two. `0` - sclang's
 /// default, "use the chain buffer's size" - is accepted and resolved at run time (up to
@@ -310,7 +311,11 @@ fn aux_fftsize(fftsize: usize) -> usize {
 /// Resolve a deferred (`winsize = 0`) FFT size from the chain buffer's frame count: the buffer
 /// size, if it is a supported power of two within the reserved aux. `None` leaves the unit waiting
 /// (silent) until a suitably-sized buffer is installed.
-fn resolve_fftsize(buffers: &plyphon_dsp::buffer::BufferTable, bufnum: usize) -> Option<usize> {
-    let frames = unit::buffer_at(buffers, bufnum)?.num_frames();
+pub(crate) fn resolve_fftsize(
+    buffers: &plyphon_dsp::buffer::BufferTable,
+    local: &crate::unit::LocalBufs<'_>,
+    bufnum: usize,
+) -> Option<usize> {
+    let frames = unit::buffer_at(buffers, local, bufnum)?.num_frames();
     (is_supported_size(frames) && frames <= DEFAULT_MAX_FFT).then_some(frames)
 }

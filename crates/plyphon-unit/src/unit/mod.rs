@@ -34,6 +34,7 @@ pub mod filter;
 pub mod filter_simple;
 pub mod formant;
 pub mod freeverb;
+pub mod gendy;
 pub mod grain;
 pub mod gverb;
 pub mod hilbert;
@@ -43,6 +44,7 @@ pub mod io;
 pub mod lf;
 pub mod lf_noise;
 pub mod line;
+pub mod local_buf;
 pub mod local_io;
 pub mod measure;
 pub mod median;
@@ -68,6 +70,7 @@ pub mod pv_mag_squared;
 #[cfg(feature = "fft")]
 pub mod pv_ops;
 pub mod ramp;
+pub mod rand;
 pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
@@ -93,10 +96,12 @@ use alloc::vec::Vec;
 
 use bytemuck::Pod;
 
-use plyphon_dsp::buffer::BufferTable;
+use crate::graphdef::LocalBufSpec;
+use plyphon_dsp::buffer::{BufView, BufViewMut, BufferTable, SpectrumCoord};
 use plyphon_dsp::bus::Buses;
 use plyphon_dsp::fft::FftTables;
 use plyphon_dsp::rate::{Rate, RateInfo};
+use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::Wavetables;
 
 /// What a unit asks the engine to do with its enclosing synth when it finishes - scsynth's full set
@@ -204,6 +209,7 @@ pub use io::{
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;
+pub use local_buf::{ClearBuf, LocalBuf, MaxLocalBufs, SetBuf};
 pub use local_io::{LocalIn, LocalOut};
 pub use node_ctl::{Done, Free, Pause, SelfTrig, WhenDone};
 pub use noise::WhiteNoise;
@@ -449,6 +455,127 @@ impl<'a> LocalBus<'a> {
     }
 }
 
+/// A synth's graph-local buffers (`LocalBuf`) for the block - plyphon's port of scsynth's
+/// `parent->mLocalSndBufs`. The sample storage and per-buffer coord tags live in the per-instance
+/// pool block and **persist across blocks**; the shapes come from the compiled def's
+/// [`LocalBufSpec`]s. A local buffer's number is `buffer-table capacity + index`, and the io free
+/// fns ([`buffer_at`]/[`buffer_at_mut`]/[`buffer_pair_mut`]) resolve such a number here, so every
+/// buffer consumer works on local buffers unchanged. Empty for synths with no `LocalBuf`.
+pub struct LocalBufs<'a> {
+    /// Each local buffer's shape and sample offset, in declaration order.
+    specs: &'a [LocalBufSpec],
+    /// The sample storage: every local buffer packed at its spec's offset.
+    samples: &'a mut [f32],
+    /// One coordinate tag per local buffer (see [`SpectrumCoord::to_tag`]) - the local stand-in for
+    /// `Buffer`'s coord field, so the FFT chain can track a local frame's form.
+    coords: &'a mut [u32],
+    /// The graph's audio sample rate - a local buffer's own rate (scsynth's `FULLRATE`).
+    sample_rate: f64,
+}
+
+impl<'a> LocalBufs<'a> {
+    /// Wrap the block's local-buffer spans. Used by the synth process loop.
+    pub fn new(
+        specs: &'a [LocalBufSpec],
+        samples: &'a mut [f32],
+        coords: &'a mut [u32],
+        sample_rate: f64,
+    ) -> Self {
+        LocalBufs {
+            specs,
+            samples,
+            coords,
+            sample_rate,
+        }
+    }
+
+    /// A shorter-lived handle over the same storage, so it can be threaded through a nested borrow
+    /// (a demand pull, via [`DemandWorld`]) without moving it.
+    pub fn reborrow(&mut self) -> LocalBufs<'_> {
+        LocalBufs {
+            specs: self.specs,
+            samples: &mut *self.samples,
+            coords: &mut *self.coords,
+            sample_rate: self.sample_rate,
+        }
+    }
+
+    /// Number of graph-local buffers.
+    pub fn len(&self) -> usize {
+        self.specs.len()
+    }
+
+    /// Whether the synth declared no local buffers.
+    pub fn is_empty(&self) -> bool {
+        self.specs.is_empty()
+    }
+
+    /// The sample range of local buffer `index` within `samples`, if the index is in range. The
+    /// bounds checks (against the specs, the coord tags, and the sample span) keep the accessors
+    /// below panic-free on the audio thread even for a malformed layout.
+    fn range(&self, index: usize) -> Option<(LocalBufSpec, core::ops::Range<usize>)> {
+        let spec = *self.specs.get(index)?;
+        let len = spec.channels as usize * spec.frames as usize;
+        let range = spec.offset..spec.offset.checked_add(len)?;
+        (index < self.coords.len() && range.end <= self.samples.len()).then_some((spec, range))
+    }
+
+    /// Local buffer `index` as a read-only view, or `None` if out of range.
+    pub(crate) fn view(&self, index: usize) -> Option<BufView<'_>> {
+        let (spec, range) = self.range(index)?;
+        Some(BufView::from_parts(
+            &self.samples[range],
+            spec.frames as usize,
+            spec.channels as usize,
+            self.sample_rate,
+            SpectrumCoord::from_tag(self.coords[index]),
+        ))
+    }
+
+    /// Local buffer `index` as a mutable view, or `None` if out of range.
+    pub(crate) fn view_mut(&mut self, index: usize) -> Option<BufViewMut<'_>> {
+        let (spec, range) = self.range(index)?;
+        let samples = &mut self.samples[range];
+        Some(BufViewMut::from_tagged_parts(
+            samples,
+            spec.frames as usize,
+            spec.channels as usize,
+            self.sample_rate,
+            &mut self.coords[index],
+        ))
+    }
+
+    /// Local buffer `a` mutably and local buffer `b` read-only, as disjoint borrows - the local
+    /// counterpart of `BufferTable::pair_mut`. `None` unless `a != b` and both are in range.
+    pub(crate) fn pair_mut(&mut self, a: usize, b: usize) -> Option<(BufViewMut<'_>, BufView<'_>)> {
+        if a == b {
+            return None;
+        }
+        let (a_spec, a_range) = self.range(a)?;
+        let (b_spec, b_range) = self.range(b)?;
+        let b_coord = SpectrumCoord::from_tag(self.coords[b]);
+        // The specs pack each buffer at a distinct offset, so the two ranges are disjoint by
+        // construction and the split never fails.
+        let [a_samples, b_samples] = self.samples.get_disjoint_mut([a_range, b_range]).ok()?;
+        Some((
+            BufViewMut::from_tagged_parts(
+                a_samples,
+                a_spec.frames as usize,
+                a_spec.channels as usize,
+                self.sample_rate,
+                &mut self.coords[a],
+            ),
+            BufView::from_parts(
+                b_samples,
+                b_spec.frames as usize,
+                b_spec.channels as usize,
+                self.sample_rate,
+                b_coord,
+            ),
+        ))
+    }
+}
+
 /// A unit's private auxiliary memory for the block - a delay line / circular buffer sized at build
 /// time (see [`unit_spec_aux`]). It is the safe stand-in for scsynth's `RTAlloc`'d `float* m_dlybuf`:
 /// the bytes live in the per-instance pool block (so there is still one allocation per synth) and
@@ -565,9 +692,19 @@ pub struct ProcessCtx<'a> {
     /// The synth's private feedback bus (`LocalIn`/`LocalOut`). Empty for synths with no local bus;
     /// most units ignore it.
     pub local: LocalBus<'a>,
+    /// The synth's graph-local buffers (`LocalBuf`). The buffer io free fns take this alongside
+    /// [`buffers`](Self::buffers) so a past-capacity buffer number resolves here transparently.
+    /// Empty for synths with no `LocalBuf`; most units only pass it through.
+    pub local_bufs: LocalBufs<'a>,
     /// This unit's private auxiliary memory (a delay line). Empty for units that declared none; most
     /// units ignore it.
     pub aux: Aux<'a>,
+    /// The synth's shared random stream (scsynth's per-graph `RGen`, seeded per instance). The
+    /// `Rand` family draws from it so draws interleave deterministically across the units of one
+    /// synth, and `RandSeed` re-seeds it so those sequences restart together. Units with fully
+    /// private randomness (the noise generators) keep their own embedded
+    /// [`Rng`] and ignore this.
+    pub rgen: &'a mut Rng,
 }
 
 /// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].
@@ -591,6 +728,10 @@ pub struct InitCtx<'a> {
     pub buses: &'a Buses,
     /// The World's shared buffer table (read-only), via the [`io`] free fns.
     pub buffers: &'a BufferTable,
+    /// The synth's graph-local buffers (`LocalBuf`), so an init-time buffer resolution (a
+    /// buffer-backed delay clamping to its line) sees local buffers too. Read-only here: the handle's
+    /// mutators need `&mut`, unreachable through the shared `InitCtx` a unit's `init` receives.
+    pub local_bufs: LocalBufs<'a>,
     /// The current block counter.
     pub buf_counter: u64,
 }
@@ -756,7 +897,7 @@ impl<'a> Outputs<'a> {
 pub trait Unit: Pod {
     /// Re-seed any per-instance randomness from `seed`, called once when the synth is constructed on
     /// the audio thread (before the first block). The default is a no-op; units with an
-    /// [`Rng`](plyphon_dsp::rng::Rng) override it so that two instances of the same def decorrelate -
+    /// [`Rng`] override it so that two instances of the same def decorrelate -
     /// plyphon's stand-in for scsynth seeding each `Graph`'s `RGen`. Must not allocate or block.
     fn reseed(&mut self, _seed: u64) {}
 
@@ -836,6 +977,11 @@ pub struct BuiltUnit {
     /// Alignment the aux region needs (e.g. `align_of::<f32>()` for an `f32` delay line). Ignored
     /// when `aux_bytes == 0`.
     pub aux_align: usize,
+    /// `Some((channels, frames))` when this unit declares a graph-local buffer (`LocalBuf`). Like
+    /// `aux_bytes`, the shape is fixed at build time (from constant inputs); the compile loop
+    /// collects the declarations, in unit order, into the def's `LocalBufSpec` table and the
+    /// per-graph block's local-buffer span. `None` for every other unit.
+    pub local_buf: Option<(usize, usize)>,
 }
 
 /// Build a [`BuiltUnit`] from an initial unit state. The thunks are monomorphised for `T` here, so a
@@ -850,6 +996,7 @@ pub fn unit_spec<T: Unit>(state: T) -> BuiltUnit {
         init_bytes: bytemuck::bytes_of(&state).to_vec().into_boxed_slice(),
         aux_bytes: 0,
         aux_align: 1,
+        local_buf: None,
     }
 }
 
@@ -865,6 +1012,17 @@ pub fn unit_spec_aux<T: Unit>(state: T, aux_bytes: usize, aux_align: usize) -> B
     BuiltUnit {
         aux_bytes,
         aux_align: aux_align.max(1),
+        ..unit_spec(state)
+    }
+}
+
+/// Build a [`BuiltUnit`] that declares a graph-local buffer of `channels * frames` samples - what a
+/// `LocalBuf` returns from its build. The shape must come from constant inputs (like a delay's
+/// `maxdelaytime`); the compile loop sizes the per-graph block's local-buffer span from the
+/// declarations, in unit order, so the storage exists before the synth's first block.
+pub fn unit_spec_local_buf<T: Unit>(state: T, channels: usize, frames: usize) -> BuiltUnit {
+    BuiltUnit {
+        local_buf: Some((channels, frames)),
         ..unit_spec(state)
     }
 }

@@ -647,7 +647,8 @@ impl Unit for BufDelay {
         let dt = ctx.ins.control(BUF_DELAY);
         let min = Interp::from_tag(self.interp).min_delay(false);
         let bufnum = ctx.ins.control(BUF_BUFNUM).max(0.0) as usize;
-        let max = buffer_at(ctx.buffers, bufnum).map_or(0, |b| buf_line(b.data().len()).1 as usize);
+        let max = buffer_at(ctx.buffers, &ctx.local_bufs, bufnum)
+            .map_or(0, |b| buf_line(b.data().len()).1 as usize);
         self.delaytime = dt;
         self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, max as f32);
     }
@@ -666,8 +667,8 @@ impl Unit for BufDelay {
         let bufnum = ins.control(BUF_BUFNUM).max(0.0) as usize;
 
         let out = ctx.outs.audio(0);
-        let buf = match buffer_at_mut(ctx.buffers, bufnum) {
-            Some(b) => b.data_mut(),
+        let buf = match buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum) {
+            Some(b) => b.into_data(),
             None => {
                 out.fill(0.0);
                 return DoneAction::Nothing;
@@ -776,7 +777,8 @@ impl Unit for BufFeedbackDelay {
         let decay = ctx.ins.control(BUF_DECAY);
         let min = Interp::from_tag(self.interp).min_delay(true);
         let bufnum = ctx.ins.control(BUF_BUFNUM).max(0.0) as usize;
-        let max = buffer_at(ctx.buffers, bufnum).map_or(0, |b| buf_line(b.data().len()).1 as usize);
+        let max = buffer_at(ctx.buffers, &ctx.local_bufs, bufnum)
+            .map_or(0, |b| buf_line(b.data().len()).1 as usize);
         self.delaytime = dt;
         self.decaytime = decay;
         self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, max as f32);
@@ -799,8 +801,8 @@ impl Unit for BufFeedbackDelay {
         let bufnum = ins.control(BUF_BUFNUM).max(0.0) as usize;
 
         let out = ctx.outs.audio(0);
-        let buf = match buffer_at_mut(ctx.buffers, bufnum) {
-            Some(b) => b.data_mut(),
+        let buf = match buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum) {
+            Some(b) => b.into_data(),
             None => {
                 out.fill(0.0);
                 return DoneAction::Nothing;

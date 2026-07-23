@@ -41,7 +41,7 @@ impl Unit for BufWr {
         let num_channels = self.num_channels as usize;
 
         // scsynth's `checkBuffer`: the written channels must fit the buffer (`<= bufChannels`).
-        let buffer = match unit::buffer_at_mut(ctx.buffers, bufnum) {
+        let mut buffer = match unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum) {
             Some(buffer) if buffer.num_frames() > 0 && num_channels <= buffer.num_channels() => {
                 buffer
             }

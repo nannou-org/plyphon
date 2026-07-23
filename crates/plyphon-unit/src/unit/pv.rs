@@ -14,7 +14,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::unit::ProcessCtx;
-use plyphon_dsp::buffer::{Buffer, SpectrumCoord};
+use plyphon_dsp::buffer::{BufViewMut, SpectrumCoord};
 use plyphon_dsp::math;
 
 /// One spectral bin: a pair of floats whose meaning follows the buffer's [`SpectrumCoord`] -
@@ -54,7 +54,7 @@ impl<'a> Spectrum<'a> {
 
 /// A packed view of `buf`'s spectrum *without* converting its coordinate form. For coord-independent
 /// edits (zeroing or copying whole bins, e.g. `PV_BrickWall`) that read neither magnitude nor phase.
-pub fn spectrum(buf: &mut Buffer) -> Option<Spectrum<'_>> {
+pub fn spectrum<'a>(buf: &'a mut BufViewMut<'_>) -> Option<Spectrum<'a>> {
     Spectrum::new(buf.data_mut())
 }
 
@@ -71,7 +71,7 @@ pub fn pv_frame(ctx: &mut ProcessCtx<'_>) -> Option<usize> {
 /// Convert `buf` to polar form in place if it is currently complex (idempotent), then return its
 /// packed view. scsynth's `ToPolarApx`, with exact `hypot`/`atan2` rather than a lookup-table
 /// approximation. `None` if the buffer cannot be viewed as a packed spectrum.
-pub fn to_polar(buf: &mut Buffer) -> Option<Spectrum<'_>> {
+pub fn to_polar<'a>(buf: &'a mut BufViewMut<'_>) -> Option<Spectrum<'a>> {
     if buf.coord() == SpectrumCoord::Complex {
         for bin in Spectrum::new(buf.data_mut())?.bins {
             let (re, im) = (bin.x, bin.y);
@@ -86,7 +86,7 @@ pub fn to_polar(buf: &mut Buffer) -> Option<Spectrum<'_>> {
 /// Convert `buf` to complex (Cartesian) form in place if it is currently polar (idempotent), then
 /// return its packed view. scsynth's `ToComplexApx`. `IFFT` and Cartesian `PV_*` units call this so
 /// they read `(re, im)` regardless of what an upstream polar unit left behind.
-pub fn to_complex(buf: &mut Buffer) -> Option<Spectrum<'_>> {
+pub fn to_complex<'a>(buf: &'a mut BufViewMut<'_>) -> Option<Spectrum<'a>> {
     if buf.coord() == SpectrumCoord::Polar {
         for bin in Spectrum::new(buf.data_mut())?.bins {
             let (mag, phase) = (bin.x, bin.y);
@@ -143,6 +143,7 @@ pub fn bins(data: &[f32]) -> &[Bin] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plyphon_dsp::buffer::Buffer;
 
     /// Round-tripping complex -> polar -> complex is the identity (within float tolerance), and the
     /// coord flag tracks the current form so a second conversion is a no-op.
@@ -155,18 +156,18 @@ mod tests {
         let original = buf.data().to_vec();
 
         // Complex -> polar: bin0 (3, 4) has magnitude 5.
-        to_polar(&mut buf);
+        to_polar(&mut buf.view_mut());
         assert_eq!(buf.coord(), SpectrumCoord::Polar);
         let mag0 = buf.data()[2];
         assert!((mag0 - 5.0).abs() < 1e-5, "mag of (3,4) is 5, got {mag0}");
 
         // A second to_polar is a no-op (already polar): the data is unchanged.
         let before = buf.data().to_vec();
-        to_polar(&mut buf);
+        to_polar(&mut buf.view_mut());
         assert_eq!(buf.data(), before.as_slice());
 
         // Back to complex restores the original bins (dc/nyq untouched throughout).
-        to_complex(&mut buf);
+        to_complex(&mut buf.view_mut());
         assert_eq!(buf.coord(), SpectrumCoord::Complex);
         for (got, want) in buf.data().iter().zip(&original) {
             assert!(

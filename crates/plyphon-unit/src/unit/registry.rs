@@ -37,14 +37,14 @@ use crate::unit::demand::drand::DrandCtor;
 use crate::unit::demand::dseq::DseqCtor;
 use crate::unit::demand::dser::DserCtor;
 use crate::unit::demand::dseries::DseriesCtor;
-use crate::unit::demand::duty::DutyCtor;
+use crate::unit::demand::duty::{DutyCtor, TDutyCtor};
 use crate::unit::demand::dwhite::DwhiteCtor;
 use crate::unit::demand::dxrand::DxrandCtor;
 use crate::unit::disk_in::DiskInCtor;
 use crate::unit::disk_out::DiskOutCtor;
 use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor, LookAheadCtor, LookAheadMode};
-use crate::unit::env::EnvGenCtor;
-use crate::unit::eq::{FormletCtor, MidEQCtor};
+use crate::unit::env::{EnvGenCtor, IEnvGenCtor};
+use crate::unit::eq::{BeqCtor, BeqKind, FormletCtor, MidEQCtor};
 #[cfg(feature = "fft")]
 use crate::unit::fft::{FftCtor, IfftCtor};
 use crate::unit::filter::{ButterCtor, Kind};
@@ -54,6 +54,7 @@ use crate::unit::filter_simple::{
 };
 use crate::unit::formant::FormantCtor;
 use crate::unit::freeverb::{FreeVerb2Ctor, FreeVerbCtor};
+use crate::unit::gendy::Gendy1Ctor;
 use crate::unit::grain::{
     GrainBufCtor, GrainFMCtor, GrainInCtor, GrainSinCtor, TGrainsCtor, Warp1Ctor,
 };
@@ -70,6 +71,7 @@ use crate::unit::lf_noise::{
     LFNoise1Ctor, LFNoise2Ctor,
 };
 use crate::unit::line::{LineCtor, XLineCtor};
+use crate::unit::local_buf::{ClearBufCtor, LocalBufCtor, MaxLocalBufsCtor, SetBufCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
 use crate::unit::measure::{
     LastValueCtor, LeastChangeCtor, MostChangeCtor, PeakCtor, PeakFollowerCtor, RunningMaxCtor,
@@ -106,9 +108,13 @@ use crate::unit::pv_mag_mul::PvMagMulCtor;
 use crate::unit::pv_mag_squared::PvMagSquaredCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_ops::{
-    MagKind, PvBrickWallCtor, PvConjCtor, PvLocalMaxCtor, PvMagThreshCtor, PvPhaseQuarterCtor,
+    MagKind, PvBrickWallCtor, PvConjCtor, PvDiffuserCtor, PvLocalMaxCtor, PvMagThreshCtor,
+    PvPhaseQuarterCtor,
 };
 use crate::unit::ramp::{RampCtor, VarLagCtor};
+use crate::unit::rand::{
+    ExpRandCtor, RandCtor, RandIDCtor, RandSeedCtor, TExpRandCtor, TIRandCtor, TRandCtor,
+};
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
@@ -165,6 +171,10 @@ pub struct BuildContext<'a> {
     pub special_index: i16,
     /// A seed for this unit's random number generator (distinct per unit and per synth instance).
     pub seed: u64,
+    /// How many graph-local buffers earlier units of this def have declared - the next `LocalBuf`'s
+    /// declaration index (scsynth's running `parent->localBufNum`). The compile loop advances it per
+    /// built unit that declares one; every other unit ignores it.
+    pub local_bufs_so_far: usize,
 }
 
 impl BuildContext<'_> {
@@ -274,6 +284,13 @@ impl UnitRegistry {
         // Explicit-coefficient sections (the `B*` EQ macros feed these).
         registry.register("FOS", Box::new(FOSCtor));
         registry.register("SOS", Box::new(SOSCtor));
+        // BEQSuite RBJ biquads (one kernel, response selected per name).
+        registry.register("BLowPass", Box::new(BeqCtor(BeqKind::LowPass)));
+        registry.register("BHiPass", Box::new(BeqCtor(BeqKind::HighPass)));
+        registry.register("BBandPass", Box::new(BeqCtor(BeqKind::BandPass)));
+        registry.register("BPeakEQ", Box::new(BeqCtor(BeqKind::PeakEQ)));
+        registry.register("BLowShelf", Box::new(BeqCtor(BeqKind::LowShelf)));
+        registry.register("BHiShelf", Box::new(BeqCtor(BeqKind::HighShelf)));
         // Delay lines: plain (Delay*) and recirculating (Comb*/Allpass*), sharing one read kernel.
         registry.register("DelayN", Box::new(DelayCtor(Interp::None)));
         registry.register("DelayL", Box::new(DelayCtor(Interp::Lin)));
@@ -379,7 +396,18 @@ impl UnitRegistry {
         registry.register("FreeVerb2", Box::new(FreeVerb2Ctor));
         // GVerb: a large Griesinger-style FDN reverb.
         registry.register("GVerb", Box::new(GVerbCtor));
+        // Gendy1: Xenakis dynamic stochastic synthesis.
+        registry.register("Gendy1", Box::new(Gendy1Ctor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
+        // The init/trigger-time randoms share the synth's RGen stream (see the `rand` module);
+        // the free-running noise generators above each embed their own.
+        registry.register("Rand", Box::new(RandCtor));
+        registry.register("ExpRand", Box::new(ExpRandCtor));
+        registry.register("TRand", Box::new(TRandCtor));
+        registry.register("TExpRand", Box::new(TExpRandCtor));
+        registry.register("TIRand", Box::new(TIRandCtor));
+        registry.register("RandSeed", Box::new(RandSeedCtor));
+        registry.register("RandID", Box::new(RandIDCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
         registry.register("GrayNoise", Box::new(GrayNoiseCtor));
         registry.register("PinkNoise", Box::new(PinkNoiseCtor));
@@ -421,6 +449,12 @@ impl UnitRegistry {
         registry.register("DegreeToKey", Box::new(DegreeToKeyCtor));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
         registry.register("BufWr", Box::new(BufWrCtor));
+        // Graph-owned buffers: a synth-private buffer addressed past the table capacity, plus the
+        // declaration and one-shot fill/clear helpers sclang emits alongside it.
+        registry.register("LocalBuf", Box::new(LocalBufCtor));
+        registry.register("MaxLocalBufs", Box::new(MaxLocalBufsCtor));
+        registry.register("SetBuf", Box::new(SetBufCtor));
+        registry.register("ClearBuf", Box::new(ClearBufCtor));
         registry.register("LFSaw", Box::new(LFSawCtor));
         registry.register("LFPulse", Box::new(LFPulseCtor));
         registry.register("Impulse", Box::new(ImpulseCtor));
@@ -488,6 +522,7 @@ impl UnitRegistry {
             Box::new(LookAheadCtor(LookAheadMode::Normalizer)),
         );
         registry.register("EnvGen", Box::new(EnvGenCtor));
+        registry.register("IEnvGen", Box::new(IEnvGenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
         registry.register("Poll", Box::new(PollCtor));
         registry.register("Trig", Box::new(TrigCtor));
@@ -570,6 +605,7 @@ impl UnitRegistry {
         registry.register("Sanitize", Box::new(SanitizeCtor));
         // Demand-rate consumers (normal calc-rate units that pull from the demand plan).
         registry.register("Duty", Box::new(DutyCtor));
+        registry.register("TDuty", Box::new(TDutyCtor));
         registry.register("Demand", Box::new(DemandCtor));
         // Demand-rate sources (the demand plan).
         registry.register_demand("Dseq", Box::new(DseqCtor));
@@ -600,6 +636,7 @@ impl UnitRegistry {
             registry.register("PV_PhaseShift270", Box::new(PvPhaseQuarterCtor(true)));
             registry.register("PV_BrickWall", Box::new(PvBrickWallCtor));
             registry.register("PV_Conj", Box::new(PvConjCtor));
+            registry.register("PV_Diffuser", Box::new(PvDiffuserCtor));
             registry.register("PV_Add", Box::new(PvComplexCtor(ComplexKind::Add)));
             registry.register("PV_Mul", Box::new(PvComplexCtor(ComplexKind::Mul)));
             registry.register("PV_Div", Box::new(PvComplexCtor(ComplexKind::Div)));

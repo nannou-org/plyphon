@@ -67,11 +67,11 @@ fn drive_with_duty(name: &str, mut units: Vec<UnitSpec>, src: u32) -> SynthDef {
         vec![
             InputRef::Constant(SEG_DUR),
             InputRef::Constant(0.0),
+            InputRef::Constant(0.0),
             InputRef::Unit {
                 unit: src,
                 output: 0,
             },
-            InputRef::Constant(0.0),
         ],
         1,
     ));

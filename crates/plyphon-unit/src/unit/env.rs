@@ -16,6 +16,7 @@ use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
+use plyphon_dsp::rate::Rate;
 
 /// Where the generator is in the envelope, stored as a `u32` so the state is [`Pod`].
 mod phase {
@@ -254,6 +255,155 @@ impl UnitDef for EnvGenCtor {
 /// Read input `i` as a single value, or 0.0 if the unit was built with fewer inputs.
 fn get(ins: &Inputs<'_>, i: usize) -> f32 {
     if i < ins.len() { ins.control(i) } else { 0.0 }
+}
+
+/// `IEnvGen.ar/kr(env, index)`: reads an envelope by position rather than playing it in time. The
+/// `index` input (in seconds) is looked up in the flattened `Env`: input 0 is the index, then the
+/// interpolation array `offset, startLevel, numSegments, totalDuration`, then four inputs per
+/// segment (`duration, shapeCode, curveValue, endLevel`). The output is the envelope's value at
+/// `index - offset`, held below `0` and above the total duration - scsynth's `IEnvGen`.
+///
+/// The segment values are read live from the inputs (they are constants in a baked def), so no
+/// per-unit envelope copy is kept; the last computed level is cached and reused while the index is
+/// unchanged, as scsynth does. Two deliberate divergences from scsynth: there the envelope is
+/// copied once at ctor and never re-read, so wiring a *changing* signal into an envelope slot
+/// diverges (constant-baked defs agree), and scsynth's Hold shape (8) outputs a stale cached
+/// level and then stores the segment's end level - stateful in scan order - where plyphon
+/// outputs the segment's start level throughout, the shape's evident intent.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct IEnvGen {
+    /// The most recently computed output level.
+    level: f32,
+    /// The previous index value; a matching index reuses `level`. Starts `NaN` so the first sample
+    /// always computes.
+    prev_point: f32,
+    /// `0`/`1`: control-rate output (one value) vs audio-rate (a full block from a per-sample index).
+    audio: u32,
+    _pad: u32,
+}
+
+impl IEnvGen {
+    const INDEX: usize = 0;
+    const OFFSET: usize = 1;
+    const START_LEVEL: usize = 2;
+    const NUM_SEGMENTS: usize = 3;
+    const TOTAL_DUR: usize = 4;
+
+    /// Map an index into scsynth's `m_envvals` array to the corresponding unit input: entry `0` is
+    /// the start level (input 2), and every later entry `m` is input `4 + m` (the per-segment
+    /// `duration, shapeCode, curveValue, endLevel` run, starting at input 5).
+    fn envval(ins: &Inputs<'_>, m: usize) -> f32 {
+        if m == 0 {
+            get(ins, Self::START_LEVEL)
+        } else {
+            get(ins, 4 + m)
+        }
+    }
+
+    /// The envelope's value at `point` seconds, by the same segment search and per-segment shaping
+    /// scsynth's `IEnvGen` uses.
+    fn level_at(ins: &Inputs<'_>, num_segments: usize, total_dur: f32, point: f32) -> f32 {
+        if point >= total_dur {
+            return Self::envval(ins, num_segments * 4);
+        }
+        if point <= 0.0 {
+            return Self::envval(ins, 0);
+        }
+        // Walk the segments, subtracting each duration, until `point` falls inside one.
+        let mut newtime = 0.0f32;
+        let mut segpos = point;
+        let mut seglen = 0.0f32;
+        let mut stage = 0usize;
+        let mut j = 0usize;
+        while j < num_segments && point >= newtime {
+            seglen = Self::envval(ins, j * 4 + 1);
+            newtime += seglen;
+            segpos -= seglen;
+            stage = j;
+            j += 1;
+        }
+        let stagemul = stage * 4;
+        segpos += seglen;
+        let beg_level = Self::envval(ins, stagemul) as f64;
+        let shape_code = Self::envval(ins, stagemul + 2) as i32;
+        // scsynth reads the curve value as an `int`, so a fractional curve is truncated.
+        let curve_value = (Self::envval(ins, stagemul + 3) as i32) as f64;
+        let end_level = Self::envval(ins, stagemul + 4) as f64;
+        let pos = if seglen != 0.0 {
+            (segpos / seglen) as f64
+        } else {
+            1.0
+        };
+        shape(shape_code, curve_value, beg_level, end_level, pos) as f32
+    }
+}
+
+impl IEnvGen {
+    /// Compute (and cache) the level for one raw index sample.
+    fn eval(
+        &mut self,
+        ins: &Inputs<'_>,
+        offset: f32,
+        num_segments: usize,
+        total_dur: f32,
+        raw: f32,
+    ) -> f32 {
+        let point = (raw - offset).max(0.0);
+        if point == self.prev_point {
+            return self.level;
+        }
+        self.prev_point = point;
+        self.level = Self::level_at(ins, num_segments, total_dur, point);
+        self.level
+    }
+}
+
+impl Unit for IEnvGen {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let ins = ctx.ins;
+        let offset = get(&ins, Self::OFFSET);
+        // Clamp the declared stage count to the segments the inputs actually carry (four inputs
+        // per segment after the header), so a malformed def cannot spin the segment walk beyond
+        // the input list on the audio thread. scsynth walks its ctor-copied array unchecked.
+        let num_segments =
+            (get(&ins, Self::NUM_SEGMENTS) as usize).min(ins.len().saturating_sub(5) / 4);
+        let total_dur = get(&ins, Self::TOTAL_DUR);
+
+        if self.audio != 0 {
+            let index = if ins.rate(Self::INDEX) == Rate::Audio {
+                Some(ins.audio(Self::INDEX))
+            } else {
+                None
+            };
+            let broadcast = ins.control(Self::INDEX);
+            for (i, o) in ctx.outs.audio(0).iter_mut().enumerate() {
+                let raw = index.map_or(broadcast, |s| s[i]);
+                *o = self.eval(&ins, offset, num_segments, total_dur, raw);
+            }
+        } else {
+            let raw = ins.control(Self::INDEX);
+            *ctx.outs.control(0) = self.eval(&ins, offset, num_segments, total_dur, raw);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`IEnvGen`].
+pub struct IEnvGenCtor;
+
+impl UnitDef for IEnvGenCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() <= IEnvGen::TOTAL_DUR {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(IEnvGen {
+            level: 0.0,
+            prev_point: f32::NAN,
+            audio: (ctx.rate == Rate::Audio) as u32,
+            _pad: 0,
+        }))
+    }
 }
 
 /// Interpolate `start`..`end` at fraction `t` per a scsynth envelope curve type.

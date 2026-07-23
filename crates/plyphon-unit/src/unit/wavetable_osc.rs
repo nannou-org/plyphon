@@ -17,7 +17,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
-use plyphon_dsp::buffer::{Buffer, BufferTable};
+use plyphon_dsp::buffer::{BufView, BufferTable};
 use plyphon_dsp::interp::lininterp;
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
@@ -51,7 +51,7 @@ fn freq_calc(ctx: &BuildContext<'_>, freq_input: usize) -> u32 {
 /// `verify_wavetable`): the frame count must be a power of two within scsynth's ceiling, so its
 /// `frames / 2` logical samples index cleanly. `None` (→ silence) otherwise, matching scsynth zeroing
 /// its output on a bad table.
-fn wavetable_data(buffer: &Buffer) -> Option<&[f32]> {
+fn wavetable_data<'a>(buffer: BufView<'a>) -> Option<&'a [f32]> {
     let frames = buffer.num_frames();
     ((2..=131_072).contains(&frames) && frames.is_power_of_two()).then(|| buffer.data())
 }
@@ -92,13 +92,14 @@ impl Unit for Osc {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
         let sample_dur = ctx.own.sample_dur as f32;
-        let wt = match unit::buffer_at(ctx.buffers, bufnum).and_then(wavetable_data) {
-            Some(wt) => wt,
-            None => {
-                ctx.outs.audio(0).fill(0.0);
-                return DoneAction::Nothing;
-            }
-        };
+        let wt =
+            match unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum).and_then(wavetable_data) {
+                Some(wt) => wt,
+                None => {
+                    ctx.outs.audio(0).fill(0.0);
+                    return DoneAction::Nothing;
+                }
+            };
         match self.calc {
             calc::FREQ_AUDIO => {
                 let freq = ctx.ins.audio(Self::FREQ);
@@ -159,7 +160,7 @@ impl Unit for OscN {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
         let sample_dur = ctx.own.sample_dur as f32;
-        let table = match unit::buffer_at(ctx.buffers, bufnum) {
+        let table = match unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum) {
             Some(buffer) if buffer.num_frames() > 0 => buffer.data(),
             _ => {
                 ctx.outs.audio(0).fill(0.0);
@@ -225,13 +226,14 @@ impl Unit for COsc {
         let freq = ctx.ins.control(Self::FREQ);
         let beats = ctx.ins.control(Self::BEATS) * 0.5; // half the beat spread each side
         let sample_dur = ctx.own.sample_dur as f32;
-        let wt = match unit::buffer_at(ctx.buffers, bufnum).and_then(wavetable_data) {
-            Some(wt) => wt,
-            None => {
-                ctx.outs.audio(0).fill(0.0);
-                return DoneAction::Nothing;
-            }
-        };
+        let wt =
+            match unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum).and_then(wavetable_data) {
+                Some(wt) => wt,
+                None => {
+                    ctx.outs.audio(0).fill(0.0);
+                    return DoneAction::Nothing;
+                }
+            };
         let inc1 = (freq + beats) * sample_dur;
         let inc2 = (freq - beats) * sample_dur;
         for o in ctx.outs.audio(0).iter_mut() {
@@ -262,9 +264,13 @@ impl UnitDef for COscCtor {
 /// crossfaded (`VOsc`-style) read. `None` unless both slots hold valid, equal-size wavetables -
 /// scsynth's `VOsc` silences a missing/mismatched bank member. Resolved once per `bufindex` change
 /// (the loops below cache the pair), not per sample.
-fn wavetable_pair(buffers: &BufferTable, bufindex: usize) -> Option<(&[f32], &[f32])> {
-    let t0 = unit::buffer_at(buffers, bufindex).and_then(wavetable_data)?;
-    let t1 = unit::buffer_at(buffers, bufindex + 1).and_then(wavetable_data)?;
+fn wavetable_pair<'a>(
+    buffers: &'a BufferTable,
+    local: &'a crate::unit::LocalBufs<'_>,
+    bufindex: usize,
+) -> Option<(&'a [f32], &'a [f32])> {
+    let t0 = unit::buffer_at(buffers, local, bufindex).and_then(wavetable_data)?;
+    let t1 = unit::buffer_at(buffers, local, bufindex + 1).and_then(wavetable_data)?;
     (t0.len() == t1.len()).then_some((t0, t1))
 }
 
@@ -346,7 +352,7 @@ impl Unit for VOsc {
             let bufindex = base.max(0.0) as usize;
             if bufindex != cur_index {
                 cur_index = bufindex;
-                tables = wavetable_pair(ctx.buffers, bufindex);
+                tables = wavetable_pair(ctx.buffers, &ctx.local_bufs, bufindex);
             }
             *o = crossfade(tables, phase + phase_offset, level);
             // Audio rate: `freq_slice` has one value per sample; control rate: it is empty and `.get`
@@ -431,7 +437,7 @@ impl Unit for VOsc3 {
             let bufindex = base.max(0.0) as usize;
             if bufindex != cur_index {
                 cur_index = bufindex;
-                tables = wavetable_pair(ctx.buffers, bufindex);
+                tables = wavetable_pair(ctx.buffers, &ctx.local_bufs, bufindex);
             }
             *o = crossfade(tables, phase1, level)
                 + crossfade(tables, phase2, level)
