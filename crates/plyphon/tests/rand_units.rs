@@ -243,11 +243,14 @@ fn rand_id_consumes_input_and_outputs_zero() {
 }
 
 #[test]
-fn unary_as_int_truncates_toward_zero_and_as_float_is_identity() {
+fn unary_as_int_and_as_float_pass_through_like_scsynth() {
+    // scsynth's server implements neither: both fall to the `thru` default in UnaryOpUGens.cpp,
+    // so `asInteger` does *not* truncate on the server even though sclang's number semantics
+    // suggest it would.
     for (index, input, expected) in [
-        (7, 2.7f32, 2.0f32),
-        (7, -2.7, -2.0),
-        (7, 0.9, 0.0),
+        (7, 2.7f32, 2.7f32),
+        (7, -2.7, -2.7),
+        (7, 0.9, 0.9),
         (6, 2.7, 2.7),
         (6, -0.25, -0.25),
     ] {
