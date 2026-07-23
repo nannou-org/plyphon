@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nannou-org/plyphon/compare/plyphon-osc-v0.1.2...plyphon-osc-v0.2.0) - 2026-07-23
+
+### Fixed
+
+- *(controller)* stop automatic node-id allocation at i32::MAX
+
 ## [0.1.2](https://github.com/nannou-org/plyphon/compare/plyphon-osc-v0.1.1...plyphon-osc-v0.1.2) - 2026-07-07
 
 ### Other
