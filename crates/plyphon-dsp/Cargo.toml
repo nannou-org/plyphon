@@ -1,6 +1,6 @@
 [package]
 name = "plyphon-dsp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Shared DSP primitives for the plyphon engine: rates, RNG, wavetables, buses, buffers, and streams."
 authors.workspace = true
 edition.workspace = true

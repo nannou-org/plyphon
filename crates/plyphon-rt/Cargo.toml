@@ -1,6 +1,6 @@
 [package]
 name = "plyphon-rt"
-version = "0.1.1"
+version = "0.1.2"
 description = "The plyphon real-time audio driver: the World engine, node tree, command protocol, and NRT cleanup."
 authors.workspace = true
 edition.workspace = true
