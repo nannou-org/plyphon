@@ -439,3 +439,21 @@ fn set_buf_and_clear_buf_output_zero() {
     writer("ClearBuf", vec![u(0)]);
     writer("SetBuf", vec![u(0), c(0.0), c(1.0), c(0.5)]);
 }
+
+#[test]
+fn two_buffer_pv_ops_tolerate_a_one_sample_buffer() {
+    // A hand-built def can wire two `LocalBuf(1, 1)` numbers straight into a two-buffer PV_* unit:
+    // any non-negative input-0 signal reads as a ready frame, and both sides have equal frame
+    // counts, so the op reaches its header reads. A one-sample frame has no `[dc, nyq]` header;
+    // the op must skip it rather than panic the audio thread. Rendering is the assertion: the
+    // pre-guard code panicked on `data()[1]` in the very first block.
+    let units = vec![
+        local_buf(1.0, 1.0),
+        local_buf(1.0, 1.0),
+        UnitSpec::new("PV_Add", Rate::Control, vec![u(0), u(1)], 1),
+        UnitSpec::new("K2A", Rate::Audio, vec![u(2)], 1),
+        out(3),
+    ];
+    let buf = render(units, 2);
+    assert_eq!(buf.len(), 2 * BLOCK);
+}

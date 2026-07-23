@@ -73,6 +73,9 @@ impl Unit for PvComplex {
             && let Some((mut buf_a, buf_b)) =
                 unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, b_idx)
             && buf_a.num_frames() == buf_b.num_frames()
+            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
+            // must not panic the audio thread on the raw reads below.
+            && buf_b.data().len() >= 2
         {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
@@ -145,6 +148,9 @@ impl Unit for PvPolar {
             && let Some((mut buf_a, buf_b)) =
                 unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, b_idx)
             && buf_a.num_frames() == buf_b.num_frames()
+            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
+            // must not panic the audio thread on the raw reads below.
+            && buf_b.data().len() >= 2
         {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
@@ -201,6 +207,9 @@ impl Unit for PvCopyPhase {
             && let Some((mut buf_a, buf_b)) =
                 unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, b_idx)
             && buf_a.num_frames() == buf_b.num_frames()
+            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
+            // must not panic the audio thread on the raw reads below.
+            && buf_b.data().len() >= 2
         {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
