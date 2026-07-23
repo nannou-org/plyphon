@@ -345,3 +345,83 @@ fn first_sample(world: &mut World) -> f32 {
     world.fill(&mut buf, 1);
     buf[0]
 }
+
+#[test]
+fn a_spawn_does_not_replay_the_previous_spawns_first_unit_stream() {
+    // The graph's shared-stream seed must stay off the per-unit reseed ladder of *neighbouring*
+    // spawns too: with the old `base - SEED_STEP` seed it equalled the previous spawn's unit-0
+    // value, so a WhiteNoise there and this graph's rrand draws replayed one underlying stream.
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR,
+        output_channels: 2,
+        ..Options::default()
+    });
+    controller.add_synthdef(SynthDef {
+        name: "noise".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new("WhiteNoise", Rate::Audio, vec![], 1),
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 0, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    });
+    controller.add_synthdef(SynthDef {
+        name: "stream".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(0.0)], 1),
+            UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(1.0)], 1),
+            UnitSpec {
+                name: "BinaryOpUGen".to_string(),
+                rate: Rate::Audio,
+                inputs: vec![
+                    InputRef::Unit { unit: 0, output: 0 },
+                    InputRef::Unit { unit: 1, output: 0 },
+                ],
+                num_outputs: 1,
+                special_index: 47, // rrand
+            },
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(1.0),
+                    InputRef::Unit { unit: 2, output: 0 },
+                ],
+                0,
+            ),
+        ],
+    });
+    controller
+        .synth_new("noise", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("noise synth");
+    controller
+        .synth_new("stream", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("stream synth");
+    let mut buf = vec![0.0f32; BLOCK * 2];
+    world.fill(&mut buf, 2);
+    let noise: Vec<f32> = buf.iter().step_by(2).copied().collect();
+    let stream: Vec<f32> = buf.iter().skip(1).step_by(2).copied().collect();
+    // WhiteNoise emits the bipolar `frand2` map of its stream. A replayed stream would make the
+    // rrand(0, 1) output match under the unipolar map (`(noise + 1) / 2`) or the bipolar one
+    // (`noise` itself), depending on the rrand draw convention.
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-7;
+    assert!(
+        !noise
+            .iter()
+            .zip(&stream)
+            .all(|(n, s)| close((n + 1.0) * 0.5, *s)),
+        "graph stream replays the previous spawn's unit-0 stream (unipolar map)"
+    );
+    assert!(
+        !noise.iter().zip(&stream).all(|(n, s)| close(*n, *s)),
+        "graph stream replays the previous spawn's unit-0 stream (bipolar map)"
+    );
+}
