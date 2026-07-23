@@ -359,7 +359,11 @@ impl Unit for IEnvGen {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ins = ctx.ins;
         let offset = get(&ins, Self::OFFSET);
-        let num_segments = get(&ins, Self::NUM_SEGMENTS) as usize;
+        // Clamp the declared stage count to the segments the inputs actually carry (four inputs
+        // per segment after the header), so a malformed def cannot spin the segment walk beyond
+        // the input list on the audio thread. scsynth walks its ctor-copied array unchecked.
+        let num_segments =
+            (get(&ins, Self::NUM_SEGMENTS) as usize).min(ins.len().saturating_sub(5) / 4);
         let total_dur = get(&ins, Self::TOTAL_DUR);
 
         if self.audio != 0 {

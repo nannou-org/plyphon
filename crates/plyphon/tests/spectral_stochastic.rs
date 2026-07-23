@@ -393,3 +393,33 @@ fn gendy1_rejects_a_non_constant_init_cps() {
         "expected AuxRequiresConstant for a wired initCPs"
     );
 }
+
+#[test]
+fn ienvgen_clamps_an_oversized_stage_count_to_its_inputs() {
+    // A def declaring a huge numSegments with only one actual segment must clamp the walk to the
+    // inputs it carries (the pre-clamp code spun the search a billion iterations per sample).
+    let units = vec![
+        UnitSpec::new(
+            "IEnvGen",
+            Rate::Audio,
+            vec![
+                c(0.5), // index: halfway up the one real segment
+                c(0.0),
+                c(0.0),
+                c(1.0e9), // numSegments, absurdly oversized
+                c(1.0),   // totalDur
+                c(1.0),
+                c(1.0),
+                c(0.0),
+                c(1.0), // seg0: dur=1, shape=lin, curve=0, endLevel=1
+            ],
+            1,
+        ),
+        out(0),
+    ];
+    let got = render(units, 1)[0];
+    assert!(
+        (got - 0.5).abs() < 1e-4,
+        "clamped walk should still read the real segment, got {got}"
+    );
+}
