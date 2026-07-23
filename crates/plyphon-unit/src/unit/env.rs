@@ -265,7 +265,11 @@ fn get(ins: &Inputs<'_>, i: usize) -> f32 {
 ///
 /// The segment values are read live from the inputs (they are constants in a baked def), so no
 /// per-unit envelope copy is kept; the last computed level is cached and reused while the index is
-/// unchanged, as scsynth does.
+/// unchanged, as scsynth does. Two deliberate divergences from scsynth: there the envelope is
+/// copied once at ctor and never re-read, so wiring a *changing* signal into an envelope slot
+/// diverges (constant-baked defs agree), and scsynth's Hold shape (8) outputs a stale cached
+/// level and then stores the segment's end level - stateful in scan order - where plyphon
+/// outputs the segment's start level throughout, the shape's evident intent.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct IEnvGen {
