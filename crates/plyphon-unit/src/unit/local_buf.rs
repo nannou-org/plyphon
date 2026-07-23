@@ -8,19 +8,17 @@
 //! storage at SynthDef compile time - the `numChannels`/`numFrames` inputs must be constants - and
 //! carves it from the synth's single pool block, so instantiation stays one allocation.
 //!
-//! Two deliberate, benign divergences from scsynth:
-//!
-//! - Local-buffer memory is **zeroed once at synth spawn** (scsynth's `RTAlloc` leaves it
-//!   uninitialised, so a scsynth local buffer starts with whatever the pool held). Deterministic
-//!   silence is strictly safer and costs one bounded memset per spawn.
-//! - `SetBuf`/`ClearBuf` output the resolved buffer number, so a hand-built graph can chain them as
-//!   the buffer argument of a consumer. scsynth writes `0` to their outputs (sclang never reads
-//!   them: its `SetBuf`/`ClearBuf` classes return the `buf` argument, not the UGen).
+//! One deliberate, benign divergence from scsynth: local-buffer memory is **zeroed once at synth
+//! spawn** (scsynth's `RTAlloc` leaves it uninitialised, so a scsynth local buffer starts with
+//! whatever the pool held). Deterministic silence is strictly safer and costs one bounded memset
+//! per spawn.
 //!
 //! `SetBuf` and `ClearBuf` apply their write on the unit's **first process**. scsynth applies it at
 //! ctor - before any unit's first calc - so a consumer ordered *before* the writer would see the
 //! write one block earlier there; sclang always orders these writers before the consumers that read
-//! the buffer, where the two schedules agree.
+//! the buffer, where the two schedules agree. Both output a constant `0` as scsynth does; sclang
+//! reads the buffer number from the `LocalBuf` itself (`.set`/`.clear` return the receiver), never
+//! from these units' outputs.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -107,9 +105,9 @@ impl UnitDef for MaxLocalBufsCtor {
     }
 }
 
-/// `ClearBuf(buf)`: zeroes every sample of buffer `buf` once, on the unit's first process, then
-/// outputs the buffer number (held). Works on world and graph-local buffers alike (they share the
-/// buffer io resolution). A missing buffer is a no-op, like scsynth's "no valid buffer".
+/// `ClearBuf(buf)`: zeroes every sample of buffer `buf` once, on the unit's first process. Outputs
+/// a constant `0` (scsynth's `OUT0(0) = 0.f`). Works on world and graph-local buffers alike (they
+/// share the buffer io resolution). A missing buffer is a no-op, like scsynth's "no valid buffer".
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct ClearBuf {
@@ -128,7 +126,7 @@ impl Unit for ClearBuf {
                 buffer.data_mut().fill(0.0);
             }
         }
-        *ctx.outs.control(0) = bufnum as f32;
+        *ctx.outs.control(0) = 0.0;
         DoneAction::Nothing
     }
 }
@@ -146,11 +144,11 @@ impl UnitDef for ClearBufCtor {
 }
 
 /// `SetBuf(buf, offset, numValues, values...)`: writes `numValues` values into buffer `buf` starting
-/// at flat (interleaved) sample `offset`, once, on the unit's first process, then outputs the buffer
-/// number (held). The input layout matches scsynth's `SetBuf_Ctor` (`IN0(1)` offset, `IN0(2)` count,
-/// values from `IN0(3)`); the write is clamped to the buffer's samples (`sc_min(buf->samples, ...)`)
-/// and to the values actually supplied. Works on world and graph-local buffers alike. A missing
-/// buffer is a no-op.
+/// at flat (interleaved) sample `offset`, once, on the unit's first process. Outputs a constant `0`
+/// (scsynth's `OUT0(0) = 0.f`). The input layout matches scsynth's `SetBuf_Ctor` (`IN0(1)` offset,
+/// `IN0(2)` count, values from `IN0(3)`); the write is clamped to the buffer's samples
+/// (`sc_min(buf->samples, ...)`) and to the values actually supplied. Works on world and graph-local
+/// buffers alike. A missing buffer is a no-op.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct SetBuf {
@@ -186,7 +184,7 @@ impl Unit for SetBuf {
                 }
             }
         }
-        *ctx.outs.control(0) = bufnum as f32;
+        *ctx.outs.control(0) = 0.0;
         DoneAction::Nothing
     }
 }
