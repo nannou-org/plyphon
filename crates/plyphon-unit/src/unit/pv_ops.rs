@@ -329,9 +329,13 @@ fn zero() -> pv::Bin {
 /// supported FFT (`[dc, nyq, bins...]` packs `(N - 2) / 2` bins).
 const MAX_DIFFUSER_BINS: usize = (DEFAULT_MAX_FFT - 2) / 2;
 
-/// `PV_Diffuser(buffer, trig)`: add a fixed, random phase offset to every bin, re-randomising the
+/// `PV_Diffuser(buffer, trig)`: add a fixed, random phase offset per bin, re-randomising the
 /// offsets on each rising `trig`. Smears transients over time (each bin's phase is decorrelated)
 /// while leaving magnitudes untouched, so a steady tone is unchanged but an impulse is diffused.
+///
+/// `trig` doubles as the shifted-bin fraction: each frame offsets only the first
+/// `clip(trig * numbins, 0, numbins)` bins (scsynth's `PV_Diffuser_next`), so `0` leaves every
+/// phase untouched, `0.5` diffuses the lower half of the spectrum and `>= 1` the whole frame.
 ///
 /// The offsets are drawn from the synth's shared random stream, held in `aux` (one `f32` per bin),
 /// and reserved for the largest supported FFT since the chain buffer - hence the bin count - is not
@@ -380,10 +384,14 @@ impl Unit for PvDiffuser {
             }
             self.retrigger = 0;
         }
+        // The trigger level also scales how many bins are offset - scsynth's
+        // `n = sc_clip((int)(trig * numbins), 0, numbins)` - so a zero trig converts the frame to
+        // polar but shifts nothing.
+        let n = ((trig * numbins as f32) as i32).clamp(0, numbins as i32) as usize;
         if let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
             && let Some(spectrum) = pv::to_polar(&mut buffer)
         {
-            for (bin, &shift) in spectrum.bins.iter_mut().zip(shifts.iter()) {
+            for (bin, &shift) in spectrum.bins.iter_mut().zip(shifts.iter()).take(n) {
                 bin.y += shift;
             }
         }
