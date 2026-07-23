@@ -271,11 +271,14 @@ fn unary_as_int_truncates_toward_zero_and_as_float_is_identity() {
 
 #[test]
 fn binary_rand_ops_draw_between_inputs_per_sample() {
-    for (index, lo, hi) in [(47i16, 100.0f32, 200.0f32), (48, 100.0, 200.0)] {
+    // Audio-rate ranges follow scsynth's calc variants: `rrand_aa` draws with the *bipolar*
+    // `frand2`, so `rrand(100, 200).ar` is uniform over [0, 200) (twice the requested width,
+    // extending below lo - shipped scsynth behaviour); `exprand_aa` stays within [100, 200).
+    for (index, range, below_lo) in [(47i16, 0.0f32..200.0f32, true), (48, 100.0..200.0, false)] {
         let buf = render(
             vec![
-                UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(lo)], 1),
-                UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(hi)], 1),
+                UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(100.0)], 1),
+                UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(200.0)], 1),
                 UnitSpec {
                     name: "BinaryOpUGen".to_string(),
                     rate: Rate::Audio,
@@ -288,15 +291,20 @@ fn binary_rand_ops_draw_between_inputs_per_sample() {
                 },
                 out(2),
             ],
-            2,
+            4,
         );
         assert!(
-            buf.iter().all(|&s| (100.0..200.0).contains(&s)),
-            "op {index} stays in range"
+            buf.iter().all(|s| range.contains(s)),
+            "op {index} stays in {range:?}"
         );
         assert!(
             buf.windows(2).any(|w| w[0] != w[1]),
             "op {index} draws fresh values per sample"
+        );
+        assert_eq!(
+            buf.iter().any(|&s| s < 100.0),
+            below_lo,
+            "op {index}: bipolar draws land below lo iff rrand at audio rate"
         );
     }
 }
