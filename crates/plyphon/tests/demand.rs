@@ -621,3 +621,32 @@ fn tduty_gap_first_with_an_empty_dur_stream_freezes_silently() {
         );
     }
 }
+
+#[test]
+fn duty_done_action_fires_when_the_level_stream_ends() {
+    // dur is a constant (never exhausts) while level = Dseq([0.5, 0.6], 1) runs out on the third
+    // refill: scsynth holds the previous value and fires doneAction from the NaN level too.
+    let level = dseq(&[0.5, 0.6], 1.0);
+    let (_c, mut nrt, mut world, node) = start(duty_def("level_done", vec![level], 2.0));
+    let out = render(&mut world, 1, SEG * 5);
+    assert!(approx(segment(&out, 0), 0.5), "first segment should be 0.5");
+    assert!(
+        approx(segment(&out, 1), 0.6),
+        "second segment should be 0.6"
+    );
+    assert!(
+        out[(SEG * 4)..].iter().all(|s| s.abs() < 1e-6),
+        "synth should be silent after the level stream's doneAction frees it"
+    );
+    nrt.process();
+    let mut ended = false;
+    while let Some(event) = nrt.poll() {
+        if matches!(event, Event::NodeEnded(n) if n.node == node) {
+            ended = true;
+        }
+    }
+    assert!(
+        ended,
+        "expected a NodeEnded notification from the NaN level"
+    );
+}

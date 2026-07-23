@@ -13,8 +13,8 @@ use plyphon_dsp::rate::Rate;
 /// `dur`. `dur` and `level` are typically demand sources (e.g. `Dseq`), so `Duty` drives a sequence
 /// entirely on the audio thread with no control-plane messages. An exhausted (`NaN`) duration
 /// fires `doneAction` once and freezes the unit on its held level (scsynth's `NaN` count) until a
-/// rising `reset` revives it; a `NaN` level holds the previous value. A rising `reset` resets the
-/// `dur`/`level` sources and restarts the count.
+/// rising `reset` revives it; an exhausted (`NaN`) level holds the previous value and fires
+/// `doneAction` too. A rising `reset` resets the `dur`/`level` sources and restarts the count.
 ///
 /// The compiled input order is `[dur, reset, doneAction, level]`: the `.ar`/`.kr` methods take
 /// `(dur, reset, level, doneAction)` but pass `doneAction` before `level` to the UGen, so `level`
@@ -71,7 +71,14 @@ impl Duty {
         }
         // The level is still pulled (and output) on the exhausting refill, as in scsynth.
         let level = demand_next(ins, demand, world, Self::LEVEL);
-        if !level.is_nan() {
+        if level.is_nan() {
+            // An exhausted level stream holds the previous value and *also* fires `doneAction`
+            // (scsynth's `if (sc_isnan(x)) { x = prevout; DoneAction(...); }`), again excepting
+            // the ctor-poll stand-in.
+            if self.primed != 0 {
+                done = done.max(DoneAction::from_code(ins.control(Self::DONE)));
+            }
+        } else {
             self.level = level;
         }
         self.primed = 1;
