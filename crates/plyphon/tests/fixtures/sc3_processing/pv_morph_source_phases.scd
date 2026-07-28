@@ -42,6 +42,7 @@ def = SynthDef(\spec100_pv_morph_source_phases, {
     var polarA = PV_MagSmooth(chainA, 0);
     var polarB = PV_MagSmooth(chainB, 0);
     var ready = (polarA > -1) * (polarB > -1);
+    // Decode and latch all 63 ordinary-bin phases for one ready spectral chain.
     var readPhases = { |chain|
         Array.fill(63, { |index|
             var slot = DC.ar((index + 1) * 2 + 1);

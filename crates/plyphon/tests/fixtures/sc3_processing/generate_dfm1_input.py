@@ -19,6 +19,7 @@ def source(index: int) -> float:
 
 
 def main() -> None:
+    """Write the complete deterministic DFM1 input vector."""
     values = [source(index) for index in range(FRAMES)]
     (ROOT / "dfm1_source.f32").write_bytes(
         b"".join(struct.pack("<f", value) for value in values)

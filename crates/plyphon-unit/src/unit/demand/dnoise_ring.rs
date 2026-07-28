@@ -125,6 +125,7 @@ impl DNoiseRing {
 }
 
 impl DemandUnit for DNoiseRing {
+    /// Resets nested demand inputs and reloads the finite ring seed.
     fn reset(&mut self, ctx: &mut DemandCtx<'_>) {
         for input in Self::CHANGE..=Self::NUM_BITS {
             ctx.reset(input);
@@ -142,6 +143,7 @@ impl DemandUnit for DNoiseRing {
         }
     }
 
+    /// Pulls one complete control set and advances the rotating ring once.
     fn produce(&mut self, ctx: &mut DemandCtx<'_>) -> f32 {
         let Some(controls) = self.controls(ctx) else {
             return f32::NAN;
@@ -174,6 +176,7 @@ impl DemandUnit for DNoiseRing {
 pub struct DNoiseRingCtor;
 
 impl DemandUnitDef for DNoiseRingCtor {
+    /// Validates the demand-rate ABI and constructs the fixed-size ring state.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError> {
         if ctx.input_rates.len() != 5 {
             return Err(BuildError::WrongInputCount);

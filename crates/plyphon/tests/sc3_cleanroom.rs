@@ -1,4 +1,4 @@
-//! Black-box conformance for the five oracle-only Spec 100 units.
+//! Black-box conformance for the independently implemented processing units.
 
 use plyphon::{
     AddAction, Buffer, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
@@ -9,18 +9,22 @@ const SR: f64 = 48_000.0;
 const BLOCK: usize = 64;
 const APX_PHASE_ABS_FLOOR: f32 = 0.0016;
 
+/// Shorthand for a constant graph input.
 fn c(value: f32) -> InputRef {
     InputRef::Constant(value)
 }
 
+/// Shorthand for output zero of an earlier unit.
 fn u(unit: u32) -> InputRef {
     InputRef::Unit { unit, output: 0 }
 }
 
+/// References one selected output of an earlier unit.
 fn output(unit: u32, output: u32) -> InputRef {
     InputRef::Unit { unit, output }
 }
 
+/// Builds one binary-operator unit with an explicit specialization index.
 fn binary(rate: Rate, left: InputRef, right: InputRef, special_index: i16) -> UnitSpec {
     UnitSpec {
         name: "BinaryOpUGen".to_string(),
@@ -31,6 +35,7 @@ fn binary(rate: Rate, left: InputRef, right: InputRef, special_index: i16) -> Un
     }
 }
 
+/// Decodes a little-endian `f32` fixture.
 fn fixture(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(4)
@@ -38,12 +43,14 @@ fn fixture(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+/// Renders one interleaved engine block.
 fn render_block(world: &mut World, channels: usize) -> Vec<f32> {
     let mut block = vec![0.0; BLOCK * channels];
     world.fill(&mut block, channels);
     block
 }
 
+/// Compares a finite, non-vacuous render with a retained numeric oracle.
 fn assert_oracle(label: &str, actual: &[f32], expected: &[f32]) {
     assert!(
         actual.len() <= expected.len(),
@@ -100,8 +107,7 @@ fn nearest_phase(actual: f32, expected: f32) -> f32 {
 ///
 /// Plyphon's pre-existing `Phasor` starts its accumulator at zero, while scsynth starts a
 /// zero-triggered phasor at `start`. A one-shot initial reset keeps the oracle input stream
-/// byte-for-byte equivalent without making this Spec 100 test depend on an unrelated timing-unit
-/// correction.
+/// byte-for-byte equivalent without depending on an unrelated timing-unit correction.
 fn sc_started_phasor(rate: Rate, step: f32, start: f32, end: f32) -> UnitSpec {
     UnitSpec::new(
         "Phasor",
@@ -111,6 +117,7 @@ fn sc_started_phasor(rate: Rate, step: f32, start: f32, end: f32) -> UnitSpec {
     )
 }
 
+/// Matches the retained Decimator capture across control changes and boundary cases.
 #[test]
 fn decimator_matches_sc314() {
     let (mut controller, _nrt, mut world) = engine(Options {
@@ -174,6 +181,7 @@ fn decimator_matches_sc314() {
     );
 }
 
+/// Matches all retained BMoog output modes across cutoff and resonance changes.
 #[test]
 fn bmoog_matches_sc314() {
     let (mut controller, _nrt, mut world) = engine(Options {
@@ -227,6 +235,7 @@ fn bmoog_matches_sc314() {
     );
 }
 
+/// Renders three deterministic Perlin coordinate lanes at one calculation rate.
 fn render_perlin(rate: Rate) -> Vec<f32> {
     let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR,
@@ -283,6 +292,7 @@ fn render_perlin(rate: Rate) -> Vec<f32> {
     actual
 }
 
+/// Matches the audio- and control-rate Perlin captures.
 #[test]
 fn perlin3_ar_and_kr_match_sc314() {
     assert_oracle(
@@ -297,6 +307,7 @@ fn perlin3_ar_and_kr_match_sc314() {
     );
 }
 
+/// Matches the retained Rössler trajectory across coordinate and parameter changes.
 #[test]
 fn rossler_l_matches_sc314() {
     let (mut controller, _nrt, mut world) = engine(Options {
@@ -358,6 +369,7 @@ fn rossler_l_matches_sc314() {
     );
 }
 
+/// Builds a no-interpolation reader for one packed-spectrum slot.
 fn spectrum_reader(buffer_unit: u32, slot: usize) -> UnitSpec {
     UnitSpec::new(
         "BufRd",
@@ -388,6 +400,7 @@ fn decoded_spectrum_value(
     units.push(UnitSpec::new("K2A", Rate::Audio, vec![u(held)], 1));
 }
 
+/// Matches frozen decoded spectra and resynthesized audio across the retained event schedule.
 #[test]
 fn pv_freeze_matches_sc314_decoded_spectrum_and_resynthesis() {
     const CHANNELS: usize = 134;

@@ -1,4 +1,4 @@
-//! Allocation checks for warmed Spec 100 processing callbacks.
+//! Allocation checks for warmed SC3 processing callbacks.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
@@ -31,6 +31,7 @@ struct CountingAllocator;
 // SAFETY: every operation delegates to `System` with the original pointer and
 // layout. The extra atomics neither modify nor retain allocation metadata.
 unsafe impl GlobalAlloc for CountingAllocator {
+    /// Delegates allocation to `System` and records successful measured calls.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // SAFETY: the caller provides the `GlobalAlloc` contract for `layout`.
         let pointer = unsafe { System.alloc(layout) };
@@ -38,6 +39,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         pointer
     }
 
+    /// Delegates zeroed allocation to `System` and records successful measured calls.
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         // SAFETY: the caller provides the `GlobalAlloc` contract for `layout`.
         let pointer = unsafe { System.alloc_zeroed(layout) };
@@ -45,11 +47,13 @@ unsafe impl GlobalAlloc for CountingAllocator {
         pointer
     }
 
+    /// Delegates deallocation to `System` without changing measurement state.
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
         // SAFETY: the caller provides the `GlobalAlloc` contract for this pair.
         unsafe { System.dealloc(pointer, layout) };
     }
 
+    /// Delegates reallocation to `System` and records a successful replacement.
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // SAFETY: the caller provides the `GlobalAlloc` contract for this
         // pointer, layout, and replacement size.
@@ -88,6 +92,7 @@ impl MeasurementWindow {
 }
 
 impl Drop for MeasurementWindow {
+    /// Ensures counting is disabled if a measured callback unwinds.
     fn drop(&mut self) {
         COUNTING.store(false, Ordering::SeqCst);
     }
@@ -133,7 +138,7 @@ fn wire(unit: u32) -> InputRef {
     InputRef::Unit { unit, output: 0 }
 }
 
-/// Builds a warmed one-voice graph for one calc-rate Spec 100 unit.
+/// Builds a warmed one-voice graph for one SC3 calculation unit.
 fn calc_harness(name: &'static str, inputs: Vec<InputRef>, outputs: usize) -> RenderHarness {
     let mut units = vec![
         UnitSpec::new(
@@ -165,7 +170,7 @@ fn calc_harness(name: &'static str, inputs: Vec<InputRef>, outputs: usize) -> Re
     });
     controller
         .synth_new(&def_name, ROOT_GROUP_ID, AddAction::Tail)
-        .expect("Spec 100 calc graph compiles");
+        .expect("SC3 calculation graph compiles");
     RenderHarness::warm(world)
 }
 
@@ -276,11 +281,11 @@ fn pv_harness(name: &'static str) -> RenderHarness {
     });
     controller
         .synth_new(&def_name, ROOT_GROUP_ID, AddAction::Tail)
-        .expect("Spec 100 PV graph compiles");
+        .expect("SC3 PV graph compiles");
     RenderHarness::warm(world)
 }
 
-/// Returns warmed callbacks covering every Spec 100 unit family.
+/// Returns warmed callbacks covering every SC3 processing unit family.
 fn all_family_harnesses() -> Vec<(&'static str, RenderHarness)> {
     vec![
         (
@@ -397,7 +402,7 @@ fn counting_allocator_positive_control_observes_heap_allocation() {
     );
 }
 
-/// Proves every warmed Spec 100 family callback performs zero heap allocations.
+/// Proves every warmed SC3 processing callback performs zero heap allocations.
 #[test]
 fn sc3_processing_callbacks_are_allocation_free_after_warmup() {
     let _serial = MEASUREMENT_LOCK.lock().expect("measurement lock");

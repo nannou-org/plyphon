@@ -278,6 +278,7 @@ fn build_error(
     def.build(&ctx).err()
 }
 
+/// Rejects every invalid fixed-shape demand ABI while accepting all supported inlet rates.
 #[test]
 fn dnoise_ring_rejects_invalid_shapes_rates_and_special_index() {
     let five = [Rate::Scalar; 5];
@@ -315,6 +316,7 @@ fn dnoise_ring_rejects_invalid_shapes_rates_and_special_index() {
     );
 }
 
+/// Pins lazy initialization, truncation, masking, and signed rotation behavior.
 #[test]
 fn dnoise_ring_lazily_initializes_and_rotates_with_exact_integer_rules() {
     // change=0 still consumes one coin but never replaces bit zero. Reset 1 in four bits rotates:
@@ -531,6 +533,7 @@ fn ring_sequence_after_seed(seed: f32) -> Vec<f32> {
     sequence
 }
 
+/// Covers shared-RNG draw order, nested exhaustion, reset, and deterministic reseeding.
 #[test]
 fn dnoise_ring_pull_reset_reseed_exhaust_and_interleave() {
     let after_one_coin = calc_draw_after_ring(0.0);
@@ -1184,6 +1187,7 @@ fn dnoise_ring_numeric_conversion_matrix_is_exact_and_atomic() {
             next & mask(width)
         };
 
+    /// One finite conversion case and its expected exact output bits.
     struct IntegerCase {
         label: &'static str,
         value: f32,

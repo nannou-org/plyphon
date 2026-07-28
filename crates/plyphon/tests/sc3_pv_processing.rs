@@ -15,6 +15,7 @@ fn spectrum_buffer(data: Vec<f32>, coord: SpectrumCoord) -> Buffer {
     spectrum_buffer_size(data, coord, FFT_SIZE)
 }
 
+/// Builds a packed-spectrum buffer with an explicit logical FFT size.
 fn spectrum_buffer_size(mut data: Vec<f32>, coord: SpectrumCoord, fft_size: usize) -> Buffer {
     data.resize(fft_size, 0.0);
     let mut buffer = Buffer::from_interleaved(data, 1, SR);
@@ -78,6 +79,7 @@ fn pv_build_error(
     def.build(&ctx).err()
 }
 
+/// Rejects invalid PV shapes, rates, output counts, and specialization indices.
 #[test]
 fn sc3_pv_units_reject_invalid_shapes_rates_and_special_index() {
     for (name, inputs) in [("PV_Freeze", 2), ("PV_MagSmooth", 2), ("PV_Morph", 3)] {
@@ -222,6 +224,7 @@ fn sc3_pv_approximate_polar_conversion_matches_pinned_core_and_is_isolated() {
     );
 }
 
+/// Covers freeze warm-up stages, freeze toggles, and FFT-size reinitialization.
 #[test]
 fn pv_freeze_three_stage_warmup_freeze_unfreeze_and_size_reset() {
     let (mut controller, _nrt, mut world) = engine(Options {
@@ -395,6 +398,7 @@ fn pv_freeze_three_stage_warmup_freeze_unfreeze_and_size_reset() {
     );
 }
 
+/// Proves invalid tokens and malformed frames are atomic and followed by exact recovery.
 #[test]
 fn pv_invalid_tokens_and_frames_are_atomic_then_recover() {
     let (mut controller, _nrt, mut world) = engine(Options {
@@ -504,6 +508,7 @@ fn pv_invalid_tokens_and_frames_are_atomic_then_recover() {
     );
 }
 
+/// Verifies magnitude smoothing while preserving incoming decoded phases.
 #[test]
 fn pv_mag_smooth_retains_and_updates_decoded_components() {
     let (mut controller, _nrt, mut world) = engine(Options {
@@ -586,6 +591,7 @@ fn pv_mag_smooth_retains_and_updates_decoded_components() {
     assert_eq!(channel(&clamped, 3), 1.25, "phase is never smoothed");
 }
 
+/// Verifies that morphing reads the B spectrum without changing its bytes or coordinate tag.
 #[test]
 fn pv_morph_decodes_b_without_mutating_it() {
     let (mut controller, _nrt, mut world) = engine(Options {
@@ -665,6 +671,7 @@ fn pv_morph_decodes_b_without_mutating_it() {
     assert_eq!(channel(&output, 5), 4.0, "B imaginary component unchanged");
 }
 
+/// Rejects non-finite morph results atomically and recovers on the next valid frame.
 #[test]
 fn pv_morph_rejects_overflowing_complex_bins_then_recovers() {
     let (mut controller, _nrt, mut world) = engine(Options {
@@ -740,6 +747,7 @@ fn pv_morph_rejects_overflowing_complex_bins_then_recovers() {
     );
 }
 
+/// Builds a low-amplitude sine source suitable for FFT resynthesis checks.
 fn scaled_sine(frequency: f32) -> [UnitSpec; 2] {
     [
         UnitSpec::new(
@@ -761,6 +769,7 @@ fn scaled_sine(frequency: f32) -> [UnitSpec; 2] {
     ]
 }
 
+/// Builds one FFT unit for the selected buffer and source unit.
 fn fft(buffer: f32, source: u32) -> UnitSpec {
     UnitSpec::new(
         "FFT",
@@ -780,6 +789,7 @@ fn fft(buffer: f32, source: u32) -> UnitSpec {
     )
 }
 
+/// Builds one IFFT unit for the selected spectral chain.
 fn ifft(chain: u32) -> UnitSpec {
     UnitSpec::new(
         "IFFT",
@@ -796,6 +806,7 @@ fn ifft(chain: u32) -> UnitSpec {
     )
 }
 
+/// Renders one phase-vocoder operator inside a non-vacuous FFT/IFFT graph.
 fn pv_resynthesis(name: &str) -> Vec<f32> {
     const SIZE: usize = 1_024;
     let (mut controller, _nrt, mut world) = engine(Options {
@@ -900,6 +911,7 @@ fn pv_resynthesis(name: &str) -> Vec<f32> {
     output
 }
 
+/// Proves every phase-vocoder operator resynthesizes finite non-silent audio.
 #[test]
 fn pv_units_resynthesize_non_vacuous_fft_chains() {
     for name in ["PV_Freeze", "PV_MagSmooth", "PV_Morph"] {

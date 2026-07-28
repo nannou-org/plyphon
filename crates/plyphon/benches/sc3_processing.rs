@@ -1,4 +1,4 @@
-//! Process-only benchmarks for the Spec 100 processing and spectral unit families.
+//! Process-only benchmarks for the SC3 processing and spectral unit families.
 
 use std::hint::black_box;
 
@@ -8,13 +8,13 @@ use plyphon::{
 };
 use plyphon_dsp::buffer::SpectrumCoord;
 
-/// Sample rate fixed by the reviewed benchmark contract.
+/// Sample rate shared by every benchmark case.
 const SAMPLE_RATE: f64 = 48_000.0;
-/// Control block size fixed by the reviewed benchmark contract.
+/// Control block size shared by every benchmark case.
 const BLOCK_SIZE: usize = 64;
 /// FFT size used by all three spectral benchmark cases.
 const FFT_SIZE: usize = 1_024;
-/// Voice-count matrix required by the reviewed benchmark contract.
+/// Voice counts used to expose per-voice scaling.
 const VOICE_COUNTS: [usize; 3] = [1, 16, 64];
 
 /// One required process/pull benchmark case.

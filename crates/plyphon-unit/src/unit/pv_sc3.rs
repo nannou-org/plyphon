@@ -124,6 +124,7 @@ pub struct PvFreeze {
 }
 
 impl Unit for PvFreeze {
+    /// Updates one ready spectrum while retaining the staged freeze history.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let token = ctx.ins.control(0);
         let freeze_input = ctx.ins.control(1);
@@ -249,6 +250,7 @@ impl Unit for PvFreeze {
 pub struct PvFreezeCtor;
 
 impl UnitDef for PvFreezeCtor {
+    /// Validates the PV ABI and allocates fixed per-bin history.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         validate_pv_abi(ctx, 2)?;
         Ok(unit_spec_aux(
@@ -280,6 +282,7 @@ pub struct PvMagSmooth {
 }
 
 impl Unit for PvMagSmooth {
+    /// Smooths one ready spectrum against the retained magnitude history.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let token = ctx.ins.control(0);
         let factor_in = ctx.ins.control(1);
@@ -353,6 +356,7 @@ impl Unit for PvMagSmooth {
 pub struct PvMagSmoothCtor;
 
 impl UnitDef for PvMagSmoothCtor {
+    /// Validates the PV ABI and allocates fixed per-bin magnitude history.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         validate_pv_abi(ctx, 2)?;
         Ok(unit_spec_aux(
@@ -394,6 +398,7 @@ pub struct PvMorph {
 }
 
 impl Unit for PvMorph {
+    /// Morphs one ready A spectrum toward a read-only B spectrum.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let token_a = ctx.ins.control(0);
         let token_b = ctx.ins.control(1);
@@ -461,6 +466,7 @@ impl Unit for PvMorph {
 pub struct PvMorphCtor;
 
 impl UnitDef for PvMorphCtor {
+    /// Validates the two-buffer PV ABI and constructs a morph voice.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         validate_pv_abi(ctx, 3)?;
         Ok(unit_spec(PvMorph { last_morph: 0.0 }))

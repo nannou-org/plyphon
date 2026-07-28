@@ -414,6 +414,7 @@ fn perlin_gradient(hash: u8, x: f32, y: f32, z: f32) -> f32 {
 pub struct Perlin3;
 
 impl Unit for Perlin3 {
+    /// Evaluates gradient noise for every requested audio sample.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         for sample in 0..ctx.outs.audio(0).len() {
             let value = improved_perlin3(
@@ -431,6 +432,7 @@ impl Unit for Perlin3 {
 pub struct Perlin3Ctor;
 
 impl UnitDef for Perlin3Ctor {
+    /// Validates the fixed ABI and constructs the stateless noise unit.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         use plyphon_dsp::rate::Rate;
 
@@ -502,6 +504,7 @@ impl RosslerL {
 }
 
 impl Unit for RosslerL {
+    /// Initializes retained coordinates and integration cadence from scalar controls.
     fn init(&mut self, ctx: &InitCtx<'_>) {
         self.frequency = finite_or(ctx.ins.control(0), 22_050.0);
         self.a = finite_or(ctx.ins.control(1), 0.2);
@@ -523,6 +526,7 @@ impl Unit for RosslerL {
         self.frac = 1.0 / samples;
     }
 
+    /// Advances and interpolates the Rössler trajectory for one callback.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let frequency = Self::control(ctx.ins.control(0), &mut self.frequency);
         let a = Self::control(ctx.ins.control(1), &mut self.a) as f64;
@@ -621,6 +625,7 @@ fn finite_scaled(value: f64, scale: f64) -> f32 {
 pub struct RosslerLCtor;
 
 impl UnitDef for RosslerLCtor {
+    /// Validates the fixed ABI and constructs a retained Rössler state machine.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         use plyphon_dsp::rate::Rate;
 

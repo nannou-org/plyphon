@@ -92,6 +92,7 @@ DFM1_STABILITY_CAPTURES = [
 
 
 def sha256(path: pathlib.Path) -> str:
+    """Return the lowercase SHA-256 digest of one file."""
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
@@ -100,10 +101,12 @@ def sha256(path: pathlib.Path) -> str:
 
 
 def f32_bits(value: float) -> int:
+    """Return the IEEE-754 binary32 representation of one numeric value."""
     return struct.unpack("<I", struct.pack("<f", value))[0]
 
 
 def read_rows(path: pathlib.Path, frames: int, channels: int) -> list[tuple[float, ...]]:
+    """Decode an interleaved little-endian `f32` capture into frame rows."""
     values = [
         value[0] for value in struct.iter_unpack("<f", path.read_bytes())
     ]
@@ -114,11 +117,13 @@ def read_rows(path: pathlib.Path, frames: int, channels: int) -> list[tuple[floa
 
 
 def require(condition: bool, message: str, failures: list[str]) -> None:
+    """Append one failure message when its invariant is false."""
     if not condition:
         failures.append(message)
 
 
 def verify_dfm1(vector: dict[str, Any], failures: list[str]) -> None:
+    """Verify deterministic input, capture stability, and stochastic metadata for DFM1."""
     source_path = ROOT / "dfm1_source.f32"
     source_values = [
         value[0] for value in struct.iter_unpack("<f", source_path.read_bytes())
@@ -216,6 +221,7 @@ def verify_dfm1(vector: dict[str, Any], failures: list[str]) -> None:
 
 
 def verify_moog_ladder_kr(vector: dict[str, Any], failures: list[str]) -> None:
+    """Verify control-rate transport, event coverage, and decoded Moog ladder values."""
     comparison_samples = list(range(63, 576, 64))
     require(
         vector.get("comparison_samples") == comparison_samples,
@@ -280,6 +286,7 @@ def verify_moog_ladder_kr(vector: dict[str, Any], failures: list[str]) -> None:
 
 
 def verify_dnoise(vector: dict[str, Any], failures: list[str]) -> None:
+    """Verify demand-ring draw order, integer transitions, and non-vacuous state."""
     rows = read_rows(ROOT / vector["path"], vector["frames"], vector["channels"])
     pull_frames = vector["pull_frames"]
     pulls = [rows[frame] for frame in pull_frames]
@@ -305,6 +312,7 @@ def verify_dnoise(vector: dict[str, Any], failures: list[str]) -> None:
         )
 
     def rotate(state: int, shift: int, bits: int = 4) -> int:
+        """Rotate one masked ring state right within its selected width."""
         mask = (1 << bits) - 1
         shift %= bits
         if shift == 0:
@@ -368,6 +376,7 @@ def verify_pv(
     vector: dict[str, Any],
     failures: list[str],
 ) -> None:
+    """Verify one PV capture's cadence, controls, decoded bins, and resynthesis."""
     source_schedule = vector["control_event_schedule"]
     require(
         len(source_schedule) == 1
@@ -705,6 +714,7 @@ def verify_pv_morph_source_phases(
 
 
 def main() -> None:
+    """Verify the complete retained manifest and every oracle artifact."""
     manifest = json.loads((ROOT / "manifest.json").read_text())
     failures: list[str] = []
 

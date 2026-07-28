@@ -1,15 +1,18 @@
-//! Constructor-state and first-block smoke vectors for the translated spec-100 calc units.
+//! Constructor-state and first-block smoke vectors for the translated SC3 calculation units.
 
 use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine};
 
+/// Shorthand for a constant graph input.
 fn constant(value: f32) -> InputRef {
     InputRef::Constant(value)
 }
 
+/// Shorthand for output zero of an earlier unit.
 fn wire(unit: u32) -> InputRef {
     InputRef::Unit { unit, output: 0 }
 }
 
+/// Appends a mono output and renders the supplied graph for two blocks.
 fn render(mut units: Vec<UnitSpec>, source: u32) -> Vec<f32> {
     units.push(UnitSpec::new(
         "Out",
@@ -36,6 +39,7 @@ fn render(mut units: Vec<UnitSpec>, source: u32) -> Vec<f32> {
     output
 }
 
+/// Compares equal-length samples using a tight absolute tolerance.
 fn assert_close(actual: &[f32], expected: &[f32]) {
     for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
         assert!(
@@ -45,6 +49,7 @@ fn assert_close(actual: &[f32], expected: &[f32]) {
     }
 }
 
+/// Pins zero-attack envelope behavior at the first input sample.
 #[test]
 fn env_detect_zero_attack_tracks_the_first_audio_sample() {
     let output = render(
@@ -62,6 +67,7 @@ fn env_detect_zero_attack_tracks_the_first_audio_sample() {
     assert!(output.iter().all(|&sample| sample == 0.75));
 }
 
+/// Pins the translated constructor phase for every band-limited oscillator.
 #[test]
 fn blit_variants_preserve_translated_constructor_phase() {
     let impulse = render(
@@ -115,6 +121,7 @@ fn blit_variants_preserve_translated_constructor_phase() {
     );
 }
 
+/// Proves the translated filter families emit finite, non-silent audio.
 #[test]
 fn translated_filters_emit_finite_nonzero_audio() {
     for (name, controls) in [

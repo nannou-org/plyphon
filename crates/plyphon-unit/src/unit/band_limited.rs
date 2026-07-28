@@ -214,6 +214,7 @@ pub struct BlitB3 {
 }
 
 impl Unit for BlitB3 {
+    /// Renders one audio callback while preserving oscillator phase.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let nyquist = ctx.own.sample_rate as f32 * 0.5;
         let frequency = blit_control(ctx, 0, &mut self.frequency, 0.000001, nyquist);
@@ -259,6 +260,7 @@ fn blit_b3_pulse(time: f32) -> f32 {
 pub struct BlitB3Ctor;
 
 impl UnitDef for BlitB3Ctor {
+    /// Validates the fixed ABI and constructs a `BlitB3` voice.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         validate_blit(ctx, 1)?;
         // The source performs a hidden one-sample pre-calc, then restores phase to zero. The
@@ -282,6 +284,7 @@ pub struct BlitB3Saw {
 }
 
 impl Unit for BlitB3Saw {
+    /// Renders one audio callback while retaining the two integration states.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let nyquist = ctx.own.sample_rate as f32 * 0.5;
         let frequency = blit_control(ctx, 0, &mut self.frequency, 0.000001, nyquist);
@@ -330,6 +333,7 @@ impl Unit for BlitB3Saw {
 pub struct BlitB3SawCtor;
 
 impl UnitDef for BlitB3SawCtor {
+    /// Validates the fixed ABI and constructs a `BlitB3Saw` voice.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         validate_blit(ctx, 2)?;
         Ok(unit_spec(BlitB3Saw {
@@ -354,6 +358,7 @@ pub struct BlitB3Square {
 }
 
 impl Unit for BlitB3Square {
+    /// Renders one audio callback while retaining phase and polarity.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let nyquist = ctx.own.sample_rate as f32 * 0.5;
         let frequency = blit_control(ctx, 0, &mut self.frequency, 0.000001, nyquist);
@@ -409,6 +414,7 @@ fn blit_b3_bipolar_pulse(phase: f32, bipolar: f32) -> f32 {
 pub struct BlitB3SquareCtor;
 
 impl UnitDef for BlitB3SquareCtor {
+    /// Validates the fixed ABI and constructs a `BlitB3Square` voice.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         validate_blit(ctx, 2)?;
         Ok(unit_spec(BlitB3Square {
@@ -436,6 +442,7 @@ pub struct BlitB3Tri {
 }
 
 impl Unit for BlitB3Tri {
+    /// Renders one audio callback through both retained integration stages.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let nyquist = ctx.own.sample_rate as f32 * 0.5;
         let frequency = blit_control(ctx, 0, &mut self.frequency, 0.000001, nyquist);
@@ -480,6 +487,7 @@ impl Unit for BlitB3Tri {
 pub struct BlitB3TriCtor;
 
 impl UnitDef for BlitB3TriCtor {
+    /// Validates the fixed ABI and constructs a `BlitB3Tri` voice.
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         validate_blit(ctx, 3)?;
         Ok(unit_spec(BlitB3Tri {

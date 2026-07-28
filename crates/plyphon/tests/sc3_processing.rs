@@ -1,4 +1,4 @@
-//! Aggregate contract tests for the Spec 100 processing and spectral units.
+//! Aggregate contract tests for the SC3 processing and spectral units.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -15,20 +15,24 @@ fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sc3_processing")
 }
 
+/// Shorthand for a constant graph input.
 fn constant(value: f32) -> InputRef {
     InputRef::Constant(value)
 }
 
+/// References one output of an earlier graph unit.
 fn wire(unit: u32, output: u32) -> InputRef {
     InputRef::Unit { unit, output }
 }
 
+/// Renders one mono frame range from the hosted engine.
 fn render(world: &mut World, frames: usize) -> Vec<f32> {
     let mut output = vec![0.0; frames];
     world.fill(&mut output, 1);
     output
 }
 
+/// One parameter-driven processing-unit graph configuration.
 struct ProcessingCase {
     name: &'static str,
     node_rate: Rate,
@@ -44,6 +48,7 @@ fn processing_case(case: &ProcessingCase, block_size: usize) -> (plyphon::Contro
     processing_case_at(case, 48_000.0, block_size)
 }
 
+/// Builds a processing graph at an explicit sample rate and block size.
 fn processing_case_at(
     case: &ProcessingCase,
     sample_rate: f64,
@@ -118,7 +123,7 @@ fn processing_case_at(
     (controller, world, synth)
 }
 
-/// Proves every retained oracle input still matches the manifest used for implementation review.
+/// Proves every retained oracle input still matches its manifest hash.
 #[test]
 fn sc3_processing_manifest_hashes_verify() {
     let output = Command::new("python3")
@@ -223,8 +228,10 @@ fn demand_build_error(
     def.build(&ctx).err()
 }
 
+/// Rejects invalid shapes, rates, outputs, and specialization indices for every unit.
 #[test]
 fn sc3_processing_signatures_reject_invalid_shapes() {
+    /// Expected fixed ABI for one registered calculation unit.
     struct CalcAbi {
         name: &'static str,
         node_rate: Rate,
@@ -447,6 +454,7 @@ fn sc3_processing_signatures_reject_invalid_shapes() {
     );
 }
 
+/// Proves invalid runtime controls remain finite and recover on the next valid callback.
 #[test]
 fn sc3_processing_invalid_controls_are_finite_and_recover() {
     let cases = [
@@ -593,6 +601,7 @@ fn sc3_processing_invalid_controls_are_finite_and_recover() {
     }
 }
 
+/// Pins constructor state and the first rendered callbacks for every processing family.
 #[test]
 fn sc3_processing_constructor_and_first_blocks_match() {
     let cases = [
@@ -667,6 +676,7 @@ fn sc3_processing_constructor_and_first_blocks_match() {
     }
 }
 
+/// Proves filter controls and retained gain update only at their documented cadence.
 #[test]
 fn sc3_filter_controls_and_retained_gain_follow_callback_cadence() {
     let no_resonance = ProcessingCase {
@@ -731,6 +741,7 @@ fn sc3_filter_controls_and_retained_gain_follow_callback_cadence() {
     );
 }
 
+/// Renders one filter definition using a retained impulse or frequency-response probe.
 fn render_filter(
     name: &str,
     source: UnitSpec,
@@ -763,6 +774,7 @@ fn render_filter(
     render(&mut world, frames)
 }
 
+/// Checks deterministic impulse and frequency-response vectors for the three filter families.
 #[test]
 fn sc3_filter_impulse_and_frequency_response_vectors() {
     let cases = [
@@ -837,6 +849,7 @@ fn sc3_filter_impulse_and_frequency_response_vectors() {
     }
 }
 
+/// Verifies that attack and release coefficients follow rising and falling envelopes.
 #[test]
 fn sc3_env_detect_attack_and_release_follow_the_signal_direction() {
     let immediate = ProcessingCase {
@@ -884,6 +897,7 @@ fn sc3_env_detect_attack_and_release_follow_the_signal_direction() {
     );
 }
 
+/// Renders one band-limited oscillator with fixed controls.
 fn render_blit(name: &'static str, controls: &'static [f32]) -> Vec<f32> {
     let case = ProcessingCase {
         name,
@@ -897,6 +911,7 @@ fn render_blit(name: &'static str, controls: &'static [f32]) -> Vec<f32> {
     render(&mut world, 128)
 }
 
+/// Pins oscillator constructor phase and finite behavior at frequency boundaries.
 #[test]
 fn sc3_blit_phase_recreation_and_frequency_boundaries() {
     for (name, below, minimum, above, nyquist) in [

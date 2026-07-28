@@ -1,10 +1,11 @@
-//! Exact build-time ABI coverage for the translated spec-100 calc units.
+//! Exact build-time ABI coverage for the translated SC3 calculation units.
 
 use plyphon::{BuildError, GraphDef, InputRef, Rate, RateInfo, SynthDef, UnitRegistry, UnitSpec};
 
 const SR: f64 = 48_000.0;
 const BLOCK: usize = 64;
 
+/// Compiles a unit list through the ordinary graph builder.
 fn compile(units: Vec<UnitSpec>) -> Result<GraphDef, BuildError> {
     let rate = RateInfo::new(SR, BLOCK);
     SynthDef {
@@ -23,14 +24,17 @@ fn compile(units: Vec<UnitSpec>) -> Result<GraphDef, BuildError> {
     )
 }
 
+/// Returns `count` zero-valued constant inputs.
 fn constants(count: usize) -> Vec<InputRef> {
     vec![InputRef::Constant(0.0); count]
 }
 
+/// Builds one fixed-shape unit candidate for ABI validation.
 fn unit(name: &str, rate: Rate, inputs: usize, outputs: usize) -> UnitSpec {
     UnitSpec::new(name, rate, constants(inputs), outputs)
 }
 
+/// Accepts every supported exact shape and calculation-rate specialization.
 #[test]
 fn translated_units_accept_exact_shapes_and_rates() {
     for (name, inputs) in [
@@ -64,6 +68,7 @@ fn translated_units_accept_exact_shapes_and_rates() {
     .expect("EnvDetect exact ABI");
 }
 
+/// Rejects invalid input counts, output counts, rates, and specialization indices.
 #[test]
 fn translated_units_reject_wrong_input_output_special_and_rate() {
     assert_eq!(

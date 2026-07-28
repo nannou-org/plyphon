@@ -27,6 +27,7 @@ test "$(git -C "$sc_source" rev-parse HEAD)" = "$expected_sc"
 build_dir=$(mktemp -d "${TMPDIR:-/tmp}/spec100-sc3-build.XXXXXX")
 core_build_dir=$(mktemp -d "${TMPDIR:-/tmp}/spec100-sc-build.XXXXXX")
 runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/spec100-sc3-runtime.XXXXXX")
+# Remove only the three temporary build and runtime directories created above.
 cleanup() {
     rm -rf "$build_dir" "$core_build_dir" "$runtime_dir"
 }
@@ -153,6 +154,7 @@ do
     cp "$build_dir/source/$plugin.scx" "$runtime_dir/plugins/"
 done
 
+# Invoke sclang with the pinned runtime class library.
 run_sclang() {
     "$sclang" -a --include-path "$runtime_dir/classes" "$@"
 }

@@ -1,4 +1,4 @@
-//! Differential SC 3.14.1 coverage for the compatible-source Spec 100 units.
+//! Differential SC 3.14.1 coverage for the compatible-source processing units.
 
 use plyphon::{
     AddAction, Buffer, InputRef, Options, Param, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
@@ -10,22 +10,27 @@ const BLOCK: usize = 64;
 const DSP_FRAMES: usize = 640;
 const APX_PHASE_ABS_FLOOR: f32 = 0.0016;
 
+/// Shorthand for a constant graph input.
 fn c(value: f32) -> InputRef {
     InputRef::Constant(value)
 }
 
+/// Shorthand for one SynthDef parameter input.
 fn p(index: u32) -> InputRef {
     InputRef::Param(index)
 }
 
+/// Shorthand for output zero of an earlier unit.
 fn u(unit: u32) -> InputRef {
     InputRef::Unit { unit, output: 0 }
 }
 
+/// References one selected output of an earlier unit.
 fn uo(unit: u32, output: u32) -> InputRef {
     InputRef::Unit { unit, output }
 }
 
+/// Decodes a little-endian `f32` fixture.
 fn fixture(bytes: &[u8]) -> Vec<f32> {
     assert_eq!(bytes.len() % 4, 0, "fixture contains whole f32 values");
     bytes
@@ -34,14 +39,17 @@ fn fixture(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+/// Builds a `MulAdd` graph unit around one source.
 fn mul_add(rate: Rate, source: u32, mul: f32, add: f32) -> UnitSpec {
     UnitSpec::new("MulAdd", rate, vec![u(source), c(mul), c(add)], 1)
 }
 
+/// Builds a three-input sum graph unit.
 fn sum3(rate: Rate, a: u32, b: u32, c_unit: u32) -> UnitSpec {
     UnitSpec::new("Sum3", rate, vec![u(a), u(b), u(c_unit)], 1)
 }
 
+/// Builds an addition unit from two prior unit outputs.
 fn add(rate: Rate, left: u32, right: u32) -> UnitSpec {
     UnitSpec {
         name: "BinaryOpUGen".to_string(),
@@ -52,6 +60,7 @@ fn add(rate: Rate, left: u32, right: u32) -> UnitSpec {
     }
 }
 
+/// Builds a binary-operator unit with an explicit specialization index.
 fn binary(rate: Rate, left: InputRef, right: InputRef, special_index: i16) -> UnitSpec {
     UnitSpec {
         name: "BinaryOpUGen".to_string(),
@@ -73,12 +82,14 @@ fn sc_started_phasor(step: f32, start: f32, end: f32) -> UnitSpec {
     )
 }
 
+/// Appends one hardware-output unit for the selected unit outputs.
 fn append_output(units: &mut Vec<UnitSpec>, channels: &[(u32, u32)]) {
     let mut inputs = vec![c(0.0)];
     inputs.extend(channels.iter().map(|&(unit, output)| uo(unit, output)));
     units.push(UnitSpec::new("Out", Rate::Audio, inputs, 0));
 }
 
+/// Renders one interleaved engine segment.
 fn render_segment(world: &mut World, frames: usize, channels: usize) -> Vec<f32> {
     let mut output = vec![0.0; frames * channels];
     world.fill(&mut output, channels);
@@ -98,6 +109,7 @@ fn render_scheduled(
     render_scheduled_with_buffers(def, channels, frames, &[], events)
 }
 
+/// Renders a scheduled graph after installing explicit global buffers.
 fn render_scheduled_with_buffers(
     def: SynthDef,
     channels: usize,
@@ -145,6 +157,7 @@ fn render_scheduled_with_buffers(
     output
 }
 
+/// Compares a finite, non-vacuous render with a retained DSP oracle.
 fn assert_dsp_oracle(label: &str, actual: &[f32], expected: &[f32]) {
     assert_eq!(
         actual.len(),
@@ -169,6 +182,7 @@ fn assert_dsp_oracle(label: &str, actual: &[f32], expected: &[f32]) {
     );
 }
 
+/// Compares decoded control values after reproducing the retained `K2A` interpolation.
 fn assert_k2a_decoded_block_oracle(
     label: &str,
     actual: &[f32],
@@ -190,6 +204,7 @@ fn assert_k2a_decoded_block_oracle(
     assert_dsp_oracle(label, &actual_controls, &expected_controls);
 }
 
+/// Matches the retained envelope-follower capture.
 #[test]
 fn env_detect_matches_sc314_compatible_source_vector() {
     let mut units = vec![
@@ -227,6 +242,7 @@ fn env_detect_matches_sc314_compatible_source_vector() {
     );
 }
 
+/// Matches the retained nonlinear-filter capture, including deterministic noise.
 #[test]
 fn dfm1_outputs_match_sc314_compatible_source_vector() {
     let mut units = vec![
@@ -281,6 +297,7 @@ fn dfm1_outputs_match_sc314_compatible_source_vector() {
     );
 }
 
+/// Returns the shared callback-boundary control schedule for Moog filter captures.
 fn moog_events() -> [(usize, &'static [(usize, f32)]); 4] {
     [
         (64, &[(0, 1_600.0), (1, 0.55)]),
@@ -290,6 +307,7 @@ fn moog_events() -> [(usize, &'static [(usize, f32)]); 4] {
     ]
 }
 
+/// Matches the audio-rate Moog ladder capture.
 #[test]
 fn moog_ladder_ar_matches_sc314_compatible_source_vector() {
     let mut units = vec![
@@ -323,6 +341,7 @@ fn moog_ladder_ar_matches_sc314_compatible_source_vector() {
     );
 }
 
+/// Matches the control-rate Moog ladder capture.
 #[test]
 fn moog_ladder_kr_matches_sc314_compatible_source_vector() {
     let mut units = vec![
@@ -404,6 +423,7 @@ fn moog_ladder_kr_matches_sc314_compatible_source_vector() {
     );
 }
 
+/// Matches every retained MoogVCF input-rate specialization.
 #[test]
 fn moog_vcf_all_input_rate_specializations_match_sc314() {
     let mut units = vec![
@@ -444,6 +464,7 @@ fn moog_vcf_all_input_rate_specializations_match_sc314() {
     );
 }
 
+/// Matches all band-limited oscillator captures across frequency boundaries.
 #[test]
 fn all_blit_b3_outputs_match_sc314_across_boundaries() {
     let mut units = vec![
@@ -479,12 +500,14 @@ fn all_blit_b3_outputs_match_sc314_across_boundaries() {
     );
 }
 
+/// Builds a one-repeat demand sequence from constant values.
 fn dseq(values: &[f32]) -> UnitSpec {
     let mut inputs = vec![c(f32::INFINITY)];
     inputs.extend(values.iter().copied().map(c));
     UnitSpec::new("Dseq", Rate::Demand, inputs, 1)
 }
 
+/// Matches deterministic demand-ring lanes and shared random draw order exactly.
 #[test]
 fn dnoise_ring_deterministic_lanes_match_sc314_exactly() {
     let mut units = vec![
@@ -549,6 +572,7 @@ fn dnoise_ring_deterministic_lanes_match_sc314_exactly() {
     }
 }
 
+/// Builds a no-interpolation reader for one packed-spectrum slot.
 fn spectrum_reader(buffer_unit: u32, slot: usize) -> UnitSpec {
     UnitSpec::new(
         "BufRd",
@@ -581,6 +605,7 @@ fn decoded_spectrum_value(
     u(ramped)
 }
 
+/// Appends decoded packed-spectrum channels to one graph.
 fn append_decoded_spectrum(
     units: &mut Vec<UnitSpec>,
     buffer_unit: u32,
@@ -598,6 +623,7 @@ fn append_decoded_spectrum(
     decoded
 }
 
+/// Renders a phase-vocoder graph across an explicit callback control schedule.
 fn render_pv_oracle(
     name: &str,
     units: Vec<UnitSpec>,
@@ -644,6 +670,7 @@ fn render_pv_oracle(
     output
 }
 
+/// Expresses an actual phase on the branch nearest the expected phase.
 fn nearest_phase(actual: f32, expected: f32) -> f32 {
     let difference = actual - expected;
     let difference = if difference > core::f32::consts::PI {
@@ -656,6 +683,7 @@ fn nearest_phase(actual: f32, expected: f32) -> f32 {
     expected + difference
 }
 
+/// Compares resynthesis, tokens, controls, and decoded bins with a retained PV oracle.
 fn assert_pv_oracle(label: &str, actual: &[f32], expected: &[f32]) {
     const CHANNELS: usize = 135;
     const READY_EVENTS: [usize; 11] = [65, 193, 321, 449, 577, 705, 833, 961, 1_089, 1_217, 1_345];
@@ -713,6 +741,7 @@ fn assert_pv_oracle(label: &str, actual: &[f32], expected: &[f32]) {
     assert_dsp_oracle(label, &comparable_actual, &comparable_expected);
 }
 
+/// Builds the deterministic magnitude-smoothing oracle graph.
 fn pv_mag_smooth_graph() -> Vec<UnitSpec> {
     const FRAMES: usize = 1_536;
     const FFT_SIZE: usize = 128;
@@ -763,6 +792,7 @@ fn pv_mag_smooth_graph() -> Vec<UnitSpec> {
     units
 }
 
+/// Matches decoded spectra and resynthesis for magnitude smoothing.
 #[test]
 fn pv_mag_smooth_matches_sc314_decoded_spectrum_and_resynthesis() {
     let actual = render_pv_oracle(
@@ -781,6 +811,7 @@ fn pv_mag_smooth_matches_sc314_decoded_spectrum_and_resynthesis() {
     );
 }
 
+/// Builds the deterministic two-source spectral-morph oracle graph.
 fn pv_morph_graph() -> Vec<UnitSpec> {
     const FRAMES: usize = 1_536;
     const FFT_SIZE: usize = 128;
@@ -844,6 +875,7 @@ fn pv_morph_graph() -> Vec<UnitSpec> {
     units
 }
 
+/// Matches decoded spectra and resynthesis for spectral morphing.
 #[test]
 fn pv_morph_matches_sc314_decoded_spectrum_and_resynthesis() {
     let actual = render_pv_oracle(

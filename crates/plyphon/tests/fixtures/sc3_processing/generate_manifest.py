@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate hashes and capture provenance for the Spec 100 oracle pack."""
+"""Generate hashes and capture provenance for the SC3 processing and spectral oracle pack."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 
 
 def sha256(path: pathlib.Path) -> str:
+    """Return the lowercase SHA-256 digest of one file."""
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
@@ -25,10 +26,12 @@ def sha256(path: pathlib.Path) -> str:
 
 
 def command_output(*args: str) -> str:
+    """Run a command and return its stripped standard output."""
     return subprocess.check_output(args, text=True).strip()
 
 
 def asset(path: str) -> dict[str, object]:
+    """Describe one retained asset by relative path, byte size, and digest."""
     full_path = ROOT / path
     return {
         "path": path,
@@ -46,6 +49,7 @@ def command(
     vector: str,
     script_args: list[str] | None = None,
 ) -> str:
+    """Build the reproducible command recorded for one oracle capture."""
     middle = "".join(f" {argument}" for argument in (script_args or []))
     return (
         f"{sclang} -a --include-path {runtime_dir / 'classes'} "
@@ -62,6 +66,7 @@ def vector(
     control_event_schedule: list[dict[str, Any]],
     **extra: Any,
 ) -> dict[str, Any]:
+    """Build the common manifest fields for one retained vector."""
     return {
         "script": script,
         "path": path,
@@ -131,6 +136,7 @@ def pv_capture_samples(
     channels: int,
     block_frames: int,
 ) -> tuple[list[int], list[int], list[int]]:
+    """Classify PV edge pulses, negative callbacks, and ready callbacks."""
     values = [
         value[0] for value in struct.iter_unpack("<f", (ROOT / path).read_bytes())
     ]
@@ -170,6 +176,7 @@ def pv_vector(
     source_schedule: list[dict[str, Any]],
     **extra: Any,
 ) -> dict[str, Any]:
+    """Build a PV manifest entry with exhaustive callback and decode metadata."""
     frames = 1536
     channels = 135
     block_frames = 64
@@ -248,6 +255,7 @@ def pv_vector(
 
 
 def main() -> None:
+    """Validate capture inputs and write the complete oracle manifest."""
     if len(sys.argv) != 9:
         raise SystemExit(
             "usage: generate_manifest.py PLUGINS SC3_BUILD CORE_BUILD RUNTIME "

@@ -47,6 +47,7 @@ SOURCE_B_OFFSETS = [57, 70, 56, 71, 55, 72, 54, 73, 53, 74, 52, 75]
 
 
 def source_a(index: int) -> float:
+    """Return source A's moving impulse sample at one frame."""
     window = index // FFT_SIZE
     if index % FFT_SIZE != SOURCE_A_OFFSETS[window]:
         return 0.0
@@ -54,6 +55,7 @@ def source_a(index: int) -> float:
 
 
 def source_b(index: int) -> float:
+    """Return source B's distinct moving impulse sample at one frame."""
     window = index // FFT_SIZE
     if index % FFT_SIZE != SOURCE_B_OFFSETS[window]:
         return 0.0
@@ -61,10 +63,12 @@ def source_b(index: int) -> float:
 
 
 def write(path: pathlib.Path, values: list[float]) -> None:
+    """Write a sequence as little-endian `f32` samples."""
     path.write_bytes(b"".join(struct.pack("<f", value) for value in values))
 
 
 def main() -> None:
+    """Regenerate both deterministic PV source buffers."""
     write(ROOT / "pv_source_a.f32", [source_a(index) for index in range(FRAMES)])
     write(ROOT / "pv_source_b.f32", [source_b(index) for index in range(FRAMES)])
 
