@@ -66,7 +66,7 @@ description of those prohibited implementations as a substitute.
 
 - Implementer: clean-room implementation contributor
 - Date: 2026-07-28
-- Plyphon revision: `53885e4ccb18ed0c5bec215c0ae751e72a835293` plus the uncommitted Spec 100 integration
+- Plyphon revision: `86b5d040592ace4dfbb6a4b3c2b2cd05a629b669`
 - Families implemented: `Decimator`, `BMoog`, `Perlin3`, `RosslerL`, `PV_Freeze`
 - Permitted inputs used: the reviewed Spec 100 contract; pinned class/help interfaces; this
   verified black-box conformance pack; the public BMoog functional table named above; Ken
@@ -75,3 +75,19 @@ description of those prohibited implementations as a substitute.
   phase-vocoder primitives
 - I attest that I did not inspect, transcribe, summarize, or receive details from the prohibited
   server files listed above.
+
+## Independent reviewer attestation — 2026-07-28
+
+- Reviewer: independent clean-room reviewer
+- Date: 2026-07-28
+- Reviewed Plyphon revision: `86b5d040592ace4dfbb6a4b3c2b2cd05a629b669`
+- Families reviewed: `Decimator`, `BMoog`, `Perlin3`, `RosslerL`, `PV_Freeze`
+- Permitted inputs used: the reviewed Spec 100 contract; the verified black-box conformance pack
+  and its manifest, capture scripts, verifier, and retained vectors; the public BMoog functional
+  table retained in the pack; Ken Perlin's published permutation and improved-noise equations as
+  represented by the permitted contract; standard Rössler equations, fourth-order Runge–Kutta,
+  and linear interpolation; existing Plyphon unit, buffer, and phase-vocoder primitives
+- I compared the implementation and tests only against the permitted materials and this
+  conformance pack.
+- I found no evidence that prohibited server implementation material entered the clean-room
+  implementation.
