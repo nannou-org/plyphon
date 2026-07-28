@@ -51,12 +51,6 @@ pub fn init_only_inputs(unit_name: &str) -> &'static [usize] {
     }
 }
 
-/// Bound-check the total element count an allocation site is about to allocate.
-///
-/// `elements` must be accumulated with saturating arithmetic (saturating float→int casts and
-/// saturating add/multiply) *before* any narrowing cast, so an out-of-range size arrives here as
-/// a large value rather than a truncated or wrapped small one. A count strictly greater than
-/// [`MAX_AUX_ELEMS`] fails.
 /// Bound-check a length still in `f64`, before any integer conversion. A NaN or negative
 /// length maps to `u64::MAX` and therefore fails the bound — the conservative policy for a
 /// value that is about to become an allocation size (the integer-path sites instead saturate a
@@ -74,6 +68,12 @@ pub fn checked_aux_elems_f64(
     checked_aux_elems(unit, input, elements)
 }
 
+/// Bound-check the total element count an allocation site is about to allocate.
+///
+/// `elements` must be accumulated with saturating arithmetic (saturating float→int casts and
+/// saturating add/multiply) *before* any narrowing cast, so an out-of-range size arrives here as
+/// a large value rather than a truncated or wrapped small one. A count strictly greater than
+/// [`MAX_AUX_ELEMS`] fails.
 pub fn checked_aux_elems(
     unit: &'static str,
     input: usize,

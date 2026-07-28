@@ -279,7 +279,7 @@ impl SynthDef {
         // behavior for a mismatched or orphaned `LocalOut` — while the rest of the def still
         // compiles and renders.
         let mut local_in_channels: Option<usize> = None;
-        let mut local_out_channels: Option<usize> = None;
+        let mut local_out_seen = false;
         for spec in &self.units {
             match spec.name.as_str() {
                 "LocalIn" => {
@@ -289,10 +289,10 @@ impl SynthDef {
                     local_in_channels = Some(spec.num_outputs);
                 }
                 "LocalOut" => {
-                    if local_out_channels.is_some() {
+                    if local_out_seen {
                         return Err(BuildError::MultipleLocalBuses);
                     }
-                    local_out_channels = Some(spec.inputs.len());
+                    local_out_seen = true;
                 }
                 _ => {}
             }
