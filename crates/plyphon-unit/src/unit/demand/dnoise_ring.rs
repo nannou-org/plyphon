@@ -9,6 +9,8 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::demand::{BuiltDemandUnit, DemandCtx, DemandUnit, demand_unit_spec};
 use crate::unit::registry::{BuildContext, DemandUnitDef};
+#[cfg(not(feature = "std"))]
+use plyphon_dsp::math::Real;
 use plyphon_dsp::rate::Rate;
 
 /// The default value remembered for each runtime control before its first finite pull.
