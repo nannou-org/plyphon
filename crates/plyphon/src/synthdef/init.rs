@@ -1,22 +1,24 @@
 //! Initialization specialization: proving allocation-only unit inputs to constants.
 //!
-//! Imported SynthDefs frequently compute allocation-sizing inputs — a delay's `maxdelaytime`, a
-//! `LocalBuf`'s frames, `PitchShift`'s window — from sample-rate info, parameter values, and
+//! Imported SynthDefs frequently compute allocation-sizing inputs - a delay's `maxdelaytime`, a
+//! `LocalBuf`'s frames, `PitchShift`'s window - from sample-rate info, parameter values, and
 //! scalar math rather than baking literals. scsynth accepts these because a ctor reads each input
-//! chain's *first computed sample* at instantiation; plyphon's [`BuildContext::const_input`]
+//! chain's *first computed sample* at instantiation; plyphon's
+//! [`BuildContext::const_input`](plyphon_unit::unit::registry::BuildContext::const_input)
 //! accepts only syntactic constants, so such defs fail with
 //! [`BuildError::AuxRequiresConstant`].
 //!
 //! [`SynthDef::specialize_init`] closes that gap off the audio thread: it lazily evaluates each
-//! *declared* init-only input (the table in [`init_only`]) under scsynth's constructor-time
+//! *declared* init-only input (the table in
+//! [`init_only`](plyphon_unit::unit::init_only)) under scsynth's constructor-time
 //! first-sample semantics and rewrites proven expressions to [`InputRef::Constant`], leaving
 //! every other use of the same parameters and units untouched. The host records which parameters
 //! each proof traversed ([`InitDependencies`]) and which inputs were rewritten
 //! ([`SpecializedSynthDef::rewritten`]), so specialized definitions get distinct identities and
 //! re-specialize when a dependency changes.
 //!
-//! Everything the evaluator computes goes through the *shipped* scalar kernels — the
-//! unary/binary operator tables, the `Select` index conversion, `Clip`/`LinExp`/`Sanitize` — and
+//! Everything the evaluator computes goes through the *shipped* scalar kernels - the
+//! unary/binary operator tables, the `Select` index conversion, `Clip`/`LinExp`/`Sanitize` - and
 //! every rate/info read narrows to `f32` at the leaf exactly as the runtime units do, so the
 //! evaluator can never land on the other side of a rounding boundary from an equivalent runtime
 //! chain. Evaluation is deterministic: the same definition and environment always produce the
@@ -39,14 +41,14 @@ use super::{InputRef, SynthDef};
 /// The immutable inputs one initialization specialization evaluates against.
 #[derive(Clone, Debug)]
 pub struct InitEnvironment {
-    /// The graph audio rate the definition will compile with — derive it with
+    /// The graph audio rate the definition will compile with - derive it with
     /// [`graph_rates`](super::graph_rates) from the same host rate and reblock/resample the
     /// compile call will use, so the evaluator and the compiled units can never disagree.
     /// `SampleRate`/`SampleDur`/`RadiansPerSample` read its rate fields; `ControlRate`/
     /// `ControlDur` read its `buf_rate`/`buf_dur`, mirroring the shipped info units.
     pub audio: RateInfo,
     /// One authored base value per authored param index; `-0.0` normalized to `0.0` by the
-    /// caller. Entries may be non-finite — only a non-finite *proven result* at a declared
+    /// caller. Entries may be non-finite - only a non-finite *proven result* at a declared
     /// allocation site is an error, so a bad value on a non-dependency param cannot fail a
     /// definition that never reads it. Array-span lanes carry their authored defaults.
     pub params: Vec<f32>,
@@ -55,7 +57,7 @@ pub struct InitEnvironment {
 /// The parameters a specialization's proofs traversed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InitDependencies {
-    /// Sorted authored param indices traversed by any proof, including `Select` selectors —
+    /// Sorted authored param indices traversed by any proof, including `Select` selectors -
     /// every param whose value influenced a proven result, not only the leaf that supplied the
     /// number. A change to any of these (and only these) can change the specialization.
     pub params: Vec<usize>,
@@ -77,7 +79,7 @@ pub struct InitError {
 pub struct SpecializedSynthDef {
     /// The input definition with every proven init-only input rewritten to a constant;
     /// structurally identical to the input when `rewritten` is empty (`SynthDef` has no byte
-    /// encoding — equality is structural).
+    /// encoding - equality is structural).
     pub def: SynthDef,
     /// The parameters the proofs traversed.
     pub dependencies: InitDependencies,
@@ -117,6 +119,8 @@ fn is_buffer_info_unit(name: &str) -> bool {
 /// bound and classifies `Unsupported` instead of overflowing the stack.
 const MAX_EVAL_DEPTH: usize = 256;
 
+/// One specialization's evaluation state: walks expressions over the definition and environment,
+/// accumulating traversed parameters and memoized unit outcomes as it goes.
 struct Evaluator<'a> {
     def: &'a SynthDef,
     env: &'a InitEnvironment,
@@ -133,12 +137,15 @@ struct Evaluator<'a> {
 }
 
 impl Evaluator<'_> {
+    /// Note that `param` influenced the evaluation (kept unique, insertion-ordered).
     fn record_dep(&mut self, param: usize) {
         if !self.deps.contains(&param) {
             self.deps.push(param);
         }
     }
 
+    /// Evaluate one input reference: constants prove to themselves, parameters to their
+    /// environment base (recorded as a dependency), unit outputs by recursion.
     fn eval_input(&mut self, input: &InputRef) -> InitValue {
         match *input {
             InputRef::Constant(v) => InitValue::Proven(v),
@@ -159,6 +166,8 @@ impl Evaluator<'_> {
         }
     }
 
+    /// Evaluate one unit output through the depth guard and the memo; the expression semantics
+    /// live in [`Self::eval_unit_inner`].
     fn eval_unit(&mut self, unit: usize, output: usize) -> InitValue {
         if self.depth >= MAX_EVAL_DEPTH {
             return InitValue::Dynamic(AuxDynamicCause::Unsupported);
@@ -180,6 +189,9 @@ impl Evaluator<'_> {
         value
     }
 
+    /// The evaluable-expression set itself: one arm per provable unit (compile-context
+    /// invariants, the shipped operator tables, lazy `Select`), with every unproven output
+    /// classified by its [`AuxDynamicCause`].
     fn eval_unit_inner(&mut self, unit: usize, output: usize) -> InitValue {
         let Some(spec) = self.def.units.get(unit) else {
             return InitValue::Dynamic(AuxDynamicCause::Unsupported);
@@ -307,12 +319,13 @@ impl Evaluator<'_> {
                 }
                 InitValue::Dynamic(AuxDynamicCause::BufferMetadataUnavailable)
             }
-            // Everything else — bus reads, triggers, demand units, replies, ordinary signal
-            // units — is a live signal.
+            // Everything else - bus reads, triggers, demand units, replies, ordinary signal
+            // units - is a live signal.
             _ => InitValue::Dynamic(AuxDynamicCause::Signal),
         }
     }
 
+    /// Apply a unary operator to a proven operand, or pass the dynamic outcome through.
     fn map1(&mut self, a: &InputRef, op: fn(f32) -> f32) -> InitValue {
         match self.eval_input(a) {
             InitValue::Proven(a) => InitValue::Proven(op(a)),
@@ -320,6 +333,8 @@ impl Evaluator<'_> {
         }
     }
 
+    /// Apply a binary operator to two proven operands; both are evaluated eagerly so every
+    /// traversed parameter is recorded, with the first dynamic outcome (in input order) winning.
     fn map2(&mut self, a: &InputRef, b: &InputRef, op: fn(f32, f32) -> f32) -> InitValue {
         match (self.eval_input(a), self.eval_input(b)) {
             (InitValue::Proven(a), InitValue::Proven(b)) => InitValue::Proven(op(a, b)),
@@ -327,6 +342,8 @@ impl Evaluator<'_> {
         }
     }
 
+    /// `Sum3`/`Sum4`: add exactly `arity` operands, stopping at the first dynamic one (its
+    /// cause is the whole sum's classification, so later operands stay untraversed).
     fn sum(&mut self, ins: &[InputRef], arity: usize) -> InitValue {
         if ins.len() != arity {
             return InitValue::Dynamic(AuxDynamicCause::Unsupported);
@@ -342,7 +359,7 @@ impl Evaluator<'_> {
     }
 }
 
-/// The first `Dynamic` outcome in declared-input order — the deterministic cause when several
+/// The first `Dynamic` outcome in declared-input order - the deterministic cause when several
 /// leaves are dynamic.
 fn first_dynamic<const N: usize>(values: [InitValue; N]) -> InitValue {
     for value in values {
@@ -422,6 +439,7 @@ impl SynthDef {
     }
 }
 
+/// Normalize the traversal-ordered dependency record into its published sorted, deduplicated form.
 fn finish_deps(mut deps: Vec<usize>) -> InitDependencies {
     deps.sort_unstable();
     deps.dedup();

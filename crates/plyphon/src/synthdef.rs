@@ -179,14 +179,16 @@ pub struct SynthDef {
     pub units: Vec<UnitSpec>,
 }
 
-/// The graph's own rate pair for a def compiled with `reblock`/`resample` overrides — the exact
+/// The graph's own rate pair for a def compiled with `reblock`/`resample` overrides - the exact
 /// derivation [`SynthDef::compile`] bakes into the units, factored out so hosts (and the
 /// initialization evaluator's environment construction) can never disagree with it.
 ///
 /// The graph's control block is the World block, or a smaller power-of-two reblock (scsynth's
 /// `Reblock(n)`) that divides it; the oversample factor (scsynth's `Resample(n)`) must be a
-/// power of two. An ordinary def (World block, no oversampling) reuses the World's rates
-/// verbatim; a reblocked/resampled def derives a smaller-block / higher-rate pair.
+/// power of two. An ordinary def (World block, no oversampling) reuses the World audio rate
+/// verbatim; a reblocked/resampled def derives a smaller-block / higher-rate pair. In both
+/// cases the graph's control rate is derived here, one control sample per graph block, never
+/// taken from a separately supplied control `RateInfo`.
 pub fn graph_rates(
     audio: &RateInfo,
     reblock: Option<usize>,
@@ -274,8 +276,8 @@ impl SynthDef {
 
         // Pre-scan the feedback bus (`LocalIn`/`LocalOut`): at most one of each in v1. The bus width
         // is the `LocalIn`'s output count (0 with none); the width is handed to unit construction so
-        // a `LocalOut` whose input count differs builds as a complete no-op — measured scsynth
-        // behavior for a mismatched or orphaned `LocalOut` — while the rest of the def still
+        // a `LocalOut` whose input count differs builds as a complete no-op - measured scsynth
+        // behavior for a mismatched or orphaned `LocalOut` - while the rest of the def still
         // compiles and renders.
         let mut local_in_channels: Option<usize> = None;
         let mut local_out_seen = false;

@@ -69,8 +69,8 @@ impl Unit for LocalOut {
 
 /// Constructor for [`LocalOut`]. Its inputs are the signals to write, one per local channel.
 ///
-/// A `LocalOut` whose input count differs from the def's resolved local-bus width — including a
-/// `LocalOut` with no `LocalIn` at all (width 0) — builds with zero channels and writes nothing.
+/// A `LocalOut` whose input count differs from the def's resolved local-bus width - including a
+/// `LocalOut` with no `LocalIn` at all (width 0) - builds with zero channels and writes nothing.
 /// This matches measured scsynth behavior: a mismatched `LocalOut` is a complete no-op (no
 /// channel is partially written, wrapped, or truncated) while the rest of the definition still
 /// compiles and renders, its `LocalIn` reading silence.

@@ -108,7 +108,9 @@ pub enum BuildError {
     /// An allocation site's total element count exceeds [`MAX_AUX_ELEMS`](crate::unit::init_only::MAX_AUX_ELEMS).
     /// The count is accumulated with saturating arithmetic before any narrowing cast, so an
     /// out-of-range size fails here deterministically instead of truncating or wrapping into an
-    /// undersized allocation that the audio thread would then index.
+    /// undersized allocation that the audio thread would then index. For an input that only feeds
+    /// sizing arithmetic without itself naming an element count (`GVerb`'s `spread`), the payload
+    /// is the bounded magnitude of that arithmetic instead.
     #[error("unit {unit} input {input} sizes {elements} aux elements but the limit is {limit}")]
     AuxSizeOutOfRange {
         /// The implementation (family) name of the unit whose allocation overflows the bound -

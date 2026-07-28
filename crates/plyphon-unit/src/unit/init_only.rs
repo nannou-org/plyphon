@@ -7,10 +7,11 @@
 //! inputs, so a parameter consumed both as an aux size and as a live signal keeps its live use
 //! untouched by construction.
 //!
-//! The table is exactly the set of [`BuildError::AuxRequiresConstant`] raise sites, with two
-//! deliberate exclusions: `FFT`/`IFFT` window size (stays syntactic-constant-only, so no
-//! parameter-derived FFT-plan respecialization exists) and `SendReply`/`Poll` label characters
-//! (OSC paths are encoded constants, not sizes).
+//! The table is exactly the set of [`BuildError::AuxRequiresConstant`] raise sites minus one
+//! deliberate exclusion: `FFT`/`IFFT` window size (stays syntactic-constant-only, so no
+//! parameter-derived FFT-plan respecialization exists). A non-constant `SendReply`/`Poll` label
+//! is outside the set entirely - it raises `BuildError::EmitBadLabel`, because an OSC path is an
+//! encoded constant, not a size.
 
 use crate::error::BuildError;
 
@@ -52,7 +53,7 @@ pub fn init_only_inputs(unit_name: &str) -> &'static [usize] {
 }
 
 /// Bound-check a length still in `f64`, before any integer conversion. A NaN or negative
-/// length maps to `u64::MAX` and therefore fails the bound — the conservative policy for a
+/// length maps to `u64::MAX` and therefore fails the bound - the conservative policy for a
 /// value that is about to become an allocation size (the integer-path sites instead saturate a
 /// NaN to `0` at their float→int cast, where the value has already been floored/maxed finite).
 pub fn checked_aux_elems_f64(

@@ -194,7 +194,7 @@ impl BuildContext<'_> {
     }
 
     /// [`Self::const_input`] for a declared allocation-sizing input: a non-constant fails with
-    /// [`BuildError::AuxRequiresConstant`] carrying [`AuxDynamicCause::Unsupported`] — the one
+    /// [`BuildError::AuxRequiresConstant`] carrying [`AuxDynamicCause::Unsupported`] - the one
     /// cause every raise site outside the initialization evaluator constructs.
     pub fn const_input_required(&self, i: usize) -> Result<f32, BuildError> {
         self.const_input(i).ok_or(BuildError::AuxRequiresConstant {
