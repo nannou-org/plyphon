@@ -5,8 +5,9 @@
 //! lives in the per-instance pool block and persists across blocks, so a `LocalIn` reads what
 //! `LocalOut` wrote on the *previous* block - a one-block feedback delay. The one-block delay falls
 //! out of calc order: `LocalIn` (a source, ordered before `LocalOut`) reads the bus before
-//! `LocalOut` overwrites it. The channel count is fixed by the single `LocalIn` (its output count),
-//! enforced against the `LocalOut` at compile time.
+//! `LocalOut` overwrites it. The channel count is fixed by the single `LocalIn` (its output
+//! count); a `LocalOut` whose input count differs builds with zero channels and writes nothing,
+//! matching measured scsynth mismatch behavior.
 
 use bytemuck::{Pod, Zeroable};
 

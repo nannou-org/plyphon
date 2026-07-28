@@ -918,3 +918,100 @@ fn init_only_input_table_is_exactly_the_enumerated_aux_sites() {
         );
     }
 }
+
+#[test]
+fn deep_shared_subexpressions_specialize_quickly() {
+    // sclang's `n.do { a = a + a }` idiom emits a diamond DAG: each BinaryOpUGen feeds both
+    // inputs of the next. Without per-unit memoization evaluation costs 2^depth; with it, one
+    // visit per unit. Depth 64 completes instantly when linear and never when exponential.
+    const DEPTH: u32 = 64;
+    let mut units = vec![UnitSpec::new("SampleRate", Rate::Control, vec![], 1)];
+    for level in 0..DEPTH {
+        units.push(op(
+            "BinaryOpUGen",
+            Rate::Control,
+            vec![u(level), u(level)],
+            0, // opAdd
+        ));
+    }
+    // Scale the astronomically large sum back into bounds before it sizes anything.
+    units.push(op(
+        "BinaryOpUGen",
+        Rate::Control,
+        vec![u(DEPTH), c(0.0)],
+        MUL,
+    ));
+    units.push(op(
+        "BinaryOpUGen",
+        Rate::Control,
+        vec![u(DEPTH + 1), c(64.0)],
+        0, // opAdd: 0 * huge + 64 frames
+    ));
+    units.push(UnitSpec::new(
+        "LocalBuf",
+        Rate::Scalar,
+        vec![c(1.0), u(DEPTH + 2)],
+        1,
+    ));
+    let def = SynthDef {
+        name: "diamond".to_string(),
+        params: vec![],
+        units,
+    };
+    let specialized = def
+        .specialize_init(&env(&[]))
+        .expect("a shared-subexpression diamond proves in linear time");
+    assert_eq!(
+        constant_at(&specialized.def, (DEPTH + 3) as usize, 1, "LocalBuf frames"),
+        64.0,
+        "the scaled diamond bakes the expected frame count"
+    );
+}
+
+#[test]
+fn every_aux_raise_site_is_declared_in_the_init_only_table() {
+    // The declared table's guard: probe every registered unit with all-wire inputs and
+    // constant-substitute each AuxRequiresConstant it raises. A new upstream raise site that
+    // is neither declared nor deliberately excluded fails here, which the literal-table test
+    // above cannot do (it only detects edits to the table itself).
+    const EXCLUDED: [&str; 2] = ["FFT", "IFFT"];
+    let registry = UnitRegistry::with_builtins();
+    let (audio, control) = rates();
+    let names: Vec<String> = registry.names().map(str::to_string).collect();
+    for name in names {
+        let Some(def) = registry.get(&name) else {
+            continue;
+        };
+        let declared = init_only_inputs(&name);
+        let mut sources = vec![plyphon_unit::unit::InputSource::Control(0); 16];
+        loop {
+            let input_rates = vec![Rate::Control; sources.len()];
+            let input_units = vec![None; sources.len()];
+            let ctx = plyphon_unit::unit::registry::BuildContext {
+                input_rates: &input_rates,
+                input_units: &input_units,
+                input_sources: &sources,
+                rate: Rate::Control,
+                num_outputs: 1,
+                audio: &audio,
+                control: &control,
+                special_index: 0,
+                seed: 0,
+                local_bufs_so_far: 0,
+                local_channels: 0,
+            };
+            match def.build(&ctx) {
+                Err(BuildError::AuxRequiresConstant { input, .. }) => {
+                    assert!(
+                        declared.contains(&input) || EXCLUDED.contains(&name.as_str()),
+                        "{name} raises AuxRequiresConstant for input {input} \
+                         but neither declares it nor sits on the exclusion list"
+                    );
+                    // Satisfy this site so multi-site units (LocalBuf, GVerb) uncover the next.
+                    sources[input] = plyphon_unit::unit::InputSource::Constant(64.0);
+                }
+                _ => break,
+            }
+        }
+    }
+}

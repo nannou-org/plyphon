@@ -88,6 +88,7 @@ pub struct SpecializedSynthDef {
 }
 
 /// The outcome of evaluating one expression.
+#[derive(Clone, Copy)]
 enum InitValue {
     /// Reduced to a finite-or-not scalar under constructor-time semantics.
     Proven(f32),
@@ -123,6 +124,12 @@ struct Evaluator<'a> {
     deps: Vec<usize>,
     /// Current expression recursion depth, bounded by [`MAX_EVAL_DEPTH`].
     depth: usize,
+    /// Per-unit memo of output 0's outcome. Chains of shared subexpressions form diamond DAGs
+    /// (sclang's `n.do { a = a + a }` idiom), which naive recursion re-evaluates `2^depth`
+    /// times; the memo makes evaluation linear in the unit count. Keying by unit index alone is
+    /// sound because a non-zero output short-circuits to `Signal` before any recursion, and a
+    /// memo hit contributes no new dependencies (the first evaluation already recorded them).
+    memo: Vec<Option<InitValue>>,
 }
 
 impl Evaluator<'_> {
@@ -156,9 +163,20 @@ impl Evaluator<'_> {
         if self.depth >= MAX_EVAL_DEPTH {
             return InitValue::Dynamic(AuxDynamicCause::Unsupported);
         }
+        // Only output 0 is memoizable (and only output 0 recurses; see below).
+        if output == 0
+            && let Some(Some(value)) = self.memo.get(unit)
+        {
+            return *value;
+        }
         self.depth += 1;
         let value = self.eval_unit_inner(unit, output);
         self.depth -= 1;
+        if output == 0
+            && let Some(slot) = self.memo.get_mut(unit)
+        {
+            *slot = Some(value);
+        }
         value
     }
 
@@ -352,6 +370,7 @@ impl SynthDef {
             env,
             deps: Vec::new(),
             depth: 0,
+            memo: vec![None; self.units.len()],
         };
         let mut rewrites: Vec<(u32, u32, f32)> = Vec::new();
         for (u, spec) in self.units.iter().enumerate() {
