@@ -1893,8 +1893,13 @@ fn sc3_pv_audio_modulation_uses_first_sample_in0() {
         );
         let mut later_sample_reference =
             DirectCalc::new(name, control_sources, Rate::Control, 1, 48_000.0, 64);
-        let mut audio_wire = vec![1.0; 64];
-        audio_wire[0] = 0.0;
+        let (first_sample, later_sample) = match name {
+            "PV_Freeze" => (1.0, 0.0),
+            "PV_MagSmooth" | "PV_Morph" => (0.25, 0.75),
+            _ => unreachable!(),
+        };
+        let mut audio_wire = vec![later_sample; 64];
+        audio_wire[0] = first_sample;
 
         for frame in 0..4 {
             audio_modulation
@@ -1918,13 +1923,13 @@ fn sc3_pv_audio_modulation_uses_first_sample_in0() {
                 }
             }
 
-            let mut zero_controls = token_controls.clone();
-            zero_controls.push(0.0);
-            let mut one_controls = token_controls.clone();
-            one_controls.push(1.0);
+            let mut first_controls = token_controls.clone();
+            first_controls.push(first_sample);
+            let mut later_controls = token_controls.clone();
+            later_controls.push(later_sample);
             assert_eq!(
                 audio_modulation.process(&audio_wire, &token_controls, 64),
-                first_sample_reference.process(&[], &zero_controls, 64),
+                first_sample_reference.process(&[], &first_controls, 64),
                 "{name} output token"
             );
             assert_eq!(
@@ -1937,13 +1942,13 @@ fn sc3_pv_audio_modulation_uses_first_sample_in0() {
                 pv_buffer_snapshots(&first_sample_reference),
                 "{name} first-sample spectra"
             );
-            later_sample_reference.process(&[], &one_controls, 64);
+            later_sample_reference.process(&[], &later_controls, 64);
         }
 
         assert_ne!(
             pv_buffer_snapshots(&first_sample_reference),
             pv_buffer_snapshots(&later_sample_reference),
-            "{name} discriminator must distinguish first sample zero from later samples one"
+            "{name} discriminator must distinguish its non-default first sample from later samples"
         );
     }
 }
