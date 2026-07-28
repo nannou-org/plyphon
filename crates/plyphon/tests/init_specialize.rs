@@ -236,8 +236,10 @@ fn select_gated_param_aux_specializes_from_initial_values() {
 fn select_index_conversion_matches_runtime_unit() {
     // The evaluator and the compiled `Select` share one index conversion, so a non-integral or
     // out-of-range selector can never pick different branches on the two sides.
+    // The two 3e9 selectors sit past the `i32` limits, where the conversion saturates and the
+    // increment must not overflow: far positive picks the last branch, far negative the first.
     const BRANCHES: [f32; 3] = [11.0, 22.0, 33.0];
-    const SELECTORS: [f32; 7] = [-0.5, 0.0, 0.9, 1.0, 1.5, 2.0, 5.0];
+    const SELECTORS: [f32; 9] = [-3e9, -0.5, 0.0, 0.9, 1.0, 1.5, 2.0, 5.0, 3e9];
 
     // The specialization side: three constant branches feeding `LocalBuf` frames.
     let sized = SynthDef {
@@ -270,6 +272,17 @@ fn select_index_conversion_matches_runtime_unit() {
     let node = controller
         .synth_new("picked", ROOT_GROUP_ID, AddAction::Tail)
         .expect("synth_new");
+
+    assert_eq!(
+        select_index(3e9, 1 + BRANCHES.len()),
+        BRANCHES.len(),
+        "a selector past `i32::MAX` clamps to the last input"
+    );
+    assert_eq!(
+        select_index(-3e9, 1 + BRANCHES.len()),
+        1,
+        "a selector past `i32::MIN` clamps to the first input"
+    );
 
     let mut seen = Vec::new();
     for selector in SELECTORS {
@@ -781,6 +794,44 @@ fn aux_size_out_of_range_is_rejected() {
     );
     assert_eq!((unit.as_str(), input), ("GVerb", 9));
     assert_eq!(elements, u64::MAX, "the room-size chain saturates");
+
+    // The spread lane feeds `i32` diffuser-offset arithmetic, so it is bounded on its own input
+    // in both overflow directions; an ordinary spread still compiles.
+    let gverb_spread = |spread: f32| SynthDef {
+        name: "spreading".to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new("Impulse", Rate::Audio, vec![c(2.0), c(0.0)], 1),
+            UnitSpec::new(
+                "GVerb",
+                Rate::Audio,
+                vec![
+                    u(0),      // in
+                    c(10.0),   // roomsize
+                    c(3.0),    // revtime
+                    c(0.5),    // damping
+                    c(0.5),    // inputbw
+                    c(spread), // spread
+                    c(0.5),    // drylevel
+                    c(0.7),    // earlyreflevel
+                    c(0.5),    // taillevel
+                    c(11.0),   // maxroomsize
+                ],
+                2,
+            ),
+        ],
+    };
+    let (unit, input, elements) =
+        expect_out_of_range(&gverb_spread(1e10), "a GVerb spread in the overflow regime");
+    assert_eq!((unit.as_str(), input), ("GVerb", 5));
+    assert_eq!(elements, 30_000_000_000, "three times the spread magnitude");
+    let (unit, input, elements) = expect_out_of_range(
+        &gverb_spread(-1e30),
+        "a negative GVerb spread in the saturating regime",
+    );
+    assert_eq!((unit.as_str(), input), ("GVerb", 5));
+    assert_eq!(elements, u64::MAX, "the spread magnitude saturates");
+    try_compile(&gverb_spread(15.0)).expect("an ordinary GVerb spread still compiles");
 
     let (unit, input, elements) = expect_out_of_range(
         &SynthDef {

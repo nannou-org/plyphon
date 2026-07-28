@@ -411,6 +411,10 @@ impl UnitDef for GVerbCtor {
         let largestdelay = sr * roomsize.max(1.0) as f64 / 340.0;
         checked_aux_elems_f64("GVerb", 9, maxdelay_f)?;
         checked_aux_elems_f64("GVerb", 1, largestdelay)?;
+        // `spread` feeds the diffuser-section offsets below as `i32` intermediates whose largest
+        // term is `3 * spread`; bound that magnitude the same way so an out-of-range spread fails
+        // deterministically here instead of overflowing the offset arithmetic.
+        checked_aux_elems_f64("GVerb", 5, 3.0 * spread.abs() as f64)?;
         let maxdelay = maxdelay_f as usize;
 
         // FDN line lengths (scsynth's `gbmul`); line 0 snapped to a prime.

@@ -23,12 +23,13 @@ use plyphon_dsp::rate::Rate;
 use plyphon_dsp::wavetable::shape_wavetable;
 
 /// Convert a `Select` selector value into the input index it reads: truncate toward zero
-/// (`as i32`), then `(which + 1).clamp(1, num_inputs - 1)`. Shared between the runtime unit and
-/// the initialization evaluator so a proven selector can never pick a different branch than the
-/// compiled unit would.
+/// (`as i32`, saturating at the `i32` limits), then `(which + 1).clamp(1, num_inputs - 1)` with a
+/// saturating increment, so a selector at or beyond `i32::MAX` clamps to the last input instead of
+/// overflowing. Shared between the runtime unit and the initialization evaluator so a proven
+/// selector can never pick a different branch than the compiled unit would.
 pub fn select_index(which: f32, num_inputs: usize) -> usize {
     let maxindex = (num_inputs as i32 - 1).max(1);
-    ((which as i32) + 1).clamp(1, maxindex) as usize
+    (which as i32).saturating_add(1).clamp(1, maxindex) as usize
 }
 
 /// `Select.ar/kr(which, array)`: outputs the `array` input selected by `which` (truncated toward
