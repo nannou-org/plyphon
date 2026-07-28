@@ -968,8 +968,7 @@ mod tests {
     /// consumer end so a test can observe exactly what crossed to the RT side.
     fn test_controller(capacity: usize) -> (Controller, Consumer<TimedCommand>) {
         let options = Options::default();
-        let audio = RateInfo::new(options.sample_rate, options.block_size);
-        let control = RateInfo::new(options.sample_rate / options.block_size as f64, 1);
+        let (audio, control) = options.rates();
         let (tx, rx) = RingBuffer::<TimedCommand>::new(capacity);
         (Controller::new(&options, audio, control, tx), rx)
     }

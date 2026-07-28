@@ -32,9 +32,7 @@ pub fn engine(options: Options) -> (Controller, Nrt, World) {
     // the trigger ring it is separate and best-effort; excess is dropped when the host lags.
     let (node_msgs_tx, node_msgs_rx) = RingBuffer::<NodeMsg>::new(options.max_node_msgs.max(1));
 
-    let audio = RateInfo::new(options.sample_rate, options.block_size);
-    // Control rate: one value per control block.
-    let control = RateInfo::new(options.sample_rate / options.block_size as f64, 1);
+    let (audio, control) = options.rates();
 
     let world = World::new(
         &options,

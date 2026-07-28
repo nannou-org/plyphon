@@ -61,7 +61,7 @@ pub fn checked_aux_elems(
     unit: &'static str,
     input: usize,
     elements: u64,
-) -> Result<u64, BuildError> {
+) -> Result<(), BuildError> {
     if elements > MAX_AUX_ELEMS {
         return Err(BuildError::AuxSizeOutOfRange {
             unit: unit.into(),
@@ -70,5 +70,5 @@ pub fn checked_aux_elems(
             limit: MAX_AUX_ELEMS,
         });
     }
-    Ok(elements)
+    Ok(())
 }

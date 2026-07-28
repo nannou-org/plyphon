@@ -71,3 +71,15 @@ impl Default for Options {
         }
     }
 }
+
+impl Options {
+    /// The World's audio/control [`RateInfo`] pair these options describe: audio at
+    /// `sample_rate`/`block_size`, control at one value per control block. The single
+    /// derivation shared by the engine, the controller, and hosts, so none can disagree.
+    pub fn rates(&self) -> (plyphon_dsp::rate::RateInfo, plyphon_dsp::rate::RateInfo) {
+        (
+            plyphon_dsp::rate::RateInfo::new(self.sample_rate, self.block_size),
+            plyphon_dsp::rate::RateInfo::new(self.sample_rate / self.block_size as f64, 1),
+        )
+    }
+}
