@@ -1856,6 +1856,98 @@ fn check_pv_partition(name: &str, sample_rate: f64, block_size: usize, fft_size:
     assert_eq!(partitioned.observed_callbacks, vec![1; 12]);
 }
 
+/// Proves PV modulation audio wires use their first sample rather than a later block sample.
+#[test]
+fn sc3_pv_audio_modulation_uses_first_sample_in0() {
+    for name in ["PV_Freeze", "PV_MagSmooth", "PV_Morph"] {
+        let (audio_sources, control_sources, token_controls) = match name {
+            "PV_Freeze" | "PV_MagSmooth" => (
+                vec![InputSource::Control(0), InputSource::Audio(0)],
+                vec![InputSource::Control(0), InputSource::Control(1)],
+                vec![0.0],
+            ),
+            "PV_Morph" => (
+                vec![
+                    InputSource::Control(0),
+                    InputSource::Control(1),
+                    InputSource::Audio(0),
+                ],
+                vec![
+                    InputSource::Control(0),
+                    InputSource::Control(1),
+                    InputSource::Control(2),
+                ],
+                vec![0.0, 1.0],
+            ),
+            _ => unreachable!(),
+        };
+        let mut audio_modulation =
+            DirectCalc::new(name, audio_sources, Rate::Control, 1, 48_000.0, 64);
+        let mut first_sample_reference = DirectCalc::new(
+            name,
+            control_sources.clone(),
+            Rate::Control,
+            1,
+            48_000.0,
+            64,
+        );
+        let mut later_sample_reference =
+            DirectCalc::new(name, control_sources, Rate::Control, 1, 48_000.0, 64);
+        let mut audio_wire = vec![1.0; 64];
+        audio_wire[0] = 0.0;
+
+        for frame in 0..4 {
+            audio_modulation
+                .buffers
+                .set(0, Box::new(spectrum(64, frame, 0, 48_000.0)));
+            first_sample_reference
+                .buffers
+                .set(0, Box::new(spectrum(64, frame, 0, 48_000.0)));
+            later_sample_reference
+                .buffers
+                .set(0, Box::new(spectrum(64, frame, 0, 48_000.0)));
+            if name == "PV_Morph" {
+                for harness in [
+                    &mut audio_modulation,
+                    &mut first_sample_reference,
+                    &mut later_sample_reference,
+                ] {
+                    harness
+                        .buffers
+                        .set(1, Box::new(spectrum(64, frame, 1, 48_000.0)));
+                }
+            }
+
+            let mut zero_controls = token_controls.clone();
+            zero_controls.push(0.0);
+            let mut one_controls = token_controls.clone();
+            one_controls.push(1.0);
+            assert_eq!(
+                audio_modulation.process(&audio_wire, &token_controls, 64),
+                first_sample_reference.process(&[], &zero_controls, 64),
+                "{name} output token"
+            );
+            assert_eq!(
+                audio_modulation.state_snapshot(),
+                first_sample_reference.state_snapshot(),
+                "{name} first-sample retained state"
+            );
+            assert_eq!(
+                pv_buffer_snapshots(&audio_modulation),
+                pv_buffer_snapshots(&first_sample_reference),
+                "{name} first-sample spectra"
+            );
+            later_sample_reference.process(&[], &one_controls, 64);
+        }
+
+        assert_ne!(
+            pv_buffer_snapshots(&first_sample_reference),
+            pv_buffer_snapshots(&later_sample_reference),
+            "{name} discriminator must distinguish first sample zero from later samples one"
+        );
+    }
+}
+
 /// Proves every invalid SC3 PV token/frame is atomic and the next valid frame exactly recovers.
 #[test]
 fn sc3_pv_invalid_token_frame_matrix_is_atomic_and_recovers() {
