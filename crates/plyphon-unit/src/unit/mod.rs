@@ -77,7 +77,7 @@ pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
 pub mod resonant;
-pub mod sc3_processing;
+mod sc3_processing;
 pub mod scope_out;
 pub mod section;
 pub mod select;
