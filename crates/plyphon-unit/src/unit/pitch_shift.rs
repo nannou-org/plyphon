@@ -166,7 +166,10 @@ impl UnitDef for PitchShiftCtor {
         // 3-sample minimum (below which its own delay maths misbehaves).
         let winsize = ctx
             .const_input(WINSIZE)
-            .ok_or(BuildError::AuxRequiresConstant { input: WINSIZE, cause: AuxDynamicCause::Unsupported })?
+            .ok_or(BuildError::AuxRequiresConstant {
+                input: WINSIZE,
+                cause: AuxDynamicCause::Unsupported,
+            })?
             .max(3.0 / sr as f32);
         // The line holds three windows plus a little headroom, rounded up to a power of two. The
         // accumulation saturates end to end and the bound comparison runs before the narrowing

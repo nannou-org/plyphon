@@ -400,8 +400,10 @@ impl UnitDef for GVerbCtor {
         }
         let sr = ctx.audio.sample_rate;
         let need_const = |i: usize| {
-            ctx.const_input(i)
-                .ok_or(BuildError::AuxRequiresConstant { input: i, cause: AuxDynamicCause::Unsupported })
+            ctx.const_input(i).ok_or(BuildError::AuxRequiresConstant {
+                input: i,
+                cause: AuxDynamicCause::Unsupported,
+            })
         };
         let roomsize = need_const(1)?;
         let spread = need_const(5)?;
@@ -413,16 +415,24 @@ impl UnitDef for GVerbCtor {
         // out-of-range sizes a deterministic build error.
         let maxdelay_f = sr * maxroomsize as f64 / 340.0;
         let largestdelay = sr * roomsize.max(1.0) as f64 / 340.0;
-        checked_aux_elems("GVerb", 9, if maxdelay_f.is_finite() && maxdelay_f >= 0.0 {
-            maxdelay_f as u64
-        } else {
-            u64::MAX
-        })?;
-        checked_aux_elems("GVerb", 1, if largestdelay.is_finite() && largestdelay >= 0.0 {
-            largestdelay as u64
-        } else {
-            u64::MAX
-        })?;
+        checked_aux_elems(
+            "GVerb",
+            9,
+            if maxdelay_f.is_finite() && maxdelay_f >= 0.0 {
+                maxdelay_f as u64
+            } else {
+                u64::MAX
+            },
+        )?;
+        checked_aux_elems(
+            "GVerb",
+            1,
+            if largestdelay.is_finite() && largestdelay >= 0.0 {
+                largestdelay as u64
+            } else {
+                u64::MAX
+            },
+        )?;
         let maxdelay = maxdelay_f as usize;
 
         // FDN line lengths (scsynth's `gbmul`); line 0 snapped to a prime.

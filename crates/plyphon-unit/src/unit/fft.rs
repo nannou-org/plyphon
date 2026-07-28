@@ -291,7 +291,10 @@ pub(crate) const DEFAULT_MAX_FFT: usize = 8192;
 fn const_fftsize(ctx: &BuildContext<'_>, winsize: usize) -> Result<usize, BuildError> {
     let size = ctx
         .const_input(winsize)
-        .ok_or(BuildError::AuxRequiresConstant { input: winsize, cause: AuxDynamicCause::Unsupported })? as usize;
+        .ok_or(BuildError::AuxRequiresConstant {
+            input: winsize,
+            cause: AuxDynamicCause::Unsupported,
+        })? as usize;
     if size != 0 && !is_supported_size(size) {
         return Err(BuildError::UnsupportedFftSize { size });
     }

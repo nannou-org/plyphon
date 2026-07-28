@@ -105,13 +105,15 @@ pub enum BuildError {
         /// The index of the offending input.
         input: usize,
     },
-    /// An allocation site's total element count exceeds [`MAX_AUX_ELEMS`](crate::unit::MAX_AUX_ELEMS).
+    /// An allocation site's total element count exceeds [`MAX_AUX_ELEMS`](crate::unit::init_only::MAX_AUX_ELEMS).
     /// The count is accumulated with saturating arithmetic before any narrowing cast, so an
     /// out-of-range size fails here deterministically instead of truncating or wrapping into an
     /// undersized allocation that the audio thread would then index.
     #[error("unit {unit} input {input} sizes {elements} aux elements but the limit is {limit}")]
     AuxSizeOutOfRange {
-        /// The registry name of the unit whose allocation overflows the bound.
+        /// The implementation (family) name of the unit whose allocation overflows the bound -
+        /// shared builders report their family (`Delay`, `FeedbackDelay`, `LookAhead`), not the
+        /// registry spelling (`DelayC`, `Normalizer`).
         unit: String,
         /// The index of the sizing input.
         input: usize,

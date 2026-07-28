@@ -59,12 +59,14 @@ impl UnitDef for LocalBufCtor {
         }
         // scsynth reads both at ctor (`IN0(0)` channels, `IN0(1)` frames); here they size pool
         // storage, so like a delay's `maxdelaytime` they must be baked constants.
-        let channels = ctx
-            .const_input(0)
-            .ok_or(BuildError::AuxRequiresConstant { input: 0, cause: AuxDynamicCause::Unsupported })?;
-        let frames = ctx
-            .const_input(1)
-            .ok_or(BuildError::AuxRequiresConstant { input: 1, cause: AuxDynamicCause::Unsupported })?;
+        let channels = ctx.const_input(0).ok_or(BuildError::AuxRequiresConstant {
+            input: 0,
+            cause: AuxDynamicCause::Unsupported,
+        })?;
+        let frames = ctx.const_input(1).ok_or(BuildError::AuxRequiresConstant {
+            input: 1,
+            cause: AuxDynamicCause::Unsupported,
+        })?;
         // Bound-check each factor and the `channels * frames` product in saturating `u64` before
         // any narrowing cast: a huge pair would otherwise wrap the product (or truncate a factor)
         // into an undersized allocation the audio thread then indexes.

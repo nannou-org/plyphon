@@ -236,11 +236,7 @@ impl Evaluator<'_> {
                 let [a, lo, hi] = ins.as_slice() else {
                     return InitValue::Dynamic(AuxDynamicCause::Unsupported);
                 };
-                match (
-                    self.eval_input(a),
-                    self.eval_input(lo),
-                    self.eval_input(hi),
-                ) {
+                match (self.eval_input(a), self.eval_input(lo), self.eval_input(hi)) {
                     (InitValue::Proven(a), InitValue::Proven(lo), InitValue::Proven(hi)) => {
                         InitValue::Proven(ops::clip(a, lo, hi))
                     }
@@ -285,6 +281,12 @@ impl Evaluator<'_> {
             }
             name if is_random_unit(name) => InitValue::Dynamic(AuxDynamicCause::Random),
             name if is_buffer_info_unit(name) => {
+                // Traverse the buffer input for the attempted-dependency record (so a host can
+                // watch the buffer-selecting param for a corrective edit) before classifying;
+                // its value is deliberately unused - no metadata channel exists here.
+                if let Some(buffer_input) = ins.first() {
+                    let _ = self.eval_input(buffer_input);
+                }
                 InitValue::Dynamic(AuxDynamicCause::BufferMetadataUnavailable)
             }
             // Everything else — bus reads, triggers, demand units, replies, ordinary signal

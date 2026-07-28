@@ -553,8 +553,17 @@ fn build_line(
     // ctor and never again).
     let max_delay = ctx
         .const_input(MAXDELAY)
-        .ok_or(BuildError::AuxRequiresConstant { input: MAXDELAY, cause: AuxDynamicCause::Unsupported })?;
-    let len = line_len(unit, MAXDELAY, max_delay, ctx.audio.sample_rate, ctx.audio.block_size)?;
+        .ok_or(BuildError::AuxRequiresConstant {
+            input: MAXDELAY,
+            cause: AuxDynamicCause::Unsupported,
+        })?;
+    let len = line_len(
+        unit,
+        MAXDELAY,
+        max_delay,
+        ctx.audio.sample_rate,
+        ctx.audio.block_size,
+    )?;
     let calc = match ctx.input_rates[DELAY] {
         Rate::Audio => calc::DELAY_AUDIO,
         _ => calc::DELAY_CONTROL,
