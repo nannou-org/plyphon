@@ -15,7 +15,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::{AuxDynamicCause, BuildError};
-use crate::unit::init_only::checked_aux_elems;
+use crate::unit::init_only::{checked_aux_elems, checked_aux_elems_f64};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_aux};
 use plyphon_dsp::math;
@@ -415,24 +415,8 @@ impl UnitDef for GVerbCtor {
         // out-of-range sizes a deterministic build error.
         let maxdelay_f = sr * maxroomsize as f64 / 340.0;
         let largestdelay = sr * roomsize.max(1.0) as f64 / 340.0;
-        checked_aux_elems(
-            "GVerb",
-            9,
-            if maxdelay_f.is_finite() && maxdelay_f >= 0.0 {
-                maxdelay_f as u64
-            } else {
-                u64::MAX
-            },
-        )?;
-        checked_aux_elems(
-            "GVerb",
-            1,
-            if largestdelay.is_finite() && largestdelay >= 0.0 {
-                largestdelay as u64
-            } else {
-                u64::MAX
-            },
-        )?;
+        checked_aux_elems_f64("GVerb", 9, maxdelay_f)?;
+        checked_aux_elems_f64("GVerb", 1, largestdelay)?;
         let maxdelay = maxdelay_f as usize;
 
         // FDN line lengths (scsynth's `gbmul`); line 0 snapped to a prime.

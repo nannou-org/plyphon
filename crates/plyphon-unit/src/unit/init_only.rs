@@ -57,6 +57,23 @@ pub fn init_only_inputs(unit_name: &str) -> &'static [usize] {
 /// saturating add/multiply) *before* any narrowing cast, so an out-of-range size arrives here as
 /// a large value rather than a truncated or wrapped small one. A count strictly greater than
 /// [`MAX_AUX_ELEMS`] fails.
+/// Bound-check a length still in `f64`, before any integer conversion. A NaN or negative
+/// length maps to `u64::MAX` and therefore fails the bound — the conservative policy for a
+/// value that is about to become an allocation size (the integer-path sites instead saturate a
+/// NaN to `0` at their float→int cast, where the value has already been floored/maxed finite).
+pub fn checked_aux_elems_f64(
+    unit: &'static str,
+    input: usize,
+    elements: f64,
+) -> Result<(), BuildError> {
+    let elements = if elements.is_finite() && elements >= 0.0 {
+        elements as u64
+    } else {
+        u64::MAX
+    };
+    checked_aux_elems(unit, input, elements)
+}
+
 pub fn checked_aux_elems(
     unit: &'static str,
     input: usize,
