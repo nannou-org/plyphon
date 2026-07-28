@@ -67,12 +67,22 @@ impl Unit for LocalOut {
 }
 
 /// Constructor for [`LocalOut`]. Its inputs are the signals to write, one per local channel.
+///
+/// A `LocalOut` whose input count differs from the def's resolved local-bus width — including a
+/// `LocalOut` with no `LocalIn` at all (width 0) — builds with zero channels and writes nothing.
+/// This matches measured scsynth behavior: a mismatched `LocalOut` is a complete no-op (no
+/// channel is partially written, wrapped, or truncated) while the rest of the definition still
+/// compiles and renders, its `LocalIn` reading silence.
 pub struct LocalOutCtor;
 
 impl UnitDef for LocalOutCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        Ok(unit_spec(LocalOut {
-            num_channels: ctx.input_rates.len() as u32,
-        }))
+        let inputs = ctx.input_rates.len();
+        let num_channels = if inputs == ctx.local_channels {
+            inputs as u32
+        } else {
+            0
+        };
+        Ok(unit_spec(LocalOut { num_channels }))
     }
 }

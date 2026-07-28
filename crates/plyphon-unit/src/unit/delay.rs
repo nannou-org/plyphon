@@ -20,7 +20,8 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::BuildError;
+use crate::error::{AuxDynamicCause, BuildError};
+use crate::unit::init_only::checked_aux_elems;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{
     BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, buffer_at, buffer_at_mut, unit_spec,
@@ -88,10 +89,23 @@ impl Interp {
 /// BUFLENGTH)`. The `+1` lets a read sit one sample behind a write at the same phase; the `+block`
 /// headroom keeps the write head and any delayed read from colliding within a block; the power-of-two
 /// length makes circular addressing a single mask.
-pub(crate) fn line_len(max_delay: f32, sr: f64, block: usize) -> u32 {
-    let base = math::ceil(max_delay.max(0.0) as f64 * sr + 1.0) as i64;
-    let len = (base + block as i64).max(1) as u64;
-    len.next_power_of_two() as u32
+///
+/// The accumulation saturates end to end (the float→int cast saturates in Rust; the `+block` uses
+/// `saturating_add`) and the [`MAX_AUX_ELEMS`](crate::unit::init_only::MAX_AUX_ELEMS) comparison
+/// runs before the narrowing `u32` cast, so an out-of-range `maxdelay` fails deterministically
+/// instead of truncating to a zero-length line whose mask would index an empty aux slice on the
+/// audio thread. The bound is a power of two, so comparing the pre-rounding length is exact.
+pub(crate) fn line_len(
+    unit: &'static str,
+    input: usize,
+    max_delay: f32,
+    sr: f64,
+    block: usize,
+) -> Result<u32, BuildError> {
+    let base = math::ceil(max_delay.max(0.0) as f64 * sr + 1.0) as u64;
+    let len = base.saturating_add(block as u64).max(1);
+    checked_aux_elems(unit, input, len)?;
+    Ok(len.next_power_of_two() as u32)
 }
 
 /// Clamp a delay in samples to `[min, max]` (scsynth's `CalcDelay`/`sc_clip`). NaN-safe: the
@@ -528,6 +542,7 @@ impl Unit for FeedbackDelay {
 /// Build a delay line, validating inputs and sizing the aux buffer from the constant `maxdelaytime`.
 /// Returns `(len, mask, calc, aux_bytes)`.
 fn build_line(
+    unit: &'static str,
     ctx: &BuildContext<'_>,
     min_inputs: usize,
 ) -> Result<(u32, u32, u32, usize), BuildError> {
@@ -538,8 +553,8 @@ fn build_line(
     // ctor and never again).
     let max_delay = ctx
         .const_input(MAXDELAY)
-        .ok_or(BuildError::AuxRequiresConstant { input: MAXDELAY })?;
-    let len = line_len(max_delay, ctx.audio.sample_rate, ctx.audio.block_size);
+        .ok_or(BuildError::AuxRequiresConstant { input: MAXDELAY, cause: AuxDynamicCause::Unsupported })?;
+    let len = line_len(unit, MAXDELAY, max_delay, ctx.audio.sample_rate, ctx.audio.block_size)?;
     let calc = match ctx.input_rates[DELAY] {
         Rate::Audio => calc::DELAY_AUDIO,
         _ => calc::DELAY_CONTROL,
@@ -553,7 +568,7 @@ pub struct DelayCtor(pub Interp);
 
 impl UnitDef for DelayCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        let (len, mask, calc, aux_bytes) = build_line(ctx, 3)?;
+        let (len, mask, calc, aux_bytes) = build_line("Delay", ctx, 3)?;
         Ok(unit_spec_aux(
             Delay {
                 dsamp: 0.0,
@@ -580,7 +595,7 @@ pub struct FeedbackDelayCtor {
 
 impl UnitDef for FeedbackDelayCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        let (len, mask, calc, aux_bytes) = build_line(ctx, 4)?;
+        let (len, mask, calc, aux_bytes) = build_line("FeedbackDelay", ctx, 4)?;
         Ok(unit_spec_aux(
             FeedbackDelay {
                 dsamp: 0.0,

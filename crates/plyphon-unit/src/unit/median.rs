@@ -7,7 +7,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::BuildError;
+use crate::error::{AuxDynamicCause, BuildError};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
 
@@ -96,6 +96,7 @@ impl UnitDef for MedianCtor {
             .const_input(Median::LENGTH)
             .ok_or(BuildError::AuxRequiresConstant {
                 input: Median::LENGTH,
+                cause: AuxDynamicCause::Unsupported,
             })?;
         let size = (length as i32).clamp(1, MAX_MEDIAN as i32) as u32;
         Ok(unit_spec(Median {

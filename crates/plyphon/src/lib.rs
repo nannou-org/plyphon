@@ -46,7 +46,9 @@ pub use plyphon_unit::{
 pub use controller::{Controller, ControllerBatchCommand, GroupNewError, QueueFull, SynthNewError};
 pub use engine::engine;
 pub use render::{Render, RenderUntil};
-pub use synthdef::{InputRef, Param, SynthDef, UnitSpec};
+pub use plyphon_unit::AuxDynamicCause;
+pub use synthdef::init::{InitDependencies, InitEnvironment, InitError, SpecializedSynthDef};
+pub use synthdef::{InputRef, Param, SynthDef, UnitSpec, graph_rates};
 
 /// Anything that can fill an interleaved, `channels`-wide block of `f32` output samples.
 ///

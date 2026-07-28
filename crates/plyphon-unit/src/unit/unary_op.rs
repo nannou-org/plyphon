@@ -79,8 +79,9 @@ impl UnitDef for UnaryOpCtor {
 /// `SpecialSelectorsOperatorsAndClasses.h`; kernels match the calc functions in
 /// `UnaryOpUGens.cpp`). The RNG-driven ops (`opRand`/`opRand2`/`opLinRand`/`opBiLinRand`/
 /// `opSum3Rand`/`opCoin`) and the remaining non-signal ops (`opIsNil`/...) are absent;
-/// `opAsFloat`/`opAsInt` pass through, matching scsynth's `thru` default for both.
-fn unary_op(index: i16) -> Option<fn(f32) -> f32> {
+/// `opAsFloat`/`opAsInt` pass through, matching scsynth's `thru` default for both. Public so the
+/// initialization evaluator resolves operators through this exact table, never a re-derivation.
+pub fn unary_op(index: i16) -> Option<fn(f32) -> f32> {
     Some(match index {
         0 => |a| -a,                    // opNeg
         1 => ops::not,                  // opNot

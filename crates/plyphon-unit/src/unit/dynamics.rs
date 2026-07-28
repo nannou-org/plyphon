@@ -10,7 +10,8 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::BuildError;
+use crate::error::{AuxDynamicCause, BuildError};
+use crate::unit::init_only::checked_aux_elems;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::trigger::{drive, sig};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec, unit_spec_aux};
@@ -359,8 +360,13 @@ impl UnitDef for LookAheadCtor {
             .const_input(LookAhead::DUR)
             .ok_or(BuildError::AuxRequiresConstant {
                 input: LookAhead::DUR,
+                cause: AuxDynamicCause::Unsupported,
             })?;
-        let n = (math::ceil(dur as f64 * ctx.audio.sample_rate) as usize).max(1);
+        // Three windows of `n` samples; accumulate in saturating `u64` and bound-check before the
+        // narrowing cast so a huge `dur` fails instead of overflowing `3 * n`.
+        let n_u64 = (math::ceil(dur as f64 * ctx.audio.sample_rate) as u64).max(1);
+        checked_aux_elems("LookAhead", LookAhead::DUR, n_u64.saturating_mul(3))?;
+        let n = n_u64 as usize;
         let aux_bytes = 3 * n * core::mem::size_of::<f32>();
         Ok(unit_spec_aux(
             LookAhead {

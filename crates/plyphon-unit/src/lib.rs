@@ -23,7 +23,7 @@ pub mod error;
 pub mod graphdef;
 pub mod unit;
 
-pub use error::BuildError;
+pub use error::{AuxDynamicCause, BuildError};
 pub use graphdef::GraphDef;
 pub use unit::{
     Aux, BuildContext, BuiltUnit, DoneAction, InitCtx, Inputs, NodeMsg, NodeMsgKind, NodeMsgSink,

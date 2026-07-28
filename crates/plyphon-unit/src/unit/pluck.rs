@@ -9,7 +9,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::BuildError;
+use crate::error::{AuxDynamicCause, BuildError};
 use crate::unit::delay::{Interp, calc_feedback, clamp_delay, line_len, read_delayed};
 use crate::unit::filter::zap;
 use crate::unit::registry::{BuildContext, UnitDef};
@@ -189,8 +189,8 @@ impl UnitDef for PluckCtor {
         }
         let max_delay = ctx
             .const_input(MAXDELAY)
-            .ok_or(BuildError::AuxRequiresConstant { input: MAXDELAY })?;
-        let len = line_len(max_delay, ctx.audio.sample_rate, ctx.audio.block_size);
+            .ok_or(BuildError::AuxRequiresConstant { input: MAXDELAY, cause: AuxDynamicCause::Unsupported })?;
+        let len = line_len("Pluck", MAXDELAY, max_delay, ctx.audio.sample_rate, ctx.audio.block_size)?;
         let aux_bytes = len as usize * core::mem::size_of::<f32>();
         Ok(unit_spec_aux(
             Pluck {

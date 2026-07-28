@@ -160,8 +160,9 @@ impl Unit for RandBinaryOp {
 /// `SpecialSelectorsOperatorsAndClasses.h`; kernels match the `*_1` calc functions in
 /// `BinaryOpUGens.cpp`). The RNG-driven ops (`opRandRange` 47, `opExpRandRange` 48) build into the
 /// stateful [`RandBinaryOp`] instead; the unimplemented-at-audio-rate ops (`opUnsignedShift`,
-/// `opFill`) are absent.
-fn binary_op(index: i16) -> Option<fn(f32, f32) -> f32> {
+/// `opFill`) are absent. Public so the initialization evaluator resolves operators through this
+/// exact table, never a re-derivation.
+pub fn binary_op(index: i16) -> Option<fn(f32, f32) -> f32> {
     Some(match index {
         0 => |a, b| a + b,                           // opAdd
         1 => |a, b| a - b,                           // opSub

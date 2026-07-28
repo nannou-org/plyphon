@@ -175,6 +175,10 @@ pub struct BuildContext<'a> {
     /// declaration index (scsynth's running `parent->localBufNum`). The compile loop advances it per
     /// built unit that declares one; every other unit ignores it.
     pub local_bufs_so_far: usize,
+    /// The def's resolved local feedback-bus width: the single `LocalIn`'s output count, `0` when
+    /// the def has none. `LocalOut` builds with zero channels (a complete no-op) when its input
+    /// count differs, matching measured scsynth mismatch behavior; every other unit ignores it.
+    pub local_channels: usize,
 }
 
 impl BuildContext<'_> {

@@ -22,7 +22,8 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::BuildError;
+use crate::error::{AuxDynamicCause, BuildError};
+use crate::unit::init_only::checked_aux_elems;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec, unit_spec_local_buf};
 
@@ -60,16 +61,24 @@ impl UnitDef for LocalBufCtor {
         // storage, so like a delay's `maxdelaytime` they must be baked constants.
         let channels = ctx
             .const_input(0)
-            .ok_or(BuildError::AuxRequiresConstant { input: 0 })?;
+            .ok_or(BuildError::AuxRequiresConstant { input: 0, cause: AuxDynamicCause::Unsupported })?;
         let frames = ctx
             .const_input(1)
-            .ok_or(BuildError::AuxRequiresConstant { input: 1 })?;
+            .ok_or(BuildError::AuxRequiresConstant { input: 1, cause: AuxDynamicCause::Unsupported })?;
+        // Bound-check each factor and the `channels * frames` product in saturating `u64` before
+        // any narrowing cast: a huge pair would otherwise wrap the product (or truncate a factor)
+        // into an undersized allocation the audio thread then indexes.
+        let channels_u64 = channels.max(0.0) as u64;
+        let frames_u64 = frames.max(0.0) as u64;
+        checked_aux_elems("LocalBuf", 0, channels_u64)?;
+        checked_aux_elems("LocalBuf", 1, frames_u64)?;
+        checked_aux_elems("LocalBuf", 1, channels_u64.saturating_mul(frames_u64))?;
         Ok(unit_spec_local_buf(
             LocalBuf {
                 index: ctx.local_bufs_so_far as u32,
             },
-            channels.max(0.0) as usize,
-            frames.max(0.0) as usize,
+            channels_u64 as usize,
+            frames_u64 as usize,
         ))
     }
 }

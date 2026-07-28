@@ -124,29 +124,124 @@ fn try_compile(def: &SynthDef) -> Result<(), BuildError> {
     .map(|_| ())
 }
 
+/// A feedback-only def: the loop is the sole signal path, so `Out` carries non-silence exactly
+/// when `LocalOut` writes. `LocalIn` declares `local_in` channels, `LocalOut` writes `DC(0.5)`
+/// into each of `local_out` inputs, and `Out` sums every `LocalIn` channel.
+fn feedback_only_def(name: &str, local_in: usize, local_out: usize) -> SynthDef {
+    let mut units = vec![
+        // 0: LocalIn.ar(local_in) - the only signal source feeding Out.
+        UnitSpec::new("LocalIn", Rate::Audio, vec![], local_in),
+        // 1: DC.ar(0.5) - what LocalOut writes (per channel).
+        UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(0.5)], 1),
+    ];
+    // Sum the LocalIn channels pairwise so any partially-written channel would surface.
+    let mut sum = InputRef::Unit { unit: 0, output: 0 };
+    for output in 1..local_in as u32 {
+        let unit = units.len() as u32;
+        units.push(UnitSpec::new(
+            "BinaryOpUGen",
+            Rate::Audio,
+            vec![sum, InputRef::Unit { unit: 0, output }],
+            1,
+        ));
+        sum = InputRef::Unit { unit, output: 0 };
+    }
+    units.push(UnitSpec::new(
+        "Out",
+        Rate::Audio,
+        vec![InputRef::Constant(0.0), sum],
+        0,
+    ));
+    units.push(UnitSpec::new(
+        "LocalOut",
+        Rate::Audio,
+        vec![InputRef::Unit { unit: 1, output: 0 }; local_out],
+        0,
+    ));
+    SynthDef {
+        name: name.to_string(),
+        params: vec![],
+        units,
+    }
+}
+
 #[test]
-fn local_bus_channel_mismatch_rejected() {
-    // LocalIn declares 1 channel; LocalOut writes 2 -> mismatch.
-    let def = SynthDef {
-        name: "bad".to_string(),
+fn local_out_width_mismatch_is_complete_no_op() {
+    // Measured scsynth behavior: a mismatched LocalOut writes *nothing* - not even the channels
+    // that would fit - so a feedback-only def renders exact silence. Verified for 1->2, 2->1,
+    // and a LocalOut with no LocalIn at all (whose def still compiles and renders).
+    for (name, local_in, local_out) in [("m12", 1usize, 2usize), ("m21", 2, 1)] {
+        let (mut controller, _nrt, mut world) = engine(opts());
+        controller.add_synthdef(feedback_only_def(name, local_in, local_out));
+        controller
+            .synth_new(name, ROOT_GROUP_ID, AddAction::Tail)
+            .unwrap();
+        for block in 0..8 {
+            assert_eq!(
+                one(&mut world),
+                0.0,
+                "{name}: a mismatched LocalOut must write no channel (block {block})"
+            );
+        }
+    }
+
+    // Orphan LocalOut (no LocalIn): the write is a no-op while the rest of the def renders.
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller.add_synthdef(SynthDef {
+        name: "orphan".to_string(),
         params: vec![],
         units: vec![
-            UnitSpec::new("LocalIn", Rate::Audio, vec![], 1),
+            // 0: DC.ar(0.5) - fed to the orphan LocalOut.
+            UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(0.5)], 1),
+            // 1: DC.ar(0.125) - the liveness marker on the real output.
+            UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(0.125)], 1),
+            // 2: Out.ar(0, marker).
+            UnitSpec::new(
+                "Out",
+                Rate::Audio,
+                vec![
+                    InputRef::Constant(0.0),
+                    InputRef::Unit { unit: 1, output: 0 },
+                ],
+                0,
+            ),
+            // 3: LocalOut.ar(DC) with no LocalIn - bus width 0, complete no-op.
             UnitSpec::new(
                 "LocalOut",
                 Rate::Audio,
-                vec![InputRef::Constant(0.0), InputRef::Constant(0.0)],
+                vec![InputRef::Unit { unit: 0, output: 0 }],
                 0,
             ),
         ],
-    };
-    assert_eq!(
-        try_compile(&def),
-        Err(BuildError::LocalBusMismatch {
-            local_in: 1,
-            local_out: 2
-        })
-    );
+    });
+    controller
+        .synth_new("orphan", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    for _ in 0..4 {
+        assert!(
+            (one(&mut world) - 0.125).abs() < 1e-6,
+            "the rest of an orphan-LocalOut def still renders"
+        );
+    }
+}
+
+#[test]
+fn matching_local_feedback_still_writes() {
+    // The matched-width def from the same fixture family goes non-silent from the second block
+    // on (LocalIn reads last block's write), guarding the no-op build against over-firing.
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller.add_synthdef(feedback_only_def("matched", 1, 1));
+    controller
+        .synth_new("matched", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    assert_eq!(one(&mut world), 0.0, "block 1 reads the silent initial bus");
+    for block in 0..4 {
+        let got = one(&mut world);
+        assert!(
+            (got - 0.5).abs() < 1e-6,
+            "matched LocalOut must write: got {got} (block {block})"
+        );
+    }
 }
 
 #[test]

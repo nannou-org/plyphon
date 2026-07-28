@@ -10,7 +10,8 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::BuildError;
+use crate::error::{AuxDynamicCause, BuildError};
+use crate::unit::init_only::checked_aux_elems;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec_aux};
 use plyphon_dsp::interp::lininterp;
@@ -165,12 +166,17 @@ impl UnitDef for PitchShiftCtor {
         // 3-sample minimum (below which its own delay maths misbehaves).
         let winsize = ctx
             .const_input(WINSIZE)
-            .ok_or(BuildError::AuxRequiresConstant { input: WINSIZE })?
+            .ok_or(BuildError::AuxRequiresConstant { input: WINSIZE, cause: AuxDynamicCause::Unsupported })?
             .max(3.0 / sr as f32);
-        // The line holds three windows plus a little headroom, rounded up to a power of two.
-        let base = math::ceil(winsize as f64 * sr * 3.0 + 3.0) as i64;
-        let len = ((base + block as i64).max(1) as u64).next_power_of_two() as u32;
-        let framesize = (((winsize as f64 * sr) as i64 + 2) & !3) as u32;
+        // The line holds three windows plus a little headroom, rounded up to a power of two. The
+        // accumulation saturates end to end and the bound comparison runs before the narrowing
+        // casts, so a huge `windowSize` fails deterministically instead of truncating; a passing
+        // line length also bounds `framesize` (one window) well inside `u32`.
+        let base = math::ceil(winsize as f64 * sr * 3.0 + 3.0) as u64;
+        let len_u64 = base.saturating_add(block as u64).max(1);
+        checked_aux_elems("PitchShift", WINSIZE, len_u64)?;
+        let len = len_u64.next_power_of_two() as u32;
+        let framesize = (((winsize as f64 * sr) as u64 + 2) & !3) as u32;
         let slope = 2.0 / framesize as f32;
         let aux_bytes = len as usize * core::mem::size_of::<f32>();
         Ok(unit_spec_aux(

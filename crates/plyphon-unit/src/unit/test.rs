@@ -70,17 +70,22 @@ pub struct Sanitize {
     audio: u32,
 }
 
+/// `Sanitize`'s per-sample kernel: replace a NaN, infinite or subnormal `x` with `replace`.
+/// Shared between the runtime unit and the initialization evaluator.
+pub fn sanitize_scalar(x: f32, replace: f32) -> f32 {
+    match x.classify() {
+        FpCategory::Nan | FpCategory::Infinite | FpCategory::Subnormal => replace,
+        FpCategory::Normal | FpCategory::Zero => x,
+    }
+}
+
 impl Unit for Sanitize {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let input = sig(&ctx.ins, 0);
         let replace = sig(&ctx.ins, 1);
         drive(ctx, audio_out, |i| {
-            let x = input.at(i);
-            match x.classify() {
-                FpCategory::Nan | FpCategory::Infinite | FpCategory::Subnormal => replace.at(i),
-                FpCategory::Normal | FpCategory::Zero => x,
-            }
+            sanitize_scalar(input.at(i), replace.at(i))
         });
         DoneAction::Nothing
     }
