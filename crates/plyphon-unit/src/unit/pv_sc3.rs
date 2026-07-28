@@ -66,6 +66,10 @@ fn smooth(previous: f32, current: f32, factor: f32) -> Option<f32> {
 }
 
 /// Validate the shared ABI of a control-rate PV operator.
+///
+/// Chain tokens remain scalar/control values. The final modulation inlet also accepts an audio
+/// wire, which [`Inputs::control`](crate::unit::Inputs::control) samples with scsynth's `IN0`
+/// convention.
 fn validate_pv_abi(ctx: &BuildContext<'_>, num_inputs: usize) -> Result<(), BuildError> {
     if ctx.input_rates.len() != num_inputs {
         return Err(BuildError::WrongInputCount);
@@ -79,11 +83,13 @@ fn validate_pv_abi(ctx: &BuildContext<'_>, num_inputs: usize) -> Result<(), Buil
     if ctx.special_index != 0 {
         return Err(BuildError::UnsupportedOp(ctx.special_index));
     }
+    let chain_inputs = &ctx.input_rates[..num_inputs - 1];
+    let modulation = ctx.input_rates[num_inputs - 1];
     if ctx.rate != Rate::Control
-        || ctx
-            .input_rates
+        || chain_inputs
             .iter()
             .any(|rate| !matches!(rate, Rate::Scalar | Rate::Control))
+        || !matches!(modulation, Rate::Scalar | Rate::Control | Rate::Audio)
     {
         return Err(BuildError::UnsupportedUnitRate);
     }

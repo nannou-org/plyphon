@@ -110,7 +110,14 @@ fn sc3_pv_units_reject_invalid_shapes_rates_and_special_index() {
         assert_eq!(
             pv_build_error(name, Rate::Control, &audio_input, 1, 0),
             Some(BuildError::UnsupportedUnitRate),
-            "{name} input rate"
+            "{name} buffer-token input rate"
+        );
+        let mut audio_modulation = valid.clone();
+        *audio_modulation.last_mut().expect("modulation input") = Rate::Audio;
+        assert_eq!(
+            pv_build_error(name, Rate::Control, &audio_modulation, 1, 0),
+            None,
+            "{name} audio-rate modulation input"
         );
         assert_eq!(
             pv_build_error(name, Rate::Control, &valid, 1, 0),
