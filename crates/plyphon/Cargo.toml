@@ -32,3 +32,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 bytemuck.workspace = true
+criterion = "0.6"
+
+[[bench]]
+name = "sc3_processing"
+harness = false

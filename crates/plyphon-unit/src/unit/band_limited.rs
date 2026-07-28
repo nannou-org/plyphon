@@ -17,6 +17,7 @@ use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
+use plyphon_dsp::rate::Rate;
 
 /// `Saw.ar(freq)`: a band-limited sawtooth, output -1 to 1.
 #[repr(C)]
@@ -147,6 +148,350 @@ impl UnitDef for BlipCtor {
     fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         // Start at a period boundary so the first sample is the impulse.
         Ok(unit_spec(Blip { phase: 0.0 }))
+    }
+}
+
+// The following four B-spline BLIT oscillators are translated from
+// `AntiAliasingOscillators.cpp`.
+//
+// SuperCollider is under the GNU General Public License, version 3; these extensions are released
+// under the same license.
+//
+// AntiAliasingOscillators
+// Created by Nicholas Collins on 07/08/2010.
+// Copyright 2010 Nicholas M Collins. All rights reserved.
+//
+// UGens by Nick Collins, (c) 8 August 2010, following research work by Juhan Nam, Vesa Valimaki,
+// Jonathan S. Abel, and Julius O. Smith, released under the GNU GPL as SuperCollider server
+// extension plugins. `BlitB3` phase tracking revised by Nathan Ho in 2016.
+
+/// Read a block-sampled BLIT control, retaining the last finite clamped value.
+fn blit_control(
+    ctx: &ProcessCtx<'_>,
+    inlet: usize,
+    remembered: &mut f32,
+    min: f32,
+    max: f32,
+) -> f32 {
+    let value = ctx.ins.control(inlet);
+    if value.is_finite() {
+        *remembered = value.clamp(min, max);
+    }
+    *remembered
+}
+
+/// Validate the shared fixed-shape BLIT ABI.
+fn validate_blit(ctx: &BuildContext<'_>, inputs: usize) -> Result<(), BuildError> {
+    if ctx.input_rates.len() != inputs {
+        return Err(BuildError::WrongInputCount);
+    }
+    if ctx.num_outputs != 1 {
+        return Err(BuildError::WrongOutputCount {
+            expected: 1,
+            actual: ctx.num_outputs,
+        });
+    }
+    if ctx.special_index != 0 {
+        return Err(BuildError::UnsupportedOp(ctx.special_index));
+    }
+    if ctx.rate != Rate::Audio
+        || ctx
+            .input_rates
+            .iter()
+            .any(|rate| !matches!(rate, Rate::Scalar | Rate::Control | Rate::Audio))
+    {
+        return Err(BuildError::UnsupportedUnitRate);
+    }
+    Ok(())
+}
+
+/// `BlitB3.ar(freq)`: third-order B-spline band-limited impulse train.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct BlitB3 {
+    phase: f32,
+    frequency: f32,
+}
+
+impl Unit for BlitB3 {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let nyquist = ctx.own.sample_rate as f32 * 0.5;
+        let frequency = blit_control(ctx, 0, &mut self.frequency, 0.000001, nyquist);
+        let period = ctx.own.sample_rate as f32 / frequency;
+        let phase = self.phase % 1.0;
+        let mut time = phase * period;
+        for output in ctx.outs.audio(0).iter_mut() {
+            *output = blit_b3_pulse(time);
+            time += 1.0;
+            if time >= period {
+                time -= period;
+            }
+        }
+        self.phase = time * frequency * ctx.own.sample_dur as f32;
+        if !self.phase.is_finite() {
+            self.phase = 0.0;
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Evaluate the translated third-order B-spline pulse for elapsed samples `time`.
+fn blit_b3_pulse(time: f32) -> f32 {
+    if time >= 4.0 {
+        0.0
+    } else if time >= 3.0 {
+        let x = 4.0 - time;
+        0.166_666_67 * x * x * x
+    } else if time >= 2.0 {
+        let x = time - 2.0;
+        let square = x * x;
+        0.666_666_7 - square + 0.5 * square * x
+    } else if time >= 1.0 {
+        let x = time - 2.0;
+        let square = x * x;
+        0.666_666_7 - square - 0.5 * square * x
+    } else {
+        0.166_666_67 * time * time * time
+    }
+}
+
+/// Constructor for [`BlitB3`].
+pub struct BlitB3Ctor;
+
+impl UnitDef for BlitB3Ctor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        validate_blit(ctx, 1)?;
+        // The source performs a hidden one-sample pre-calc, then restores phase to zero. The
+        // pre-calc changes no other state, so this is its exact post-constructor image.
+        Ok(unit_spec(BlitB3 {
+            phase: 0.0,
+            frequency: 440.0,
+        }))
+    }
+}
+
+/// `BlitB3Saw.ar(freq, leak)`: integrated B-spline impulse train with DC compensation.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct BlitB3Saw {
+    phase: f32,
+    last_output: f32,
+    dc_offset: f32,
+    frequency: f32,
+    leak: f32,
+}
+
+impl Unit for BlitB3Saw {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let nyquist = ctx.own.sample_rate as f32 * 0.5;
+        let frequency = blit_control(ctx, 0, &mut self.frequency, 0.000001, nyquist);
+        let leak = blit_control(ctx, 1, &mut self.leak, 0.0, 1.0);
+        let mut phase = self.phase;
+        let mut last_output = self.last_output;
+        let mut dc_offset = self.dc_offset;
+        for output in ctx.outs.audio(0).iter_mut() {
+            phase -= 1.0;
+            let mut value = if phase >= 2.0 {
+                dc_offset
+            } else if phase >= 1.0 {
+                let temp = 2.0 - phase;
+                0.166_666_67 * temp * temp * temp + dc_offset
+            } else if phase >= 0.0 {
+                let square = phase * phase;
+                0.666_666_7 - square + 0.5 * square * phase + dc_offset
+            } else if phase >= -1.0 {
+                let square = phase * phase;
+                0.666_666_7 - square - 0.5 * square * phase + dc_offset
+            } else if phase >= -2.0 {
+                let temp = 2.0 + phase;
+                0.166_666_67 * temp * temp * temp + dc_offset
+            } else {
+                let value = dc_offset;
+                let period = (ctx.own.sample_rate as f32 / frequency).max(4.0);
+                dc_offset = -1.0 / period;
+                phase += period;
+                value
+            };
+            value += last_output * leak;
+            if !value.is_finite() {
+                value = 0.0;
+            }
+            *output = value;
+            last_output = value;
+        }
+        self.phase = if phase.is_finite() { phase } else { 3.0 };
+        self.last_output = last_output;
+        self.dc_offset = dc_offset;
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`BlitB3Saw`].
+pub struct BlitB3SawCtor;
+
+impl UnitDef for BlitB3SawCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        validate_blit(ctx, 2)?;
+        Ok(unit_spec(BlitB3Saw {
+            phase: 3.0,
+            last_output: 3.0 / 5.0 - 0.5,
+            dc_offset: -1.0 / 5.0,
+            frequency: 440.0,
+            leak: 0.99,
+        }))
+    }
+}
+
+/// `BlitB3Square.ar(freq, leak)`: alternating integrated B-spline impulse train.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct BlitB3Square {
+    phase: f32,
+    last_output: f32,
+    bipolar: f32,
+    frequency: f32,
+    leak: f32,
+}
+
+impl Unit for BlitB3Square {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let nyquist = ctx.own.sample_rate as f32 * 0.5;
+        let frequency = blit_control(ctx, 0, &mut self.frequency, 0.000001, nyquist);
+        let leak = blit_control(ctx, 1, &mut self.leak, 0.0, 1.0);
+        let mut phase = self.phase;
+        let mut last_output = self.last_output;
+        let mut bipolar = self.bipolar;
+        for output in ctx.outs.audio(0).iter_mut() {
+            phase -= 1.0;
+            let mut value = blit_b3_bipolar_pulse(phase, bipolar);
+            if phase < -2.0 {
+                let half_period = (ctx.own.sample_rate as f32 / frequency * 0.5).max(1.0);
+                bipolar *= -1.0;
+                phase += half_period;
+                value = 0.0;
+            }
+            value += last_output * leak;
+            if !value.is_finite() {
+                value = 0.0;
+            }
+            *output = value;
+            last_output = value;
+        }
+        self.phase = if phase.is_finite() { phase } else { 3.0 };
+        self.last_output = last_output;
+        self.bipolar = bipolar;
+        DoneAction::Nothing
+    }
+}
+
+/// Evaluate the signed B-spline pulse shared by square and triangle variants.
+fn blit_b3_bipolar_pulse(phase: f32, bipolar: f32) -> f32 {
+    if phase >= 2.0 {
+        0.0
+    } else if phase >= 1.0 {
+        let temp = 2.0 - phase;
+        0.166_666_67 * temp * temp * temp * bipolar
+    } else if phase >= 0.0 {
+        let square = phase * phase;
+        (0.666_666_7 - square + 0.5 * square * phase) * bipolar
+    } else if phase >= -1.0 {
+        let square = phase * phase;
+        (0.666_666_7 - square - 0.5 * square * phase) * bipolar
+    } else if phase >= -2.0 {
+        let temp = 2.0 + phase;
+        0.166_666_67 * temp * temp * temp * bipolar
+    } else {
+        0.0
+    }
+}
+
+/// Constructor for [`BlitB3Square`].
+pub struct BlitB3SquareCtor;
+
+impl UnitDef for BlitB3SquareCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        validate_blit(ctx, 2)?;
+        Ok(unit_spec(BlitB3Square {
+            phase: 3.0,
+            last_output: -0.5,
+            bipolar: 1.0,
+            frequency: 440.0,
+            leak: 0.99,
+        }))
+    }
+}
+
+/// `BlitB3Tri.ar(freq, leak, leak2)`: twice-integrated alternating B-spline impulse train.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct BlitB3Tri {
+    phase: f32,
+    last_output: f32,
+    last_output_2: f32,
+    bipolar: f32,
+    scale: f32,
+    frequency: f32,
+    leak: f32,
+    leak_2: f32,
+}
+
+impl Unit for BlitB3Tri {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let nyquist = ctx.own.sample_rate as f32 * 0.5;
+        let frequency = blit_control(ctx, 0, &mut self.frequency, 0.000001, nyquist);
+        let leak = blit_control(ctx, 1, &mut self.leak, 0.0, 1.0);
+        let leak_2 = blit_control(ctx, 2, &mut self.leak_2, 0.0, 1.0);
+        let mut phase = self.phase;
+        let mut last_output = self.last_output;
+        let mut last_output_2 = self.last_output_2;
+        let mut bipolar = self.bipolar;
+        let mut scale = self.scale;
+        for output in ctx.outs.audio(0).iter_mut() {
+            phase -= 1.0;
+            let mut value = blit_b3_bipolar_pulse(phase, bipolar);
+            if phase < -2.0 {
+                let half_period = (ctx.own.sample_rate as f32 / frequency * 0.5).max(1.0);
+                scale = 0.25;
+                bipolar *= -1.0;
+                phase += half_period;
+                value = 0.0;
+            }
+            value += last_output * leak;
+            last_output = value;
+            value += last_output_2 * leak_2;
+            last_output_2 = value;
+            let emitted = value * scale;
+            *output = if emitted.is_finite() { emitted } else { 0.0 };
+            if !value.is_finite() {
+                last_output = 0.0;
+                last_output_2 = 0.0;
+            }
+        }
+        self.phase = if phase.is_finite() { phase } else { 3.0 };
+        self.last_output = last_output;
+        self.last_output_2 = last_output_2;
+        self.bipolar = bipolar;
+        self.scale = scale;
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`BlitB3Tri`].
+pub struct BlitB3TriCtor;
+
+impl UnitDef for BlitB3TriCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        validate_blit(ctx, 3)?;
+        Ok(unit_spec(BlitB3Tri {
+            phase: 3.0,
+            last_output: -0.5,
+            last_output_2: 0.0,
+            bipolar: 1.0,
+            scale: 4.0 / 20.0,
+            frequency: 440.0,
+            leak: 0.99,
+            leak_2: 0.99,
+        }))
     }
 }
 

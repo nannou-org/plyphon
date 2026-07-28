@@ -27,6 +27,7 @@ pub mod demand_ugen;
 pub mod dgeom;
 pub mod dibrown;
 pub mod diwhite;
+pub mod dnoise_ring;
 pub mod dpoll;
 pub mod drand;
 pub mod dseq;
@@ -40,6 +41,7 @@ use alloc::boxed::Box;
 
 use bytemuck::Pod;
 use plyphon_dsp::buffer::{BufView, BufViewMut, BufferTable};
+use plyphon_dsp::rng::Rng;
 
 use crate::unit::{
     InputSource, Inputs, LocalBufs, MAX_LABEL, MAX_VALUES, NodeMsg, NodeMsgKind, NodeMsgSink,
@@ -53,6 +55,7 @@ pub use demand_ugen::Demand;
 pub use dgeom::Dgeom;
 pub use dibrown::Dibrown;
 pub use diwhite::Diwhite;
+pub use dnoise_ring::DNoiseRing;
 pub use dpoll::Dpoll;
 pub use drand::Drand;
 pub use dseq::Dseq;
@@ -193,6 +196,9 @@ pub struct DemandWorld<'w, 's> {
     pub node_id: i32,
     /// Sink for host messages (`Dpoll` posts here, via [`DemandCtx::post`]).
     pub node_msgs: &'w mut NodeMsgSink<'s>,
+    /// The synth's shared random stream. Demand sources that use graph-level randomness draw from
+    /// this stream so their draws interleave with calc units in graph execution order.
+    pub rgen: &'w mut Rng,
 }
 
 /// What a demand unit touches while producing or resetting - the pull-side analogue of
@@ -210,6 +216,7 @@ pub struct DemandCtx<'a> {
     local_bufs: LocalBufs<'a>,
     node_id: i32,
     node_msgs: NodeMsgSink<'a>,
+    rgen: &'a mut Rng,
 }
 
 impl DemandCtx<'_> {
@@ -242,6 +249,7 @@ impl DemandCtx<'_> {
                     local_bufs: &mut self.local_bufs,
                     node_id: self.node_id,
                     node_msgs: &mut self.node_msgs,
+                    rgen: &mut *self.rgen,
                 },
                 d as usize,
                 Op::Produce,
@@ -267,6 +275,7 @@ impl DemandCtx<'_> {
                     local_bufs: &mut self.local_bufs,
                     node_id: self.node_id,
                     node_msgs: &mut self.node_msgs,
+                    rgen: &mut *self.rgen,
                 },
                 d as usize,
                 Op::Reset,
@@ -290,6 +299,14 @@ impl DemandCtx<'_> {
     /// The enclosing synth's node id, for a source that tags an emitted message (`Dpoll`).
     pub fn node_id(&self) -> i32 {
         self.node_id
+    }
+
+    /// Draw one value from the enclosing synth's shared uniform random stream in `[0, 1)`.
+    ///
+    /// The draw advances the same stream used by calc-rate graph-random units, preserving
+    /// deterministic execution-order interleaving without giving the demand unit private RNG state.
+    pub fn random_unipolar(&mut self) -> f32 {
+        self.rgen.next_unipolar()
     }
 
     /// Post one polled `value` to the host (`Dpoll`): a [`NodeMsg`] of kind [`NodeMsgKind::Poll`]
@@ -354,6 +371,7 @@ fn pull(
             local_bufs: world.local_bufs.reborrow(),
             node_id: world.node_id,
             node_msgs: world.node_msgs.reborrow(),
+            rgen: &mut *world.rgen,
         };
         match op {
             Op::Produce => (v.produce)(&mut buf.0[..size], &mut ctx),

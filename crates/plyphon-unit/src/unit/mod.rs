@@ -69,12 +69,15 @@ pub mod pv_mag_mul;
 pub mod pv_mag_squared;
 #[cfg(feature = "fft")]
 pub mod pv_ops;
+#[cfg(feature = "fft")]
+pub mod pv_sc3;
 pub mod ramp;
 pub mod rand;
 pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
 pub mod resonant;
+pub mod sc3_processing;
 pub mod scope_out;
 pub mod section;
 pub mod select;

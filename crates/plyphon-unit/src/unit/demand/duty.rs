@@ -97,6 +97,7 @@ impl Unit for Duty {
             local_bufs: &mut ctx.local_bufs,
             node_id: ctx.node_id,
             node_msgs: &mut ctx.node_msgs,
+            rgen: &mut *ctx.rgen,
         };
 
         // A rising reset restarts the count and resets the demand sources.
@@ -212,6 +213,7 @@ impl Unit for TDuty {
             local_bufs: &mut ctx.local_bufs,
             node_id: ctx.node_id,
             node_msgs: &mut ctx.node_msgs,
+            rgen: &mut *ctx.rgen,
         };
         let frame_rate = if self.audio != 0 {
             ctx.audio.sample_rate

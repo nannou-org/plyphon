@@ -55,6 +55,7 @@ impl Demand {
             local_bufs: &mut ctx.local_bufs,
             node_id: ctx.node_id,
             node_msgs: &mut ctx.node_msgs,
+            rgen: &mut *ctx.rgen,
         };
         for k in 0..self.num_outputs as usize {
             demand_reset(
@@ -74,6 +75,7 @@ impl Demand {
             local_bufs: &mut ctx.local_bufs,
             node_id: ctx.node_id,
             node_msgs: &mut ctx.node_msgs,
+            rgen: &mut *ctx.rgen,
         };
         for k in 0..self.num_outputs as usize {
             let x = demand_next(
