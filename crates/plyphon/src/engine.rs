@@ -3,7 +3,6 @@
 
 use rtrb::RingBuffer;
 
-use plyphon_dsp::rate::RateInfo;
 use plyphon_rt::{Event, NodeMsg, Nrt, Options, Reply, TimedCommand, Trash, Trigger, World};
 
 use crate::controller::Controller;
