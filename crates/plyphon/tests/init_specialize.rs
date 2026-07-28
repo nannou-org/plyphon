@@ -59,8 +59,8 @@ fn opts() -> Options {
 /// The graph rate pair these tests specialize and compile against, derived through the same helper
 /// `compile` uses so the evaluator and the built units can never disagree.
 fn rates() -> (RateInfo, RateInfo) {
-    let (audio, control) = opts().rates();
-    graph_rates(&audio, &control, None, 1).expect("nominal graph rates")
+    let (audio, _) = opts().rates();
+    graph_rates(&audio, None, 1).expect("nominal graph rates")
 }
 
 /// An initialization environment at the nominal rates with `params` as the authored bases.

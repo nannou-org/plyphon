@@ -9,7 +9,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::{AuxDynamicCause, BuildError};
+use crate::error::BuildError;
 use crate::unit::delay::{Interp, calc_feedback, clamp_delay, line_len, read_delayed};
 use crate::unit::filter::zap;
 use crate::unit::registry::{BuildContext, UnitDef};
@@ -187,12 +187,7 @@ impl UnitDef for PluckCtor {
         if ctx.input_rates.len() < 6 {
             return Err(BuildError::WrongInputCount);
         }
-        let max_delay = ctx
-            .const_input(MAXDELAY)
-            .ok_or(BuildError::AuxRequiresConstant {
-                input: MAXDELAY,
-                cause: AuxDynamicCause::Unsupported,
-            })?;
+        let max_delay = ctx.const_input_required(MAXDELAY)?;
         let len = line_len(
             "Pluck",
             MAXDELAY,

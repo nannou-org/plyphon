@@ -10,7 +10,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::{AuxDynamicCause, BuildError};
+use crate::error::BuildError;
 use crate::unit::init_only::checked_aux_elems;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec_aux};
@@ -164,13 +164,7 @@ impl UnitDef for PitchShiftCtor {
         let block = ctx.audio.block_size;
         // `windowSize` sizes the line, so it must be a compile-time constant; clamp to scsynth's
         // 3-sample minimum (below which its own delay maths misbehaves).
-        let winsize = ctx
-            .const_input(WINSIZE)
-            .ok_or(BuildError::AuxRequiresConstant {
-                input: WINSIZE,
-                cause: AuxDynamicCause::Unsupported,
-            })?
-            .max(3.0 / sr as f32);
+        let winsize = ctx.const_input_required(WINSIZE)?.max(3.0 / sr as f32);
         // The line holds three windows plus a little headroom, rounded up to a power of two. The
         // accumulation saturates end to end and the bound comparison runs before the narrowing
         // casts, so a huge `windowSize` fails deterministically instead of truncating; a passing

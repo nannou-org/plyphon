@@ -189,7 +189,6 @@ pub struct SynthDef {
 /// verbatim; a reblocked/resampled def derives a smaller-block / higher-rate pair.
 pub fn graph_rates(
     audio: &RateInfo,
-    control: &RateInfo,
     reblock: Option<usize>,
     resample: usize,
 ) -> Result<(RateInfo, RateInfo), BuildError> {
@@ -208,7 +207,7 @@ pub fn graph_rates(
     }
     let graph_sr = audio.sample_rate * resample as f64;
     Ok(if block_size == audio.block_size && resample == 1 {
-        (*audio, *control)
+        (*audio, RateInfo::new(audio.buf_rate, 1))
     } else {
         (
             RateInfo::new(graph_sr, block_size),
@@ -241,7 +240,7 @@ impl SynthDef {
         reblock: Option<usize>,
         resample: usize,
     ) -> Result<GraphDef, BuildError> {
-        let (graph_audio, graph_control) = graph_rates(audio, control, reblock, resample)?;
+        let (graph_audio, graph_control) = graph_rates(audio, reblock, resample)?;
         let block_size = graph_audio.block_size;
 
         // Parameters occupy the first control wires.

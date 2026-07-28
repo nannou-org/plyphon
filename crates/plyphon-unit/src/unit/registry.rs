@@ -9,7 +9,7 @@ use alloc::string::{String, ToString};
 
 use hashbrown::HashMap;
 
-use crate::error::BuildError;
+use crate::error::{AuxDynamicCause, BuildError};
 use crate::unit::amp_comp::{AmpCompACtor, AmpCompCtor};
 use crate::unit::band_limited::{BlipCtor, PulseCtor, SawCtor};
 use crate::unit::bank::{KlangCtor, KlankCtor};
@@ -191,6 +191,16 @@ impl BuildContext<'_> {
             Some(InputSource::Constant(v)) => Some(*v),
             _ => None,
         }
+    }
+
+    /// [`Self::const_input`] for a declared allocation-sizing input: a non-constant fails with
+    /// [`BuildError::AuxRequiresConstant`] carrying [`AuxDynamicCause::Unsupported`] — the one
+    /// cause every raise site outside the initialization evaluator constructs.
+    pub fn const_input_required(&self, i: usize) -> Result<f32, BuildError> {
+        self.const_input(i).ok_or(BuildError::AuxRequiresConstant {
+            input: i,
+            cause: AuxDynamicCause::Unsupported,
+        })
     }
 }
 

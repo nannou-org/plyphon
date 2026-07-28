@@ -12,7 +12,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::{AuxDynamicCause, BuildError};
+use crate::error::BuildError;
 use crate::unit::init_only::checked_aux_elems;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec_aux};
@@ -209,12 +209,7 @@ impl UnitDef for Gendy1Ctor {
         // every other aux-sized input (a delay's `maxdelaytime`); scsynth reads it once at ctor.
         // The element count (two arrays of `memory_size`) accumulates in saturating `u64` and is
         // bound-checked before the narrowing cast, so a huge `initCPs` fails instead of wrapping.
-        let cps = ctx
-            .const_input(Gendy1::INIT_CPS)
-            .ok_or(BuildError::AuxRequiresConstant {
-                input: Gendy1::INIT_CPS,
-                cause: AuxDynamicCause::Unsupported,
-            })?;
+        let cps = ctx.const_input_required(Gendy1::INIT_CPS)?;
         let memory_u64 = (cps as u64).max(1);
         checked_aux_elems("Gendy1", Gendy1::INIT_CPS, memory_u64.saturating_mul(2))?;
         let memory_size = memory_u64 as usize;

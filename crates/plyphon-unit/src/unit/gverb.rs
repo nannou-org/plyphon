@@ -14,7 +14,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::{AuxDynamicCause, BuildError};
+use crate::error::BuildError;
 use crate::unit::init_only::{checked_aux_elems, checked_aux_elems_f64};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_aux};
@@ -399,15 +399,9 @@ impl UnitDef for GVerbCtor {
             return Err(BuildError::WrongInputCount);
         }
         let sr = ctx.audio.sample_rate;
-        let need_const = |i: usize| {
-            ctx.const_input(i).ok_or(BuildError::AuxRequiresConstant {
-                input: i,
-                cause: AuxDynamicCause::Unsupported,
-            })
-        };
-        let roomsize = need_const(1)?;
-        let spread = need_const(5)?;
-        let maxroomsize = need_const(9)?.max(1.0001);
+        let roomsize = ctx.const_input_required(1)?;
+        let spread = ctx.const_input_required(5)?;
+        let maxroomsize = ctx.const_input_required(9)?.max(1.0001);
 
         // Bound the two room-size-derived lengths in `f64` before any integer conversion: a huge
         // `roomsize`/`maxroomsize` would otherwise saturate the casts and overflow the cap/cursor

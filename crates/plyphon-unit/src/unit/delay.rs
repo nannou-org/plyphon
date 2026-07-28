@@ -20,7 +20,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::error::{AuxDynamicCause, BuildError};
+use crate::error::BuildError;
 use crate::unit::init_only::checked_aux_elems;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{
@@ -551,12 +551,7 @@ fn build_line(
     }
     // `maxdelaytime` sizes the line, so it must be a compile-time constant (scsynth reads it once at
     // ctor and never again).
-    let max_delay = ctx
-        .const_input(MAXDELAY)
-        .ok_or(BuildError::AuxRequiresConstant {
-            input: MAXDELAY,
-            cause: AuxDynamicCause::Unsupported,
-        })?;
+    let max_delay = ctx.const_input_required(MAXDELAY)?;
     let len = line_len(
         unit,
         MAXDELAY,
