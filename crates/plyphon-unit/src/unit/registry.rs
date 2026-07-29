@@ -9,7 +9,7 @@ use alloc::string::{String, ToString};
 
 use hashbrown::HashMap;
 
-use crate::error::BuildError;
+use crate::error::{AuxDynamicCause, BuildError};
 use crate::unit::amp_comp::{AmpCompACtor, AmpCompCtor};
 use crate::unit::band_limited::{BlipCtor, PulseCtor, SawCtor};
 use crate::unit::bank::{KlangCtor, KlankCtor};
@@ -175,6 +175,10 @@ pub struct BuildContext<'a> {
     /// declaration index (scsynth's running `parent->localBufNum`). The compile loop advances it per
     /// built unit that declares one; every other unit ignores it.
     pub local_bufs_so_far: usize,
+    /// The def's resolved local feedback-bus width: the single `LocalIn`'s output count, `0` when
+    /// the def has none. `LocalOut` builds with zero channels (a complete no-op) when its input
+    /// count differs, matching measured scsynth mismatch behavior; every other unit ignores it.
+    pub local_channels: usize,
 }
 
 impl BuildContext<'_> {
@@ -187,6 +191,16 @@ impl BuildContext<'_> {
             Some(InputSource::Constant(v)) => Some(*v),
             _ => None,
         }
+    }
+
+    /// [`Self::const_input`] for a declared allocation-sizing input: a non-constant fails with
+    /// [`BuildError::AuxRequiresConstant`] carrying [`AuxDynamicCause::Unsupported`] - the one
+    /// cause every raise site outside the initialization evaluator constructs.
+    pub fn const_input_required(&self, i: usize) -> Result<f32, BuildError> {
+        self.const_input(i).ok_or(BuildError::AuxRequiresConstant {
+            input: i,
+            cause: AuxDynamicCause::Unsupported,
+        })
     }
 }
 

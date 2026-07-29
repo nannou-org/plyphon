@@ -22,8 +22,18 @@ use plyphon_dsp::ops;
 use plyphon_dsp::rate::Rate;
 use plyphon_dsp::wavetable::shape_wavetable;
 
-/// `Select.ar/kr(which, array)`: outputs the `array` input selected by `which` (rounded and clamped
-/// into range). Input `0` is `which`; inputs `1..` are the selectable signals.
+/// Convert a `Select` selector value into the input index it reads: truncate toward zero
+/// (`as i32`, saturating at the `i32` limits), then `(which + 1).clamp(1, num_inputs - 1)` with a
+/// saturating increment, so a selector at or beyond `i32::MAX` clamps to the last input instead of
+/// overflowing. Shared between the runtime unit and the initialization evaluator so a proven
+/// selector can never pick a different branch than the compiled unit would.
+pub fn select_index(which: f32, num_inputs: usize) -> usize {
+    let maxindex = (num_inputs as i32 - 1).max(1);
+    (which as i32).saturating_add(1).clamp(1, maxindex) as usize
+}
+
+/// `Select.ar/kr(which, array)`: outputs the `array` input selected by `which` (truncated toward
+/// zero and clamped into range). Input `0` is `which`; inputs `1..` are the selectable signals.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Select {
@@ -35,10 +45,8 @@ impl Unit for Select {
         let audio = self.audio != 0;
         let ins = ctx.ins; // `Copy`; its slices are `'a`, so it coexists with the `&mut` output.
         // scsynth's `maxindex = mNumInputs - 1`; items live at inputs `1..=maxindex`.
-        let maxindex = (ins.len() as i32 - 1).max(1);
         drive(ctx, audio, |i| {
-            let which = sample_channel(&ins, 0, i) as i32;
-            let index = (which + 1).clamp(1, maxindex) as usize;
+            let index = select_index(sample_channel(&ins, 0, i), ins.len());
             sample_channel(&ins, index, i)
         });
         DoneAction::Nothing

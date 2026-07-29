@@ -4,6 +4,7 @@
 //! requirement, the end-to-end delay, the cold-start guard over recycled (un-zeroed) memory, and the
 //! single-alloc/single-free invariant.
 
+use plyphon::AuxDynamicCause;
 use plyphon::{
     AddAction, BuildError, GraphDef, InputRef, Options, Param, ROOT_GROUP_ID, Rate, RateInfo,
     SynthDef, UnitRegistry, UnitSpec, engine,
@@ -110,7 +111,10 @@ fn non_constant_maxdelaytime_rejected() {
     };
     assert_eq!(
         compile(&def).map(|_| ()),
-        Err(BuildError::AuxRequiresConstant { input: 1 })
+        Err(BuildError::AuxRequiresConstant {
+            input: 1,
+            cause: AuxDynamicCause::Unsupported
+        })
     );
 }
 

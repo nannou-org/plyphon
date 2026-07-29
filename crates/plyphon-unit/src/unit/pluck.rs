@@ -187,10 +187,14 @@ impl UnitDef for PluckCtor {
         if ctx.input_rates.len() < 6 {
             return Err(BuildError::WrongInputCount);
         }
-        let max_delay = ctx
-            .const_input(MAXDELAY)
-            .ok_or(BuildError::AuxRequiresConstant { input: MAXDELAY })?;
-        let len = line_len(max_delay, ctx.audio.sample_rate, ctx.audio.block_size);
+        let max_delay = ctx.const_input_required(MAXDELAY)?;
+        let len = line_len(
+            "Pluck",
+            MAXDELAY,
+            max_delay,
+            ctx.audio.sample_rate,
+            ctx.audio.block_size,
+        )?;
         let aux_bytes = len as usize * core::mem::size_of::<f32>();
         Ok(unit_spec_aux(
             Pluck {

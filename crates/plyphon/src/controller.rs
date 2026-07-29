@@ -134,7 +134,15 @@ pub struct Controller {
     def_ids: HashMap<String, u32>,
     /// Retired compiled defs (superseded by a redefinition, or freed) awaiting their last
     /// audio-thread reference to drop; drained by [`reap_retired_defs`](Self::reap_retired_defs).
-    retiring: Vec<Arc<GraphDef>>,
+    /// The `Option<u32>` discriminates the two producers: a redefinition retires with `None` (the
+    /// name keeps its `def_id`, so the same slot is redefined), while [`free_def`](Self::free_def)
+    /// retires with `Some(def_id)` - the id returns to `free_def_ids` once the retired def's last
+    /// reference drops, so the id space is bounded by live definitions rather than historical
+    /// names.
+    retiring: Vec<(Arc<GraphDef>, Option<u32>)>,
+    /// `def_id`s reclaimed from fully-drained freed defs, consumed by
+    /// [`ensure_compiled`](Self::ensure_compiled) before minting from `next_def_id`.
+    free_def_ids: Vec<u32>,
     next_def_id: u32,
     audio: RateInfo,
     control: RateInfo,
@@ -162,6 +170,7 @@ impl Controller {
             compiled: HashMap::new(),
             def_ids: HashMap::new(),
             retiring: Vec::new(),
+            free_def_ids: Vec::new(),
             next_def_id: 0,
             audio,
             control,
@@ -267,8 +276,10 @@ impl Controller {
 
     /// Shared body of the `add_synthdef*` methods: retire any compiled form and store.
     fn insert_def(&mut self, def: SynthDef) {
+        // A redefinition keeps the name's `def_id` (the slot is redefined in place), so the
+        // retired form carries no id to reclaim.
         if let Some(old) = self.compiled.remove(&def.name) {
-            self.retiring.push(old);
+            self.retiring.push((old, None));
         }
         self.defs.insert(def);
         self.reap_retired_defs();
@@ -284,8 +295,12 @@ impl Controller {
     /// with this name fails until the def is added again. Returns whether a def by that name existed.
     ///
     /// The compiled `Arc` is retired (see [`reap_retired_defs`](Self::reap_retired_defs)), so the
-    /// def-table slot's drop on the audio thread is never the final reference; the `def_id` stays
-    /// reserved, so re-adding the same name reuses its slot.
+    /// def-table slot's drop on the audio thread is never the final reference. The name's
+    /// `def_id` is released: once the retired def's last reference drops it returns to the free
+    /// list for reuse, so a host that frees superseded defs keeps the id space bounded by *live*
+    /// definitions. Re-adding a freed name mints a fresh id.
+    ///
+    /// On `Err(QueueFull)` nothing is mutated, so the call is safely retried.
     pub fn free_def(&mut self, name: &str) -> Result<bool, QueueFull> {
         let known = self.defs.get(name).is_some() || self.compiled.contains_key(name);
         if !known {
@@ -296,8 +311,12 @@ impl Controller {
         if let Some(&def_id) = self.def_ids.get(name) {
             self.send_now(Command::FreeGraphDef { def_id })?;
         }
+        let freed_id = self.def_ids.remove(name);
         if let Some(old) = self.compiled.remove(name) {
-            self.retiring.push(old);
+            self.retiring.push((old, freed_id));
+        } else if let Some(def_id) = freed_id {
+            // An id with no compiled form has no drain to wait for; reclaim it immediately.
+            self.free_def_ids.push(def_id);
         }
         self.defs.remove(name);
         self.graph_rate.remove(name);
@@ -315,11 +334,12 @@ impl Controller {
         Ok(())
     }
 
-    /// Drop every retired `GraphDef` the audio thread has finished with, reclaiming its memory on
-    /// the control thread. Cheap and allocation-free; [`add_synthdef`](Self::add_synthdef) and
+    /// Drop every retired `GraphDef` the audio thread has finished with, reclaiming its memory
+    /// (and any freed `def_id`) on the control thread. [`add_synthdef`](Self::add_synthdef) and
     /// [`free_def`](Self::free_def) call it opportunistically, but a long-running host should also
     /// call it periodically (e.g. once per control tick) so a def pinned only by a since-freed synth
-    /// is reclaimed promptly rather than waiting for the next def change.
+    /// is reclaimed promptly rather than waiting for the next def change. Cheap on the control
+    /// thread; a reclaimed `def_id` may grow the small free-list vector.
     ///
     /// A retired def's `Arc::strong_count` reaching 1 means this `Vec` holds the only remaining
     /// strong reference: the `World` has cleared or replaced its def-table slot *and* every synth
@@ -329,7 +349,19 @@ impl Controller {
     /// `strong_count == 1` is therefore a stable terminal state (no later clone can occur), and the
     /// relaxed snapshot can only ever read stale-high (reaping one cycle late), never stale-low.
     pub fn reap_retired_defs(&mut self) {
-        self.retiring.retain(|def| Arc::strong_count(def) > 1);
+        let mut i = 0;
+        while i < self.retiring.len() {
+            if Arc::strong_count(&self.retiring[i].0) > 1 {
+                i += 1;
+            } else {
+                let (_, freed_id) = self.retiring.swap_remove(i);
+                // A `free_def`-retired id is reclaimable only now: the slot is cleared and every
+                // synth that used the def has been freed, so no spawn can reference it again.
+                if let Some(def_id) = freed_id {
+                    self.free_def_ids.push(def_id);
+                }
+            }
+        }
     }
 
     /// The number of retired `GraphDef`s still awaiting reclamation (not yet dropped by
@@ -416,15 +448,23 @@ impl Controller {
                 resample,
             )?
         };
-        // Assign a stable def_id (reused if this name was compiled before).
+        // Assign a stable def_id (reused if this name was compiled before). An unseen name takes
+        // a reclaimed id from the free list before minting a new one, so the id space is bounded
+        // by live definitions when the host frees superseded defs.
         let def_id = match self.def_ids.get(def_name).copied() {
             Some(id) => id,
             None => {
-                let id = self.next_def_id;
-                if id as usize >= self.max_synthdefs {
-                    return Err(SynthNewError::TooManyDefs);
-                }
-                self.next_def_id += 1;
+                let id = match self.free_def_ids.pop() {
+                    Some(id) => id,
+                    None => {
+                        let id = self.next_def_id;
+                        if id as usize >= self.max_synthdefs {
+                            return Err(SynthNewError::TooManyDefs);
+                        }
+                        self.next_def_id += 1;
+                        id
+                    }
+                };
                 self.def_ids.insert(def_name.to_string(), id);
                 id
             }
@@ -928,8 +968,7 @@ mod tests {
     /// consumer end so a test can observe exactly what crossed to the RT side.
     fn test_controller(capacity: usize) -> (Controller, Consumer<TimedCommand>) {
         let options = Options::default();
-        let audio = RateInfo::new(options.sample_rate, options.block_size);
-        let control = RateInfo::new(options.sample_rate / options.block_size as f64, 1);
+        let (audio, control) = options.rates();
         let (tx, rx) = RingBuffer::<TimedCommand>::new(capacity);
         (Controller::new(&options, audio, control, tx), rx)
     }

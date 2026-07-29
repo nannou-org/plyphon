@@ -4,6 +4,28 @@ use alloc::string::String;
 
 use thiserror::Error;
 
+/// Why an allocation-sizing input could not reduce to a compile-time constant.
+///
+/// Carried by [`BuildError::AuxRequiresConstant`] so hosts can classify the failure without
+/// re-deriving the expression: a genuinely signal-driven size, an init-time random size (which
+/// scsynth folds at ctor but plyphon deliberately does not), a size gated on buffer metadata the
+/// host has not supplied, or an expression outside the initialization evaluator's proven set.
+/// Raise sites outside the evaluator (unit builders reached by a bare `compile`) always construct
+/// [`AuxDynamicCause::Unsupported`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuxDynamicCause {
+    /// The expression reads a live signal: a bus (`In`/`InFeedback`/`LocalIn`), a trigger, a demand
+    /// unit, a reply, or any unit output the evaluator does not prove.
+    Signal,
+    /// The expression draws init-time randomness (the `Rand` family).
+    Random,
+    /// The expression is rooted in a `Buf*` info unit and no buffer metadata is available.
+    BufferMetadataUnavailable,
+    /// An unresolved operator index, an out-of-range parameter reference, or any other expression
+    /// outside the evaluator's enumerated set.
+    Unsupported,
+}
+
 /// Errors from compiling a `SynthDef` into a [`GraphDef`](crate::graphdef::GraphDef).
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum BuildError {
@@ -61,22 +83,46 @@ pub enum BuildError {
     /// each (its channel count is taken from the single `LocalIn`).
     #[error("a def may have at most one LocalIn and one LocalOut")]
     MultipleLocalBuses,
-    /// `LocalOut` writes a different channel count than the `LocalIn` declares (or there is a
-    /// `LocalOut` with no `LocalIn` to size the bus). The two must agree.
-    #[error("LocalOut writes {local_out} channels but LocalIn declares {local_in}")]
-    LocalBusMismatch {
-        /// Channels the `LocalIn` declares (its output count; `0` if there is no `LocalIn`).
-        local_in: usize,
-        /// Channels the `LocalOut` writes (its input count).
-        local_out: usize,
-    },
     /// A unit that sizes per-instance auxiliary memory (a delay line) from a scalar input was given a
     /// non-constant for that input. The size must be known at compile time, so - like scsynth's
     /// instantiation-only `maxdelaytime` (`ZIN0` at ctor) - the input must be a baked constant.
+    /// `cause` records why the input could not reduce to a constant, so hosts can classify the
+    /// failure (signal-driven vs init-time-random vs buffer-metadata-gated) without re-deriving it.
     #[error("input {input} must be a compile-time constant to size auxiliary memory")]
     AuxRequiresConstant {
         /// The index of the offending input.
         input: usize,
+        /// Why the input is not a compile-time constant.
+        cause: AuxDynamicCause,
+    },
+    /// The initialization evaluator proved an allocation-sizing input to a value that is NaN or
+    /// infinite. Aux sizes must be finite, so the definition is rejected deterministically at
+    /// specialization time rather than allocating from a nonsense size.
+    #[error("unit {unit} input {input} proved to a non-finite auxiliary size")]
+    AuxNonFinite {
+        /// The registry name of the unit whose input proved non-finite.
+        unit: String,
+        /// The index of the offending input.
+        input: usize,
+    },
+    /// An allocation site's total element count exceeds [`MAX_AUX_ELEMS`](crate::unit::init_only::MAX_AUX_ELEMS).
+    /// The count is accumulated with saturating arithmetic before any narrowing cast, so an
+    /// out-of-range size fails here deterministically instead of truncating or wrapping into an
+    /// undersized allocation that the audio thread would then index. For an input that only feeds
+    /// sizing arithmetic without itself naming an element count (`GVerb`'s `spread`), the payload
+    /// is the bounded magnitude of that arithmetic instead.
+    #[error("unit {unit} input {input} sizes {elements} aux elements but the limit is {limit}")]
+    AuxSizeOutOfRange {
+        /// The implementation (family) name of the unit whose allocation overflows the bound -
+        /// shared builders report their family (`Delay`, `FeedbackDelay`, `LookAhead`), not the
+        /// registry spelling (`DelayC`, `Normalizer`).
+        unit: String,
+        /// The index of the sizing input.
+        input: usize,
+        /// The saturating total element count the site would allocate.
+        elements: u64,
+        /// The `MAX_AUX_ELEMS` bound.
+        limit: u64,
     },
     /// An emitting unit (`SendReply`) was given a non-constant label length or character. The OSC path
     /// is encoded as constant float inputs (scsynth's scheme), so it must be known at compile time.

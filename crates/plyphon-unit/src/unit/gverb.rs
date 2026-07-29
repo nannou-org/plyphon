@@ -15,6 +15,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
+use crate::unit::init_only::{checked_aux_elems, checked_aux_elems_f64};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_aux};
 use plyphon_dsp::math;
@@ -398,16 +399,23 @@ impl UnitDef for GVerbCtor {
             return Err(BuildError::WrongInputCount);
         }
         let sr = ctx.audio.sample_rate;
-        let need_const = |i: usize| {
-            ctx.const_input(i)
-                .ok_or(BuildError::AuxRequiresConstant { input: i })
-        };
-        let roomsize = need_const(1)?;
-        let spread = need_const(5)?;
-        let maxroomsize = need_const(9)?.max(1.0001);
+        let roomsize = ctx.const_input_required(1)?;
+        let spread = ctx.const_input_required(5)?;
+        let maxroomsize = ctx.const_input_required(9)?.max(1.0001);
 
-        let maxdelay = (sr * maxroomsize as f64 / 340.0) as usize;
+        // Bound the two room-size-derived lengths in `f64` before any integer conversion: a huge
+        // `roomsize`/`maxroomsize` would otherwise saturate the casts and overflow the cap/cursor
+        // accumulation below (or hand `nearest_prime` a pathological input). Failing here keeps
+        // out-of-range sizes a deterministic build error.
+        let maxdelay_f = sr * maxroomsize as f64 / 340.0;
         let largestdelay = sr * roomsize.max(1.0) as f64 / 340.0;
+        checked_aux_elems_f64("GVerb", 9, maxdelay_f)?;
+        checked_aux_elems_f64("GVerb", 1, largestdelay)?;
+        // `spread` feeds the diffuser-section offsets below as `i32` intermediates whose largest
+        // term is `3 * spread`; bound that magnitude the same way so an out-of-range spread fails
+        // deterministically here instead of overflowing the offset arithmetic.
+        checked_aux_elems_f64("GVerb", 5, 3.0 * spread.abs() as f64)?;
+        let maxdelay = maxdelay_f as usize;
 
         // FDN line lengths (scsynth's `gbmul`); line 0 snapped to a prime.
         let gbmul = [1.0, 0.816_49, 0.707_1, 0.632_45];
@@ -470,13 +478,16 @@ impl UnitDef for GVerbCtor {
             TAP_LEN, fdnlens[0], fdnlens[1], fdnlens[2], fdnlens[3], ldif[0], ldif[1], ldif[2],
             ldif[3], rdif[0], rdif[1], rdif[2], rdif[3],
         ];
+        // Accumulate the layout cursor in saturating `u64` and bound-check the total before the
+        // narrowing `u32` offsets, so the 13-buffer sum can never wrap into overlapping spans.
         let mut off = [0u32; NBUF];
-        let mut cursor = 0usize;
+        let mut cursor_u64 = 0u64;
         for k in 0..NBUF {
-            off[k] = cursor as u32;
-            cursor += caps[k];
+            off[k] = cursor_u64 as u32;
+            cursor_u64 = cursor_u64.saturating_add(caps[k] as u64);
         }
-        let total = cursor;
+        checked_aux_elems("GVerb", 9, cursor_u64)?;
+        let total = cursor_u64 as usize;
 
         let mut size = [0u32; NBUF];
         for k in 0..NBUF {

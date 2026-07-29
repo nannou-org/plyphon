@@ -92,11 +92,7 @@ impl UnitDef for MedianCtor {
         if ctx.input_rates.len() < 2 {
             return Err(BuildError::WrongInputCount);
         }
-        let length = ctx
-            .const_input(Median::LENGTH)
-            .ok_or(BuildError::AuxRequiresConstant {
-                input: Median::LENGTH,
-            })?;
+        let length = ctx.const_input_required(Median::LENGTH)?;
         let size = (length as i32).clamp(1, MAX_MEDIAN as i32) as u32;
         Ok(unit_spec(Median {
             values: [0.0; MAX_MEDIAN],

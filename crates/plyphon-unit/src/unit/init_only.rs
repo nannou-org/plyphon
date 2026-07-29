@@ -1,0 +1,92 @@
+//! The declared init-only input table and the auxiliary-allocation bound.
+//!
+//! An *init-only* input is consumed entirely at build time to size per-instance auxiliary
+//! memory - scsynth reads it once at ctor (`ZIN0`) and never again. The table below declares,
+//! per registry name, exactly which input indices are init-only: the initialization evaluator
+//! (`SynthDef::specialize_init` in the `plyphon` crate) proves and rewrites *only* declared
+//! inputs, so a parameter consumed both as an aux size and as a live signal keeps its live use
+//! untouched by construction.
+//!
+//! The table is exactly the set of [`BuildError::AuxRequiresConstant`] raise sites minus one
+//! deliberate exclusion: `FFT`/`IFFT` window size (stays syntactic-constant-only, so no
+//! parameter-derived FFT-plan respecialization exists). A non-constant `SendReply`/`Poll` label
+//! is outside the set entirely - it raises `BuildError::EmitBadLabel`, because an OSC path is an
+//! encoded constant, not a size.
+
+use crate::error::BuildError;
+
+/// The per-allocation element bound: an allocation site whose total element count exceeds this
+/// fails with [`BuildError::AuxSizeOutOfRange`] instead of allocating. The committed corpus
+/// maximum is a 24 s `DelayC` line - 8.4M elements after power-of-two rounding at a 192 kHz
+/// graph rate - so the bound admits every shipped definition at every supported device rate
+/// while still rejecting out-of-range preset or parameter-derived sizes deterministically at
+/// build rather than as truncation, wrap, or silent pool exhaustion.
+pub const MAX_AUX_ELEMS: u64 = 1 << 24;
+
+/// The declared init-only input indices for `unit_name`, empty for units with none.
+///
+/// Kept in exact correspondence with the `AuxRequiresConstant` raise sites (minus the documented
+/// `FFT`/`IFFT` exclusion); a test pins the correspondence so a new aux site upstream fails until
+/// it is declared here or explicitly excluded.
+pub fn init_only_inputs(unit_name: &str) -> &'static [usize] {
+    match unit_name {
+        // The delay family's `maxdelaytime` (`build_line`'s MAXDELAY).
+        "DelayN" | "DelayL" | "DelayC" | "CombN" | "CombL" | "CombC" | "AllpassN" | "AllpassL"
+        | "AllpassC" => &[1],
+        // `Pluck`'s `maxdelaytime`.
+        "Pluck" => &[2],
+        // `PitchShift`'s `windowSize`.
+        "PitchShift" => &[1],
+        // `LocalBuf`'s `channels` and `frames`.
+        "LocalBuf" => &[0, 1],
+        // `Gendy1`'s `initCPs`.
+        "Gendy1" => &[8],
+        // The `Limiter`/`Normalizer` look-ahead duration.
+        "Limiter" | "Normalizer" => &[2],
+        // `Median`'s window length (clamped into a fixed array; no aux allocation, so no bound
+        // check applies at its site).
+        "Median" => &[0],
+        // `GVerb`'s `roomsize`, `spread`, and `maxroomsize`.
+        "GVerb" => &[1, 5, 9],
+        _ => &[],
+    }
+}
+
+/// Bound-check a length still in `f64`, before any integer conversion. A NaN or negative
+/// length maps to `u64::MAX` and therefore fails the bound - the conservative policy for a
+/// value that is about to become an allocation size (the integer-path sites instead saturate a
+/// NaN to `0` at their float→int cast, where the value has already been floored/maxed finite).
+pub fn checked_aux_elems_f64(
+    unit: &'static str,
+    input: usize,
+    elements: f64,
+) -> Result<(), BuildError> {
+    let elements = if elements.is_finite() && elements >= 0.0 {
+        elements as u64
+    } else {
+        u64::MAX
+    };
+    checked_aux_elems(unit, input, elements)
+}
+
+/// Bound-check the total element count an allocation site is about to allocate.
+///
+/// `elements` must be accumulated with saturating arithmetic (saturating float→int casts and
+/// saturating add/multiply) *before* any narrowing cast, so an out-of-range size arrives here as
+/// a large value rather than a truncated or wrapped small one. A count strictly greater than
+/// [`MAX_AUX_ELEMS`] fails.
+pub fn checked_aux_elems(
+    unit: &'static str,
+    input: usize,
+    elements: u64,
+) -> Result<(), BuildError> {
+    if elements > MAX_AUX_ELEMS {
+        return Err(BuildError::AuxSizeOutOfRange {
+            unit: unit.into(),
+            input,
+            elements,
+            limit: MAX_AUX_ELEMS,
+        });
+    }
+    Ok(())
+}

@@ -39,14 +39,15 @@ pub use plyphon_rt::{
     ROOT_GROUP_ID, Reply, Trigger, World,
 };
 pub use plyphon_unit::{
-    Aux, BuildContext, BuildError, BuiltUnit, DoneAction, GraphDef, InitCtx, Inputs, Outputs,
-    ProcessCtx, Unit, UnitDef, UnitRegistry, unit_spec, unit_spec_aux,
+    Aux, AuxDynamicCause, BuildContext, BuildError, BuiltUnit, DoneAction, GraphDef, InitCtx,
+    Inputs, Outputs, ProcessCtx, Unit, UnitDef, UnitRegistry, unit_spec, unit_spec_aux,
 };
 
 pub use controller::{Controller, ControllerBatchCommand, GroupNewError, QueueFull, SynthNewError};
 pub use engine::engine;
 pub use render::{Render, RenderUntil};
-pub use synthdef::{InputRef, Param, SynthDef, UnitSpec};
+pub use synthdef::init::{InitDependencies, InitEnvironment, InitError, SpecializedSynthDef};
+pub use synthdef::{InputRef, Param, SynthDef, UnitSpec, graph_rates};
 
 /// Anything that can fill an interleaved, `channels`-wide block of `f32` output samples.
 ///

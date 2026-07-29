@@ -13,6 +13,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
+use crate::unit::init_only::checked_aux_elems;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec_aux};
 use plyphon_dsp::math;
@@ -206,12 +207,12 @@ impl UnitDef for Gendy1Ctor {
         }
         // The breakpoint arrays are aux memory, so `initCPs` must be a compile-time constant like
         // every other aux-sized input (a delay's `maxdelaytime`); scsynth reads it once at ctor.
-        let memory_size = ctx
-            .const_input(Gendy1::INIT_CPS)
-            .map(|cps| (cps as i32).max(1) as usize)
-            .ok_or(BuildError::AuxRequiresConstant {
-                input: Gendy1::INIT_CPS,
-            })?;
+        // The element count (two arrays of `memory_size`) accumulates in saturating `u64` and is
+        // bound-checked before the narrowing cast, so a huge `initCPs` fails instead of wrapping.
+        let cps = ctx.const_input_required(Gendy1::INIT_CPS)?;
+        let memory_u64 = (cps as u64).max(1);
+        checked_aux_elems("Gendy1", Gendy1::INIT_CPS, memory_u64.saturating_mul(2))?;
+        let memory_size = memory_u64 as usize;
         Ok(unit_spec_aux(
             Gendy1 {
                 phase: 1.0,

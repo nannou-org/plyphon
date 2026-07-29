@@ -39,6 +39,7 @@ pub mod grain;
 pub mod gverb;
 pub mod hilbert;
 pub mod info;
+pub mod init_only;
 pub mod input;
 pub mod io;
 pub mod lf;

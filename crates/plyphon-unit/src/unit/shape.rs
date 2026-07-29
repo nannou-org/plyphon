@@ -167,6 +167,20 @@ impl UnitDef for InRectCtor {
     }
 }
 
+/// `LinExp`'s per-block coefficients `(dstratio, rsrcrange, rrminuslo)`. Shared between the
+/// runtime unit and the initialization evaluator so both compute the identical expression.
+pub fn lin_exp_coeffs(srclo: f32, srchi: f32, dstlo: f32, dsthi: f32) -> (f32, f32, f32) {
+    let dstratio = dsthi / dstlo;
+    let rsrcrange = 1.0 / (srchi - srclo);
+    let rrminuslo = rsrcrange * -srclo;
+    (dstratio, rsrcrange, rrminuslo)
+}
+
+/// Apply `LinExp`'s mapping to one sample given [`lin_exp_coeffs`]'s precomputed coefficients.
+pub fn lin_exp_apply(x: f32, dstlo: f32, dstratio: f32, rsrcrange: f32, rrminuslo: f32) -> f32 {
+    dstlo * math::powf(dstratio, x * rsrcrange + rrminuslo)
+}
+
 /// `LinExp.ar(in, srclo, srchi, dstlo, dsthi)`: maps a linear input range onto an exponential output
 /// range (`dstlo`/`dsthi` must share a sign and be non-zero).
 #[repr(C)]
@@ -183,11 +197,9 @@ impl Unit for LinExp {
         let srchi = ctx.ins.control(2);
         let dstlo = ctx.ins.control(3);
         let dsthi = ctx.ins.control(4);
-        let dstratio = dsthi / dstlo;
-        let rsrcrange = 1.0 / (srchi - srclo);
-        let rrminuslo = rsrcrange * -srclo;
+        let (dstratio, rsrcrange, rrminuslo) = lin_exp_coeffs(srclo, srchi, dstlo, dsthi);
         drive(ctx, audio_out, |i| {
-            dstlo * math::powf(dstratio, input.at(i) * rsrcrange + rrminuslo)
+            lin_exp_apply(input.at(i), dstlo, dstratio, rsrcrange, rrminuslo)
         });
         DoneAction::Nothing
     }

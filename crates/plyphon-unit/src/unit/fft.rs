@@ -289,9 +289,7 @@ pub(crate) const DEFAULT_MAX_FFT: usize = 8192;
 /// default, "use the chain buffer's size" - is accepted and resolved at run time (up to
 /// [`DEFAULT_MAX_FFT`]), since the buffer is not known at compile time.
 fn const_fftsize(ctx: &BuildContext<'_>, winsize: usize) -> Result<usize, BuildError> {
-    let size = ctx
-        .const_input(winsize)
-        .ok_or(BuildError::AuxRequiresConstant { input: winsize })? as usize;
+    let size = ctx.const_input_required(winsize)? as usize;
     if size != 0 && !is_supported_size(size) {
         return Err(BuildError::UnsupportedFftSize { size });
     }

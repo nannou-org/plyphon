@@ -5,8 +5,9 @@
 //! lives in the per-instance pool block and persists across blocks, so a `LocalIn` reads what
 //! `LocalOut` wrote on the *previous* block - a one-block feedback delay. The one-block delay falls
 //! out of calc order: `LocalIn` (a source, ordered before `LocalOut`) reads the bus before
-//! `LocalOut` overwrites it. The channel count is fixed by the single `LocalIn` (its output count),
-//! enforced against the `LocalOut` at compile time.
+//! `LocalOut` overwrites it. The channel count is fixed by the single `LocalIn` (its output
+//! count); a `LocalOut` whose input count differs builds with zero channels and writes nothing,
+//! matching measured scsynth mismatch behavior.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -67,12 +68,22 @@ impl Unit for LocalOut {
 }
 
 /// Constructor for [`LocalOut`]. Its inputs are the signals to write, one per local channel.
+///
+/// A `LocalOut` whose input count differs from the def's resolved local-bus width - including a
+/// `LocalOut` with no `LocalIn` at all (width 0) - builds with zero channels and writes nothing.
+/// This matches measured scsynth behavior: a mismatched `LocalOut` is a complete no-op (no
+/// channel is partially written, wrapped, or truncated) while the rest of the definition still
+/// compiles and renders, its `LocalIn` reading silence.
 pub struct LocalOutCtor;
 
 impl UnitDef for LocalOutCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        Ok(unit_spec(LocalOut {
-            num_channels: ctx.input_rates.len() as u32,
-        }))
+        let inputs = ctx.input_rates.len();
+        let num_channels = if inputs == ctx.local_channels {
+            inputs as u32
+        } else {
+            0
+        };
+        Ok(unit_spec(LocalOut { num_channels }))
     }
 }

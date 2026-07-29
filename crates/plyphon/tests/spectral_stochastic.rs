@@ -388,7 +388,7 @@ fn gendy1_rejects_a_non_constant_init_cps() {
     assert!(
         matches!(
             result.as_ref().map(|_| ()),
-            Err(BuildError::AuxRequiresConstant { input: 8 })
+            Err(BuildError::AuxRequiresConstant { input: 8, .. })
         ),
         "expected AuxRequiresConstant for a wired initCPs"
     );

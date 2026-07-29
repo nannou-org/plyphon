@@ -7,6 +7,7 @@
 //! which the audio thread constructs live [`Graph`](plyphon_rt::graph::Graph)s with a single pool
 //! allocation.
 
+pub mod init;
 pub mod read;
 
 use alloc::boxed::Box;
@@ -178,6 +179,45 @@ pub struct SynthDef {
     pub units: Vec<UnitSpec>,
 }
 
+/// The graph's own rate pair for a def compiled with `reblock`/`resample` overrides - the exact
+/// derivation [`SynthDef::compile`] bakes into the units, factored out so hosts (and the
+/// initialization evaluator's environment construction) can never disagree with it.
+///
+/// The graph's control block is the World block, or a smaller power-of-two reblock (scsynth's
+/// `Reblock(n)`) that divides it; the oversample factor (scsynth's `Resample(n)`) must be a
+/// power of two. An ordinary def (World block, no oversampling) reuses the World audio rate
+/// verbatim; a reblocked/resampled def derives a smaller-block / higher-rate pair. In both
+/// cases the graph's control rate is derived here, one control sample per graph block, never
+/// taken from a separately supplied control `RateInfo`.
+pub fn graph_rates(
+    audio: &RateInfo,
+    reblock: Option<usize>,
+    resample: usize,
+) -> Result<(RateInfo, RateInfo), BuildError> {
+    let block_size = match reblock {
+        Some(b) if b >= 1 && b.is_power_of_two() && b <= audio.block_size => b,
+        Some(b) => {
+            return Err(BuildError::InvalidReblock {
+                block_size: b,
+                world: audio.block_size,
+            });
+        }
+        None => audio.block_size,
+    };
+    if resample == 0 || !resample.is_power_of_two() {
+        return Err(BuildError::InvalidResample { factor: resample });
+    }
+    let graph_sr = audio.sample_rate * resample as f64;
+    Ok(if block_size == audio.block_size && resample == 1 {
+        (*audio, RateInfo::new(audio.buf_rate, 1))
+    } else {
+        (
+            RateInfo::new(graph_sr, block_size),
+            RateInfo::new(graph_sr / block_size as f64, 1),
+        )
+    })
+}
+
 impl SynthDef {
     /// Resolve the index of the parameter named `name`, if any.
     pub fn param_index(&self, name: &str) -> Option<usize> {
@@ -202,35 +242,8 @@ impl SynthDef {
         reblock: Option<usize>,
         resample: usize,
     ) -> Result<GraphDef, BuildError> {
-        // The graph's control block: the World block, or a smaller power-of-two reblock (scsynth's
-        // `Reblock(n)`) that divides it. The graph's units run at this finer rate.
-        let block_size = match reblock {
-            Some(b) if b >= 1 && b.is_power_of_two() && b <= audio.block_size => b,
-            Some(b) => {
-                return Err(BuildError::InvalidReblock {
-                    block_size: b,
-                    world: audio.block_size,
-                });
-            }
-            None => audio.block_size,
-        };
-        // The oversample factor (scsynth's `Resample(n)`): the graph runs at `factor`x the World
-        // sample rate, anti-aliasing nonlinear units. Power-of-two only (no downsampling).
-        if resample == 0 || !resample.is_power_of_two() {
-            return Err(BuildError::InvalidResample { factor: resample });
-        }
-        // The graph's own rate pair, baked into the units and handed to each `ProcessCtx`. An ordinary
-        // def (World block, no oversampling) reuses the World's rates verbatim, so its output is
-        // unchanged; a reblocked/resampled def derives a smaller-block / higher-rate pair.
-        let graph_sr = audio.sample_rate * resample as f64;
-        let (graph_audio, graph_control) = if block_size == audio.block_size && resample == 1 {
-            (*audio, *control)
-        } else {
-            (
-                RateInfo::new(graph_sr, block_size),
-                RateInfo::new(graph_sr / block_size as f64, 1),
-            )
-        };
+        let (graph_audio, graph_control) = graph_rates(audio, reblock, resample)?;
+        let block_size = graph_audio.block_size;
 
         // Parameters occupy the first control wires.
         let num_params = self.params.len();
@@ -262,9 +275,12 @@ impl SynthDef {
         }
 
         // Pre-scan the feedback bus (`LocalIn`/`LocalOut`): at most one of each in v1. The bus width
-        // is the `LocalIn`'s output count; a `LocalOut`, if present, must write that many channels.
+        // is the `LocalIn`'s output count (0 with none); the width is handed to unit construction so
+        // a `LocalOut` whose input count differs builds as a complete no-op - measured scsynth
+        // behavior for a mismatched or orphaned `LocalOut` - while the rest of the def still
+        // compiles and renders.
         let mut local_in_channels: Option<usize> = None;
-        let mut local_out_channels: Option<usize> = None;
+        let mut local_out_seen = false;
         for spec in &self.units {
             match spec.name.as_str() {
                 "LocalIn" => {
@@ -274,23 +290,15 @@ impl SynthDef {
                     local_in_channels = Some(spec.num_outputs);
                 }
                 "LocalOut" => {
-                    if local_out_channels.is_some() {
+                    if local_out_seen {
                         return Err(BuildError::MultipleLocalBuses);
                     }
-                    local_out_channels = Some(spec.inputs.len());
+                    local_out_seen = true;
                 }
                 _ => {}
             }
         }
         let num_local_channels = local_in_channels.unwrap_or(0);
-        if let Some(local_out) = local_out_channels
-            && local_out != num_local_channels
-        {
-            return Err(BuildError::LocalBusMismatch {
-                local_in: num_local_channels,
-                local_out,
-            });
-        }
 
         // Resolve each parameter. Every param's value lives in its control wire (`p`, the
         // `/n_set`/`/n_map`/`control_value` target). A *control* param's output is that wire directly;
@@ -462,6 +470,7 @@ impl SynthDef {
                 special_index: spec.special_index,
                 seed: (u as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 local_bufs_so_far: local_buf_specs.len(),
+                local_channels: num_local_channels,
             };
 
             if spec.rate == Rate::Demand {
