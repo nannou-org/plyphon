@@ -14,13 +14,13 @@
 //! exactly one stream, so `RandID` keeps its shape (inputs consumed, `0.0` output) but selects
 //! nothing. Cross-synth correlated randomness via a shared `RandID` stream is not expressible.
 //!
-//! The one-time draws happen on the first `process` call, which runs at the same topological
-//! position as scsynth's constructor calc, so draw interleaving within a synth matches unit order
-//! exactly as it does there.
+//! The one-time draws happen during the graph's ordered constructor pass, so draw interleaving
+//! within a synth matches unit order exactly as it does in scsynth.
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
+use crate::unit::demand::{DemandWorld, demand_next};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::trigger::sig;
 use crate::unit::{BuiltUnit, DoneAction, Outputs, ProcessCtx, Unit, unit_spec};
@@ -36,14 +36,15 @@ fn uniform(rgen: &mut Rng, lo: f32, hi: f32) -> f32 {
 /// An exponential-distribution draw in `[lo, hi)` (scsynth's `pow(hi / lo, frand()) * lo`): equal
 /// probability per octave, so `lo` must be non-zero and share `hi`'s sign for a sensible result.
 fn exponential(rgen: &mut Rng, lo: f32, hi: f32) -> f32 {
-    math::exp(math::ln(hi / lo) * rgen.next_unipolar()) * lo
+    math::powf(hi / lo, rgen.next_unipolar()) * lo
 }
 
 /// A uniform integer draw in `[lo, hi]` as a float (scsynth's `rgen.irand(hi - lo + 1) + lo`).
 fn integer(rgen: &mut Rng, lo: f32, hi: f32) -> f32 {
     let lo = lo as i32;
     let hi = hi as i32;
-    (rgen.next_irand(hi - lo + 1) + lo) as f32
+    rgen.next_irand(hi.wrapping_sub(lo).wrapping_add(1))
+        .wrapping_add(lo) as f32
 }
 
 /// Write `value` across the output at the unit's rate (a full block, or one control value).
@@ -55,27 +56,23 @@ fn hold(outs: &mut Outputs<'_>, audio: bool, value: f32) {
     }
 }
 
-/// `Rand.new(lo, hi)`: one uniform draw in `[lo, hi)` at the synth's first block, held forever.
+/// `Rand.new(lo, hi)`: one constructor-time uniform draw in `[lo, hi)`, held forever.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Rand {
     value: f32,
-    /// `0` until the one-time draw has happened on the first `process`.
-    primed: u32,
     /// `0`/`1`: audio-rate (a full block) vs control-rate (one value).
     audio: u32,
 }
 
 impl Unit for Rand {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        self.value = uniform(ctx.rgen, ctx.ins.control(0), ctx.ins.control(1));
+        *ctx.outs.control(0) = self.value;
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let ProcessCtx {
-            ins, outs, rgen, ..
-        } = ctx;
-        if self.primed == 0 {
-            self.primed = 1;
-            self.value = uniform(rgen, ins.control(0), ins.control(1));
-        }
-        hold(outs, self.audio != 0, self.value);
+        hold(&mut ctx.outs, self.audio != 0, self.value);
         DoneAction::Nothing
     }
 }
@@ -87,32 +84,28 @@ impl UnitDef for RandCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(Rand {
             value: 0.0,
-            primed: 0,
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
 }
 
-/// `ExpRand.new(lo, hi)`: one exponential-distribution draw in `[lo, hi)` at the synth's first
-/// block, held forever.
+/// `ExpRand.new(lo, hi)`: one constructor-time exponential-distribution draw in `[lo, hi)`, held
+/// forever.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct ExpRand {
     value: f32,
-    primed: u32,
     audio: u32,
 }
 
 impl Unit for ExpRand {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        self.value = exponential(ctx.rgen, ctx.ins.control(0), ctx.ins.control(1));
+        *ctx.outs.control(0) = self.value;
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let ProcessCtx {
-            ins, outs, rgen, ..
-        } = ctx;
-        if self.primed == 0 {
-            self.primed = 1;
-            self.value = exponential(rgen, ins.control(0), ins.control(1));
-        }
-        hold(outs, self.audio != 0, self.value);
+        hold(&mut ctx.outs, self.audio != 0, self.value);
         DoneAction::Nothing
     }
 }
@@ -124,63 +117,75 @@ impl UnitDef for ExpRandCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(ExpRand {
             value: 0.0,
-            primed: 0,
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
 }
 
-/// The shared body of the `TRand` family: `(lo, hi, trig)` inputs, an initial draw on the first
-/// block, and a fresh draw on every rising trigger edge, holding the value between.
+/// The shared body of the `TRand` family: `(lo, hi, trig)` inputs, a constructor-time initial draw,
+/// and a fresh draw on every rising trigger edge, holding the value between.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct TrigRand {
     value: f32,
     prev_trig: f32,
-    primed: u32,
     audio: u32,
 }
 
 impl TrigRand {
-    /// A fresh trigger-random body that draws on its first block; `audio` selects a full-block
-    /// output vs a single control value.
+    /// A fresh trigger-random body; `audio` selects a full-block output vs one control value.
     fn new(audio: bool) -> Self {
         TrigRand {
             value: 0.0,
             prev_trig: 0.0,
-            primed: 0,
             audio: audio as u32,
         }
     }
 
-    /// Run one block: the first call draws immediately and latches the current trigger level (as
-    /// scsynth's constructor does, so a trigger already high at spawn does not double-fire); every
-    /// call redraws on each `<= 0` to `> 0` trigger crossing.
-    fn run(&mut self, ctx: &mut ProcessCtx<'_>, draw: impl Fn(&mut Rng, f32, f32) -> f32) {
+    /// Draw the initial value and latch the constructor-time trigger sample.
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>, draw: impl Fn(&mut Rng, f32, f32) -> f32) {
+        self.value = draw(ctx.rgen, ctx.ins.control(0), ctx.ins.control(1));
+        self.prev_trig = ctx.ins.control(2);
+        *ctx.outs.control(0) = self.value;
+    }
+
+    /// Run one block, redrawing on the trigger edges selected by the source calc variant.
+    ///
+    /// `advance_prev` preserves the source plugins' differing audio-loop behavior: `TRand`
+    /// advances the comparison sample inside the loop, while `TExpRand` and `TIRand` compare every
+    /// sample against the block-entry trigger and only retain the final trigger after the loop.
+    fn run(
+        &mut self,
+        ctx: &mut ProcessCtx<'_>,
+        draw: impl Fn(&mut Rng, f32, f32) -> f32,
+        advance_prev: bool,
+    ) {
         let ProcessCtx {
             ins, outs, rgen, ..
         } = ctx;
-        let lo = ins.control(0);
-        let hi = ins.control(1);
         let trig = sig(ins, 2);
-        if self.primed == 0 {
-            self.primed = 1;
-            self.value = draw(rgen, lo, hi);
-            self.prev_trig = trig.at(0);
-        }
         if self.audio != 0 {
+            let varying_bounds = ins.rate(0) == Rate::Audio;
+            let lo = sig(ins, 0);
+            let hi = sig(ins, 1);
+            let mut last_trig = self.prev_trig;
             for (i, o) in outs.audio(0).iter_mut().enumerate() {
                 let t = trig.at(i);
                 if self.prev_trig <= 0.0 && t > 0.0 {
-                    self.value = draw(rgen, lo, hi);
+                    let frame = if varying_bounds { i } else { 0 };
+                    self.value = draw(rgen, lo.at(frame), hi.at(frame));
                 }
-                self.prev_trig = t;
+                if advance_prev {
+                    self.prev_trig = t;
+                }
+                last_trig = t;
                 *o = self.value;
             }
+            self.prev_trig = last_trig;
         } else {
             let t = trig.at(0);
             if self.prev_trig <= 0.0 && t > 0.0 {
-                self.value = draw(rgen, lo, hi);
+                self.value = draw(rgen, ins.control(0), ins.control(1));
             }
             self.prev_trig = t;
             *outs.control(0) = self.value;
@@ -194,8 +199,12 @@ impl TrigRand {
 pub struct TRand(TrigRand);
 
 impl Unit for TRand {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        self.0.construct(ctx, uniform);
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.0.run(ctx, uniform);
+        self.0.run(ctx, uniform, true);
         DoneAction::Nothing
     }
 }
@@ -216,8 +225,12 @@ impl UnitDef for TRandCtor {
 pub struct TExpRand(TrigRand);
 
 impl Unit for TExpRand {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        self.0.construct(ctx, exponential);
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.0.run(ctx, exponential);
+        self.0.run(ctx, exponential, false);
         DoneAction::Nothing
     }
 }
@@ -238,8 +251,12 @@ impl UnitDef for TExpRandCtor {
 pub struct TIRand(TrigRand);
 
 impl Unit for TIRand {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        self.0.construct(ctx, integer);
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.0.run(ctx, integer);
+        self.0.run(ctx, integer, false);
         DoneAction::Nothing
     }
 }
@@ -265,22 +282,53 @@ pub struct RandSeed {
 }
 
 impl Unit for RandSeed {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let mut world = DemandWorld {
+            buffers: &mut *ctx.buffers,
+            local_bufs: &mut ctx.local_bufs,
+            node_id: ctx.node_id,
+            node_msgs: &mut ctx.node_msgs,
+            rgen: &mut *ctx.rgen,
+        };
+        let trig = ctx.ins.control(0);
+        if trig > 0.0 {
+            let seed = demand_next(&ctx.ins, &mut ctx.demand, &mut world, 1, 1);
+            world.rgen.reseed(seed as i32 as u32);
+        }
+        self.prev_trig = trig;
+        *ctx.outs.control(0) = 0.0;
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ProcessCtx {
             ins,
             outs,
             rgen,
-            own,
+            buffers,
+            local_bufs,
+            demand,
+            node_id,
+            node_msgs,
             ..
         } = ctx;
         let trig = sig(ins, 0);
-        let frames = if self.audio != 0 { own.block_size } else { 1 };
+        let frames = if self.audio != 0 {
+            outs.audio(0).len()
+        } else {
+            1
+        };
+        let mut world = DemandWorld {
+            buffers: &mut **buffers,
+            local_bufs,
+            node_id: *node_id,
+            node_msgs,
+            rgen: &mut **rgen,
+        };
         for i in 0..frames {
             let t = trig.at(i);
             if self.prev_trig <= 0.0 && t > 0.0 {
-                // The seed input truncates to an `i32` and re-keys the stream by its 32-bit
-                // pattern, so equal seed values always produce equal sequences.
-                **rgen = Rng::new(ins.control(1) as i32 as u32 as u64);
+                let seed = demand_next(ins, demand, &mut world, 1, frames);
+                world.rgen.reseed(seed as i32 as u32);
             }
             self.prev_trig = t;
         }

@@ -11,7 +11,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::unit::demand::DemandVtbl;
-use crate::unit::{InitFn, InputSource, ProcessFn, ReseedFn};
+use crate::unit::{ConstructFn, InitFn, InputSource, ProcessFn, ReseedFn};
 use plyphon_dsp::rate::{Rate, RateInfo};
 
 /// Where a unit output is published: an audio wire (a full block in the World's shared wire scratch)
@@ -62,6 +62,8 @@ pub struct UnitVtbl {
     pub rate: Rate,
     /// Per-block calc function over the state slot.
     pub process: ProcessFn,
+    /// Source-constructor callback, run once in original SynthDef unit order.
+    pub construct: ConstructFn,
     /// One-time first-block seeding function over the state slot.
     pub init: InitFn,
     /// Per-instance re-seed function over the state slot (no-op for units without randomness).
@@ -79,6 +81,15 @@ pub struct UnitVtbl {
     pub aux_offset: usize,
     /// Bytes this unit's aux region occupies in the `aux` arena (`0` for units with no aux memory).
     pub aux_size: usize,
+}
+
+/// One entry in the graph's original mixed calc/demand constructor order.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ConstructorUnit {
+    /// A unit in [`GraphDef::units`].
+    Calc(u32),
+    /// A unit in [`GraphDef::demand_units`].
+    Demand(u32),
 }
 
 /// The compiled shape of one graph-local buffer (a `LocalBuf`), indexed by declaration order.
@@ -178,6 +189,8 @@ pub struct GraphDef {
     /// The demand plan: per-demand-unit pull/reset/seed vtable + wiring. Not in the per-block calc
     /// list - each is driven on demand by a consuming unit. Empty when the def has no demand units.
     demand_units: Box<[DemandVtbl]>,
+    /// Calc and demand constructors in original SynthDef unit order.
+    constructor_units: Box<[ConstructorUnit]>,
     /// How a per-graph pool block is carved.
     layout: BlockLayout,
     /// The initial state-arena image: each unit's initial state bytes packed at its offset. Copied
@@ -222,6 +235,7 @@ impl GraphDef {
     pub fn new(
         units: Box<[UnitVtbl]>,
         demand_units: Box<[DemandVtbl]>,
+        constructor_units: Box<[ConstructorUnit]>,
         layout: BlockLayout,
         state_image: Box<[u8]>,
         demand_state_image: Box<[u8]>,
@@ -238,6 +252,7 @@ impl GraphDef {
         GraphDef {
             units,
             demand_units,
+            constructor_units,
             layout,
             state_image,
             demand_state_image,
@@ -261,6 +276,11 @@ impl GraphDef {
     /// The demand plan: per-demand-unit vtables and wiring, indexed by demand-plan index.
     pub fn demand_units(&self) -> &[DemandVtbl] {
         &self.demand_units
+    }
+
+    /// Calc and demand constructors in original SynthDef unit order.
+    pub fn constructor_units(&self) -> &[ConstructorUnit] {
+        &self.constructor_units
     }
 
     /// How a per-graph pool block is carved.

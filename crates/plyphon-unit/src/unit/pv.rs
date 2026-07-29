@@ -6,8 +6,10 @@
 //! passthrough (scsynth's `PV_GET_BUF` preamble). The packed spectrum is scsynth's
 //! `[dc, nyq, x0, y0, x1, y1, ...]`; [`Spectrum`] is a typed view over it, and
 //! [`to_polar`]/[`to_complex`] convert it in place - idempotently, tracking the buffer's
-//! [`SpectrumCoord`] - the analogues of scsynth's `ToPolarApx`/`ToComplexApx` (plyphon uses exact
-//! `hypot`/`atan2` where scsynth uses a lookup-table approximation).
+//! [`SpectrumCoord`] - the analogues of scsynth's `ToPolarApx`/`ToComplexApx`. The public
+//! conversions retain Plyphon's exact `hypot`/`atan2` behavior; crate-internal approximate-polar
+//! helpers let source-parity units opt into SuperCollider's quantized phase grid without changing
+//! existing PV units.
 //!
 //! Compiled only with the `fft` feature.
 
@@ -77,6 +79,65 @@ pub fn to_polar<'a>(buf: &'a mut BufViewMut<'_>) -> Option<Spectrum<'a>> {
             let (re, im) = (bin.x, bin.y);
             bin.x = math::hypot(im, re);
             bin.y = math::atan2(im, re);
+        }
+        buf.set_coord(SpectrumCoord::Polar);
+    }
+    Spectrum::new(buf.data_mut())
+}
+
+/// Convert one complex bin with SuperCollider's lookup-grid polar approximation.
+///
+/// The source table contains 2,049 entries over slopes `-1..=1`. Computing the selected entry
+/// from its defining `atan` and reciprocal-cosine equations avoids a process-global mutable table
+/// while preserving the source's slope quantization and quadrant arithmetic.
+fn complex_to_polar_apx(bin: Bin) -> Bin {
+    const LUT_HALF: f32 = 1_024.0;
+
+    let (real, imag) = (bin.x, bin.y);
+    let (abs_real, abs_imag) = (real.abs(), imag.abs());
+    if abs_real > abs_imag {
+        let slope = imag / real;
+        let index = (LUT_HALF + LUT_HALF * slope) as i32;
+        let quantized_slope = f64::from(index - LUT_HALF as i32) / f64::from(LUT_HALF);
+        let angle = math::atan(quantized_slope);
+        let phase = angle as f32;
+        let magnitude_scale = (1.0 / math::cos(angle)) as f32;
+        Bin {
+            x: magnitude_scale * abs_real,
+            y: if real > 0.0 {
+                phase
+            } else {
+                (core::f64::consts::PI + f64::from(phase)) as f32
+            },
+        }
+    } else if abs_imag > 0.0 {
+        let slope = real / imag;
+        let index = (LUT_HALF + LUT_HALF * slope) as i32;
+        let quantized_slope = f64::from(index - LUT_HALF as i32) / f64::from(LUT_HALF);
+        let angle = math::atan(quantized_slope);
+        let phase = angle as f32;
+        let magnitude_scale = (1.0 / math::cos(angle)) as f32;
+        Bin {
+            x: magnitude_scale * abs_imag,
+            y: if imag > 0.0 {
+                (core::f64::consts::FRAC_PI_2 - f64::from(phase)) as f32
+            } else {
+                (3.0 * core::f64::consts::FRAC_PI_2 - f64::from(phase)) as f32
+            },
+        }
+    } else {
+        Bin { x: 0.0, y: 0.0 }
+    }
+}
+
+/// Convert `buf` to SuperCollider-compatible approximate polar form in place.
+///
+/// This is crate-internal so units that require source-compatible polar phase branches can opt in
+/// without changing the exact [`to_polar`] behavior used by existing Plyphon PV units.
+pub(crate) fn to_polar_apx<'a>(buf: &'a mut BufViewMut<'_>) -> Option<Spectrum<'a>> {
+    if buf.coord() == SpectrumCoord::Complex {
+        for bin in Spectrum::new(buf.data_mut())?.bins {
+            *bin = complex_to_polar_apx(*bin);
         }
         buf.set_coord(SpectrumCoord::Polar);
     }

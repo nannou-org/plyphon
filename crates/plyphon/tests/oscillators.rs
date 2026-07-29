@@ -66,7 +66,8 @@ fn render_osc(name: &str, inputs: Vec<InputRef>) -> Vec<f32> {
 #[test]
 fn lfsaw_is_the_phase_from_iphase() {
     // scsynth's LFSaw outputs the phase itself: iphase 0 starts at 0, ramps toward 1, wraps to -1
-    // (not a ramp starting at -1); iphase 1 starts at the -1 wrap point.
+    // (not a ramp starting at -1). Its constructor preserves an initial phase at the wrap boundary
+    // for the first callback sample, then wraps after emitting it.
     let hz = 46.875; // 1024 samples per cycle at 48 kHz
     let out = render_osc(
         "LFSaw",
@@ -95,9 +96,14 @@ fn lfsaw_is_the_phase_from_iphase() {
         vec![InputRef::Constant(hz), InputRef::Constant(1.0)],
     );
     assert!(
-        (from_one[0] + 1.0).abs() < 1e-6,
-        "iphase 1 must start at -1, got {}",
+        (from_one[0] - 1.0).abs() < 1e-6,
+        "iphase 1 must emit the raw constructor phase first, got {}",
         from_one[0]
+    );
+    assert!(
+        from_one[1] < -0.99,
+        "iphase 1 must wrap after its first callback sample, got {}",
+        from_one[1]
     );
 }
 

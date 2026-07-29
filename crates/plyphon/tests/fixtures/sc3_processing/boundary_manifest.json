@@ -1,0 +1,844 @@
+{
+  "assets": [
+    {
+      "bytes": 1541,
+      "path": "BOUNDARIES.md",
+      "sha256": "d74be2757d6f32a2e29c7d18a472da2b6e8f1fe34367654de2785a1730984719"
+    },
+    {
+      "bytes": 5565,
+      "path": "capture_boundaries.sh",
+      "sha256": "0fd85585a05882ac7dd71d1281b11b26904f8263bfc64d55850143e16599412d"
+    },
+    {
+      "bytes": 15126,
+      "path": "generate_boundary_manifest.py",
+      "sha256": "5234d3296c713e86f92c8c83d39eb038e78a4a6667c214984e9143ee544f3ded"
+    },
+    {
+      "bytes": 24392,
+      "path": "verify_boundaries.py",
+      "sha256": "c9a8f99ac1d6b8468e9c77ce56d445b3a86307993ad690dcd927b1026aa1d413"
+    },
+    {
+      "bytes": 1310,
+      "path": "decimator_boundaries.scd",
+      "sha256": "658bdb2ff6506c3f8dca52b16c2c11fc1642544507faeede47966ba2bfbd9f89"
+    },
+    {
+      "bytes": 10240,
+      "path": "decimator_boundaries.f32",
+      "sha256": "ca78e70a3b8afedbfcff114dc15f2880bbaac57c92b25c6fbe3da304af164b61"
+    },
+    {
+      "bytes": 2578,
+      "path": "decimator_controls.scd",
+      "sha256": "06213d67addcd4bcdcf5b15c2ba2372d1971118e3d1c02e82247925ce9739e9c"
+    },
+    {
+      "bytes": 18432,
+      "path": "decimator_controls.f32",
+      "sha256": "b9262a2c7838b59e16c9a3ec6461e2cb5f29881be1c42aaaf53cd217c5bfcc0e"
+    },
+    {
+      "bytes": 1568,
+      "path": "bmoog_boundaries.scd",
+      "sha256": "033e8695f8a9b04ee2513f7a6317d56b9b962c20bde101704033aefd0bcff2f0"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog_boundaries_0.f32",
+      "sha256": "48e487c4d73522bcf80392b4659182c18305e98119668838afb57eb297d95133"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog_boundaries_1.f32",
+      "sha256": "5142cb2a42684b7e8ff3ddb448f83ab930d76ce4b97285f4871101a4c48c5d0b"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog_boundaries_2.f32",
+      "sha256": "6b90877dda521c76a46fdf3fcb643bd40d3e965147992a84fb49014e1f284779"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog_boundaries_3.f32",
+      "sha256": "ca112fba842604f7ced04ee37516ac1e9ee205123a556ddfa9513c12e72c5acd"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog_boundaries_4.f32",
+      "sha256": "41182087b9c2c203f41da9af91d98c843f78083435fc5483ba0a894ebd848399"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog_boundaries_5.f32",
+      "sha256": "8198f19752435f92ee83bc7ace52f1446741a5e07fb1143f6daa46a2be5a2c48"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog_boundaries_6.f32",
+      "sha256": "e1d606563574442ad75617227266237923abda7f3a88064a98c2dcc57bfc680f"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog_boundaries_7.f32",
+      "sha256": "ae3a6265f938f4f88d1e1610b0b11b88ef150cba0914e1f279ce8ef5200101ac"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog_boundaries_8.f32",
+      "sha256": "8e7f933014f216e1ef56f063e98e1e160e2941dcd97f7d28c67302a0a2ff624a"
+    },
+    {
+      "bytes": 2258,
+      "path": "bmoog_controls.scd",
+      "sha256": "65e2db47b015f3f1a220f442bf4b527a297c194082ef9325b30f44b5ddfb2964"
+    },
+    {
+      "bytes": 14336,
+      "path": "bmoog_controls.f32",
+      "sha256": "646a76ad593af2c96fea85b14f12cc6fda7a2b61c9cb856c517c0288fc05cb5d"
+    },
+    {
+      "bytes": 1994,
+      "path": "perlin3_boundaries.scd",
+      "sha256": "e90494d98e9389f0e4c1e654c1095c0211c144c66bf44ecceaf4e6086e0cbd92"
+    },
+    {
+      "bytes": 7168,
+      "path": "perlin3_boundaries.f32",
+      "sha256": "9a9f307e43a74efc52611cea15fe3d6e728ec1935800836bc999668b995599c0"
+    },
+    {
+      "bytes": 1343,
+      "path": "rossler_l_boundaries.scd",
+      "sha256": "2c6ad1d37608c79f92507417e7c2033fbb7f1a67f2ff6e9ecc09b8ab5d98b603"
+    },
+    {
+      "bytes": 24576,
+      "path": "rossler_l_boundaries.f32",
+      "sha256": "4505c4560b404b740c337b9bf764ce95038d6127f8038c73fe18f83e88f5582f"
+    },
+    {
+      "bytes": 2444,
+      "path": "rossler_l_controls.scd",
+      "sha256": "ee4ef6667e86dc7a95d43f4a1b201b36902242d306edfaf60c6a1aac7a05b693"
+    },
+    {
+      "bytes": 159744,
+      "path": "rossler_l_controls.f32",
+      "sha256": "6b7669adb20cf020c63c4e04db81f0c4eeb8cdde28d1f2c3e5a8dbcaf229244e"
+    },
+    {
+      "bytes": 2457,
+      "path": "pv_freeze_early.scd",
+      "sha256": "4da2cb1f73ce559363927713928a57711273f9341de9f1028f93750b284653ab"
+    },
+    {
+      "bytes": 414720,
+      "path": "pv_freeze_early.f32",
+      "sha256": "d5f2216e4d240808fa5f3d9e6b7de68c15e97fe1fcabd43dd992d3f9e7a616aa"
+    },
+    {
+      "bytes": 2758,
+      "path": "pv_freeze_controls.scd",
+      "sha256": "e5ae42bd4d724ef1ef7b8f04e1b5a58e3344be589cc832467807388da5c93574"
+    },
+    {
+      "bytes": 153600,
+      "path": "pv_freeze_controls.f32",
+      "sha256": "5418d58456b8ba81fab3030bd79ddfcc57902511b10a1b835b71c4a7d68dc4de"
+    },
+    {
+      "bytes": 4682,
+      "path": "signed_zero_boundaries.scd",
+      "sha256": "ff88639201496f50a5382d23571eaf50c64a58de63fa4e11da2d7de9e5e9d6eb"
+    },
+    {
+      "bytes": 167936,
+      "path": "signed_zero_boundaries.f32",
+      "sha256": "abddddb84e98d72163b3c64ef3978341d0ebb0ba1f4170f9023fa389133ac805"
+    },
+    {
+      "bytes": 6144,
+      "path": "pv_source_a.f32",
+      "sha256": "4923acd0a1fbd4de837c84fecce0afaac2f74559fb46fdd908cff8e25d5d99cc"
+    }
+  ],
+  "format": {
+    "flattening": "sample-frame-major, channel-interleaved",
+    "vectors": "raw little-endian IEEE-754 f32"
+  },
+  "omitted_cases": [
+    {
+      "controls": [
+        "freq=NaN",
+        "freq=+infinity",
+        "freq=-infinity"
+      ],
+      "reason": "non-finite cutoff can reach a non-finite-to-index conversion or out-of-range gain-table access; no black-box execution is safe enough to make that undefined behavior normative",
+      "unit": "BMoog"
+    },
+    {
+      "controls": [
+        "live FFT size 128 -> 256 -> 128"
+      ],
+      "reason": "an isolated NRT black-box probe terminated scsynth before a render was produced; size-changing one live instance is not safe enough to canonicalize or run in automatic capture",
+      "unit": "PV_Freeze"
+    }
+  ],
+  "provenance": {
+    "capture_commands": [
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/decimator_boundaries.scd $FIXTURE_DIR/decimator_boundaries.f32 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/decimator_controls.scd $FIXTURE_DIR/decimator_controls.f32 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_boundaries.scd $FIXTURE_DIR/bmoog_boundaries_0.f32 0 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_boundaries.scd $FIXTURE_DIR/bmoog_boundaries_1.f32 1 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_boundaries.scd $FIXTURE_DIR/bmoog_boundaries_2.f32 2 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_boundaries.scd $FIXTURE_DIR/bmoog_boundaries_3.f32 3 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_boundaries.scd $FIXTURE_DIR/bmoog_boundaries_4.f32 4 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_boundaries.scd $FIXTURE_DIR/bmoog_boundaries_5.f32 5 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_boundaries.scd $FIXTURE_DIR/bmoog_boundaries_6.f32 6 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_boundaries.scd $FIXTURE_DIR/bmoog_boundaries_7.f32 7 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_boundaries.scd $FIXTURE_DIR/bmoog_boundaries_8.f32 8 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/bmoog_controls.scd $FIXTURE_DIR/bmoog_controls.f32 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/perlin3_boundaries.scd $FIXTURE_DIR/perlin3_boundaries.f32 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/rossler_l_boundaries.scd $FIXTURE_DIR/rossler_l_boundaries.f32 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/rossler_l_controls.scd $FIXTURE_DIR/rossler_l_controls.f32 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/pv_freeze_early.scd $FIXTURE_DIR/pv_freeze_early.f32 $FIXTURE_DIR/pv_source_a.f32 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/pv_freeze_controls.scd $FIXTURE_DIR/pv_freeze_controls.f32 $FIXTURE_DIR/pv_source_a.f32 $RUNTIME/plugins $SCSYNTH",
+      "$SCLANG -a --include-path $RUNTIME/classes $FIXTURE_DIR/signed_zero_boundaries.scd $FIXTURE_DIR/signed_zero_boundaries.f32 $FIXTURE_DIR/pv_source_a.f32 $RUNTIME/plugins $SCSYNTH"
+    ],
+    "sc3_plugins": {
+      "loaded_plugin_binaries": [
+        {
+          "built_sha256": "14971168b4afbd62e788d8e7eb0f2fa450c684707c767b22e634bb0b9d85304b",
+          "bytes": 235712,
+          "name": "BinaryOpUGens.scx",
+          "sha256": "14971168b4afbd62e788d8e7eb0f2fa450c684707c767b22e634bb0b9d85304b",
+          "source_revision": "supercollider"
+        },
+        {
+          "built_sha256": "827b0ea8c64f8af558d58da650ce1a7b2f867b87f73cba9305a9b995e0a594bc",
+          "bytes": 34096,
+          "name": "BlackrainUGens.scx",
+          "sha256": "827b0ea8c64f8af558d58da650ce1a7b2f867b87f73cba9305a9b995e0a594bc",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "built_sha256": "81eab9de419acdbb7c38c340d54824bad8f9f384989ff71c06ea2512108fa0ae",
+          "bytes": 159408,
+          "name": "DelayUGens.scx",
+          "sha256": "81eab9de419acdbb7c38c340d54824bad8f9f384989ff71c06ea2512108fa0ae",
+          "source_revision": "supercollider"
+        },
+        {
+          "built_sha256": "a782c0ab0527bbccd89780b4a2766c89418f5eee21f813a621c971d078d0f40d",
+          "bytes": 68736,
+          "name": "DemandUGens.scx",
+          "sha256": "a782c0ab0527bbccd89780b4a2766c89418f5eee21f813a621c971d078d0f40d",
+          "source_revision": "supercollider"
+        },
+        {
+          "built_sha256": "89d6891a4c619d3140c8b3caa2187c3525b3472c583709c615ff94f324af06c6",
+          "bytes": 34160,
+          "name": "DistortionUGens.scx",
+          "sha256": "89d6891a4c619d3140c8b3caa2187c3525b3472c583709c615ff94f324af06c6",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "built_sha256": "a1df901664f7dc64c152c619ef51504f8aa32e6a0fb5d9cce73e54fc6bb24858",
+          "bytes": 71392,
+          "name": "FFT_UGens.scx",
+          "sha256": "a1df901664f7dc64c152c619ef51504f8aa32e6a0fb5d9cce73e54fc6bb24858",
+          "source_revision": "supercollider"
+        },
+        {
+          "built_sha256": "57d19292dad284f868e2b9e1bfafedfac144fc4cfa8123ba23b1ca329a262700",
+          "bytes": 52424,
+          "name": "IOUGens.scx",
+          "sha256": "57d19292dad284f868e2b9e1bfafedfac144fc4cfa8123ba23b1ca329a262700",
+          "source_revision": "supercollider"
+        },
+        {
+          "built_sha256": "0d7b569bc41b807532afa5dd743707fd9413ead2e100d286f61317c6e7bac942",
+          "bytes": 86864,
+          "name": "JoshPVUGens.scx",
+          "sha256": "0d7b569bc41b807532afa5dd743707fd9413ead2e100d286f61317c6e7bac942",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "built_sha256": "7b1be9640dbf6ce54d668412f6f7a19586472f5ad606fba2b4df5e96814b0485",
+          "bytes": 72536,
+          "name": "LFUGens.scx",
+          "sha256": "7b1be9640dbf6ce54d668412f6f7a19586472f5ad606fba2b4df5e96814b0485",
+          "source_revision": "supercollider"
+        },
+        {
+          "built_sha256": "a2f76d6b7335f09f6c47103919f628bbe9e3949efb32c78bc912bad0f0a7af65",
+          "bytes": 34016,
+          "name": "MCLDChaosUGens.scx",
+          "sha256": "a2f76d6b7335f09f6c47103919f628bbe9e3949efb32c78bc912bad0f0a7af65",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "built_sha256": "530351c4d75c1b213c3a03cdaf724a50a13e72b4acd4fc73a676b96332c189fb",
+          "bytes": 80832,
+          "name": "MulAddUGens.scx",
+          "sha256": "530351c4d75c1b213c3a03cdaf724a50a13e72b4acd4fc73a676b96332c189fb",
+          "source_revision": "supercollider"
+        },
+        {
+          "built_sha256": "cce986f5ec48ae2436798ea78c15e2f8a40d62877103c1c1e606bd92f3c9bedb",
+          "bytes": 55232,
+          "name": "TriggerUGens.scx",
+          "sha256": "cce986f5ec48ae2436798ea78c15e2f8a40d62877103c1c1e606bd92f3c9bedb",
+          "source_revision": "supercollider"
+        },
+        {
+          "built_sha256": "70e0899e04204801409409af8c6a7bed66308911478ff4ea5ddcb4a84d1582aa",
+          "bytes": 34144,
+          "name": "UnpackFFTUGens.scx",
+          "sha256": "70e0899e04204801409409af8c6a7bed66308911478ff4ea5ddcb4a84d1582aa",
+          "source_revision": "supercollider"
+        }
+      ],
+      "revision": "66047341f83e25cbaf3b106f35bd1174a3bbee7c"
+    },
+    "supercollider": {
+      "revision": "426edf6d8742e1cc3bd85b51ca0c4e595d37a903",
+      "sclang_sha256": "284af04c596c0be20663d132497928eee8012b59ccc4ed83fba2daae230fad51",
+      "sclang_version": "sclang 3.14.1 (Built from tag 'Version-3.14.1' [426edf6])",
+      "scsynth_sha256": "42688919bb83f8c836918dcef04a0b713a14efc86636902f105c01313d980c83",
+      "scsynth_version": "scsynth 3.14.1 (Built from tag 'Version-3.14.1' [426edf6])"
+    }
+  },
+  "schema": 1,
+  "vectors": {
+    "bmoog_boundaries_0": {
+      "channels": 4,
+      "channels_order": [
+        "cutoff_19_q_0_5_mode_0",
+        "cutoff_19_q_0_5_mode_1",
+        "cutoff_19_q_0_5_mode_2",
+        "cutoff_19_q_0_5_mode_3"
+      ],
+      "cutoff": 19,
+      "frames": 512,
+      "isolated_nrt_process": true,
+      "path": "bmoog_boundaries_0.f32",
+      "q": 0.5,
+      "script": "bmoog_boundaries.scd",
+      "script_args": [
+        "0"
+      ]
+    },
+    "bmoog_boundaries_1": {
+      "channels": 4,
+      "channels_order": [
+        "cutoff_negative_100_q_0_5_mode_0",
+        "cutoff_negative_100_q_0_5_mode_1",
+        "cutoff_negative_100_q_0_5_mode_2",
+        "cutoff_negative_100_q_0_5_mode_3"
+      ],
+      "cutoff": -100,
+      "frames": 512,
+      "isolated_nrt_process": true,
+      "path": "bmoog_boundaries_1.f32",
+      "q": 0.5,
+      "script": "bmoog_boundaries.scd",
+      "script_args": [
+        "1"
+      ]
+    },
+    "bmoog_boundaries_2": {
+      "channels": 4,
+      "channels_order": [
+        "cutoff_24001_q_0_5_mode_0",
+        "cutoff_24001_q_0_5_mode_1",
+        "cutoff_24001_q_0_5_mode_2",
+        "cutoff_24001_q_0_5_mode_3"
+      ],
+      "cutoff": 24001,
+      "frames": 512,
+      "isolated_nrt_process": true,
+      "path": "bmoog_boundaries_2.f32",
+      "q": 0.5,
+      "script": "bmoog_boundaries.scd",
+      "script_args": [
+        "2"
+      ]
+    },
+    "bmoog_boundaries_3": {
+      "channels": 4,
+      "channels_order": [
+        "cutoff_440_q_negative_0_5_mode_0",
+        "cutoff_440_q_negative_0_5_mode_1",
+        "cutoff_440_q_negative_0_5_mode_2",
+        "cutoff_440_q_negative_0_5_mode_3"
+      ],
+      "cutoff": 440,
+      "frames": 512,
+      "isolated_nrt_process": true,
+      "path": "bmoog_boundaries_3.f32",
+      "q": -0.5,
+      "script": "bmoog_boundaries.scd",
+      "script_args": [
+        "3"
+      ]
+    },
+    "bmoog_boundaries_4": {
+      "channels": 4,
+      "channels_order": [
+        "cutoff_440_q_1_5_mode_0",
+        "cutoff_440_q_1_5_mode_1",
+        "cutoff_440_q_1_5_mode_2",
+        "cutoff_440_q_1_5_mode_3"
+      ],
+      "cutoff": 440,
+      "frames": 512,
+      "isolated_nrt_process": true,
+      "path": "bmoog_boundaries_4.f32",
+      "q": 1.5,
+      "script": "bmoog_boundaries.scd",
+      "script_args": [
+        "4"
+      ]
+    },
+    "bmoog_boundaries_5": {
+      "channels": 4,
+      "channels_order": [
+        "cutoff_20_q_0_5_mode_0",
+        "cutoff_20_q_0_5_mode_1",
+        "cutoff_20_q_0_5_mode_2",
+        "cutoff_20_q_0_5_mode_3"
+      ],
+      "cutoff": 20,
+      "frames": 512,
+      "isolated_nrt_process": true,
+      "path": "bmoog_boundaries_5.f32",
+      "q": 0.5,
+      "script": "bmoog_boundaries.scd",
+      "script_args": [
+        "5"
+      ]
+    },
+    "bmoog_boundaries_6": {
+      "channels": 4,
+      "channels_order": [
+        "cutoff_24000_q_0_5_mode_0",
+        "cutoff_24000_q_0_5_mode_1",
+        "cutoff_24000_q_0_5_mode_2",
+        "cutoff_24000_q_0_5_mode_3"
+      ],
+      "cutoff": 24000,
+      "frames": 512,
+      "isolated_nrt_process": true,
+      "path": "bmoog_boundaries_6.f32",
+      "q": 0.5,
+      "script": "bmoog_boundaries.scd",
+      "script_args": [
+        "6"
+      ]
+    },
+    "bmoog_boundaries_7": {
+      "channels": 4,
+      "channels_order": [
+        "cutoff_440_q_0_mode_0",
+        "cutoff_440_q_0_mode_1",
+        "cutoff_440_q_0_mode_2",
+        "cutoff_440_q_0_mode_3"
+      ],
+      "cutoff": 440,
+      "frames": 512,
+      "isolated_nrt_process": true,
+      "path": "bmoog_boundaries_7.f32",
+      "q": 0,
+      "script": "bmoog_boundaries.scd",
+      "script_args": [
+        "7"
+      ]
+    },
+    "bmoog_boundaries_8": {
+      "channels": 4,
+      "channels_order": [
+        "cutoff_440_q_1_mode_0",
+        "cutoff_440_q_1_mode_1",
+        "cutoff_440_q_1_mode_2",
+        "cutoff_440_q_1_mode_3"
+      ],
+      "cutoff": 440,
+      "frames": 512,
+      "isolated_nrt_process": true,
+      "path": "bmoog_boundaries_8.f32",
+      "q": 1,
+      "script": "bmoog_boundaries.scd",
+      "script_args": [
+        "8"
+      ]
+    },
+    "bmoog_controls": {
+      "channels": 7,
+      "channels_order": [
+        "q_nan",
+        "q_positive_infinity",
+        "q_negative_infinity",
+        "mode_nan",
+        "mode_positive_infinity",
+        "mode_negative_infinity",
+        "mode_zero_reference"
+      ],
+      "frames": 512,
+      "observed_invalid_block_frame": 64,
+      "observed_recovery_block_frame": 192,
+      "path": "bmoog_controls.f32",
+      "score_invalid_frame": 128,
+      "score_recovery_frame": 256,
+      "script": "bmoog_controls.scd"
+    },
+    "decimator_boundaries": {
+      "bits": 24,
+      "channels": 5,
+      "channels_order": [
+        "source",
+        "rate_negative_12000",
+        "rate_zero",
+        "rate_48000",
+        "rate_96000"
+      ],
+      "frames": 512,
+      "path": "decimator_boundaries.f32",
+      "sample_rate_hz": 48000,
+      "script": "decimator_boundaries.scd"
+    },
+    "decimator_controls": {
+      "channels": 9,
+      "channels_order": [
+        "rate_nan",
+        "rate_positive_infinity",
+        "rate_negative_infinity",
+        "bits_nan",
+        "bits_positive_infinity",
+        "bits_negative_infinity",
+        "rate_zero_reference",
+        "rate_sample_rate_reference",
+        "bits_31_reference"
+      ],
+      "frames": 512,
+      "observed_invalid_block_frame": 64,
+      "observed_recovery_block_frame": 192,
+      "path": "decimator_controls.f32",
+      "sample_rate_hz": 48000,
+      "score_invalid_frame": 128,
+      "score_recovery_frame": 256,
+      "script": "decimator_controls.scd"
+    },
+    "perlin3_boundaries": {
+      "channels": 14,
+      "channels_order": [
+        "x_negative_256_minus_epsilon",
+        "x_negative_256",
+        "x_negative_256_plus_epsilon",
+        "x_negative_epsilon",
+        "x_zero",
+        "x_positive_epsilon",
+        "x_256_minus_epsilon",
+        "x_256",
+        "x_256_plus_epsilon",
+        "base",
+        "base_x_plus_256",
+        "base_y_plus_256",
+        "base_z_plus_256",
+        "base_xyz_plus_256"
+      ],
+      "epsilon": 0.0009765625,
+      "fixed_y": 0.375,
+      "fixed_z": -0.625,
+      "frames": 128,
+      "path": "perlin3_boundaries.f32",
+      "periodicity_base": [
+        -0.25,
+        0.375,
+        -0.625
+      ],
+      "script": "perlin3_boundaries.scd"
+    },
+    "pv_freeze_controls": {
+      "channels": 25,
+      "channels_order": [
+        "nan_ifft_audio",
+        "nan_chain_token",
+        "nan_ready_flag",
+        "nan_freeze_control",
+        "nan_ready_positive_edge_pulse",
+        "positive_infinity_ifft_audio",
+        "positive_infinity_chain_token",
+        "positive_infinity_ready_flag",
+        "positive_infinity_freeze_control",
+        "positive_infinity_ready_positive_edge_pulse",
+        "negative_infinity_ifft_audio",
+        "negative_infinity_chain_token",
+        "negative_infinity_ready_flag",
+        "negative_infinity_freeze_control",
+        "negative_infinity_ready_positive_edge_pulse",
+        "zero_reference_ifft_audio",
+        "zero_reference_chain_token",
+        "zero_reference_ready_flag",
+        "zero_reference_freeze_control",
+        "zero_reference_ready_positive_edge_pulse",
+        "one_reference_ifft_audio",
+        "one_reference_chain_token",
+        "one_reference_ready_flag",
+        "one_reference_freeze_control",
+        "one_reference_ready_positive_edge_pulse"
+      ],
+      "fft_size": 128,
+      "first_affected_ifft_frame": 320,
+      "first_recovered_ifft_frame": 704,
+      "frames": 1536,
+      "path": "pv_freeze_controls.f32",
+      "score_invalid_frame": 384,
+      "score_recovery_frame": 768,
+      "script": "pv_freeze_controls.scd",
+      "source_asset": "pv_source_a.f32"
+    },
+    "pv_freeze_early": {
+      "channels": 135,
+      "channels_order": [
+        "ifft_audio",
+        "k2a_interpolated_chain_token",
+        "k2a_interpolated_ready_flag",
+        "k2a_interpolated_freeze",
+        "ready_positive_edge_pulse",
+        "bin_0_magnitude",
+        "bin_0_phase",
+        "... alternating magnitude/phase through bin 64 ...",
+        "bin_64_magnitude",
+        "bin_64_phase"
+      ],
+      "decoded_channels": [
+        5,
+        134
+      ],
+      "fft_size": 128,
+      "frames": 768,
+      "freeze": 1,
+      "path": "pv_freeze_early.f32",
+      "script": "pv_freeze_early.scd",
+      "source_asset": "pv_source_a.f32"
+    },
+    "rossler_l_boundaries": {
+      "channels": 12,
+      "channels_order": [
+        "freq_0_x",
+        "freq_0_y",
+        "freq_0_z",
+        "freq_negative_1_x",
+        "freq_negative_1_y",
+        "freq_negative_1_z",
+        "freq_0_0005_x",
+        "freq_0_0005_y",
+        "freq_0_0005_z",
+        "freq_48000_h_5_x",
+        "freq_48000_h_5_y",
+        "freq_48000_h_5_z"
+      ],
+      "common_parameters": {
+        "a": 0.2,
+        "b": 0.2,
+        "c": 5.7,
+        "xi": 0.1,
+        "yi": 0,
+        "zi": 0
+      },
+      "frames": 512,
+      "path": "rossler_l_boundaries.f32",
+      "sample_rate_hz": 48000,
+      "script": "rossler_l_boundaries.scd"
+    },
+    "rossler_l_controls": {
+      "channels": 78,
+      "channels_order": [
+        "nan_freq_x",
+        "nan_freq_y",
+        "nan_freq_z",
+        "nan_a_x",
+        "nan_a_y",
+        "nan_a_z",
+        "nan_b_x",
+        "nan_b_y",
+        "nan_b_z",
+        "nan_c_x",
+        "nan_c_y",
+        "nan_c_z",
+        "nan_h_x",
+        "nan_h_y",
+        "nan_h_z",
+        "nan_xi_x",
+        "nan_xi_y",
+        "nan_xi_z",
+        "nan_yi_x",
+        "nan_yi_y",
+        "nan_yi_z",
+        "nan_zi_x",
+        "nan_zi_y",
+        "nan_zi_z",
+        "positive_infinity_freq_x",
+        "positive_infinity_freq_y",
+        "positive_infinity_freq_z",
+        "positive_infinity_a_x",
+        "positive_infinity_a_y",
+        "positive_infinity_a_z",
+        "positive_infinity_b_x",
+        "positive_infinity_b_y",
+        "positive_infinity_b_z",
+        "positive_infinity_c_x",
+        "positive_infinity_c_y",
+        "positive_infinity_c_z",
+        "positive_infinity_h_x",
+        "positive_infinity_h_y",
+        "positive_infinity_h_z",
+        "positive_infinity_xi_x",
+        "positive_infinity_xi_y",
+        "positive_infinity_xi_z",
+        "positive_infinity_yi_x",
+        "positive_infinity_yi_y",
+        "positive_infinity_yi_z",
+        "positive_infinity_zi_x",
+        "positive_infinity_zi_y",
+        "positive_infinity_zi_z",
+        "negative_infinity_freq_x",
+        "negative_infinity_freq_y",
+        "negative_infinity_freq_z",
+        "negative_infinity_a_x",
+        "negative_infinity_a_y",
+        "negative_infinity_a_z",
+        "negative_infinity_b_x",
+        "negative_infinity_b_y",
+        "negative_infinity_b_z",
+        "negative_infinity_c_x",
+        "negative_infinity_c_y",
+        "negative_infinity_c_z",
+        "negative_infinity_h_x",
+        "negative_infinity_h_y",
+        "negative_infinity_h_z",
+        "negative_infinity_xi_x",
+        "negative_infinity_xi_y",
+        "negative_infinity_xi_z",
+        "negative_infinity_yi_x",
+        "negative_infinity_yi_y",
+        "negative_infinity_yi_z",
+        "negative_infinity_zi_x",
+        "negative_infinity_zi_y",
+        "negative_infinity_zi_z",
+        "freq_48000_reference_x",
+        "freq_48000_reference_y",
+        "freq_48000_reference_z",
+        "freq_0_001_reference_x",
+        "freq_0_001_reference_y",
+        "freq_0_001_reference_z"
+      ],
+      "frames": 512,
+      "observed_invalid_block_frame": 64,
+      "observed_recovery_block_frame": 192,
+      "path": "rossler_l_controls.f32",
+      "score_invalid_frame": 128,
+      "score_recovery_frame": 256,
+      "script": "rossler_l_controls.scd"
+    },
+    "signed_zero_boundaries": {
+      "channels": 82,
+      "channels_order": [
+        "positive_zero_reciprocal_witness",
+        "negative_zero_reciprocal_witness",
+        "decimator_source_positive_zero",
+        "decimator_source_negative_zero",
+        "decimator_source_reciprocal_positive_zero",
+        "decimator_source_reciprocal_negative_zero",
+        "decimator_rate_positive_zero",
+        "decimator_rate_negative_zero",
+        "decimator_bits_positive_zero",
+        "decimator_bits_negative_zero",
+        "bmoog_source_positive_zero",
+        "bmoog_source_negative_zero",
+        "bmoog_source_reciprocal_positive_zero",
+        "bmoog_source_reciprocal_negative_zero",
+        "bmoog_cutoff_positive_zero",
+        "bmoog_cutoff_negative_zero",
+        "bmoog_q_positive_zero",
+        "bmoog_q_negative_zero",
+        "bmoog_mode_positive_zero",
+        "bmoog_mode_negative_zero",
+        "perlin3_x_positive_zero",
+        "perlin3_x_negative_zero",
+        "perlin3_y_positive_zero",
+        "perlin3_y_negative_zero",
+        "perlin3_z_positive_zero",
+        "perlin3_z_negative_zero",
+        "rossler_l_freq_positive_zero_x",
+        "rossler_l_freq_positive_zero_y",
+        "rossler_l_freq_positive_zero_z",
+        "rossler_l_freq_negative_zero_x",
+        "rossler_l_freq_negative_zero_y",
+        "rossler_l_freq_negative_zero_z",
+        "rossler_l_a_positive_zero_x",
+        "rossler_l_a_positive_zero_y",
+        "rossler_l_a_positive_zero_z",
+        "rossler_l_a_negative_zero_x",
+        "rossler_l_a_negative_zero_y",
+        "rossler_l_a_negative_zero_z",
+        "rossler_l_b_positive_zero_x",
+        "rossler_l_b_positive_zero_y",
+        "rossler_l_b_positive_zero_z",
+        "rossler_l_b_negative_zero_x",
+        "rossler_l_b_negative_zero_y",
+        "rossler_l_b_negative_zero_z",
+        "rossler_l_c_positive_zero_x",
+        "rossler_l_c_positive_zero_y",
+        "rossler_l_c_positive_zero_z",
+        "rossler_l_c_negative_zero_x",
+        "rossler_l_c_negative_zero_y",
+        "rossler_l_c_negative_zero_z",
+        "rossler_l_h_positive_zero_x",
+        "rossler_l_h_positive_zero_y",
+        "rossler_l_h_positive_zero_z",
+        "rossler_l_h_negative_zero_x",
+        "rossler_l_h_negative_zero_y",
+        "rossler_l_h_negative_zero_z",
+        "rossler_l_xi_positive_zero_x",
+        "rossler_l_xi_positive_zero_y",
+        "rossler_l_xi_positive_zero_z",
+        "rossler_l_xi_negative_zero_x",
+        "rossler_l_xi_negative_zero_y",
+        "rossler_l_xi_negative_zero_z",
+        "rossler_l_yi_positive_zero_x",
+        "rossler_l_yi_positive_zero_y",
+        "rossler_l_yi_positive_zero_z",
+        "rossler_l_yi_negative_zero_x",
+        "rossler_l_yi_negative_zero_y",
+        "rossler_l_yi_negative_zero_z",
+        "rossler_l_zi_positive_zero_x",
+        "rossler_l_zi_positive_zero_y",
+        "rossler_l_zi_positive_zero_z",
+        "rossler_l_zi_negative_zero_x",
+        "rossler_l_zi_negative_zero_y",
+        "rossler_l_zi_negative_zero_z",
+        "pv_freeze_positive_zero_ifft_audio",
+        "pv_freeze_positive_zero_chain_token",
+        "pv_freeze_positive_zero_ready_flag",
+        "pv_freeze_positive_zero_ready_positive_edge_pulse",
+        "pv_freeze_negative_zero_ifft_audio",
+        "pv_freeze_negative_zero_chain_token",
+        "pv_freeze_negative_zero_ready_flag",
+        "pv_freeze_negative_zero_ready_positive_edge_pulse"
+      ],
+      "fft_size": 128,
+      "frames": 512,
+      "path": "signed_zero_boundaries.f32",
+      "reciprocal_witnesses": true,
+      "sample_rate_hz": 48000,
+      "script": "signed_zero_boundaries.scd",
+      "source_asset": "pv_source_a.f32"
+    }
+  }
+}

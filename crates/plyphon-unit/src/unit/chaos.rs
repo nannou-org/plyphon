@@ -288,3 +288,335 @@ chaos_ctor!(LinCongNCtor, LinCongN, 5, { xn: 0.0 });
 chaos_ctor!(GbmanNCtor, GbmanN, 3, { xn: 0.0, yn: 0.0 });
 chaos_ctor!(StandardNCtor, StandardN, 4, { xn: 0.0, yn: 0.0 });
 chaos_ctor!(LatoocarfianNCtor, LatoocarfianN, 7, { xn: 0.0, yn: 0.0 });
+
+/// Validate an exact fixed-shape chaos unit before it reaches the audio thread.
+fn validate_exact_chaos(
+    ctx: &BuildContext<'_>,
+    inputs: usize,
+    outputs: usize,
+    node_rates: &[plyphon_dsp::rate::Rate],
+) -> Result<(), BuildError> {
+    use plyphon_dsp::rate::Rate;
+
+    if ctx.input_rates.len() != inputs {
+        return Err(BuildError::WrongInputCount);
+    }
+    if ctx.num_outputs != outputs {
+        return Err(BuildError::WrongOutputCount {
+            expected: outputs,
+            actual: ctx.num_outputs,
+        });
+    }
+    if ctx.special_index != 0 {
+        return Err(BuildError::UnsupportedOp(ctx.special_index));
+    }
+    if !node_rates.contains(&ctx.rate)
+        || ctx.input_rates.iter().any(|rate| {
+            *rate == Rate::Demand || (ctx.rate == Rate::Control && *rate == Rate::Audio)
+        })
+    {
+        return Err(BuildError::UnsupportedUnitRate);
+    }
+    Ok(())
+}
+
+/// Read one coordinate sample while expanding scalar and control values.
+fn coordinate(ctx: &ProcessCtx<'_>, inlet: usize, sample: usize) -> f32 {
+    use plyphon_dsp::rate::Rate;
+
+    if ctx.ins.rate(inlet) == Rate::Audio {
+        ctx.ins.audio(inlet).get(sample).copied().unwrap_or(0.0)
+    } else {
+        ctx.ins.control(inlet)
+    }
+}
+
+/// Ken Perlin's improved three-dimensional gradient-noise function.
+fn improved_perlin3(x: f32, y: f32, z: f32) -> f32 {
+    let xf = math::floor(x);
+    let yf = math::floor(y);
+    let zf = math::floor(z);
+    let xi = xf as i64 as usize & 255;
+    let yi = yf as i64 as usize & 255;
+    let zi = zf as i64 as usize & 255;
+    let x = x - xf;
+    let y = y - yf;
+    let z = z - zf;
+    let u = perlin_fade(x);
+    let v = perlin_fade(y);
+    let w = perlin_fade(z);
+
+    let a = PERLIN_PERMUTATION[xi] as usize + yi;
+    let aa = PERLIN_PERMUTATION[a & 255] as usize + zi;
+    let ab = PERLIN_PERMUTATION[(a + 1) & 255] as usize + zi;
+    let b = PERLIN_PERMUTATION[(xi + 1) & 255] as usize + yi;
+    let ba = PERLIN_PERMUTATION[b & 255] as usize + zi;
+    let bb = PERLIN_PERMUTATION[(b + 1) & 255] as usize + zi;
+
+    let x1 = perlin_lerp(
+        u,
+        perlin_gradient(PERLIN_PERMUTATION[aa & 255], x, y, z),
+        perlin_gradient(PERLIN_PERMUTATION[ba & 255], x - 1.0, y, z),
+    );
+    let x2 = perlin_lerp(
+        u,
+        perlin_gradient(PERLIN_PERMUTATION[ab & 255], x, y - 1.0, z),
+        perlin_gradient(PERLIN_PERMUTATION[bb & 255], x - 1.0, y - 1.0, z),
+    );
+    let y1 = perlin_lerp(v, x1, x2);
+
+    let x1 = perlin_lerp(
+        u,
+        perlin_gradient(PERLIN_PERMUTATION[(aa + 1) & 255], x, y, z - 1.0),
+        perlin_gradient(PERLIN_PERMUTATION[(ba + 1) & 255], x - 1.0, y, z - 1.0),
+    );
+    let x2 = perlin_lerp(
+        u,
+        perlin_gradient(PERLIN_PERMUTATION[(ab + 1) & 255], x, y - 1.0, z - 1.0),
+        perlin_gradient(
+            PERLIN_PERMUTATION[(bb + 1) & 255],
+            x - 1.0,
+            y - 1.0,
+            z - 1.0,
+        ),
+    );
+    perlin_lerp(w, y1, perlin_lerp(v, x1, x2))
+}
+
+/// Improved-noise quintic interpolation weight.
+fn perlin_fade(value: f32) -> f32 {
+    value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
+}
+
+/// Linear interpolation in the published improved-noise arithmetic order.
+fn perlin_lerp(weight: f32, a: f32, b: f32) -> f32 {
+    a + weight * (b - a)
+}
+
+/// Select one of the twelve improved-noise cube gradients.
+fn perlin_gradient(hash: u8, x: f32, y: f32, z: f32) -> f32 {
+    let h = hash & 15;
+    let u = if h < 8 { x } else { y };
+    let v = if h < 4 {
+        y
+    } else if h == 12 || h == 14 {
+        x
+    } else {
+        z
+    };
+    (if h & 1 == 0 { u } else { -u }) + if h & 2 == 0 { v } else { -v }
+}
+
+/// `Perlin3(x, y, z)`: stateless improved gradient noise at audio or control rate.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct Perlin3;
+
+impl Unit for Perlin3 {
+    /// Evaluates gradient noise for every requested audio sample.
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        for sample in 0..ctx.outs.audio(0).len() {
+            let value = improved_perlin3(
+                coordinate(ctx, 0, sample),
+                coordinate(ctx, 1, sample),
+                coordinate(ctx, 2, sample),
+            );
+            ctx.outs.audio(0)[sample] = value;
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`Perlin3`].
+pub(super) struct Perlin3Ctor;
+
+impl UnitDef for Perlin3Ctor {
+    /// Validates the fixed ABI and constructs the stateless noise unit.
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        use plyphon_dsp::rate::Rate;
+
+        validate_exact_chaos(ctx, 3, 1, &[Rate::Audio, Rate::Control])?;
+        Ok(unit_spec(Perlin3))
+    }
+}
+
+/// One retained Rössler state machine with linearly interpolated audio-rate output.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct RosslerL {
+    xn: f64,
+    yn: f64,
+    zn: f64,
+    xnm1: f64,
+    ynm1: f64,
+    znm1: f64,
+    counter: f64,
+    frac: f64,
+    xi: f32,
+    yi: f32,
+    zi: f32,
+    _pad: u32,
+}
+
+impl RosslerL {
+    /// Apply one textbook fourth-order Runge-Kutta step to the Rössler equations.
+    fn rk4(x: f64, y: f64, z: f64, a: f64, b: f64, c: f64, h: f64) -> (f64, f64, f64) {
+        let (k1x, k1y, k1z) = rossler_derivative(x, y, z, a, b, c);
+        let (k2x, k2y, k2z) = rossler_derivative(
+            x + h * k1x * 0.5,
+            y + h * k1y * 0.5,
+            z + h * k1z * 0.5,
+            a,
+            b,
+            c,
+        );
+        let (k3x, k3y, k3z) = rossler_derivative(
+            x + h * k2x * 0.5,
+            y + h * k2y * 0.5,
+            z + h * k2z * 0.5,
+            a,
+            b,
+            c,
+        );
+        let (k4x, k4y, k4z) = rossler_derivative(x + h * k3x, y + h * k3y, z + h * k3z, a, b, c);
+        let sixth_h = h / 6.0;
+        (
+            x + sixth_h * (k1x + 2.0 * k2x + 2.0 * k3x + k4x),
+            y + sixth_h * (k1y + 2.0 * k2y + 2.0 * k3y + k4y),
+            z + sixth_h * (k1z + 2.0 * k2z + 2.0 * k3z + k4z),
+        )
+    }
+}
+
+impl Unit for RosslerL {
+    /// Initializes retained coordinates and integration cadence from scalar controls.
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        let frequency = ctx.ins.control(0);
+        self.xi = ctx.ins.control(5);
+        self.yi = ctx.ins.control(6);
+        self.zi = ctx.ins.control(7);
+        self.xn = self.xi as f64;
+        self.yn = self.yi as f64;
+        self.zn = self.zi as f64;
+        self.xnm1 = self.xn;
+        self.ynm1 = self.yn;
+        self.znm1 = self.zn;
+
+        let samples = rossler_samples_per_cycle(frequency, ctx.own.sample_rate as f32);
+        self.counter = 1.0;
+        self.frac = 1.0 / samples;
+    }
+
+    /// Advances and interpolates the Rössler trajectory for one callback.
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let frequency = ctx.ins.control(0);
+        let a = ctx.ins.control(1) as f64;
+        let b = ctx.ins.control(2) as f64;
+        let c = ctx.ins.control(3) as f64;
+        let h = ctx.ins.control(4) as f64;
+
+        let prior_xi = self.xi;
+        let prior_yi = self.yi;
+        let prior_zi = self.zi;
+        let xi = ctx.ins.control(5);
+        let yi = ctx.ins.control(6);
+        let zi = ctx.ins.control(7);
+        self.xi = xi;
+        self.yi = yi;
+        self.zi = zi;
+        if xi != prior_xi || yi != prior_yi || zi != prior_zi {
+            self.xnm1 = self.xn;
+            self.ynm1 = self.yn;
+            self.znm1 = self.zn;
+            self.xn = xi as f64;
+            self.yn = yi as f64;
+            self.zn = zi as f64;
+        }
+
+        let samples = rossler_samples_per_cycle(frequency, ctx.own.sample_rate as f32);
+        let slope = 1.0 / samples;
+        let output_len = ctx.outs.audio(0).len();
+        for sample in 0..output_len {
+            if self.counter >= samples {
+                self.counter -= samples;
+                self.frac = 0.0;
+                self.xnm1 = self.xn;
+                self.ynm1 = self.yn;
+                self.znm1 = self.zn;
+
+                (self.xn, self.yn, self.zn) = Self::rk4(self.xn, self.yn, self.zn, a, b, c, h);
+            }
+
+            self.counter += 1.0;
+            let x = self.xnm1 + (self.xn - self.xnm1) * self.frac;
+            let y = self.ynm1 + (self.yn - self.ynm1) * self.frac;
+            let z = self.znm1 + (self.zn - self.znm1) * self.frac;
+            ctx.outs.audio(0)[sample] = (x * 0.5) as f32;
+            ctx.outs.audio(1)[sample] = (y * 0.5) as f32;
+            ctx.outs.audio(2)[sample] = z as f32;
+            self.frac += slope;
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Derivatives of the standard three-coordinate Rössler system.
+fn rossler_derivative(x: f64, y: f64, z: f64, a: f64, b: f64, c: f64) -> (f64, f64, f64) {
+    (-y - z, x + a * y, b + z * (x - c))
+}
+
+/// Integration cadence for `RosslerL`, in output samples per RK4 step.
+fn rossler_samples_per_cycle(frequency: f32, sample_rate: f32) -> f64 {
+    if frequency < sample_rate {
+        (sample_rate / frequency.max(0.001)) as f64
+    } else {
+        1.0
+    }
+}
+
+/// Constructor for [`RosslerL`].
+pub(super) struct RosslerLCtor;
+
+impl UnitDef for RosslerLCtor {
+    /// Validates the fixed ABI and constructs a retained Rössler state machine.
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        use plyphon_dsp::rate::Rate;
+
+        validate_exact_chaos(ctx, 8, 3, &[Rate::Audio])?;
+        Ok(unit_spec(RosslerL {
+            xn: 0.1,
+            yn: 0.0,
+            zn: 0.0,
+            xnm1: 0.1,
+            ynm1: 0.0,
+            znm1: 0.0,
+            counter: 0.0,
+            frac: 0.0,
+            xi: 0.1,
+            yi: 0.0,
+            zi: 0.0,
+            _pad: 0,
+        }))
+    }
+}
+
+/// Ken Perlin's published 256-entry improved-noise permutation.
+#[rustfmt::skip]
+const PERLIN_PERMUTATION: [u8; 256] = [
+    151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225,
+    140, 36, 103, 30, 69, 142, 8, 99, 37, 240, 21, 10, 23, 190, 6, 148,
+    247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219, 203, 117, 35, 11, 32,
+    57, 177, 33, 88, 237, 149, 56, 87, 174, 20, 125, 136, 171, 168, 68, 175,
+    74, 165, 71, 134, 139, 48, 27, 166, 77, 146, 158, 231, 83, 111, 229, 122,
+    60, 211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244, 102, 143, 54,
+    65, 25, 63, 161, 1, 216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169,
+    200, 196, 135, 130, 116, 188, 159, 86, 164, 100, 109, 198, 173, 186, 3, 64,
+    52, 217, 226, 250, 124, 123, 5, 202, 38, 147, 118, 126, 255, 82, 85, 212,
+    207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42, 223, 183, 170, 213,
+    119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155, 167, 43, 172, 9,
+    129, 22, 39, 253, 19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104,
+    218, 246, 97, 228, 251, 34, 242, 193, 238, 210, 144, 12, 191, 179, 162, 241,
+    81, 51, 145, 235, 249, 14, 239, 107, 49, 192, 214, 31, 181, 199, 106, 157,
+    184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150, 254, 138, 236, 205, 93,
+    222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180,
+];

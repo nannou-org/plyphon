@@ -55,6 +55,7 @@ impl Demand {
             local_bufs: &mut ctx.local_bufs,
             node_id: ctx.node_id,
             node_msgs: &mut ctx.node_msgs,
+            rgen: &mut *ctx.rgen,
         };
         for k in 0..self.num_outputs as usize {
             demand_reset(
@@ -68,24 +69,30 @@ impl Demand {
 
     /// Demand the next value from each source into `prev_out` (rising `trig`). An exhausted source
     /// (`NaN`) keeps its previous value.
-    fn pull_all(&mut self, ctx: &mut ProcessCtx<'_>) {
+    fn pull_all(&mut self, ctx: &mut ProcessCtx<'_>, offset: usize) -> bool {
         let mut world = DemandWorld {
             buffers: &mut *ctx.buffers,
             local_bufs: &mut ctx.local_bufs,
             node_id: ctx.node_id,
             node_msgs: &mut ctx.node_msgs,
+            rgen: &mut *ctx.rgen,
         };
+        let mut exhausted = false;
         for k in 0..self.num_outputs as usize {
             let x = demand_next(
                 &ctx.ins,
                 &mut ctx.demand,
                 &mut world,
                 Self::FIRST_SOURCE + k,
+                offset,
             );
             if !x.is_nan() {
                 self.prev_out[k] = x;
+            } else {
+                exhausted = true;
             }
         }
+        exhausted
     }
 }
 
@@ -101,7 +108,9 @@ impl Unit for Demand {
                     self.reset_sources(ctx);
                 }
                 if trig > 0.0 && self.prev_trig <= 0.0 {
-                    self.pull_all(ctx);
+                    if self.pull_all(ctx, i + 1) {
+                        ctx.done.mark_done();
+                    }
                 }
                 for k in 0..n {
                     ctx.outs.audio(k)[i] = self.prev_out[k];
@@ -116,7 +125,9 @@ impl Unit for Demand {
                 self.reset_sources(ctx);
             }
             if trig > 0.0 && self.prev_trig <= 0.0 {
-                self.pull_all(ctx);
+                if self.pull_all(ctx, 1) {
+                    ctx.done.mark_done();
+                }
             }
             for k in 0..n {
                 *ctx.outs.control(k) = self.prev_out[k];

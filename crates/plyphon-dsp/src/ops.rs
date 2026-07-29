@@ -13,7 +13,7 @@
 use crate::math;
 
 /// `sqrt(2) - 1`, the diagonal-distance coefficient used by [`hypotx`].
-const SQRT2_M1: f32 = core::f32::consts::SQRT_2 - 1.0;
+const SQRT2_M1: f32 = f32::from_bits(0x3ed4_13cd);
 
 // ---------------------------------------------------------------------------------------------
 // Unary kernels.

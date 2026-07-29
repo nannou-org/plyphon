@@ -69,12 +69,15 @@ pub mod pv_mag_mul;
 pub mod pv_mag_squared;
 #[cfg(feature = "fft")]
 pub mod pv_ops;
+#[cfg(feature = "fft")]
+mod pv_sc3;
 pub mod ramp;
 pub mod rand;
 pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
 pub mod resonant;
+mod sc3_processing;
 pub mod scope_out;
 pub mod section;
 pub mod select;
@@ -901,6 +904,13 @@ pub trait Unit: Pod {
     /// plyphon's stand-in for scsynth seeding each `Graph`'s `RGen`. Must not allocate or block.
     fn reseed(&mut self, _seed: u64) {}
 
+    /// Run source-constructor behavior and publish any constructor-time outputs.
+    ///
+    /// This callback runs once in the SynthDef's original mixed calc/demand order before the first
+    /// calc pass. Most units have no constructor-visible behavior beyond their initial state image
+    /// and leave this as a no-op.
+    fn construct(&mut self, _ctx: &mut ProcessCtx<'_>) {}
+
     /// Seed state from the unit's initial inputs.
     ///
     /// Called once, on the first control block, in topological order immediately before this unit's
@@ -929,6 +939,9 @@ pub trait Unit: Pod {
 /// `UnitCalcFunc`/`mCalcFunc`. `state` is exactly `size_of::<T>()` bytes, aligned for `T`.
 pub type ProcessFn = fn(&mut [u8], &mut ProcessCtx<'_>) -> DoneAction;
 
+/// A type-erased source-constructor callback over one unit state slot.
+pub type ConstructFn = fn(&mut [u8], &mut ProcessCtx<'_>);
+
 /// A type-erased one-time seeding function over a unit's pool-resident state bytes (see
 /// [`Unit::init`]).
 pub type InitFn = fn(&mut [u8], &InitCtx<'_>);
@@ -941,6 +954,11 @@ pub type ReseedFn = fn(&mut [u8], u64);
 /// [`ProcessFn`]; the cast cannot fail because the slot is sized and aligned for `T` by construction.
 fn process_thunk<T: Unit>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) -> DoneAction {
     bytemuck::from_bytes_mut::<T>(bytes).process(ctx)
+}
+
+/// As [`process_thunk`], for [`Unit::construct`].
+fn construct_thunk<T: Unit>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) {
+    bytemuck::from_bytes_mut::<T>(bytes).construct(ctx);
 }
 
 /// As [`process_thunk`], for [`Unit::init`].
@@ -959,6 +977,8 @@ fn reseed_thunk<T: Unit>(bytes: &mut [u8], seed: u64) {
 pub struct BuiltUnit {
     /// Per-block calc function.
     pub process: ProcessFn,
+    /// Source-constructor callback, run once in original SynthDef unit order.
+    pub construct: ConstructFn,
     /// One-time first-block seeding function.
     pub init: InitFn,
     /// Per-instance re-seed function (no-op for units without randomness).
@@ -989,6 +1009,7 @@ pub struct BuiltUnit {
 pub fn unit_spec<T: Unit>(state: T) -> BuiltUnit {
     BuiltUnit {
         process: process_thunk::<T>,
+        construct: construct_thunk::<T>,
         init: init_thunk::<T>,
         reseed: reseed_thunk::<T>,
         size: core::mem::size_of::<T>(),

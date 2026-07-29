@@ -1,0 +1,1987 @@
+{
+  "assets": [
+    {
+      "bytes": 4753,
+      "path": "CLEANROOM.md",
+      "sha256": "ed19e6571c0a5b9784d9e101cdd1fdd487150f331009b246ae98519fae987c80"
+    },
+    {
+      "bytes": 6322,
+      "path": "README.md",
+      "sha256": "cc62eb9a59619d3ff4829ade24e3a49807f9bdc2d6d356c2cdc1432be17bb19f"
+    },
+    {
+      "bytes": 7927,
+      "path": "capture.sh",
+      "sha256": "c2cdbc4f762eee4da052bfbd820f1a749d87973dbb2921b81650a5eeef4fd00c"
+    },
+    {
+      "bytes": 772,
+      "path": "generate_dfm1_input.py",
+      "sha256": "ed6650efdc0bfe3348150a70883c4e62bd0b7e234b89a7d2a728dca74bdd580a"
+    },
+    {
+      "bytes": 1701,
+      "path": "generate_pv_inputs.py",
+      "sha256": "c1149441d3d4acfa7bb523173239fb0bc3e2e1a4270ee3609d274b5d32adf604"
+    },
+    {
+      "bytes": 34512,
+      "path": "generate_manifest.py",
+      "sha256": "83770032eacae28554b897e153528489ee8607d2ed27cf998e02d888176bc8be"
+    },
+    {
+      "bytes": 31555,
+      "path": "verify.py",
+      "sha256": "5757d982f54ce3d56cad30f05c49b88688ba81814e6bd659e2fae61781184bfd"
+    },
+    {
+      "bytes": 1858,
+      "path": "decimator.scd",
+      "sha256": "606bf8d3a80ffc186fa05bc2c624c1406b5eca80e8eb16e71627b6ce171dd335"
+    },
+    {
+      "bytes": 20480,
+      "path": "decimator.f32",
+      "sha256": "721a3341ee8f08f62f4e3d5275048ce36e594fe80388abb2a48d169145731dc6"
+    },
+    {
+      "bytes": 1580,
+      "path": "bmoog.scd",
+      "sha256": "4fda86c06758088d2328aaa24f0495fab88214d0009a33a0ae796a389d3730a2"
+    },
+    {
+      "bytes": 8192,
+      "path": "bmoog.f32",
+      "sha256": "439f283492a2ad785298229bf74b268468e14a77ed921444e493232afd2165c6"
+    },
+    {
+      "bytes": 2002,
+      "path": "perlin3.scd",
+      "sha256": "3345c49e33a90f3a33ead4ac2c6dbcb0c3be7ae5ca98252f4c0e053351ea53ba"
+    },
+    {
+      "bytes": 6144,
+      "path": "perlin3_ar.f32",
+      "sha256": "58ca5a955acfb957e8133383ad7c4f8c8f8b3f8bcd79d6be988fe25efe5de24f"
+    },
+    {
+      "bytes": 6144,
+      "path": "perlin3_kr.f32",
+      "sha256": "b948dc753009642b290cae72100fb15a28391de6b0b5bb33454e967d108b7484"
+    },
+    {
+      "bytes": 1570,
+      "path": "rossler_l.scd",
+      "sha256": "7b3c6eced067ae9f53274e8d7a73dd1f4b2f9b04511d6ff51ae763823f7291b9"
+    },
+    {
+      "bytes": 6144,
+      "path": "rossler_l.f32",
+      "sha256": "86060367b8a3d161c44e90ac4c422f64ea31a8c9508c04f6dd5269165f0650ac"
+    },
+    {
+      "bytes": 1579,
+      "path": "env_detect.scd",
+      "sha256": "7b9dbfad2338e943c7268c7da8c4ce17739b21ff8c66aa365fbf318ddae13550"
+    },
+    {
+      "bytes": 2560,
+      "path": "env_detect.f32",
+      "sha256": "6983c23e06230b72f2adfb8fd6f056fa423843d98884118bc34538ea690c3a1e"
+    },
+    {
+      "bytes": 2081,
+      "path": "dfm1.scd",
+      "sha256": "8af2986d550268557899a6b8222757c2e3a4244b3cdf1c63524edc99081a32f8"
+    },
+    {
+      "bytes": 2560,
+      "path": "dfm1_source.f32",
+      "sha256": "e031d280470122b3fecaaa35e3a0876c0c0c27819ba81911dd9e7ddadb8e5cef"
+    },
+    {
+      "bytes": 5120,
+      "path": "dfm1_stability_1.f32",
+      "sha256": "a84a80c362eb6992a88cdf3f182a4634a3a2d0bd6650a2cb992dbd3f09b5d1ec"
+    },
+    {
+      "bytes": 5120,
+      "path": "dfm1_stability_2.f32",
+      "sha256": "2acce7714bcc1a032e7850811b34d45160de86c8f72685bd965ec2ddf3b08c2d"
+    },
+    {
+      "bytes": 5120,
+      "path": "dfm1_stability_3.f32",
+      "sha256": "f69557fbe08519464a6f0edceeee877b6e1494572be97da86aed371051b27832"
+    },
+    {
+      "bytes": 5120,
+      "path": "dfm1.f32",
+      "sha256": "baf60fb663a515db2d884e411d59467c1dc734272304915f6c6400c92baddeec"
+    },
+    {
+      "bytes": 3291,
+      "path": "moog_ladder.scd",
+      "sha256": "1cec43ca109cc83e00bae4679e554b7dbf7f05899795888f844f421524b99c7b"
+    },
+    {
+      "bytes": 5120,
+      "path": "moog_ladder_ar.f32",
+      "sha256": "3931283b9d4d44fb66cf9fc9064db3ffa45520a5d2a9d659c36a5c69695481e6"
+    },
+    {
+      "bytes": 5120,
+      "path": "moog_ladder_kr.f32",
+      "sha256": "aa77fb41f2afbc7005b2fe67f1cb282b7de89aaea537ba1f07f48b9f6455e1b4"
+    },
+    {
+      "bytes": 1876,
+      "path": "moog_vcf.scd",
+      "sha256": "b33006833756d7cb45980a5dc1b60afc9e3bfbfdcd0432ee654c52f1912e4f29"
+    },
+    {
+      "bytes": 10240,
+      "path": "moog_vcf.f32",
+      "sha256": "6592ac16c4ce0962fd7feec7805a2b10fadc9a8ecc244fb0ced0fd7c73b9d97b"
+    },
+    {
+      "bytes": 1604,
+      "path": "blit_b3.scd",
+      "sha256": "3d736369b9d03bb43f1ac71add25572a775d37887c2dcc614c28b159b8854000"
+    },
+    {
+      "bytes": 10240,
+      "path": "blit_b3.f32",
+      "sha256": "09bb6431ba742143d07893e780b2342be0ff29b24c21e2d589d54cdb469dda1e"
+    },
+    {
+      "bytes": 3232,
+      "path": "dnoise_ring.scd",
+      "sha256": "2ebe9d486159464041cc5e8463793e5896f3e72e6b121e9c9ca3571b259140df"
+    },
+    {
+      "bytes": 40960,
+      "path": "dnoise_ring.f32",
+      "sha256": "ad5e310e5635d2454484502ce6af0da2e963575715d038e64991222c5f357607"
+    },
+    {
+      "bytes": 2906,
+      "path": "pv_freeze.scd",
+      "sha256": "bccdda566f97616b541fd45cbf6cc3969924241c5ca856d420578d6c8e560c40"
+    },
+    {
+      "bytes": 829440,
+      "path": "pv_freeze.f32",
+      "sha256": "933d5c8dcf4e1c1bb3c0df9ec7b09016c7d9f5bef1edb49a95736f0bf1136627"
+    },
+    {
+      "bytes": 2950,
+      "path": "pv_mag_smooth.scd",
+      "sha256": "01702ff1415c27417ee36e79bc39da8d5dbf44d2a0703dd5a734aec8687a65c1"
+    },
+    {
+      "bytes": 829440,
+      "path": "pv_mag_smooth.f32",
+      "sha256": "8a9a4d8cc96e324ff6b3c619931c322ab4429e545f1d801066f62eb430a0a14b"
+    },
+    {
+      "bytes": 3380,
+      "path": "pv_morph.scd",
+      "sha256": "df65401f466a511c2dc96c03b835a55fbb4532f2a71f9edcc6274733125b4255"
+    },
+    {
+      "bytes": 829440,
+      "path": "pv_morph.f32",
+      "sha256": "6f4555a163c325777e684f88ce8dd149ceb83df1118188eec97b1c727f0b287d"
+    },
+    {
+      "bytes": 2725,
+      "path": "pv_morph_source_phases.scd",
+      "sha256": "95a32ede3e1bd4c446ef2f9314b9ca398ed74b216469b3769e81ab75666d93aa"
+    },
+    {
+      "bytes": 774144,
+      "path": "pv_morph_source_phases.f32",
+      "sha256": "c117855ade1a49cb185203e6f2b22825481342db5b3c422df4629fceeeae1c57"
+    },
+    {
+      "bytes": 6144,
+      "path": "pv_source_a.f32",
+      "sha256": "4923acd0a1fbd4de837c84fecce0afaac2f74559fb46fdd908cff8e25d5d99cc"
+    },
+    {
+      "bytes": 6144,
+      "path": "pv_source_b.f32",
+      "sha256": "c1ec8846c1ee8054ca39158d449b65228582f11f33f685e58e5ddd7a7cc41dd6"
+    },
+    {
+      "bytes": 2014,
+      "path": "bmoog_gain_table.json",
+      "sha256": "4f65276d66f7b57732c3077c865eaaa3e46de2ba71c32f534c1df0b9f0c15bdd"
+    },
+    {
+      "bytes": 796,
+      "path": "bmoog_gain_table.f32",
+      "sha256": "148d40073f2857a83d6d6a82f55728724eabdb4b57fa56ed2792c891ec8df635"
+    }
+  ],
+  "bmoog_public_functional_table": {
+    "f32_path": "bmoog_gain_table.f32",
+    "f32_sha256": "148d40073f2857a83d6d6a82f55728724eabdb4b57fa56ed2792c891ec8df635",
+    "json_path": "bmoog_gain_table.json",
+    "json_sha256": "4f65276d66f7b57732c3077c865eaaa3e46de2ba71c32f534c1df0b9f0c15bdd",
+    "site_revision": "43f15628",
+    "source": "https://www.musicdsp.org/en/latest/Filters/145-stilson-s-moog-filter-code.html",
+    "values": 199
+  },
+  "format": {
+    "flattening": "sample-frame-major, channel-interleaved",
+    "vectors": "raw little-endian IEEE-754 f32"
+  },
+  "provenance": {
+    "capture_commands": [
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/decimator.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/decimator.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/bmoog.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/bmoog.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/perlin3.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/perlin3_ar.f32 ar /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/perlin3.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/perlin3_kr.f32 kr /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/rossler_l.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/rossler_l.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/env_detect.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/env_detect.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1_stability_1.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1_source.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1_stability_2.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1_source.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1_stability_3.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1_source.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dfm1_source.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/moog_ladder.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/moog_ladder_ar.f32 ar /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/moog_ladder.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/moog_ladder_kr.f32 kr /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/moog_vcf.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/moog_vcf.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/blit_b3.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/blit_b3.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dnoise_ring.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/dnoise_ring.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_freeze.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_freeze.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_source_a.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_mag_smooth.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_mag_smooth.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_source_a.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_morph.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_morph.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_source_a.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_source_b.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth",
+      "/Applications/SuperCollider.app/Contents/MacOS/sclang -a --include-path /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_morph_source_phases.scd /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_morph_source_phases.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_source_a.f32 /Users/josh/Documents/rust/crates/plyphon/crates/plyphon/tests/fixtures/sc3_processing/pv_source_b.f32 /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins /Applications/SuperCollider.app/Contents/Resources/scsynth"
+    ],
+    "sc3_plugins": {
+      "build_commands": [
+        "cmake -S /private/tmp/spec100-review.1gRi2n/sc3-plugins -B /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa -G Ninja -DSC_PATH=/private/tmp/spec100-review.1gRi2n/supercollider-3.14.1 -DCMAKE_BUILD_TYPE=Release -DSUPERNOVA=OFF -DNOVA_SIMD=OFF -DNOVA_DISK_IO=OFF -DAY=OFF -DLADSPA=OFF -DHOA_UGENS=OFF -DIN_PLACE_BUILD=ON -DUSE_CCACHE=OFF",
+        "cmake --build /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa --target AntiAliasingOscillators BhobFFT BhobFilt BlackrainUGens DistortionUGens JoshPVUGens JoshUGens MCLDChaosUGens MCLDFFTUGens NoiseRing SLUGens TJUGens --parallel 8"
+      ],
+      "loaded_extension_classes": [
+        {
+          "bytes": 1139,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/AntiAliasingOscillators.sc",
+          "sha256": "53b2040a8952ac20775c048882141154b11a80bc04705052cce2c2efea9f01b7"
+        },
+        {
+          "bytes": 733,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/DistortionPlugins.sc",
+          "sha256": "0663ff4904d27577109e9646f08616b7fbb65bbb6023e61a6ebc788135ade14d"
+        },
+        {
+          "bytes": 3966,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/JoshPV.sc",
+          "sha256": "841bedc84cb85e9dedc2d0d250877be465fe24c222ed952c62723ba2e8cf36a8"
+        },
+        {
+          "bytes": 3237,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/MCLDChaosUGens.sc",
+          "sha256": "afe432e001368a3d9fc05f43f7c91ab804c2997f55e1f5f90a876124592dc06b"
+        },
+        {
+          "bytes": 4926,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/MCLDFFTUGens.sc",
+          "sha256": "f39db273c119ea90324f182f539921e0bb45573f9718fa10378cdb9c4cedc86f"
+        },
+        {
+          "bytes": 326,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/MoogVCF.sc",
+          "sha256": "431002a15a55df8a3437e15f7cd9b14edde9669940360ab6e3fa15dc83a2c5fb"
+        },
+        {
+          "bytes": 271,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/NoiseRing.sc",
+          "sha256": "ef948a19c117e9528479e57d12d62c4cdadcd480c3a6e0f58ab3edbc8981f841"
+        },
+        {
+          "bytes": 7161,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/SLUGens.sc",
+          "sha256": "e29e455103044178b9d56143a92aed4a50e5daf036fa2a3ec07799753ef239e6"
+        },
+        {
+          "bytes": 220,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/TJUGens.sc",
+          "sha256": "9bcf82da7d3b444b10700cc49b5fc3afb6c482a1fff76bd506a157e2e2d2c053"
+        },
+        {
+          "bytes": 1066,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/bhobFFT.sc",
+          "sha256": "1cdf3e9ea6b8debf7762889f4b52963e50e4b2b416c59d22ca25fe8353f53499"
+        },
+        {
+          "bytes": 5235,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/bhobGens.sc",
+          "sha256": "776c4d019f07323d5814ceeb04d5b81b69f89772c9113a33e78a361c36a0526d"
+        },
+        {
+          "bytes": 1209,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes/Spec100Extensions/blackrain_ugens.sc",
+          "sha256": "7baea1ac8baf171a62ae3f5218050d1731aee1fef1b305cc976d71cea4b446ba"
+        }
+      ],
+      "loaded_plugin_binaries": [
+        {
+          "bytes": 33992,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/AntiAliasingOscillators.scx",
+          "sha256": "b83abcf8422272762ede1641ab2b522602af578ad949a57e411f77587d80026f",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/AntiAliasingOscillators.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 34648,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/BhobFFT.scx",
+          "sha256": "6aa47a611a763ddb9788e8c338a3ae399def5f2e2a0eaa1ada397ed3c9133535",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/BhobFFT.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 68928,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/BhobFilt.scx",
+          "sha256": "59f42537d514cb9f836c9f5af5d059448e3ce5f70c657280c4846450931eede6",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/BhobFilt.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 235712,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/BinaryOpUGens.scx",
+          "sha256": "14971168b4afbd62e788d8e7eb0f2fa450c684707c767b22e634bb0b9d85304b",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/BinaryOpUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 34096,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/BlackrainUGens.scx",
+          "sha256": "827b0ea8c64f8af558d58da650ce1a7b2f867b87f73cba9305a9b995e0a594bc",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/BlackrainUGens.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 159408,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/DelayUGens.scx",
+          "sha256": "81eab9de419acdbb7c38c340d54824bad8f9f384989ff71c06ea2512108fa0ae",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/DelayUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 68736,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/DemandUGens.scx",
+          "sha256": "a782c0ab0527bbccd89780b4a2766c89418f5eee21f813a621c971d078d0f40d",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/DemandUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 34160,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/DistortionUGens.scx",
+          "sha256": "89d6891a4c619d3140c8b3caa2187c3525b3472c583709c615ff94f324af06c6",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/DistortionUGens.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 71392,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/FFT_UGens.scx",
+          "sha256": "a1df901664f7dc64c152c619ef51504f8aa32e6a0fb5d9cce73e54fc6bb24858",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/FFT_UGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 52424,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/IOUGens.scx",
+          "sha256": "57d19292dad284f868e2b9e1bfafedfac144fc4cfa8123ba23b1ca329a262700",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/IOUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 86864,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/JoshPVUGens.scx",
+          "sha256": "0d7b569bc41b807532afa5dd743707fd9413ead2e100d286f61317c6e7bac942",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/JoshPVUGens.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 87136,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/JoshUGens.scx",
+          "sha256": "4519c8569dc0db565763ff147db58f9743f32bdefa119b07cb1751a4691ffb6b",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/JoshUGens.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 72536,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/LFUGens.scx",
+          "sha256": "7b1be9640dbf6ce54d668412f6f7a19586472f5ad606fba2b4df5e96814b0485",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/LFUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 34016,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/MCLDChaosUGens.scx",
+          "sha256": "a2f76d6b7335f09f6c47103919f628bbe9e3949efb32c78bc912bad0f0a7af65",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/MCLDChaosUGens.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 52448,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/MCLDFFTUGens.scx",
+          "sha256": "791f3d0d8702d6845ac83772778d8d5b165dd435578c7e0991766d4b7200ce4e",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/MCLDFFTUGens.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 80832,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/MulAddUGens.scx",
+          "sha256": "530351c4d75c1b213c3a03cdaf724a50a13e72b4acd4fc73a676b96332c189fb",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/MulAddUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 33728,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/NoiseRing.scx",
+          "sha256": "e5be3eb4c866d3b9635a391aaa7358a81b43805e28bbbb07f95242df3dff7dfa",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/NoiseRing.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 52320,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/NoiseUGens.scx",
+          "sha256": "46d2aac45ebf8555237d4bc79a9eb6752fea610176161aa6697acef1c53969c6",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/NoiseUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 70512,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/OscUGens.scx",
+          "sha256": "e3d2e2554ea9c576788b8e72eca9c8696a18552f54c0b67612c30f68b86e29cd",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/OscUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 69704,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/SLUGens.scx",
+          "sha256": "2e02f586b602e2abaf4b5eb6d15a569fd193024a46608e3b93e8d4b4d35e2009",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/SLUGens.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 54408,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/TJUGens.scx",
+          "sha256": "ec39a9defb4e88c44e0599e9f3a509dda398382ddfae72cb78c114f99128d485",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-build.ItdnEa/source/TJUGens.scx",
+          "source_revision": "sc3_plugins"
+        },
+        {
+          "bytes": 55232,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/TriggerUGens.scx",
+          "sha256": "cce986f5ec48ae2436798ea78c15e2f8a40d62877103c1c1e606bd92f3c9bedb",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/TriggerUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 90800,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/UnaryOpUGens.scx",
+          "sha256": "4a30d7da88aff5f7881b249d726df22f39b4dc1aa5836c62c028afd42281c434",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/UnaryOpUGens.scx",
+          "source_revision": "supercollider"
+        },
+        {
+          "bytes": 34144,
+          "loaded_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins/UnpackFFTUGens.scx",
+          "sha256": "70e0899e04204801409409af8c6a7bed66308911478ff4ea5ddcb4a84d1582aa",
+          "source_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC/server/plugins/UnpackFFTUGens.scx",
+          "source_revision": "supercollider"
+        }
+      ],
+      "loaded_plugin_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/plugins",
+      "repository": "https://github.com/supercollider/sc3-plugins",
+      "revision": "66047341f83e25cbaf3b106f35bd1174a3bbee7c"
+    },
+    "supercollider": {
+      "approximate_polar_helper": {
+        "path": "include/plugin_interface/SC_Complex.h",
+        "sha256": "7791dc85d8026eb6a665bd686ff21a91cf6beaaa3949ad54f444007893837a2f"
+      },
+      "core_plugin_build_commands": [
+        "cmake -S /private/tmp/spec100-review.1gRi2n/supercollider-3.14.1 -B /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC -G Ninja -DCMAKE_BUILD_TYPE=Release -DSC_QT=OFF -DSC_IDE=OFF -DSUPERNOVA=OFF -DENABLE_TESTSUITE=OFF -DSC_ABLETON_LINK=OFF -DSC_HIDAPI=OFF -DNO_X11=ON -DNO_LIBSNDFILE=ON -DNATIVE=OFF -DUSE_CCACHE=OFF -DSCLANG_SERVER=OFF",
+        "cmake --build /private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc-build.yCjaeC --target BinaryOpUGens DelayUGens DemandUGens FFT_UGens IOUGens LFUGens MulAddUGens NoiseUGens OscUGens TriggerUGens UnaryOpUGens UnpackFFTUGens --parallel 8"
+      ],
+      "repository": "https://github.com/supercollider/supercollider",
+      "revision": "426edf6d8742e1cc3bd85b51ca0c4e595d37a903",
+      "sclang": {
+        "path": "/Applications/SuperCollider.app/Contents/MacOS/sclang",
+        "sha256": "284af04c596c0be20663d132497928eee8012b59ccc4ed83fba2daae230fad51",
+        "version": "sclang 3.14.1 (Built from tag 'Version-3.14.1' [426edf6])"
+      },
+      "scsynth": {
+        "path": "/Applications/SuperCollider.app/Contents/Resources/scsynth",
+        "sha256": "42688919bb83f8c836918dcef04a0b713a14efc86636902f105c01313d980c83",
+        "version": "scsynth 3.14.1 (Built from tag 'Version-3.14.1' [426edf6])"
+      }
+    },
+    "temporary_class_library_path": "/private/var/folders/k8/gxhlzzm94rj3nbqycq0ng3580000gn/T/spec100-sc3-runtime.0hf8c7/classes"
+  },
+  "schema": 2,
+  "settings": {
+    "control_block_frames": 64,
+    "dsp_tolerance": {
+      "absolute": 0.0001,
+      "formula": "abs_error <= 1e-4 + 1e-3 * abs(reference)",
+      "relative": 0.001
+    },
+    "fft_sizes": [
+      128
+    ],
+    "sample_rate_hz": 48000,
+    "seeds": {
+      "dnoise_ring": 1956
+    },
+    "spectral_comparison": {
+      "magnitude_dc_nyquist_ifft_distance": "abs(actual - reference)",
+      "magnitude_dc_nyquist_ifft_tolerance": "dsp_tolerance",
+      "ordinary_phase_distance": "abs(atan2(sin(actual - reference), cos(actual - reference)))",
+      "ordinary_phase_tolerance": {
+        "approximate_path_absolute_floor_radians": 0.0016,
+        "approximate_path_units": [
+          "pv_freeze",
+          "pv_mag_smooth",
+          "pv_morph"
+        ],
+        "default": "dsp_tolerance",
+        "formula": "max(0.0016, 1e-4 + 1e-3 * abs(reference))"
+      }
+    }
+  },
+  "vectors": {
+    "blit_b3": {
+      "captured_frame_range": [
+        0,
+        639
+      ],
+      "channels": 4,
+      "channels_order": [
+        "BlitB3",
+        "BlitB3Saw",
+        "BlitB3Square",
+        "BlitB3Tri"
+      ],
+      "control_event_schedule": [
+        {
+          "frame": 0,
+          "freq": 440,
+          "leak": 0.99,
+          "leak2": 0.97
+        },
+        {
+          "frame": 128,
+          "freq": 0
+        },
+        {
+          "frame": 256,
+          "freq": -220
+        },
+        {
+          "frame": 384,
+          "freq": 24000
+        },
+        {
+          "frame": 512,
+          "freq": 880,
+          "leak": 0.93,
+          "leak2": 0.89
+        }
+      ],
+      "frames": 640,
+      "path": "blit_b3.f32",
+      "script": "blit_b3.scd",
+      "voice_recreated": false,
+      "warm_up_frames": 0
+    },
+    "bmoog": {
+      "captured_frame_range": [
+        0,
+        511
+      ],
+      "channels": 4,
+      "channels_order": [
+        "mode_0",
+        "mode_1",
+        "mode_2",
+        "mode_3"
+      ],
+      "control_event_schedule": [
+        {
+          "cutoff": 440,
+          "frame": 0,
+          "q": 0.2
+        },
+        {
+          "cutoff": 1200,
+          "frame": 128,
+          "q": 0.65
+        },
+        {
+          "cutoff": 6000,
+          "frame": 256,
+          "q": 0.9
+        },
+        {
+          "cutoff": 220,
+          "frame": 384,
+          "q": 0.1
+        }
+      ],
+      "frames": 512,
+      "path": "bmoog.f32",
+      "script": "bmoog.scd",
+      "warm_up_frames": 0
+    },
+    "decimator": {
+      "captured_frame_range": [
+        0,
+        511
+      ],
+      "channels": 10,
+      "channels_order": [
+        "changing",
+        "rate_0_bits_8",
+        "rate_24000_bits_8_5",
+        "rate_48000_bits_1",
+        "rate_12000_bits_0_999",
+        "rate_12000_bits_1_001",
+        "rate_12000_bits_30_999",
+        "rate_12000_bits_31",
+        "negative_input_rate_16000_bits_4",
+        "zero_input_rate_48000_bits_12"
+      ],
+      "control_event_schedule": [
+        {
+          "changingBits": 24,
+          "changingRate": 44100,
+          "frame": 0
+        },
+        {
+          "changingBits": 8.5,
+          "changingRate": 12000,
+          "frame": 256
+        },
+        {
+          "changingBits": 31,
+          "changingRate": 48000,
+          "frame": 384
+        }
+      ],
+      "frames": 512,
+      "path": "decimator.f32",
+      "script": "decimator.scd",
+      "warm_up_frames": 0
+    },
+    "dfm1": {
+      "captured_frame_range": [
+        0,
+        639
+      ],
+      "channels": 2,
+      "channels_order": [
+        "type_0",
+        "type_1"
+      ],
+      "control_event_schedule": [
+        {
+          "frame": 0,
+          "freq": 1000,
+          "inputGain": 1.5,
+          "res": 0.05
+        },
+        {
+          "frame": 128,
+          "freq": 1800,
+          "inputGain": 1.75,
+          "res": 0.1
+        },
+        {
+          "frame": 256,
+          "freq": 3200,
+          "inputGain": 1.25,
+          "res": 0.15
+        },
+        {
+          "frame": 384,
+          "freq": 700,
+          "inputGain": 2,
+          "res": 0.08
+        },
+        {
+          "frame": 512,
+          "freq": 4400,
+          "inputGain": 1,
+          "res": 0.2
+        }
+      ],
+      "frames": 640,
+      "noiselevel": 0,
+      "path": "dfm1.f32",
+      "reference_dither": "DFM1 retains its private minimum noise floor when noiselevel is zero; the source RNG is intentionally not cross-engine deterministic",
+      "script": "dfm1.scd",
+      "source_assets": [
+        "dfm1_source.f32"
+      ],
+      "source_pattern": "positive binary-rational Nyquist alternation and ramp with a 5/8 DC bias",
+      "source_range": [
+        0.34765625,
+        0.8984375
+      ],
+      "stability_captures": [
+        "dfm1_stability_1.f32",
+        "dfm1_stability_2.f32",
+        "dfm1_stability_3.f32",
+        "dfm1.f32"
+      ],
+      "stability_pairwise": [
+        {
+          "absolute_error": 9.08970832824707e-05,
+          "actual": "dfm1_stability_2.f32",
+          "actual_value": 0.717365026473999,
+          "reference": "dfm1_stability_1.f32",
+          "reference_value": 0.7172741293907166,
+          "tolerance": 0.0008172741293907166,
+          "tolerance_ratio": 0.11121982210575428,
+          "within_tolerance": true,
+          "worst_sample": 513
+        },
+        {
+          "absolute_error": 8.571147918701172e-05,
+          "actual": "dfm1_stability_3.f32",
+          "actual_value": -0.7166796922683716,
+          "reference": "dfm1_stability_1.f32",
+          "reference_value": -0.7167654037475586,
+          "tolerance": 0.0008167654037475586,
+          "tolerance_ratio": 0.10494014412674971,
+          "within_tolerance": true,
+          "worst_sample": 1147
+        },
+        {
+          "absolute_error": 6.645917892456055e-05,
+          "actual": "dfm1.f32",
+          "actual_value": 0.6300774216651917,
+          "reference": "dfm1_stability_1.f32",
+          "reference_value": 0.6300109624862671,
+          "tolerance": 0.0007300109624862671,
+          "tolerance_ratio": 0.09103860399330753,
+          "within_tolerance": true,
+          "worst_sample": 1089
+        },
+        {
+          "absolute_error": 8.624792098999023e-05,
+          "actual": "dfm1_stability_3.f32",
+          "actual_value": 0.717278778553009,
+          "reference": "dfm1_stability_2.f32",
+          "reference_value": 0.717365026473999,
+          "tolerance": 0.0008173650264739991,
+          "tolerance_ratio": 0.10551946584019133,
+          "within_tolerance": true,
+          "worst_sample": 513
+        },
+        {
+          "absolute_error": 8.0108642578125e-05,
+          "actual": "dfm1.f32",
+          "actual_value": 0.6310566067695618,
+          "reference": "dfm1_stability_2.f32",
+          "reference_value": 0.6309764981269836,
+          "tolerance": 0.0007309764981269837,
+          "tolerance_ratio": 0.10959126973766083,
+          "within_tolerance": true,
+          "worst_sample": 1025
+        },
+        {
+          "absolute_error": 0.00011324882507324219,
+          "actual": "dfm1.f32",
+          "actual_value": -0.8092819452285767,
+          "reference": "dfm1_stability_3.f32",
+          "reference_value": -0.8093951940536499,
+          "tolerance": 0.00090939519405365,
+          "tolerance_ratio": 0.12453202503570857,
+          "within_tolerance": true,
+          "worst_sample": 155
+        }
+      ],
+      "warm_up_frames": 0
+    },
+    "dnoise_ring": {
+      "captured_frame_range": [
+        0,
+        1023
+      ],
+      "channels": 10,
+      "channels_order": [
+        "baseline_draw_0",
+        "baseline_draw_1",
+        "baseline_draw_2",
+        "change_0_ring",
+        "probe_after_one_draw",
+        "change_1_ring_chance_0_1",
+        "probe_after_two_draws",
+        "scheduled_ring",
+        "probe_after_scheduled_draw_count",
+        "seeded_stochastic_transition_ring"
+      ],
+      "control_event_schedule": [],
+      "deterministic_schedule": {
+        "chance": [
+          1,
+          0,
+          1,
+          0
+        ],
+        "change": [
+          0,
+          1,
+          1,
+          0
+        ],
+        "numBits": 4,
+        "resetval": 13,
+        "shift": [
+          1,
+          2,
+          3,
+          0
+        ]
+      },
+      "draw_order_contract": {
+        "baseline_channels": [
+          0,
+          1,
+          2
+        ],
+        "one_draw_probe_channel": 4,
+        "scheduled_probe_channel": 8,
+        "seed_reset_each_pull": true,
+        "two_draw_probe_channel": 6
+      },
+      "frames": 1024,
+      "path": "dnoise_ring.f32",
+      "pull_frames": [
+        0,
+        64,
+        128,
+        192,
+        256,
+        320,
+        384,
+        448,
+        512,
+        576,
+        640,
+        704,
+        768,
+        832,
+        896,
+        960
+      ],
+      "pull_period_frames": 64,
+      "script": "dnoise_ring.scd",
+      "seed": 1956,
+      "warm_up_frames": 0
+    },
+    "env_detect": {
+      "captured_frame_range": [
+        0,
+        639
+      ],
+      "channels": 1,
+      "channels_order": [
+        "envelope"
+      ],
+      "control_event_schedule": [
+        {
+          "attack": 100,
+          "frame": 0,
+          "release": 0
+        },
+        {
+          "attack": 8,
+          "frame": 128,
+          "release": 2
+        },
+        {
+          "attack": 0,
+          "frame": 256,
+          "release": 12
+        },
+        {
+          "attack": 250,
+          "frame": 384,
+          "release": 50
+        },
+        {
+          "attack": 32,
+          "frame": 512,
+          "release": 4
+        }
+      ],
+      "frames": 640,
+      "path": "env_detect.f32",
+      "script": "env_detect.scd",
+      "warm_up_frames": 0
+    },
+    "moog_ladder_ar": {
+      "captured_frame_range": [
+        0,
+        639
+      ],
+      "channels": 2,
+      "channels_order": [
+        "audio_rate_cutoff_and_resonance",
+        "control_rate_cutoff_and_resonance"
+      ],
+      "control_event_schedule": [
+        {
+          "cutoff": 440,
+          "frame": 0,
+          "res": 0.2
+        },
+        {
+          "cutoff": 1600,
+          "frame": 128,
+          "res": 0.55
+        },
+        {
+          "cutoff": 7200,
+          "frame": 256,
+          "res": 0.85
+        },
+        {
+          "cutoff": 220,
+          "frame": 384,
+          "res": 0.1
+        },
+        {
+          "cutoff": 3500,
+          "frame": 512,
+          "res": 0.7
+        }
+      ],
+      "frames": 640,
+      "node_rate": "audio",
+      "path": "moog_ladder_ar.f32",
+      "script": "moog_ladder.scd",
+      "warm_up_frames": 0
+    },
+    "moog_ladder_kr": {
+      "audio_transport": "K2A.ar interpolation of each control-rate output",
+      "captured_frame_range": [
+        0,
+        639
+      ],
+      "channels": 2,
+      "channels_order": [
+        "scheduled_control_lane_a",
+        "scheduled_control_lane_b"
+      ],
+      "comparison_decode": "current = block_start + (block_end - block_start) * 64 / 63",
+      "comparison_samples": [
+        63,
+        127,
+        191,
+        255,
+        319,
+        383,
+        447,
+        511,
+        575
+      ],
+      "comparison_semantics": "decode each live block's current control-rate result from its first and final K2A samples, then compare at the declared block-end sample; the full retained vector documents transport but is not a raw control-rate oracle",
+      "control_event_schedule": [
+        {
+          "cutoffA": 120,
+          "cutoffB": 180,
+          "frame": 0,
+          "resA": 0.1,
+          "resB": 0.2,
+          "sourceA": 0.45,
+          "sourceB": 0.3
+        },
+        {
+          "cutoffA": 160,
+          "cutoffB": 220,
+          "frame": 128,
+          "resA": 0.15,
+          "resB": 0.24,
+          "sourceA": 0.48,
+          "sourceB": 0.27
+        },
+        {
+          "cutoffA": 240,
+          "cutoffB": 300,
+          "frame": 256,
+          "resA": 0.2,
+          "resB": 0.28,
+          "sourceA": 0.44,
+          "sourceB": 0.33
+        },
+        {
+          "cutoffA": 80,
+          "cutoffB": 140,
+          "frame": 384,
+          "resA": 0.12,
+          "resB": 0.14,
+          "sourceA": 0.5,
+          "sourceB": 0.29
+        },
+        {
+          "cutoffA": 280,
+          "cutoffB": 340,
+          "frame": 512,
+          "resA": 0.25,
+          "resB": 0.32,
+          "sourceA": 0.46,
+          "sourceB": 0.35
+        }
+      ],
+      "frames": 640,
+      "node_rate": "control",
+      "path": "moog_ladder_kr.f32",
+      "script": "moog_ladder.scd",
+      "valid_cutoff_range_hz": [
+        0,
+        375
+      ],
+      "warm_up_frames": 0
+    },
+    "moog_vcf": {
+      "captured_frame_range": [
+        0,
+        639
+      ],
+      "channels": 4,
+      "channels_order": [
+        "control_cutoff_control_resonance",
+        "audio_cutoff_control_resonance",
+        "control_cutoff_audio_resonance",
+        "audio_cutoff_audio_resonance"
+      ],
+      "control_event_schedule": [
+        {
+          "cutoff": 440,
+          "frame": 0,
+          "res": 0.2
+        },
+        {
+          "cutoff": 1400,
+          "frame": 128,
+          "res": 0.5
+        },
+        {
+          "cutoff": 6800,
+          "frame": 256,
+          "res": 0.85
+        },
+        {
+          "cutoff": 180,
+          "frame": 384,
+          "res": 0.1
+        },
+        {
+          "cutoff": 3200,
+          "frame": 512,
+          "res": 0.7
+        }
+      ],
+      "frames": 640,
+      "path": "moog_vcf.f32",
+      "script": "moog_vcf.scd",
+      "warm_up_frames": 0
+    },
+    "perlin3_ar": {
+      "captured_frame_range": [
+        0,
+        511
+      ],
+      "channels": 3,
+      "channels_order": [
+        "base",
+        "translated",
+        "scaled_reflected"
+      ],
+      "control_event_schedule": [],
+      "frames": 512,
+      "node_rate": "audio",
+      "path": "perlin3_ar.f32",
+      "script": "perlin3.scd",
+      "warm_up_frames": 0
+    },
+    "perlin3_kr": {
+      "captured_frame_range": [
+        0,
+        511
+      ],
+      "channels": 3,
+      "channels_order": [
+        "base",
+        "translated",
+        "scaled_reflected"
+      ],
+      "control_event_schedule": [],
+      "frames": 512,
+      "node_rate": "control",
+      "path": "perlin3_kr.f32",
+      "script": "perlin3.scd",
+      "warm_up_frames": 0
+    },
+    "pv_freeze": {
+      "callback_spacing_frames": 64,
+      "captured_frame_range": [
+        0,
+        1535
+      ],
+      "channels": 135,
+      "channels_order": [
+        "ifft_audio",
+        "k2a_interpolated_chain_token",
+        "k2a_interpolated_ready_flag",
+        "k2a_interpolated_freeze",
+        "ready_positive_edge_pulse",
+        "bin_0_magnitude",
+        "bin_0_phase",
+        "... alternating magnitude/phase through bin 64 ...",
+        "bin_64_magnitude",
+        "bin_64_phase"
+      ],
+      "constructor_edge_pulse_sample": 0,
+      "control_block_frames": 64,
+      "control_event_schedule": [
+        {
+          "frame": 0,
+          "frames": 1536,
+          "impulse_offsets": [
+            64,
+            63,
+            62,
+            65,
+            61,
+            66,
+            60,
+            67,
+            59,
+            68,
+            58,
+            69
+          ],
+          "pattern": "one at-most-half-scale positive binary-rational impulse at the declared near-center offset per FFT window",
+          "segment_frames": 128,
+          "source_buffer": "pv_source_a.f32"
+        }
+      ],
+      "decoded_channels": [
+        5,
+        134
+      ],
+      "decoded_frame_samples": [
+        128,
+        256,
+        384,
+        512,
+        640,
+        768,
+        896,
+        1024,
+        1152,
+        1280,
+        1408
+      ],
+      "decoded_order": "alternating magnitude, phase for bins 0 through 64",
+      "decoded_phase_channels": {
+        "dc_nyquist_zero_phase": [
+          6,
+          134
+        ],
+        "ordinary_complex_bins": [
+          8,
+          132,
+          2
+        ]
+      },
+      "decoded_ready_mapping": [
+        {
+          "decoded_sample": 128,
+          "ready_callback": 1,
+          "ready_callback_sample": 128
+        },
+        {
+          "decoded_sample": 256,
+          "ready_callback": 2,
+          "ready_callback_sample": 256
+        },
+        {
+          "decoded_sample": 384,
+          "ready_callback": 3,
+          "ready_callback_sample": 384
+        },
+        {
+          "decoded_sample": 512,
+          "ready_callback": 4,
+          "ready_callback_sample": 512
+        },
+        {
+          "decoded_sample": 640,
+          "ready_callback": 5,
+          "ready_callback_sample": 640
+        },
+        {
+          "decoded_sample": 768,
+          "ready_callback": 6,
+          "ready_callback_sample": 768
+        },
+        {
+          "decoded_sample": 896,
+          "ready_callback": 7,
+          "ready_callback_sample": 896
+        },
+        {
+          "decoded_sample": 1024,
+          "ready_callback": 8,
+          "ready_callback_sample": 1024
+        },
+        {
+          "decoded_sample": 1152,
+          "ready_callback": 9,
+          "ready_callback_sample": 1152
+        },
+        {
+          "decoded_sample": 1280,
+          "ready_callback": 10,
+          "ready_callback_sample": 1280
+        },
+        {
+          "decoded_sample": 1408,
+          "ready_callback": 11,
+          "ready_callback_sample": 1408
+        }
+      ],
+      "fft_hop": 1.0,
+      "fft_size": 128,
+      "frames": 1536,
+      "ifft_window_frames": 64,
+      "interpolated_chain_token_channel": 1,
+      "interpolated_control_channel": 3,
+      "interpolated_ready_flag_channel": 2,
+      "negative_token_callback_samples": [
+        64,
+        192,
+        320,
+        448,
+        576,
+        704,
+        832,
+        960,
+        1088,
+        1216,
+        1344
+      ],
+      "path": "pv_freeze.f32",
+      "positive_edge_to_ready_callback_frames": 63,
+      "ready_callback_control_schedule": [
+        {
+          "freeze": 0,
+          "ready_callback": 1,
+          "sample": 128,
+          "stage": 0
+        },
+        {
+          "freeze": 0,
+          "ready_callback": 2,
+          "sample": 256,
+          "stage": 1
+        },
+        {
+          "freeze": 0,
+          "ready_callback": 3,
+          "sample": 384,
+          "stage": 2
+        },
+        {
+          "freeze": 1,
+          "ready_callback": 4,
+          "sample": 512,
+          "stage": 3
+        },
+        {
+          "freeze": 1,
+          "ready_callback": 5,
+          "sample": 640,
+          "stage": 4
+        },
+        {
+          "freeze": 0,
+          "ready_callback": 6,
+          "sample": 768,
+          "stage": 5
+        },
+        {
+          "freeze": 0,
+          "ready_callback": 7,
+          "sample": 896,
+          "stage": 6
+        },
+        {
+          "freeze": 1,
+          "ready_callback": 8,
+          "sample": 1024,
+          "stage": 7
+        },
+        {
+          "freeze": 1,
+          "ready_callback": 9,
+          "sample": 1152,
+          "stage": 8
+        },
+        {
+          "freeze": 1,
+          "ready_callback": 10,
+          "sample": 1280,
+          "stage": 9,
+          "tail_hold": true
+        },
+        {
+          "freeze": 1,
+          "ready_callback": 11,
+          "sample": 1408,
+          "stage": 10,
+          "tail_hold": true
+        }
+      ],
+      "ready_callback_samples": [
+        128,
+        256,
+        384,
+        512,
+        640,
+        768,
+        896,
+        1024,
+        1152,
+        1280,
+        1408
+      ],
+      "ready_positive_edge_pulse_channel": 4,
+      "ready_positive_edge_pulse_samples": [
+        0,
+        65,
+        193,
+        321,
+        449,
+        577,
+        705,
+        833,
+        961,
+        1089,
+        1217,
+        1345
+      ],
+      "script": "pv_freeze.scd",
+      "source_assets": [
+        "pv_source_a.f32"
+      ],
+      "warm_up_frames": 0
+    },
+    "pv_mag_smooth": {
+      "callback_spacing_frames": 64,
+      "captured_frame_range": [
+        0,
+        1535
+      ],
+      "channels": 135,
+      "channels_order": [
+        "ifft_audio",
+        "k2a_interpolated_chain_token",
+        "k2a_interpolated_ready_flag",
+        "k2a_interpolated_factor",
+        "ready_positive_edge_pulse",
+        "bin_0_magnitude",
+        "bin_0_phase",
+        "... alternating magnitude/phase through bin 64 ...",
+        "bin_64_magnitude",
+        "bin_64_phase"
+      ],
+      "constructor_edge_pulse_sample": 0,
+      "control_block_frames": 64,
+      "control_event_schedule": [
+        {
+          "frame": 0,
+          "frames": 1536,
+          "impulse_offsets": [
+            64,
+            63,
+            62,
+            65,
+            61,
+            66,
+            60,
+            67,
+            59,
+            68,
+            58,
+            69
+          ],
+          "pattern": "one at-most-half-scale positive binary-rational impulse at the declared near-center offset per FFT window",
+          "segment_frames": 128,
+          "source_buffer": "pv_source_a.f32"
+        }
+      ],
+      "decoded_channels": [
+        5,
+        134
+      ],
+      "decoded_frame_samples": [
+        128,
+        256,
+        384,
+        512,
+        640,
+        768,
+        896,
+        1024,
+        1152,
+        1280,
+        1408
+      ],
+      "decoded_order": "alternating magnitude, phase for bins 0 through 64",
+      "decoded_phase_channels": {
+        "dc_nyquist_zero_phase": [
+          6,
+          134
+        ],
+        "ordinary_complex_bins": [
+          8,
+          132,
+          2
+        ]
+      },
+      "decoded_ready_mapping": [
+        {
+          "decoded_sample": 128,
+          "ready_callback": 1,
+          "ready_callback_sample": 128
+        },
+        {
+          "decoded_sample": 256,
+          "ready_callback": 2,
+          "ready_callback_sample": 256
+        },
+        {
+          "decoded_sample": 384,
+          "ready_callback": 3,
+          "ready_callback_sample": 384
+        },
+        {
+          "decoded_sample": 512,
+          "ready_callback": 4,
+          "ready_callback_sample": 512
+        },
+        {
+          "decoded_sample": 640,
+          "ready_callback": 5,
+          "ready_callback_sample": 640
+        },
+        {
+          "decoded_sample": 768,
+          "ready_callback": 6,
+          "ready_callback_sample": 768
+        },
+        {
+          "decoded_sample": 896,
+          "ready_callback": 7,
+          "ready_callback_sample": 896
+        },
+        {
+          "decoded_sample": 1024,
+          "ready_callback": 8,
+          "ready_callback_sample": 1024
+        },
+        {
+          "decoded_sample": 1152,
+          "ready_callback": 9,
+          "ready_callback_sample": 1152
+        },
+        {
+          "decoded_sample": 1280,
+          "ready_callback": 10,
+          "ready_callback_sample": 1280
+        },
+        {
+          "decoded_sample": 1408,
+          "ready_callback": 11,
+          "ready_callback_sample": 1408
+        }
+      ],
+      "fft_hop": 1.0,
+      "fft_size": 128,
+      "frames": 1536,
+      "ifft_window_frames": 64,
+      "interpolated_chain_token_channel": 1,
+      "interpolated_control_channel": 3,
+      "interpolated_ready_flag_channel": 2,
+      "negative_token_callback_samples": [
+        64,
+        192,
+        320,
+        448,
+        576,
+        704,
+        832,
+        960,
+        1088,
+        1216,
+        1344
+      ],
+      "path": "pv_mag_smooth.f32",
+      "positive_edge_to_ready_callback_frames": 63,
+      "ready_callback_control_schedule": [
+        {
+          "factor": 0.1,
+          "ready_callback": 1,
+          "sample": 128,
+          "state": "initialize"
+        },
+        {
+          "factor": 0.1,
+          "ready_callback": 2,
+          "sample": 256
+        },
+        {
+          "factor": 0.25,
+          "ready_callback": 3,
+          "sample": 384
+        },
+        {
+          "factor": 0.75,
+          "ready_callback": 4,
+          "sample": 512
+        },
+        {
+          "factor": 1,
+          "ready_callback": 5,
+          "sample": 640
+        },
+        {
+          "factor": 0,
+          "ready_callback": 6,
+          "sample": 768
+        },
+        {
+          "factor": 0.5,
+          "ready_callback": 7,
+          "sample": 896
+        },
+        {
+          "factor": 0.2,
+          "ready_callback": 8,
+          "sample": 1024
+        },
+        {
+          "factor": 0.2,
+          "ready_callback": 9,
+          "sample": 1152,
+          "tail_hold": true
+        },
+        {
+          "factor": 0.2,
+          "ready_callback": 10,
+          "sample": 1280,
+          "tail_hold": true
+        },
+        {
+          "factor": 0.2,
+          "ready_callback": 11,
+          "sample": 1408,
+          "tail_hold": true
+        }
+      ],
+      "ready_callback_samples": [
+        128,
+        256,
+        384,
+        512,
+        640,
+        768,
+        896,
+        1024,
+        1152,
+        1280,
+        1408
+      ],
+      "ready_positive_edge_pulse_channel": 4,
+      "ready_positive_edge_pulse_samples": [
+        0,
+        65,
+        193,
+        321,
+        449,
+        577,
+        705,
+        833,
+        961,
+        1089,
+        1217,
+        1345
+      ],
+      "script": "pv_mag_smooth.scd",
+      "source_assets": [
+        "pv_source_a.f32"
+      ],
+      "warm_up_frames": 0
+    },
+    "pv_morph": {
+      "callback_spacing_frames": 64,
+      "captured_frame_range": [
+        0,
+        1535
+      ],
+      "channels": 135,
+      "channels_order": [
+        "ifft_audio",
+        "k2a_interpolated_chain_token",
+        "k2a_interpolated_ready_flag",
+        "k2a_interpolated_morph",
+        "ready_positive_edge_pulse",
+        "bin_0_magnitude",
+        "bin_0_phase",
+        "... alternating magnitude/phase through bin 64 ...",
+        "bin_64_magnitude",
+        "bin_64_phase"
+      ],
+      "constructor_edge_pulse_sample": 0,
+      "control_block_frames": 64,
+      "control_event_schedule": [
+        {
+          "frame": 0,
+          "frames": 1536,
+          "pattern": "one distinct at-most-half-scale positive binary-rational impulse at each declared near-center offset per FFT window",
+          "segment_frames": 128,
+          "source_a_buffer": "pv_source_a.f32",
+          "source_a_impulse_offsets": [
+            64,
+            63,
+            62,
+            65,
+            61,
+            66,
+            60,
+            67,
+            59,
+            68,
+            58,
+            69
+          ],
+          "source_b_buffer": "pv_source_b.f32",
+          "source_b_impulse_offsets": [
+            57,
+            70,
+            56,
+            71,
+            55,
+            72,
+            54,
+            73,
+            53,
+            74,
+            52,
+            75
+          ]
+        }
+      ],
+      "decoded_channels": [
+        5,
+        134
+      ],
+      "decoded_frame_samples": [
+        128,
+        256,
+        384,
+        512,
+        640,
+        768,
+        896,
+        1024,
+        1152,
+        1280,
+        1408
+      ],
+      "decoded_order": "alternating magnitude, phase for bins 0 through 64",
+      "decoded_phase_channels": {
+        "dc_nyquist_zero_phase": [
+          6,
+          134
+        ],
+        "ordinary_complex_bins": [
+          8,
+          132,
+          2
+        ]
+      },
+      "decoded_ready_mapping": [
+        {
+          "decoded_sample": 128,
+          "ready_callback": 1,
+          "ready_callback_sample": 128
+        },
+        {
+          "decoded_sample": 256,
+          "ready_callback": 2,
+          "ready_callback_sample": 256
+        },
+        {
+          "decoded_sample": 384,
+          "ready_callback": 3,
+          "ready_callback_sample": 384
+        },
+        {
+          "decoded_sample": 512,
+          "ready_callback": 4,
+          "ready_callback_sample": 512
+        },
+        {
+          "decoded_sample": 640,
+          "ready_callback": 5,
+          "ready_callback_sample": 640
+        },
+        {
+          "decoded_sample": 768,
+          "ready_callback": 6,
+          "ready_callback_sample": 768
+        },
+        {
+          "decoded_sample": 896,
+          "ready_callback": 7,
+          "ready_callback_sample": 896
+        },
+        {
+          "decoded_sample": 1024,
+          "ready_callback": 8,
+          "ready_callback_sample": 1024
+        },
+        {
+          "decoded_sample": 1152,
+          "ready_callback": 9,
+          "ready_callback_sample": 1152
+        },
+        {
+          "decoded_sample": 1280,
+          "ready_callback": 10,
+          "ready_callback_sample": 1280
+        },
+        {
+          "decoded_sample": 1408,
+          "ready_callback": 11,
+          "ready_callback_sample": 1408
+        }
+      ],
+      "distinct_input_chains": true,
+      "fft_hop": 1.0,
+      "fft_size": 128,
+      "frames": 1536,
+      "ifft_window_frames": 64,
+      "interpolated_chain_token_channel": 1,
+      "interpolated_control_channel": 3,
+      "interpolated_ready_flag_channel": 2,
+      "negative_token_callback_samples": [
+        64,
+        192,
+        320,
+        448,
+        576,
+        704,
+        832,
+        960,
+        1088,
+        1216,
+        1344
+      ],
+      "path": "pv_morph.f32",
+      "positive_edge_to_ready_callback_frames": 63,
+      "ready_callback_control_schedule": [
+        {
+          "morph": 0,
+          "ready_callback": 1,
+          "sample": 128
+        },
+        {
+          "morph": 0.25,
+          "ready_callback": 2,
+          "sample": 256
+        },
+        {
+          "morph": 0.5,
+          "ready_callback": 3,
+          "sample": 384
+        },
+        {
+          "morph": 0.75,
+          "ready_callback": 4,
+          "sample": 512
+        },
+        {
+          "morph": 1,
+          "ready_callback": 5,
+          "sample": 640
+        },
+        {
+          "morph": 0.6,
+          "ready_callback": 6,
+          "sample": 768
+        },
+        {
+          "morph": 0.2,
+          "ready_callback": 7,
+          "sample": 896
+        },
+        {
+          "morph": 0.9,
+          "ready_callback": 8,
+          "sample": 1024
+        },
+        {
+          "morph": 0.9,
+          "ready_callback": 9,
+          "sample": 1152,
+          "tail_hold": true
+        },
+        {
+          "morph": 0.9,
+          "ready_callback": 10,
+          "sample": 1280,
+          "tail_hold": true
+        },
+        {
+          "morph": 0.9,
+          "ready_callback": 11,
+          "sample": 1408,
+          "tail_hold": true
+        }
+      ],
+      "ready_callback_samples": [
+        128,
+        256,
+        384,
+        512,
+        640,
+        768,
+        896,
+        1024,
+        1152,
+        1280,
+        1408
+      ],
+      "ready_positive_edge_pulse_channel": 4,
+      "ready_positive_edge_pulse_samples": [
+        0,
+        65,
+        193,
+        321,
+        449,
+        577,
+        705,
+        833,
+        961,
+        1089,
+        1217,
+        1345
+      ],
+      "script": "pv_morph.scd",
+      "source_assets": [
+        "pv_source_a.f32",
+        "pv_source_b.f32"
+      ],
+      "source_phase_capture": {
+        "channels": 126,
+        "channels_order": [
+          "source_a_bin_1_phase",
+          "... source A ordinary-bin phases through bin 63 ...",
+          "source_a_bin_63_phase",
+          "source_b_bin_1_phase",
+          "... source B ordinary-bin phases through bin 63 ...",
+          "source_b_bin_63_phase"
+        ],
+        "decoded_frame_samples": [
+          128,
+          256,
+          384,
+          512,
+          640,
+          768,
+          896,
+          1024,
+          1152,
+          1280,
+          1408
+        ],
+        "frames": 1536,
+        "path": "pv_morph_source_phases.f32",
+        "script": "pv_morph_source_phases.scd",
+        "source_a_channels": [
+          0,
+          62
+        ],
+        "source_b_channels": [
+          63,
+          125
+        ]
+      },
+      "warm_up_frames": 0
+    },
+    "rossler_l": {
+      "captured_frame_range": [
+        0,
+        511
+      ],
+      "channels": 3,
+      "channels_order": [
+        "x",
+        "y",
+        "z"
+      ],
+      "control_event_schedule": [
+        {
+          "a": 0.2,
+          "b": 0.2,
+          "c": 5.7,
+          "frame": 0,
+          "freq": 6000,
+          "h": 0.05,
+          "xi": 0.1,
+          "yi": 0,
+          "zi": 0
+        },
+        {
+          "frame": 192,
+          "xi": 0.35,
+          "yi": -0.2,
+          "zi": 0.15
+        },
+        {
+          "a": 0.36,
+          "b": 0.35,
+          "c": 4.5,
+          "frame": 320,
+          "freq": 12000,
+          "h": 0.03
+        },
+        {
+          "frame": 448,
+          "freq": 48000
+        }
+      ],
+      "frames": 512,
+      "interleaving": "x, y, z for each frame",
+      "path": "rossler_l.f32",
+      "script": "rossler_l.scd",
+      "warm_up_frames": 0
+    }
+  }
+}

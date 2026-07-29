@@ -19,6 +19,17 @@ pub enum BuildError {
     /// A unit was instantiated with the wrong number of inputs.
     #[error("wrong number of inputs for unit")]
     WrongInputCount,
+    /// A unit was instantiated with the wrong number of outputs.
+    #[error("wrong number of outputs for unit: expected {expected}, got {actual}")]
+    WrongOutputCount {
+        /// Number of outputs required by the unit.
+        expected: usize,
+        /// Number of outputs declared by the SynthDef.
+        actual: usize,
+    },
+    /// A unit or one of its inputs uses a calculation rate that the unit does not support.
+    #[error("unsupported calculation rate for unit")]
+    UnsupportedUnitRate,
     /// The def needs more audio wire buffers than the engine's `max_wire_bufs` allows.
     #[error("def needs {needed} audio wires but the engine allows {limit}")]
     TooManyWires {

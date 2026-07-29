@@ -32,14 +32,21 @@ impl LFSaw {
 }
 
 impl Unit for LFSaw {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let phase = if ctx.ins.len() > Self::IPHASE {
+            ctx.ins.control(Self::IPHASE)
+        } else {
+            0.0
+        };
+        ctx.outs.audio(0)[0] = phase;
+    }
+
     fn init(&mut self, ctx: &InitCtx<'_>) {
-        // `iphase` is in cycles over `[0, 2)` (sclang's convention); map into the `[-1, 1)` ramp.
-        let iphase = if ctx.ins.len() > Self::IPHASE {
+        self.phase = if ctx.ins.len() > Self::IPHASE {
             ctx.ins.control(Self::IPHASE) as f64
         } else {
             0.0
         };
-        self.phase = math::rem_euclid(iphase + 1.0, 2.0) - 1.0;
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -184,8 +191,13 @@ pub struct LFTri {
 }
 
 impl Unit for LFTri {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let phase = wrap_lftri_phase(ctx.ins.control(1) as f64);
+        ctx.outs.audio(0)[0] = if phase > 1.0 { 2.0 - phase } else { phase } as f32;
+    }
+
     fn init(&mut self, ctx: &InitCtx<'_>) {
-        self.phase = math::rem_euclid(ctx.ins.control(1) as f64, 4.0);
+        self.phase = wrap_lftri_phase(ctx.ins.control(1) as f64);
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -202,6 +214,24 @@ impl Unit for LFTri {
         self.phase = phase;
         DoneAction::Nothing
     }
+}
+
+/// Wraps an initial triangle phase with the source's ordered fast paths.
+fn wrap_lftri_phase(mut phase: f64) -> f64 {
+    if phase >= 4.0 {
+        phase -= 4.0;
+        if phase < 4.0 {
+            return phase;
+        }
+    } else if phase < 0.0 {
+        phase += 4.0;
+        if phase >= 0.0 {
+            return phase;
+        }
+    } else {
+        return phase;
+    }
+    phase - 4.0 * math::floor(phase / 4.0)
 }
 
 /// `LFPar.ar/kr(freq, iphase)`: a non-band-limited parabolic wave, a sine-like curve from parabola

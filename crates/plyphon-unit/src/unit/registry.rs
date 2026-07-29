@@ -11,13 +11,16 @@ use hashbrown::HashMap;
 
 use crate::error::BuildError;
 use crate::unit::amp_comp::{AmpCompACtor, AmpCompCtor};
-use crate::unit::band_limited::{BlipCtor, PulseCtor, SawCtor};
+use crate::unit::band_limited::{
+    BlipCtor, BlitB3Ctor, BlitB3SawCtor, BlitB3SquareCtor, BlitB3TriCtor, PulseCtor, SawCtor,
+};
 use crate::unit::bank::{KlangCtor, KlankCtor};
 use crate::unit::binary_op::BinaryOpCtor;
 use crate::unit::buf_rd::BufRdCtor;
 use crate::unit::buf_wr::BufWrCtor;
 use crate::unit::chaos::{
-    CuspNCtor, GbmanNCtor, LatoocarfianNCtor, LinCongNCtor, QuadNCtor, StandardNCtor,
+    CuspNCtor, GbmanNCtor, LatoocarfianNCtor, LinCongNCtor, Perlin3Ctor, QuadNCtor, RosslerLCtor,
+    StandardNCtor,
 };
 use crate::unit::decay::{Decay2Ctor, DecayCtor};
 use crate::unit::delay::{
@@ -25,6 +28,7 @@ use crate::unit::delay::{
 };
 use crate::unit::deltap::{DelTapRdCtor, DelTapWrCtor};
 use crate::unit::demand::BuiltDemandUnit;
+use crate::unit::demand::DNoiseRingCtor;
 use crate::unit::demand::dbrown::DbrownCtor;
 use crate::unit::demand::dbufrd::DbufrdCtor;
 use crate::unit::demand::dbufwr::DbufwrCtor;
@@ -111,6 +115,8 @@ use crate::unit::pv_ops::{
     MagKind, PvBrickWallCtor, PvConjCtor, PvDiffuserCtor, PvLocalMaxCtor, PvMagThreshCtor,
     PvPhaseQuarterCtor,
 };
+#[cfg(feature = "fft")]
+use crate::unit::pv_sc3::{PvFreezeCtor, PvMagSmoothCtor, PvMorphCtor};
 use crate::unit::ramp::{RampCtor, VarLagCtor};
 use crate::unit::rand::{
     ExpRandCtor, RandCtor, RandIDCtor, RandSeedCtor, TExpRandCtor, TIRandCtor, TRandCtor,
@@ -118,6 +124,9 @@ use crate::unit::rand::{
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
+use crate::unit::sc3_processing::{
+    BMoogCtor, DecimatorCtor, Dfm1Ctor, EnvDetectCtor, MoogLadderCtor, MoogVcfCtor,
+};
 use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::section::{FOSCtor, SOSCtor};
 use crate::unit::select::{DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor};
@@ -433,6 +442,8 @@ impl UnitRegistry {
         registry.register("GbmanN", Box::new(GbmanNCtor));
         registry.register("StandardN", Box::new(StandardNCtor));
         registry.register("LatoocarfianN", Box::new(LatoocarfianNCtor));
+        registry.register("Perlin3", Box::new(Perlin3Ctor));
+        registry.register("RosslerL", Box::new(RosslerLCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("BufRd", Box::new(BufRdCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
@@ -469,6 +480,16 @@ impl UnitRegistry {
         registry.register("Saw", Box::new(SawCtor));
         registry.register("Pulse", Box::new(PulseCtor));
         registry.register("Blip", Box::new(BlipCtor));
+        registry.register("BlitB3", Box::new(BlitB3Ctor));
+        registry.register("BlitB3Saw", Box::new(BlitB3SawCtor));
+        registry.register("BlitB3Square", Box::new(BlitB3SquareCtor));
+        registry.register("BlitB3Tri", Box::new(BlitB3TriCtor));
+        registry.register("EnvDetect", Box::new(EnvDetectCtor));
+        registry.register("DFM1", Box::new(Dfm1Ctor));
+        registry.register("MoogLadder", Box::new(MoogLadderCtor));
+        registry.register("MoogVCF", Box::new(MoogVcfCtor));
+        registry.register("Decimator", Box::new(DecimatorCtor));
+        registry.register("BMoog", Box::new(BMoogCtor));
         registry.register("Formant", Box::new(FormantCtor));
         // Wavetable oscillators (read a buffer as a single-cycle table).
         registry.register("Osc", Box::new(OscCtor));
@@ -621,6 +642,7 @@ impl UnitRegistry {
         registry.register_demand("Dbufrd", Box::new(DbufrdCtor));
         registry.register_demand("Dbufwr", Box::new(DbufwrCtor));
         registry.register_demand("Dpoll", Box::new(DpollCtor));
+        registry.register_demand("DNoiseRing", Box::new(DNoiseRingCtor));
         // FFT / spectral - only when built with the `fft` feature.
         #[cfg(feature = "fft")]
         {
@@ -637,6 +659,9 @@ impl UnitRegistry {
             registry.register("PV_BrickWall", Box::new(PvBrickWallCtor));
             registry.register("PV_Conj", Box::new(PvConjCtor));
             registry.register("PV_Diffuser", Box::new(PvDiffuserCtor));
+            registry.register("PV_Freeze", Box::new(PvFreezeCtor));
+            registry.register("PV_MagSmooth", Box::new(PvMagSmoothCtor));
+            registry.register("PV_Morph", Box::new(PvMorphCtor));
             registry.register("PV_Add", Box::new(PvComplexCtor(ComplexKind::Add)));
             registry.register("PV_Mul", Box::new(PvComplexCtor(ComplexKind::Mul)));
             registry.register("PV_Div", Box::new(PvComplexCtor(ComplexKind::Div)));
