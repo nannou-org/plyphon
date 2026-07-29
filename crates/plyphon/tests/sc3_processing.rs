@@ -390,11 +390,7 @@ fn sc3_processing_signatures_reject_invalid_shapes() {
         );
 
         let mut invalid_input_rates = case.input_rates.clone();
-        invalid_input_rates[0] = if case.node_rate == Rate::Control {
-            Rate::Audio
-        } else {
-            Rate::Demand
-        };
+        invalid_input_rates[0] = Rate::Demand;
         assert_eq!(
             calc_build_error(
                 case.name,
@@ -408,6 +404,18 @@ fn sc3_processing_signatures_reject_invalid_shapes() {
             case.name
         );
     }
+
+    assert_eq!(
+        calc_build_error(
+            "MoogLadder",
+            Rate::Control,
+            &[Rate::Audio, Rate::Audio, Rate::Audio],
+            1,
+            0,
+        ),
+        None,
+        "MoogLadder.kr accepts source-defined audio inputs"
+    );
 
     // EnvDetect alone requires its signal inlet to be audio rate.
     assert_eq!(
@@ -454,9 +462,9 @@ fn sc3_processing_signatures_reject_invalid_shapes() {
     );
 }
 
-/// Proves invalid runtime controls remain finite and recover on the next valid callback.
+/// Proves ordinary finite runtime control changes continue producing finite output.
 #[test]
-fn sc3_processing_invalid_controls_are_finite_and_recover() {
+fn sc3_processing_finite_control_changes_remain_finite() {
     let cases = [
         ProcessingCase {
             name: "EnvDetect",
@@ -565,37 +573,20 @@ fn sc3_processing_invalid_controls_are_finite_and_recover() {
             case.name
         );
 
-        for index in 0..case.initial.len() {
-            let invalid = match index % 3 {
-                0 => f32::NAN,
-                1 => f32::INFINITY,
-                _ => f32::NEG_INFINITY,
-            };
-            controller
-                .set_control(synth, index, invalid)
-                .expect("set invalid control");
-        }
-        let invalid = render(&mut world, 64);
-        assert!(
-            invalid.iter().all(|sample| sample.is_finite()),
-            "{} emitted a non-finite sample for a non-finite input/control",
-            case.name
-        );
-
         for (index, &value) in case.recovery.iter().enumerate() {
             controller
                 .set_control(synth, index, value)
-                .expect("set recovery control");
+                .expect("set changed control");
         }
-        let recovered = render(&mut world, 64);
+        let changed = render(&mut world, 64);
         assert!(
-            recovered.iter().all(|sample| sample.is_finite()),
-            "{} recovery block",
+            changed.iter().all(|sample| sample.is_finite()),
+            "{} changed block",
             case.name
         );
         assert!(
-            recovered.iter().any(|sample| sample.abs() > 1e-9),
-            "{} did not resume finite non-silent processing on the next valid block",
+            changed.iter().any(|sample| sample.abs() > 1e-9),
+            "{} did not continue finite non-silent processing",
             case.name
         );
     }
@@ -911,7 +902,7 @@ fn render_blit(name: &'static str, controls: &'static [f32]) -> Vec<f32> {
     render(&mut world, 128)
 }
 
-/// Pins oscillator constructor phase and finite behavior at frequency boundaries.
+/// Pins oscillator constructor phase and source-defined behavior at frequency boundaries.
 #[test]
 fn sc3_blit_phase_recreation_and_frequency_boundaries() {
     for (name, below, minimum, above, nyquist) in [
@@ -949,11 +940,19 @@ fn sc3_blit_phase_recreation_and_frequency_boundaries() {
             render_blit(name, minimum),
             "{name} minimum effective frequency"
         );
-        assert_eq!(
-            render_blit(name, above),
-            render_blit(name, nyquist),
-            "{name} Nyquist frequency clamp"
-        );
+        if name == "BlitB3" {
+            assert_ne!(
+                render_blit(name, above),
+                render_blit(name, nyquist),
+                "BlitB3 preserves source frequencies above Nyquist"
+            );
+        } else {
+            assert_eq!(
+                render_blit(name, above),
+                render_blit(name, nyquist),
+                "{name} source minimum-period behavior"
+            );
+        }
     }
 
     for (name, below, minimum, above, maximum) in [
@@ -979,15 +978,15 @@ fn sc3_blit_phase_recreation_and_frequency_boundaries() {
             &[440.0, 1.0, 1.0][..],
         ),
     ] {
-        assert_eq!(
+        assert_ne!(
             render_blit(name, below),
             render_blit(name, minimum),
-            "{name} lower leak clamp"
+            "{name} preserves a negative source leak"
         );
-        assert_eq!(
+        assert_ne!(
             render_blit(name, above),
             render_blit(name, maximum),
-            "{name} upper leak clamp"
+            "{name} preserves a source leak above one"
         );
     }
 

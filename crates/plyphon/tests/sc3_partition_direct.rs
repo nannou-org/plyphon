@@ -158,6 +158,7 @@ struct DirectCalc {
     configured_block_size: usize,
     rate: Rate,
     outputs: usize,
+    constructed: bool,
     initialized: bool,
     observed_callbacks: Vec<usize>,
     wavetables: Wavetables,
@@ -177,6 +178,27 @@ impl DirectCalc {
         sample_rate: f64,
         configured_block_size: usize,
     ) -> Self {
+        Self::new_with_special(
+            name,
+            sources,
+            rate,
+            outputs,
+            sample_rate,
+            configured_block_size,
+            0,
+        )
+    }
+
+    /// Construct one calc unit with an explicit SynthDef special index.
+    fn new_with_special(
+        name: &str,
+        sources: Vec<InputSource>,
+        rate: Rate,
+        outputs: usize,
+        sample_rate: f64,
+        configured_block_size: usize,
+        special_index: i16,
+    ) -> Self {
         let input_rates = sources
             .iter()
             .copied()
@@ -194,7 +216,7 @@ impl DirectCalc {
             num_outputs: outputs,
             audio: &audio,
             control: &control,
-            special_index: 0,
+            special_index,
             seed: UNIT_SEED,
             local_bufs_so_far: 0,
         };
@@ -215,6 +237,7 @@ impl DirectCalc {
             configured_block_size,
             rate,
             outputs,
+            constructed: false,
             initialized: false,
             observed_callbacks: Vec::new(),
             wavetables: Wavetables::new(),
@@ -223,6 +246,82 @@ impl DirectCalc {
             buffers: BufferTable::new(2),
             rgen: Rng::new(UNIT_SEED),
         }
+    }
+
+    /// Run the source constructor callback once and return its published output wires.
+    fn construct_once(
+        &mut self,
+        audio_wires: &[f32],
+        control_wires: &[f32],
+        callback_len: usize,
+    ) -> Vec<Vec<f32>> {
+        assert!(!self.constructed);
+        let calc_len = if self.rate == Rate::Audio {
+            callback_len
+        } else {
+            1
+        };
+        let audio = RateInfo::new(self.sample_rate, self.configured_block_size);
+        let control = RateInfo::new(self.sample_rate / self.configured_block_size as f64, 1);
+        let own = if self.rate == Rate::Audio {
+            &audio
+        } else {
+            &control
+        };
+        let inputs = Inputs::new(&self.sources, audio_wires, control_wires, callback_len);
+        let mut scratch = vec![0.0; self.outputs * calc_len];
+        let mut demand_state = [];
+        let mut triggers: Vec<Trigger> = Vec::new();
+        let mut node_messages: Vec<NodeMsg> = Vec::new();
+        let mut node_ops: Vec<NodeOp> = Vec::new();
+        let mut own_done = 0;
+        let mut local_bus = [];
+        let mut local_samples = [];
+        let mut local_coords = [];
+        let mut ctx = ProcessCtx {
+            audio: &audio,
+            control: &control,
+            own,
+            wavetables: &self.wavetables,
+            fft: &self.fft,
+            ins: inputs,
+            outs: Outputs::new(&mut scratch, calc_len),
+            buses: &mut self.buses,
+            buffers: &mut self.buffers,
+            buf_counter: 1,
+            tick: 0,
+            resample_factor: 1,
+            sample_offset: 0,
+            subsample_offset: 0.0,
+            demand: DemandAccess::new(
+                &[],
+                &mut demand_state,
+                audio_wires,
+                control_wires,
+                callback_len,
+            ),
+            node_id: 1000,
+            triggers: TriggerSink::new(&mut triggers, 0),
+            node_msgs: NodeMsgSink::new(&mut node_messages, 0),
+            running_synths: 1,
+            done: DoneState::new(&[], &mut own_done),
+            node_ops: NodeOpSink::new(&mut node_ops, 0),
+            local: LocalBus::new(&mut local_bus, callback_len),
+            local_bufs: LocalBufs::new(
+                &[],
+                &mut local_samples,
+                &mut local_coords,
+                self.sample_rate,
+            ),
+            aux: Aux::new(self.aux.as_mut()),
+            rgen: &mut self.rgen,
+        };
+        (self.built.construct)(self.state.as_mut(), &mut ctx);
+        self.constructed = true;
+
+        (0..self.outputs)
+            .map(|output| scratch[output * calc_len..(output + 1) * calc_len].to_vec())
+            .collect()
     }
 
     /// Invoke one real unit callback and return its outputs split by output index.
@@ -234,6 +333,9 @@ impl DirectCalc {
     ) -> Vec<Vec<f32>> {
         assert!(callback_len > 0);
         self.observed_callbacks.push(callback_len);
+        if !self.constructed {
+            let _ = self.construct_once(audio_wires, control_wires, callback_len);
+        }
         let calc_len = if self.rate == Rate::Audio {
             callback_len
         } else {
@@ -385,17 +487,22 @@ impl DirectDemand {
             .expect("DNoiseRing demand registration")
             .build(&build)
             .expect("DNoiseRing direct build");
-        let mut state = AlignedBytes::from_bytes(&built.init_bytes, built.align);
-        (built.reseed)(state.as_mut(), UNIT_SEED);
+        let output_offset = (built.size + 3) & !3;
+        let mut init_bytes = vec![0; output_offset + core::mem::size_of::<f32>()];
+        init_bytes[..built.init_bytes.len()].copy_from_slice(&built.init_bytes);
+        let mut state = AlignedBytes::from_bytes(&init_bytes, built.align.max(4));
+        (built.reseed)(&mut state.as_mut()[..built.size], UNIT_SEED);
         let plan = vec![DemandVtbl {
+            init: built.init,
             produce: built.produce,
             reset: built.reset,
             reseed: built.reseed,
             inputs: sources.into_boxed_slice(),
             state_offset: 0,
             state_size: built.size,
+            output_offset,
         }];
-        Self {
+        let mut demand = Self {
             plan,
             state,
             buffers: BufferTable::new(0),
@@ -404,6 +511,31 @@ impl DirectDemand {
             block_size,
             observed_groups: Vec::new(),
             pull_count: 0,
+        };
+        demand.initialize();
+        demand
+    }
+
+    /// Run the demand plan's constructor callbacks before the first direct pull.
+    fn initialize(&mut self) {
+        let mut local_samples = [];
+        let mut local_coords = [];
+        let mut local_bufs =
+            LocalBufs::new(&[], &mut local_samples, &mut local_coords, self.sample_rate);
+        let mut node_messages: Vec<NodeMsg> = Vec::new();
+        let mut node_sink = NodeMsgSink::new(&mut node_messages, 0);
+        let unit_count = self.plan.len();
+        let mut access =
+            DemandAccess::new(&self.plan, self.state.as_mut(), &[], &[], self.block_size);
+        let mut world = DemandWorld {
+            buffers: &mut self.buffers,
+            local_bufs: &mut local_bufs,
+            node_id: 1000,
+            node_msgs: &mut node_sink,
+            rgen: &mut self.rgen,
+        };
+        for unit in 0..unit_count {
+            access.init(&mut world, unit);
         }
     }
 
@@ -426,7 +558,7 @@ impl DirectDemand {
             rgen: &mut self.rgen,
         };
         let values = (0..count)
-            .map(|_| access.produce(&mut world, 0))
+            .map(|_| access.produce(&mut world, 0, 1))
             .collect::<Vec<_>>();
         self.pull_count += count;
         values
@@ -675,108 +807,6 @@ impl RuntimeSafetyCase {
     }
 }
 
-/// One supplied inlet value and the explicit valid value a reference unit receives.
-struct RuntimeSafetyProbe {
-    inlet: usize,
-    supplied: f32,
-    reference: f32,
-    label: String,
-}
-
-/// Return the immediately lower representable value for a finite non-negative boundary.
-fn adjacent_below(value: f32) -> f32 {
-    if value == 0.0 {
-        -f32::from_bits(1)
-    } else {
-        f32::from_bits(value.to_bits() - 1)
-    }
-}
-
-/// Return the immediately higher representable value for a finite non-negative boundary.
-fn adjacent_above(value: f32) -> f32 {
-    f32::from_bits(value.to_bits() + 1)
-}
-
-/// Add the finite boundaries, adjacent outside values, and three non-finite classes for a clamp.
-fn add_bounded_probes(
-    probes: &mut Vec<RuntimeSafetyProbe>,
-    inlet: usize,
-    minimum: f32,
-    maximum: Option<f32>,
-    remembered: f32,
-    label: &str,
-) {
-    probes.push(RuntimeSafetyProbe {
-        inlet,
-        supplied: minimum,
-        reference: minimum,
-        label: format!("{label} lower boundary"),
-    });
-    probes.push(RuntimeSafetyProbe {
-        inlet,
-        supplied: adjacent_below(minimum),
-        reference: minimum,
-        label: format!("{label} immediately below lower boundary"),
-    });
-    if let Some(maximum) = maximum {
-        probes.push(RuntimeSafetyProbe {
-            inlet,
-            supplied: maximum,
-            reference: maximum,
-            label: format!("{label} upper boundary"),
-        });
-        probes.push(RuntimeSafetyProbe {
-            inlet,
-            supplied: adjacent_above(maximum),
-            reference: maximum,
-            label: format!("{label} immediately above upper boundary"),
-        });
-    }
-    add_nonfinite_probes(probes, inlet, remembered, label);
-}
-
-/// Add NaN and both infinities with an explicit remembered/default reference.
-fn add_nonfinite_probes(
-    probes: &mut Vec<RuntimeSafetyProbe>,
-    inlet: usize,
-    remembered: f32,
-    label: &str,
-) {
-    for (class, supplied) in [
-        ("NaN", f32::NAN),
-        ("positive infinity", f32::INFINITY),
-        ("negative infinity", f32::NEG_INFINITY),
-    ] {
-        probes.push(RuntimeSafetyProbe {
-            inlet,
-            supplied,
-            reference: remembered,
-            label: format!("{label} {class}"),
-        });
-    }
-}
-
-/// Add finite source-branch values whose valid behavior must not be mistaken for a safety clamp.
-fn add_finite_probes(
-    probes: &mut Vec<RuntimeSafetyProbe>,
-    inlet: usize,
-    values: &[f32],
-    label: &str,
-) {
-    probes.extend(
-        values
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(index, value)| RuntimeSafetyProbe {
-                inlet,
-                supplied: value,
-                reference: value,
-                label: format!("{label} finite branch {index}"),
-            }),
-    );
-}
-
 /// Return every sample-processor configuration whose runtime safety contract needs exact state.
 fn runtime_safety_cases() -> Vec<RuntimeSafetyCase> {
     use Rate::{Audio, Control};
@@ -929,228 +959,6 @@ fn runtime_safety_cases() -> Vec<RuntimeSafetyCase> {
     ]
 }
 
-/// Build the exact explicit-reference probes for one sample-processor configuration.
-fn runtime_safety_probes(case: &RuntimeSafetyCase) -> Vec<RuntimeSafetyProbe> {
-    let mut probes = Vec::new();
-    let nyquist = 24_000.0;
-    let signal_inlets: &[usize] = match case.name {
-        "EnvDetect" | "Decimator" | "DFM1" | "BMoog" | "MoogLadder" | "MoogVCF" => &[0],
-        "Perlin3" => &[0, 1, 2],
-        _ => &[],
-    };
-    for &inlet in signal_inlets {
-        add_nonfinite_probes(&mut probes, inlet, 0.0, "signal");
-    }
-
-    match case.name {
-        "EnvDetect" => {
-            add_bounded_probes(&mut probes, 1, 0.0, None, case.baseline[1], "attack");
-            add_bounded_probes(&mut probes, 2, 0.0, None, case.baseline[2], "release");
-        }
-        "Decimator" => {
-            add_bounded_probes(
-                &mut probes,
-                1,
-                0.0,
-                Some(48_000.0),
-                case.baseline[1],
-                "rate",
-            );
-            add_finite_probes(
-                &mut probes,
-                2,
-                &[adjacent_below(1.0), 1.0, adjacent_below(31.0), 31.0],
-                "bits pass-through boundary",
-            );
-            add_nonfinite_probes(&mut probes, 2, case.baseline[2], "bits");
-        }
-        "DFM1" => {
-            add_bounded_probes(
-                &mut probes,
-                1,
-                1.0,
-                Some(nyquist),
-                case.baseline[1],
-                "frequency",
-            );
-            add_bounded_probes(
-                &mut probes,
-                2,
-                0.0,
-                Some(10.0),
-                case.baseline[2],
-                "resonance",
-            );
-            add_finite_probes(&mut probes, 3, &[-0.75, 1.25], "input gain");
-            add_nonfinite_probes(&mut probes, 3, case.baseline[3], "input gain");
-            add_finite_probes(
-                &mut probes,
-                4,
-                &[adjacent_below(0.5), 0.5],
-                "type threshold",
-            );
-            add_nonfinite_probes(&mut probes, 4, case.baseline[4], "type");
-            add_bounded_probes(&mut probes, 5, 0.0, None, case.baseline[5], "noise level");
-        }
-        "BMoog" => {
-            add_bounded_probes(
-                &mut probes,
-                1,
-                20.0,
-                Some(nyquist),
-                case.baseline[1],
-                "frequency",
-            );
-            add_bounded_probes(&mut probes, 2, 0.0, Some(1.0), case.baseline[2], "Q");
-            add_finite_probes(
-                &mut probes,
-                3,
-                &[
-                    adjacent_below(1.0),
-                    1.0,
-                    adjacent_below(2.0),
-                    2.0,
-                    adjacent_below(3.0),
-                    3.0,
-                ],
-                "mode threshold",
-            );
-            add_nonfinite_probes(&mut probes, 3, case.baseline[3], "mode");
-        }
-        "MoogLadder" | "MoogVCF" => {
-            add_bounded_probes(
-                &mut probes,
-                1,
-                0.0,
-                Some(nyquist),
-                case.baseline[1],
-                "frequency",
-            );
-            add_bounded_probes(
-                &mut probes,
-                2,
-                0.0,
-                Some(1.0),
-                case.baseline[2],
-                "resonance",
-            );
-        }
-        "BlitB3" | "BlitB3Saw" | "BlitB3Square" | "BlitB3Tri" => {
-            add_bounded_probes(
-                &mut probes,
-                0,
-                0.000_001,
-                Some(nyquist),
-                case.baseline[0],
-                "frequency",
-            );
-            for inlet in 1..case.baseline.len() {
-                add_bounded_probes(
-                    &mut probes,
-                    inlet,
-                    0.0,
-                    Some(1.0),
-                    case.baseline[inlet],
-                    "leak",
-                );
-            }
-        }
-        "Perlin3" => {}
-        "RosslerL" => {
-            for inlet in 0..case.baseline.len() {
-                add_nonfinite_probes(&mut probes, inlet, case.baseline[inlet], "Rossler control");
-            }
-        }
-        _ => unreachable!("unknown runtime safety case"),
-    }
-    probes
-}
-
-/// Compare one invalid/out-of-range callback and its valid successor to an explicit reference.
-fn check_runtime_safety_probe(case: &RuntimeSafetyCase, probe: &RuntimeSafetyProbe) {
-    let mut subject = DirectCalc::new(
-        case.name,
-        case.sources.clone(),
-        case.rate,
-        case.outputs,
-        48_000.0,
-        64,
-    );
-    let mut reference = DirectCalc::new(
-        case.name,
-        case.sources.clone(),
-        case.rate,
-        case.outputs,
-        48_000.0,
-        64,
-    );
-    let len = if case.rate == Rate::Audio { 16 } else { 1 };
-    let (warm_audio, warm_controls) = case.input_block(&case.baseline, len);
-    assert_eq!(
-        subject.process(&warm_audio, &warm_controls, len),
-        reference.process(&warm_audio, &warm_controls, len),
-        "{} {} warm-up output",
-        case.label,
-        probe.label
-    );
-    assert_eq!(
-        subject.state_snapshot(),
-        reference.state_snapshot(),
-        "{} {} warm-up state",
-        case.label,
-        probe.label
-    );
-
-    let mut supplied = case.baseline.clone();
-    supplied[probe.inlet] = probe.supplied;
-    let mut sanitized = case.baseline.clone();
-    sanitized[probe.inlet] = probe.reference;
-    let (subject_audio, subject_controls) = case.input_block(&supplied, len);
-    let (reference_audio, reference_controls) = case.input_block(&sanitized, len);
-    let actual = subject.process(&subject_audio, &subject_controls, len);
-    let expected = reference.process(&reference_audio, &reference_controls, len);
-    assert_eq!(
-        actual, expected,
-        "{} {} output differs from explicit reference",
-        case.label, probe.label
-    );
-    assert!(
-        actual.iter().flatten().all(|sample| sample.is_finite()),
-        "{} {} emitted a non-finite sample",
-        case.label,
-        probe.label
-    );
-    assert_eq!(
-        subject.state_snapshot(),
-        reference.state_snapshot(),
-        "{} {} state/aux differs from explicit reference",
-        case.label,
-        probe.label
-    );
-
-    let (recovery_audio, recovery_controls) = case.input_block(&case.recovery, len);
-    let actual = subject.process(&recovery_audio, &recovery_controls, len);
-    let expected = reference.process(&recovery_audio, &recovery_controls, len);
-    assert_eq!(
-        actual, expected,
-        "{} {} recovery output",
-        case.label, probe.label
-    );
-    assert!(
-        actual.iter().flatten().all(|sample| sample.is_finite()),
-        "{} {} recovery emitted a non-finite sample",
-        case.label,
-        probe.label
-    );
-    assert_eq!(
-        subject.state_snapshot(),
-        reference.state_snapshot(),
-        "{} {} recovery state/aux",
-        case.label,
-        probe.label
-    );
-}
-
 /// Append output-major callback results to one continuous stream per output.
 fn append_outputs(accumulator: &mut [Vec<f32>], block: Vec<Vec<f32>>) {
     assert_eq!(accumulator.len(), block.len());
@@ -1185,16 +993,231 @@ fn assert_outputs_equal(expected: &[Vec<f32>], actual: &[Vec<f32>], tolerance: f
     }
 }
 
-/// Proves every sample-processor runtime clamp and non-finite fallback is state-exact and recovers.
+/// Exercises each sample processor over its ordinary finite runtime domain.
 #[test]
-fn sc3_processing_runtime_safety_matrix_is_exact_and_recovers() {
+fn sc3_processing_runtime_defined_domain_is_finite() {
     for case in runtime_safety_cases() {
-        let probes = runtime_safety_probes(&case);
-        assert!(!probes.is_empty(), "{} safety matrix is empty", case.label);
-        for probe in probes {
-            check_runtime_safety_probe(&case, &probe);
+        let mut unit = DirectCalc::new(
+            case.name,
+            case.sources.clone(),
+            case.rate,
+            case.outputs,
+            48_000.0,
+            64,
+        );
+        let len = if case.rate == Rate::Audio { 16 } else { 1 };
+        for controls in [&case.baseline, &case.recovery] {
+            let (audio, control) = case.input_block(controls, len);
+            let output = unit.process(&audio, &control, len);
+            assert!(
+                output.iter().flatten().all(|sample| sample.is_finite()),
+                "{} ordinary finite controls emitted a non-finite sample",
+                case.label
+            );
         }
     }
+}
+
+/// Pins Decimator's raw lower-rate and non-finite control arithmetic.
+#[test]
+fn decimator_non_finite_controls_follow_source_state_transitions() {
+    let sources = vec![
+        InputSource::Audio(0),
+        InputSource::Control(0),
+        InputSource::Control(1),
+    ];
+    let signal = (0..16)
+        .map(|sample| -0.75 + sample as f32 * 0.03125)
+        .collect::<Vec<_>>();
+
+    for invalid_rate in [f32::NAN, f32::NEG_INFINITY] {
+        let mut poisoned =
+            DirectCalc::new("Decimator", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+        let mut zero_rate =
+            DirectCalc::new("Decimator", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+        assert_eq!(
+            poisoned.process(&signal, &[invalid_rate, 8.0], signal.len()),
+            zero_rate.process(&signal, &[0.0, 8.0], signal.len())
+        );
+        let poisoned_recovery = poisoned.process(&signal, &[48_000.0, 8.0], signal.len());
+        let zero_recovery = zero_rate.process(&signal, &[48_000.0, 8.0], signal.len());
+        assert_ne!(
+            poisoned_recovery, zero_recovery,
+            "a poisoned cadence must not be rewritten during recovery"
+        );
+    }
+
+    let mut positive_infinity =
+        DirectCalc::new("Decimator", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+    let mut sample_rate =
+        DirectCalc::new("Decimator", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+    assert_eq!(
+        positive_infinity.process(&signal, &[f32::INFINITY, 8.0], signal.len()),
+        sample_rate.process(&signal, &[48_000.0, 8.0], signal.len())
+    );
+
+    let mut nan_bits = DirectCalc::new("Decimator", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+    assert!(
+        nan_bits
+            .process(&signal, &[48_000.0, f32::NAN], signal.len())
+            .iter()
+            .flatten()
+            .all(|sample| sample.is_nan())
+    );
+    for infinite_bits in [f32::NEG_INFINITY, f32::INFINITY] {
+        let mut infinite =
+            DirectCalc::new("Decimator", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+        let mut thirty_one =
+            DirectCalc::new("Decimator", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+        assert_eq!(
+            infinite.process(&signal, &[48_000.0, infinite_bits], signal.len()),
+            thirty_one.process(&signal, &[48_000.0, 31.0], signal.len())
+        );
+    }
+}
+
+/// Pins the Decimator pre-calculation to the constructor's actual first input sample.
+#[test]
+fn decimator_constructor_reads_input_sample_zero() {
+    let mut unit = DirectCalc::new(
+        "Decimator",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Control(0),
+            InputSource::Control(1),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let input = 0.25_f32;
+    let output = unit.construct_once(&vec![input; 64], &[48_000.0, 8.0], 64);
+    let step = plyphon_dsp::math::powf(0.5, 8.0 - 0.999);
+    let scaled = (input + step * 0.5) / step;
+    let expected = input - (scaled - plyphon_dsp::math::trunc(scaled)) * step;
+
+    assert_eq!(output[0][0].to_bits(), expected.to_bits());
+    assert_ne!(output[0][0], 0.0);
+}
+
+/// Pins BMoog's raw resonance and mode branches while preserving safe cutoff lookup.
+#[test]
+fn bmoog_non_finite_q_poisons_and_non_finite_mode_selects_low_pass() {
+    let sources = vec![
+        InputSource::Audio(0),
+        InputSource::Control(0),
+        InputSource::Control(1),
+        InputSource::Control(2),
+    ];
+    let signal = (0..64)
+        .map(|sample| -0.8 + sample as f32 * 0.021875)
+        .collect::<Vec<_>>();
+
+    for mode in [f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+        let mut non_finite =
+            DirectCalc::new("BMoog", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+        let mut low_pass = DirectCalc::new("BMoog", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+        assert_eq!(
+            non_finite.process(&signal, &[440.0, 0.5, mode], signal.len()),
+            low_pass.process(&signal, &[440.0, 0.5, 0.0], signal.len())
+        );
+    }
+
+    for resonance in [f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+        let mut filter = DirectCalc::new("BMoog", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+        filter.process(&signal, &[440.0, 0.5, 0.0], signal.len());
+        filter.process(&signal, &[440.0, resonance, 0.0], signal.len());
+        let poisoned = filter.process(&signal, &[440.0, 0.25, 0.0], signal.len());
+        assert!(
+            poisoned.iter().flatten().any(|sample| sample.is_nan()),
+            "non-finite resonance {resonance} must remain observable after recovery"
+        );
+        assert!(
+            filter
+                .process(&signal, &[440.0, 0.25, 0.0], signal.len())
+                .iter()
+                .flatten()
+                .all(|sample| sample.is_nan()),
+            "the poisoned feedback state must persist"
+        );
+    }
+}
+
+/// Preserves Perlin3's raw invalid-coordinate arithmetic around the safe index cast.
+#[test]
+fn perlin3_non_finite_coordinates_propagate_nan() {
+    for coordinate in 0..3 {
+        for invalid in [f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+            let mut controls = [0.125, 0.25, 0.375];
+            controls[coordinate] = invalid;
+            let mut unit = DirectCalc::new(
+                "Perlin3",
+                vec![
+                    InputSource::Control(0),
+                    InputSource::Control(1),
+                    InputSource::Control(2),
+                ],
+                Rate::Audio,
+                1,
+                48_000.0,
+                64,
+            );
+            assert!(
+                unit.process(&[], &controls, 64)[0]
+                    .iter()
+                    .all(|sample| sample.is_nan()),
+                "coordinate {coordinate}={invalid} must remain visible in raw Perlin arithmetic"
+            );
+        }
+    }
+}
+
+/// Pins RosslerL's raw parameter poisoning and coordinate-reset recovery.
+#[test]
+fn rossler_l_non_finite_controls_follow_source_recovery_boundaries() {
+    let sources = (0..8).map(InputSource::Control).collect::<Vec<_>>();
+    let ordinary = [6_000.0, 0.2, 0.2, 5.7, 0.05, 0.1, 0.0, 0.0];
+
+    let mut poisoned = DirectCalc::new("RosslerL", sources.clone(), Rate::Audio, 3, 48_000.0, 64);
+    poisoned.process(&[], &ordinary, 64);
+    let mut invalid_parameter = ordinary;
+    invalid_parameter[1] = f32::NAN;
+    assert!(
+        poisoned
+            .process(&[], &invalid_parameter, 64)
+            .iter()
+            .flatten()
+            .any(|sample| sample.is_nan())
+    );
+    assert!(
+        poisoned
+            .process(&[], &ordinary, 64)
+            .iter()
+            .flatten()
+            .all(|sample| sample.is_nan()),
+        "a poisoned trajectory must not be silently restarted"
+    );
+
+    let mut coordinate_reset = DirectCalc::new("RosslerL", sources, Rate::Audio, 3, 48_000.0, 64);
+    coordinate_reset.process(&[], &ordinary, 64);
+    let mut invalid_coordinate = ordinary;
+    invalid_coordinate[5] = f32::NAN;
+    assert!(
+        coordinate_reset
+            .process(&[], &invalid_coordinate, 64)
+            .iter()
+            .flatten()
+            .any(|sample| sample.is_nan())
+    );
+    let recovered = coordinate_reset.process(&[], &ordinary, 64);
+    assert!(
+        recovered.iter().flatten().any(|sample| sample.is_finite())
+            && recovered
+                .iter()
+                .all(|output| { output.last().is_some_and(|sample| sample.is_finite()) }),
+        "restoring a coordinate must recover after the retained interpolation anchor advances"
+    );
 }
 
 /// Exercise one sample unit with actual direct callback lengths and ordered changing inputs.
@@ -1441,21 +1464,13 @@ fn pv_controls(name: &str, ready: bool, frame: usize) -> Vec<f32> {
 enum PvBufferFault {
     UnsupportedSize,
     MultipleChannels,
-    NonFiniteDc,
-    NonFiniteNyquist,
-    NonFiniteReal,
-    NonFiniteImaginary,
-    ComplexMagnitudeOverflow,
 }
 
 /// One invalid token, frame, or two-buffer ownership condition.
 #[derive(Clone, Copy)]
 enum PvRejection {
-    PrimaryToken { supplied: f32, expected_output: f32 },
-    SecondaryToken(f32),
     PrimaryBuffer(PvBufferFault),
     SecondaryBuffer(PvBufferFault),
-    Alias,
     LengthMismatch,
 }
 
@@ -1463,61 +1478,14 @@ impl PvRejection {
     /// Stable assertion label for this rejection class.
     fn label(self) -> &'static str {
         match self {
-            Self::PrimaryToken {
-                supplied,
-                expected_output: _,
-            } if supplied.is_nan() => "primary NaN token",
-            Self::PrimaryToken {
-                supplied: f32::INFINITY,
-                expected_output: _,
-            } => "primary positive-infinity token",
-            Self::PrimaryToken {
-                supplied: f32::NEG_INFINITY,
-                expected_output: _,
-            } => "primary negative-infinity token",
-            Self::PrimaryToken {
-                supplied: -1.0,
-                expected_output: _,
-            } => "primary negative token",
-            Self::PrimaryToken {
-                supplied: 0.5,
-                expected_output: _,
-            } => "primary fractional token",
-            Self::PrimaryToken {
-                supplied: 9.0,
-                expected_output: _,
-            } => "primary missing-buffer token",
-            Self::PrimaryToken { .. } => "primary invalid token",
-            Self::SecondaryToken(value) if value.is_nan() => "secondary NaN token",
-            Self::SecondaryToken(f32::INFINITY) => "secondary positive-infinity token",
-            Self::SecondaryToken(f32::NEG_INFINITY) => "secondary negative-infinity token",
-            Self::SecondaryToken(-1.0) => "secondary negative token",
-            Self::SecondaryToken(0.5) => "secondary fractional token",
-            Self::SecondaryToken(9.0) => "secondary missing-buffer token",
-            Self::SecondaryToken(_) => "secondary invalid token",
             Self::PrimaryBuffer(fault) => match fault {
                 PvBufferFault::UnsupportedSize => "primary unsupported packed size",
                 PvBufferFault::MultipleChannels => "primary multichannel packed shape",
-                PvBufferFault::NonFiniteDc => "primary non-finite DC",
-                PvBufferFault::NonFiniteNyquist => "primary non-finite Nyquist",
-                PvBufferFault::NonFiniteReal => "primary non-finite real component",
-                PvBufferFault::NonFiniteImaginary => "primary non-finite imaginary component",
-                PvBufferFault::ComplexMagnitudeOverflow => {
-                    "primary finite complex magnitude overflow"
-                }
             },
             Self::SecondaryBuffer(fault) => match fault {
                 PvBufferFault::UnsupportedSize => "secondary unsupported packed size",
                 PvBufferFault::MultipleChannels => "secondary multichannel packed shape",
-                PvBufferFault::NonFiniteDc => "secondary non-finite DC",
-                PvBufferFault::NonFiniteNyquist => "secondary non-finite Nyquist",
-                PvBufferFault::NonFiniteReal => "secondary non-finite real component",
-                PvBufferFault::NonFiniteImaginary => "secondary non-finite imaginary component",
-                PvBufferFault::ComplexMagnitudeOverflow => {
-                    "secondary finite complex magnitude overflow"
-                }
             },
-            Self::Alias => "aliased A/B tokens",
             Self::LengthMismatch => "A/B length mismatch",
         }
     }
@@ -1528,7 +1496,6 @@ fn faulty_pv_buffer(fault: PvBufferFault, lane: usize, sample_rate: f64) -> Buff
     let (frames, channels) = match fault {
         PvBufferFault::UnsupportedSize => (65, 1),
         PvBufferFault::MultipleChannels => (64, 2),
-        _ => (64, 1),
     };
     let mut data = vec![0.0; frames * channels];
     data[0] = 0.25 + lane as f32 * 0.125;
@@ -1537,91 +1504,9 @@ fn faulty_pv_buffer(fault: PvBufferFault, lane: usize, sample_rate: f64) -> Buff
         pair[0] = 0.5 + bin as f32 * 0.0078125;
         pair[1] = -0.25 + lane as f32 * 0.03125;
     }
-    match fault {
-        PvBufferFault::NonFiniteDc => data[0] = f32::NAN,
-        PvBufferFault::NonFiniteNyquist => data[1] = f32::INFINITY,
-        PvBufferFault::NonFiniteReal => data[2] = f32::NEG_INFINITY,
-        PvBufferFault::NonFiniteImaginary => data[3] = f32::NAN,
-        PvBufferFault::ComplexMagnitudeOverflow => {
-            data[2] = f32::MAX;
-            data[3] = f32::MAX;
-        }
-        PvBufferFault::UnsupportedSize | PvBufferFault::MultipleChannels => {}
-    }
     let mut buffer = Buffer::from_interleaved(data, channels, sample_rate);
     buffer.set_coord(SpectrumCoord::Complex);
     buffer
-}
-
-/// Return the complete invalid-token/frame matrix shared by every PV operator.
-fn primary_pv_rejections() -> Vec<PvRejection> {
-    let mut rejections = vec![
-        PvRejection::PrimaryToken {
-            supplied: -1.0,
-            expected_output: -1.0,
-        },
-        PvRejection::PrimaryToken {
-            supplied: f32::NAN,
-            expected_output: -1.0,
-        },
-        PvRejection::PrimaryToken {
-            supplied: f32::NEG_INFINITY,
-            expected_output: -1.0,
-        },
-        PvRejection::PrimaryToken {
-            supplied: f32::INFINITY,
-            expected_output: -1.0,
-        },
-        PvRejection::PrimaryToken {
-            supplied: 0.5,
-            expected_output: 0.5,
-        },
-        PvRejection::PrimaryToken {
-            supplied: 9.0,
-            expected_output: 9.0,
-        },
-    ];
-    rejections.extend(
-        [
-            PvBufferFault::UnsupportedSize,
-            PvBufferFault::MultipleChannels,
-            PvBufferFault::NonFiniteDc,
-            PvBufferFault::NonFiniteNyquist,
-            PvBufferFault::NonFiniteReal,
-            PvBufferFault::NonFiniteImaginary,
-            PvBufferFault::ComplexMagnitudeOverflow,
-        ]
-        .into_iter()
-        .map(PvRejection::PrimaryBuffer),
-    );
-    rejections
-}
-
-/// Return every additional invalid B-frame and ownership class for `PV_Morph`.
-fn secondary_pv_rejections() -> Vec<PvRejection> {
-    let mut rejections = vec![
-        PvRejection::SecondaryToken(-1.0),
-        PvRejection::SecondaryToken(f32::NAN),
-        PvRejection::SecondaryToken(f32::NEG_INFINITY),
-        PvRejection::SecondaryToken(f32::INFINITY),
-        PvRejection::SecondaryToken(0.5),
-        PvRejection::SecondaryToken(9.0),
-    ];
-    rejections.extend(
-        [
-            PvBufferFault::UnsupportedSize,
-            PvBufferFault::MultipleChannels,
-            PvBufferFault::NonFiniteDc,
-            PvBufferFault::NonFiniteNyquist,
-            PvBufferFault::NonFiniteReal,
-            PvBufferFault::NonFiniteImaginary,
-            PvBufferFault::ComplexMagnitudeOverflow,
-        ]
-        .into_iter()
-        .map(PvRejection::SecondaryBuffer),
-    );
-    rejections.extend([PvRejection::Alias, PvRejection::LengthMismatch]);
-    rejections
 }
 
 /// Snapshot both fixed global buffer slots, preserving sample bits and coordinate tags.
@@ -1656,19 +1541,8 @@ fn install_pv_rejection(
     rejection: PvRejection,
     subject: &mut DirectCalc,
 ) -> (Vec<f32>, f32) {
-    let mut controls = pv_controls(name, true, 2);
+    let controls = pv_controls(name, true, 2);
     let expected = match rejection {
-        PvRejection::PrimaryToken {
-            supplied,
-            expected_output,
-        } => {
-            controls[0] = supplied;
-            expected_output
-        }
-        PvRejection::SecondaryToken(supplied) => {
-            controls[1] = supplied;
-            0.0
-        }
         PvRejection::PrimaryBuffer(fault) => {
             subject
                 .buffers
@@ -1679,10 +1553,6 @@ fn install_pv_rejection(
             subject
                 .buffers
                 .set(1, Box::new(faulty_pv_buffer(fault, 1, subject.sample_rate)));
-            0.0
-        }
-        PvRejection::Alias => {
-            controls[1] = 0.0;
             0.0
         }
         PvRejection::LengthMismatch => {
@@ -1829,16 +1699,24 @@ fn check_pv_partition(name: &str, sample_rate: f64, block_size: usize, fft_size:
             "{name} complete A spectrum at {sample_rate}/{block_size}/{fft_size}/{frame}"
         );
         if let Some(expected_b) = before_ready_b {
+            let converted_b = spectrum_snapshot(&partitioned, 1);
             assert_eq!(
                 spectrum_snapshot(&whole, 1),
-                expected_b,
-                "{name} whole read-only B spectrum at {sample_rate}/{block_size}/{fft_size}/{frame}"
+                converted_b,
+                "{name} B spectrum partition parity at {sample_rate}/{block_size}/{fft_size}/{frame}"
             );
-            assert_eq!(
-                spectrum_snapshot(&partitioned, 1),
-                expected_b,
-                "{name} partitioned read-only B spectrum at {sample_rate}/{block_size}/{fft_size}/{frame}"
-            );
+            assert_eq!(converted_b.coord, SpectrumCoord::Polar);
+            if expected_b.coord == SpectrumCoord::Complex {
+                assert_ne!(
+                    converted_b, expected_b,
+                    "{name} source conversion must mutate complex B at {sample_rate}/{block_size}/{fft_size}/{frame}"
+                );
+            } else {
+                assert_eq!(
+                    converted_b, expected_b,
+                    "{name} source conversion must preserve polar B at {sample_rate}/{block_size}/{fft_size}/{frame}"
+                );
+            }
         }
         assert_eq!(
             whole.state_snapshot(),
@@ -1953,19 +1831,736 @@ fn sc3_pv_audio_modulation_uses_first_sample_in0() {
     }
 }
 
-/// Proves every invalid SC3 PV token/frame is atomic and the next valid frame exactly recovers.
+/// Pins the two-chain macro's negative-token passthrough rule.
 #[test]
-fn sc3_pv_invalid_token_frame_matrix_is_atomic_and_recovers() {
+fn pv_morph_returns_negative_one_when_either_chain_is_not_ready() {
+    let sources = vec![
+        InputSource::Control(0),
+        InputSource::Control(1),
+        InputSource::Control(2),
+    ];
+    let mut primary_missing =
+        DirectCalc::new("PV_Morph", sources.clone(), Rate::Control, 1, 48_000.0, 64);
+    let mut secondary_missing =
+        DirectCalc::new("PV_Morph", sources, Rate::Control, 1, 48_000.0, 64);
+    assert_eq!(
+        primary_missing.process(&[], &[-0.5, 1.0, 0.25], 1),
+        vec![vec![-1.0]]
+    );
+    assert_eq!(
+        secondary_missing.process(&[], &[0.0, -0.5, 0.25], 1),
+        vec![vec![-1.0]]
+    );
+}
+
+/// Unknown finite tokens fall back to world buffer zero; infinity passes through but misses.
+#[test]
+fn pv_morph_out_of_range_token_uses_buffer_zero() {
+    let mut morph = DirectCalc::new(
+        "PV_Morph",
+        vec![
+            InputSource::Control(0),
+            InputSource::Control(1),
+            InputSource::Control(2),
+        ],
+        Rate::Control,
+        1,
+        48_000.0,
+        64,
+    );
+    let mut a = Buffer::from_interleaved(vec![1.0; 64], 1, 48_000.0);
+    a.set_coord(SpectrumCoord::Polar);
+    let mut b = Buffer::from_interleaved(vec![7.0; 64], 1, 48_000.0);
+    b.set_coord(SpectrumCoord::Polar);
+    morph.buffers.set(0, Box::new(a));
+    morph.buffers.set(1, Box::new(b));
+
+    assert_eq!(morph.process(&[], &[99.0, 1.0, 1.0], 1), vec![vec![99.0]]);
+    assert!(
+        morph
+            .buffers
+            .get(0)
+            .expect("fallback buffer")
+            .data()
+            .iter()
+            .all(|&value| value == 7.0)
+    );
+
+    morph
+        .buffers
+        .get_mut(0)
+        .expect("fallback buffer")
+        .data_mut()
+        .fill(1.0);
+    let output = morph.process(&[], &[f32::INFINITY, 1.0, 1.0], 1);
+    assert_eq!(output[0][0], f32::INFINITY);
+    assert!(
+        morph
+            .buffers
+            .get(0)
+            .expect("fallback buffer")
+            .data()
+            .iter()
+            .all(|&value| value == 1.0)
+    );
+    let output = morph.process(&[], &[0.0, f32::INFINITY, 1.0], 1);
+    assert_eq!(output[0][0], 0.0);
+    assert!(
+        morph
+            .buffers
+            .get(0)
+            .expect("primary buffer")
+            .data()
+            .iter()
+            .all(|&value| value == 1.0)
+    );
+}
+
+/// Pins first-frame raw smoothing and the source's smaller-frame memory indexing.
+#[test]
+fn pv_mag_smooth_first_frame_and_smaller_frame_use_source_arithmetic() {
+    let sources = vec![InputSource::Control(0), InputSource::Control(1)];
+    let mut overflowing = DirectCalc::new(
+        "PV_MagSmooth",
+        sources.clone(),
+        Rate::Control,
+        1,
+        48_000.0,
+        64,
+    );
+    let mut extreme = vec![0.0; 64];
+    extreme[0] = f32::MAX;
+    extreme[1] = f32::MAX;
+    extreme[2] = f32::MAX;
+    let mut extreme = Buffer::from_interleaved(extreme, 1, 48_000.0);
+    extreme.set_coord(SpectrumCoord::Polar);
+    overflowing.buffers.set(0, Box::new(extreme));
+    overflowing.process(&[], &[0.0, f32::MAX], 1);
+    let overflowed = overflowing.buffers.get(0).expect("overflow spectrum");
+    assert!(overflowed.data()[0].is_nan());
+    assert!(overflowed.data()[2].is_nan());
+
+    let mut smaller = DirectCalc::new("PV_MagSmooth", sources, Rate::Control, 1, 48_000.0, 64);
+    let mut original = vec![0.0; 128];
+    original[0] = 1.0;
+    original[1] = 2.0;
+    original[64] = 100.0;
+    original[66] = 200.0;
+    let mut original = Buffer::from_interleaved(original, 1, 48_000.0);
+    original.set_coord(SpectrumCoord::Polar);
+    smaller.buffers.set(0, Box::new(original));
+    smaller.process(&[], &[0.0, 0.5], 1);
+
+    let mut reduced = vec![0.0; 64];
+    reduced[0] = 10.0;
+    reduced[1] = 20.0;
+    let mut reduced = Buffer::from_interleaved(reduced, 1, 48_000.0);
+    reduced.set_coord(SpectrumCoord::Polar);
+    smaller.buffers.set(0, Box::new(reduced));
+    smaller.process(&[], &[0.0, 0.5], 1);
+    let reduced = smaller.buffers.get(0).expect("reduced spectrum");
+    assert_eq!(reduced.data()[0], 55.0);
+    assert_eq!(reduced.data()[1], 110.0);
+}
+
+/// Proves malformed host buffer shapes are rejected atomically and valid processing resumes.
+#[test]
+fn sc3_pv_malformed_host_shapes_are_atomic_and_recover() {
     for name in ["PV_Freeze", "PV_MagSmooth", "PV_Morph"] {
-        for rejection in primary_pv_rejections() {
+        for rejection in [
+            PvRejection::PrimaryBuffer(PvBufferFault::UnsupportedSize),
+            PvRejection::PrimaryBuffer(PvBufferFault::MultipleChannels),
+        ] {
             check_pv_rejection(name, rejection);
         }
         if name == "PV_Morph" {
-            for rejection in secondary_pv_rejections() {
+            for rejection in [
+                PvRejection::SecondaryBuffer(PvBufferFault::UnsupportedSize),
+                PvRejection::SecondaryBuffer(PvBufferFault::MultipleChannels),
+                PvRejection::LengthMismatch,
+            ] {
                 check_pv_rejection(name, rejection);
             }
         }
     }
+}
+
+/// Pins the source audio-cutoff/audio-resonance callback's retained-cutoff quirk.
+#[test]
+fn moog_ladder_audio_audio_retains_constructor_cutoff() {
+    let mut ladder = DirectCalc::new(
+        "MoogLadder",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Audio(1),
+            InputSource::Audio(2),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let mut inputs = vec![0.25; 64];
+    inputs.extend((0..64).map(|sample| 440.0 + sample as f32 * (1_560.0 / 63.0)));
+    inputs.extend((0..64).map(|sample| 0.1 + sample as f32 * (0.6 / 63.0)));
+    ladder.process(&inputs, &[], 64);
+
+    let state = ladder.state_snapshot().0;
+    let retained_cutoff = f32::from_ne_bytes(state[..4].try_into().expect("cutoff state bytes"));
+    assert_eq!(
+        retained_cutoff, 440.0,
+        "the audio/audio source callback does not store its final cutoff"
+    );
+}
+
+/// Pins the source's double-rate arithmetic before the ladder coefficient is stored as `f32`.
+#[test]
+fn moog_ladder_constructor_coefficient_matches_source_bits() {
+    let mut ladder = DirectCalc::new(
+        "MoogLadder",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Control(0),
+            InputSource::Control(1),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    ladder.process(&[0.0], &[440.0, 0.0], 1);
+    let state = ladder.state_snapshot().0;
+    let coefficient = f32::from_ne_bytes(state[4..8].try_into().expect("coefficient state bytes"));
+    assert_eq!(coefficient.to_bits(), 0x3d10_5310);
+}
+
+/// Proves oscillator, `MulAdd`, and binary-op constructor outputs reach both Moog constructors.
+#[test]
+fn moog_constructors_read_source_constructor_chain_outputs() {
+    let mut sine = DirectCalc::new(
+        "SinOsc",
+        vec![InputSource::Constant(389.0), InputSource::Constant(0.4)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let mut saw = DirectCalc::new(
+        "LFSaw",
+        vec![InputSource::Constant(131.0), InputSource::Constant(0.2)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let mut triangle = DirectCalc::new(
+        "LFTri",
+        vec![InputSource::Constant(11.0), InputSource::Constant(0.3)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let sine_ctor = sine.construct_once(&[], &[], 64)[0].clone();
+    let saw_ctor = saw.construct_once(&[], &[], 64)[0].clone();
+    let triangle_ctor = triangle.construct_once(&[], &[], 64)[0].clone();
+
+    assert_eq!(sine_ctor[0].to_bits(), 0x3ec7_61d6);
+    assert_eq!(saw_ctor[0].to_bits(), 0.2_f32.to_bits());
+    assert_eq!(triangle_ctor[0].to_bits(), 0.3_f32.to_bits());
+
+    let mut sine_scale = DirectCalc::new(
+        "MulAdd",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Constant(0.2),
+            InputSource::Constant(0.0),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let scaled_sine = sine_scale.construct_once(&sine_ctor, &[], 64)[0].clone();
+    let mut saw_scale = DirectCalc::new(
+        "MulAdd",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Constant(0.3),
+            InputSource::Constant(0.0),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let scaled_saw = saw_scale.construct_once(&saw_ctor, &[], 64)[0].clone();
+
+    let mut add_inputs = scaled_sine.clone();
+    add_inputs.extend_from_slice(&scaled_saw);
+    let mut add = DirectCalc::new(
+        "BinaryOpUGen",
+        vec![InputSource::Audio(0), InputSource::Audio(1)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let add_ctor = add.construct_once(&add_inputs, &[], 64)[0].clone();
+    assert_eq!(add_ctor[0], scaled_sine[0] + scaled_saw[0]);
+    let mut multiply = DirectCalc::new_with_special(
+        "BinaryOpUGen",
+        vec![InputSource::Audio(0), InputSource::Audio(1)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+        2,
+    );
+    let multiply_ctor = multiply.construct_once(&add_inputs, &[], 64);
+    assert_eq!(multiply_ctor[0][0], scaled_sine[0] * scaled_saw[0]);
+
+    let mut cutoff_scale = DirectCalc::new(
+        "MulAdd",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Constant(3_125.0),
+            InputSource::Constant(3_375.0),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let cutoff_ctor = cutoff_scale.construct_once(&sine_ctor, &[], 64)[0].clone();
+    let mut resonance_scale = DirectCalc::new(
+        "MulAdd",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Constant(0.4),
+            InputSource::Constant(0.5),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let resonance_ctor = resonance_scale.construct_once(&triangle_ctor, &[], 64)[0].clone();
+
+    let mut wires = add_ctor;
+    wires.extend_from_slice(&cutoff_ctor);
+    wires.extend_from_slice(&resonance_ctor);
+    for name in ["MoogLadder", "MoogVCF"] {
+        let mut filter = DirectCalc::new(
+            name,
+            vec![
+                InputSource::Audio(0),
+                InputSource::Audio(1),
+                InputSource::Audio(2),
+            ],
+            Rate::Audio,
+            1,
+            48_000.0,
+            64,
+        );
+        filter.construct_once(&wires, &[], 64);
+        let state = filter.state_snapshot().0;
+        let cutoff = f32::from_ne_bytes(state[..4].try_into().expect("cutoff state bytes"));
+        let resonance_offset = if name == "MoogVCF" { 4 } else { 8 };
+        let resonance = f32::from_ne_bytes(
+            state[resonance_offset..resonance_offset + 4]
+                .try_into()
+                .expect("resonance state bytes"),
+        );
+        let expected_cutoff = if name == "MoogVCF" {
+            (cutoff_ctor[0] as f64 * 2.0 / 48_000.0) as f32
+        } else {
+            cutoff_ctor[0]
+        };
+        assert_eq!(cutoff, expected_cutoff, "{name} constructor cutoff");
+        assert_eq!(resonance, resonance_ctor[0], "{name} constructor resonance");
+    }
+}
+
+/// Pins the constructor draw and following process draw for audio-rate binary `rrand`.
+#[test]
+fn binary_random_constructor_consumes_one_source_draw() {
+    let mut random = DirectCalc::new_with_special(
+        "BinaryOpUGen",
+        vec![InputSource::Audio(0), InputSource::Audio(1)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+        47,
+    );
+    let mut expected = Rng::new(UNIT_SEED);
+    let expected_constructor = 100.0 + expected.next_bipolar() * 100.0;
+    let expected_process = 100.0 + expected.next_bipolar() * 100.0;
+
+    let mut constructor_inputs = vec![100.0; 64];
+    constructor_inputs.extend([200.0; 64]);
+    let constructor = random.construct_once(&constructor_inputs, &[], 64);
+    let process = random.process(&[100.0, 200.0], &[], 1);
+    assert_eq!(constructor[0][0].to_bits(), expected_constructor.to_bits());
+    assert_eq!(process[0][0].to_bits(), expected_process.to_bits());
+}
+
+/// Pins the source min/max macros' second-operand result for equal signed zeros.
+#[test]
+fn binary_min_max_ties_return_the_second_operand() {
+    for special_index in [12, 13] {
+        for (a, b) in [(0.0, -0.0), (-0.0, 0.0)] {
+            let mut unit = DirectCalc::new_with_special(
+                "BinaryOpUGen",
+                vec![InputSource::Constant(a), InputSource::Constant(b)],
+                Rate::Audio,
+                1,
+                48_000.0,
+                64,
+                special_index,
+            );
+            let constructor = unit.construct_once(&[], &[], 1);
+            assert_eq!(constructor[0][0].to_bits(), b.to_bits());
+            let processed = unit.process(&[], &[], 1);
+            assert_eq!(processed[0][0].to_bits(), b.to_bits());
+        }
+    }
+}
+
+/// Pins the double-precision source constant used by the `hypotx` constructor kernel.
+#[test]
+fn binary_hypotx_constructor_matches_source_bits() {
+    let x = f32::from_bits(0x3f08_596c);
+    let y = f32::from_bits(0x3f08_85db);
+    let mut unit = DirectCalc::new_with_special(
+        "BinaryOpUGen",
+        vec![InputSource::Constant(x), InputSource::Constant(y)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+        24,
+    );
+    let constructor = unit.construct_once(&[], &[], 1);
+    assert_eq!(constructor[0][0].to_bits(), 0x3f58_64fb);
+}
+
+/// Pins the source constructor's zero/one MulAdd specializations.
+#[test]
+fn mul_add_constructor_preserves_source_zero_specializations() {
+    let cases: [(f32, f32, f32, f32); 4] = [
+        (f32::NAN, 0.0, 1.0, 1.0),
+        (-0.0, 2.0, 0.0, -0.0),
+        (-0.0, 1.0, 0.0, -0.0),
+        (f32::NAN, 0.0, -0.0, 0.0),
+    ];
+    for (input, mul, add, expected) in cases {
+        let mut unit = DirectCalc::new(
+            "MulAdd",
+            vec![
+                InputSource::Audio(0),
+                InputSource::Constant(mul),
+                InputSource::Constant(add),
+            ],
+            Rate::Audio,
+            1,
+            48_000.0,
+            64,
+        );
+        let constructor = unit.construct_once(&[input], &[], 1);
+        assert_eq!(constructor[0][0].to_bits(), expected.to_bits());
+    }
+}
+
+/// Pins SinOsc's fixed-point source wavetable lookup during construction.
+#[test]
+fn sin_osc_constructor_matches_source_fixed_point_bits() {
+    for (phase, expected) in [(0.1, 0x3dcc_7575), (-0.1, 0xbdcc_7575), (0.4, 0x3ec7_61d6)] {
+        let mut oscillator = DirectCalc::new(
+            "SinOsc",
+            vec![InputSource::Constant(0.0), InputSource::Constant(phase)],
+            Rate::Audio,
+            1,
+            48_000.0,
+            64,
+        );
+        let constructor = oscillator.construct_once(&[], &[], 1);
+        assert_eq!(constructor[0][0].to_bits(), expected);
+    }
+}
+
+/// Restores LFSaw's raw initial phase after its hidden constructor sample.
+#[test]
+fn lfsaw_constructor_retains_out_of_range_initial_phase() {
+    let mut oscillator = DirectCalc::new(
+        "LFSaw",
+        vec![InputSource::Constant(0.0), InputSource::Constant(2.5)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let constructor = oscillator.construct_once(&[], &[], 1);
+    assert_eq!(constructor[0][0], 2.5);
+    let processed = oscillator.process(&[], &[], 1);
+    assert_eq!(processed[0][0], 2.5);
+}
+
+/// Preserves the source wrap's positive zero for a negative exact triangle period.
+#[test]
+fn lftri_negative_period_constructor_wraps_to_positive_zero() {
+    let mut triangle = DirectCalc::new(
+        "LFTri",
+        vec![InputSource::Constant(0.0), InputSource::Constant(-4.0)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let constructor = triangle.construct_once(&[], &[], 1);
+    assert_eq!(constructor[0][0].to_bits(), 0.0_f32.to_bits());
+    let processed = triangle.process(&[], &[], 1);
+    assert_eq!(processed[0][0].to_bits(), 0.0_f32.to_bits());
+}
+
+/// Selects `Line`'s exact terminal input once its one-frame counter reaches zero.
+#[test]
+fn line_one_frame_terminal_output_uses_end_bits() {
+    let start = f32::from_bits(0x3ceb_3ffd);
+    let end = f32::from_bits(0x97b7_5092);
+    let mut line = DirectCalc::new(
+        "Line",
+        vec![
+            InputSource::Constant(start),
+            InputSource::Constant(end),
+            InputSource::Constant(1.0 / 48_000.0),
+            InputSource::Constant(0.0),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+
+    assert_eq!(line.process(&[], &[], 1)[0][0].to_bits(), start.to_bits());
+    assert_eq!(line.process(&[], &[], 1)[0][0].to_bits(), end.to_bits());
+}
+
+/// Pins the constructor count width shared by constant-duration `Duty` and gapped `TDuty`.
+#[test]
+fn duty_constructors_use_double_sample_rate_product() {
+    let duration = 1.000_000_011_686_097_4e-7;
+    for (name, sources) in [
+        (
+            "Duty",
+            vec![
+                InputSource::Constant(duration),
+                InputSource::Constant(0.0),
+                InputSource::Constant(0.0),
+                InputSource::Constant(1.0),
+            ],
+        ),
+        (
+            "TDuty",
+            vec![
+                InputSource::Constant(duration),
+                InputSource::Constant(0.0),
+                InputSource::Constant(0.0),
+                InputSource::Constant(1.0),
+                InputSource::Constant(1.0),
+            ],
+        ),
+    ] {
+        let mut duty = DirectCalc::new(name, sources, Rate::Audio, 1, 44_100.1, 64);
+        duty.construct_once(&[], &[], 64);
+        let state = duty.state_snapshot().0;
+        let count = f32::from_ne_bytes(state[..4].try_into().expect("count state bytes"));
+        assert_eq!(count.to_bits(), 0x3b90_81d8, "{name} count");
+    }
+}
+
+/// Pins the runtime coefficient's float intermediates before its double-precision exponential.
+#[test]
+fn moog_ladder_runtime_coefficient_matches_source_bits() {
+    let mut ladder = DirectCalc::new(
+        "MoogLadder",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Control(0),
+            InputSource::Control(1),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        1,
+    );
+    ladder.process(&[0.0], &[440.0, 0.0], 1);
+    ladder.process(&[0.0], &[779.400_024_414_062_5, 0.0], 1);
+
+    let state = ladder.state_snapshot().0;
+    let coefficient = f32::from_ne_bytes(state[4..8].try_into().expect("coefficient state bytes"));
+    assert_eq!(coefficient.to_bits(), 0x3d7b_c73f);
+}
+
+/// Pins `CALCSLOPE`'s multiply-by-slope-factor evaluation order.
+#[test]
+fn moog_ladder_control_slope_matches_source_bits() {
+    let mut ladder = DirectCalc::new(
+        "MoogLadder",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Control(0),
+            InputSource::Control(1),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        96,
+    );
+    ladder.process(&[0.0], &[440.0, 0.0], 1);
+    ladder.process(&[0.0], &[440.0, -868.167_968_75], 1);
+
+    let state = ladder.state_snapshot().0;
+    let resonance = f32::from_ne_bytes(state[8..12].try_into().expect("resonance state bytes"));
+    assert_eq!(resonance.to_bits(), 0xc110_b1d6);
+}
+
+/// Preserves a negative-zero control state when the source skips a zero slope.
+#[test]
+fn moog_ladder_zero_slope_preserves_signed_zero() {
+    let mut ladder = DirectCalc::new(
+        "MoogLadder",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Control(0),
+            InputSource::Control(1),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    ladder.process(&[0.0], &[440.0, -0.0], 1);
+
+    let state = ladder.state_snapshot().0;
+    let resonance = f32::from_ne_bytes(state[8..12].try_into().expect("resonance state bytes"));
+    assert_eq!(resonance.to_bits(), (-0.0_f32).to_bits());
+}
+
+/// Keeps the control cutoff multiplication in double precision until normalization is stored.
+#[test]
+fn moog_vcf_control_normalization_matches_source_bits() {
+    let mut filter = DirectCalc::new(
+        "MoogVCF",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Control(0),
+            InputSource::Control(1),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    filter.process(&[0.0], &[f32::MAX, 0.0], 1);
+
+    let state = filter.state_snapshot().0;
+    let normalized = f32::from_ne_bytes(state[..4].try_into().expect("cutoff state bytes"));
+    assert_eq!(normalized.to_bits(), 0x782e_c33d);
+}
+
+/// Preserves the constructor's `f32` cutoff multiplication before sample-duration scaling.
+#[test]
+fn moog_vcf_constructor_cutoff_overflow_matches_source() {
+    let mut filter = DirectCalc::new(
+        "MoogVCF",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Constant(f32::MAX),
+            InputSource::Constant(0.0),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    filter.construct_once(&[0.0], &[], 1);
+
+    let state = filter.state_snapshot().0;
+    let normalized = f32::from_ne_bytes(state[..4].try_into().expect("cutoff state bytes"));
+    assert_eq!(normalized, f32::INFINITY);
+}
+
+/// Pins the audio-cutoff callback's cached `f32` normalization multiplier.
+#[test]
+fn moog_vcf_audio_cutoff_uses_source_float_multiplier() {
+    let mut filter = DirectCalc::new(
+        "MoogVCF",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Audio(1),
+            InputSource::Control(0),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    let cutoff = f32::from_bits(0x4595_6296);
+    let output = filter.process(&[1.0, cutoff], &[0.0], 1);
+    assert_eq!(output[0][0].to_bits(), 0x3c3a_d66f);
+}
+
+/// Matches the source's narrowing conversion at the `float sampleRate` filter call boundary.
+#[test]
+fn dfm1_sample_rate_narrows_before_coefficient_lookup() {
+    let sources = vec![
+        InputSource::Audio(0),
+        InputSource::Control(0),
+        InputSource::Control(1),
+        InputSource::Control(2),
+        InputSource::Control(3),
+        InputSource::Control(4),
+    ];
+    let mut exact = DirectCalc::new("DFM1", sources.clone(), Rate::Audio, 1, 48_000.0, 64);
+    let mut rounded = DirectCalc::new("DFM1", sources, Rate::Audio, 1, 48_000.000_1, 64);
+    let input = vec![0.125; 64];
+    let controls = [1_237.5, 0.7, 1.0, 0.0, 0.000_3];
+
+    assert_eq!(
+        exact.process(&input, &controls, 64),
+        rounded.process(&input, &controls, 64)
+    );
+    assert_eq!(exact.state_snapshot(), rounded.state_snapshot());
+}
+
+/// Preserves the source's signed-zero and ordered-NaN branches in direct processing callbacks.
+#[test]
+fn translated_non_finite_boundaries_follow_source_arithmetic() {
+    let mut envelope = DirectCalc::new(
+        "EnvDetect",
+        vec![
+            InputSource::Audio(0),
+            InputSource::Control(0),
+            InputSource::Control(1),
+        ],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    assert!(envelope.process(&[1.0], &[-0.0, 0.1], 1)[0][0].is_nan());
+
+    let mut blit = DirectCalc::new(
+        "BlitB3",
+        vec![InputSource::Control(0)],
+        Rate::Audio,
+        1,
+        48_000.0,
+        64,
+    );
+    assert!(blit.process(&[], &[f32::NAN], 1)[0][0].is_nan());
 }
 
 /// Proves direct unit callbacks and demand pulls preserve ordered state across callback partitioning.

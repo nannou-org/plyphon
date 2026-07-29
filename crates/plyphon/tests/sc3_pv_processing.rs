@@ -111,8 +111,8 @@ fn sc3_pv_units_reject_invalid_shapes_rates_and_special_index() {
         audio_input[0] = Rate::Audio;
         assert_eq!(
             pv_build_error(name, Rate::Control, &audio_input, 1, 0),
-            Some(BuildError::UnsupportedUnitRate),
-            "{name} buffer-token input rate"
+            None,
+            "{name} audio-rate buffer token uses its first sample"
         );
         let mut audio_modulation = valid.clone();
         *audio_modulation.last_mut().expect("modulation input") = Rate::Audio;
@@ -125,6 +125,85 @@ fn sc3_pv_units_reject_invalid_shapes_rates_and_special_index() {
             pv_build_error(name, Rate::Control, &valid, 1, 0),
             None,
             "{name} valid ABI"
+        );
+    }
+}
+
+/// Proves the LocalBuf-to-FFT-to-PV constructor chain publishes the graph-local token in order.
+#[test]
+fn pv_constructor_chain_propagates_local_buffer_token() {
+    for (name, mut inputs) in [
+        ("PV_Freeze", vec![InputRef::Constant(0.0)]),
+        ("PV_MagSmooth", vec![InputRef::Constant(0.0)]),
+        (
+            "PV_Morph",
+            vec![
+                InputRef::Unit { unit: 1, output: 0 },
+                InputRef::Constant(0.0),
+            ],
+        ),
+    ] {
+        let (mut controller, _nrt, mut world) = engine(Options {
+            sample_rate: SR,
+            output_channels: 1,
+            max_buffers: 4,
+            ..Options::default()
+        });
+        inputs.insert(0, InputRef::Unit { unit: 1, output: 0 });
+        controller.add_synthdef(SynthDef {
+            name: name.to_string(),
+            params: vec![],
+            units: vec![
+                UnitSpec::new(
+                    "LocalBuf",
+                    Rate::Scalar,
+                    vec![InputRef::Constant(1.0), InputRef::Constant(FFT_SIZE as f32)],
+                    1,
+                ),
+                UnitSpec::new(
+                    "FFT",
+                    Rate::Control,
+                    vec![
+                        InputRef::Unit { unit: 0, output: 0 },
+                        InputRef::Constant(0.0),
+                        InputRef::Constant(1.0),
+                        InputRef::Constant(0.0),
+                        InputRef::Constant(1.0),
+                        InputRef::Constant(FFT_SIZE as f32),
+                    ],
+                    1,
+                ),
+                UnitSpec::new(name, Rate::Control, inputs, 1),
+                UnitSpec::new(
+                    "Line",
+                    Rate::Audio,
+                    vec![
+                        InputRef::Unit { unit: 2, output: 0 },
+                        InputRef::Unit { unit: 2, output: 0 },
+                        InputRef::Constant(1.0),
+                        InputRef::Constant(0.0),
+                    ],
+                    1,
+                ),
+                UnitSpec::new(
+                    "Out",
+                    Rate::Audio,
+                    vec![
+                        InputRef::Constant(0.0),
+                        InputRef::Unit { unit: 3, output: 0 },
+                    ],
+                    0,
+                ),
+            ],
+        });
+        controller
+            .synth_new(name, ROOT_GROUP_ID, AddAction::Tail)
+            .expect("constructor-chain synth");
+
+        let output = render_block(&mut world, 1);
+        assert!(
+            output.iter().all(|&sample| sample == 4.0),
+            "{name} must republish the graph-local token from the FFT constructor"
         );
     }
 }
@@ -224,9 +303,9 @@ fn sc3_pv_approximate_polar_conversion_matches_pinned_core_and_is_isolated() {
     );
 }
 
-/// Covers freeze warm-up stages, freeze toggles, and FFT-size reinitialization.
+/// Covers freeze warm-up stages, freeze toggles, and safe rejection of a later FFT-size change.
 #[test]
-fn pv_freeze_three_stage_warmup_freeze_unfreeze_and_size_reset() {
+fn pv_freeze_three_stage_warmup_freeze_unfreeze_and_size_rejection() {
     let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR,
         output_channels: 4,
@@ -344,21 +423,44 @@ fn pv_freeze_three_stage_warmup_freeze_unfreeze_and_size_reset() {
             .buffer_set_sample(0, slot, value)
             .expect("invalid-control frame");
     }
-    let retained = render_block(&mut world, 4);
+    let released_by_nan = render_block(&mut world, 4);
     assert_eq!(
-        (channel(&retained, 0), channel(&retained, 2)),
-        (5.0, 7.0),
-        "a non-finite control retains the previous freeze state"
+        (
+            channel(&released_by_nan, 0),
+            channel(&released_by_nan, 1),
+            channel(&released_by_nan, 2),
+            channel(&released_by_nan, 3),
+        ),
+        (17.0, 18.0, 19.0, 1.0),
+        "NaN follows the source false branch"
+    );
+
+    controller
+        .set_control(synth, 0, f32::INFINITY)
+        .expect("positive-infinity freeze control");
+    for (slot, value) in [21.0, 22.0, 23.0, 1.2].into_iter().enumerate() {
+        controller
+            .buffer_set_sample(0, slot, value)
+            .expect("positive-infinity frame");
+    }
+    let frozen_by_infinity = render_block(&mut world, 4);
+    assert_eq!(
+        (
+            channel(&frozen_by_infinity, 0),
+            channel(&frozen_by_infinity, 2)
+        ),
+        (17.0, 19.0),
+        "positive infinity follows the source true branch"
     );
     assert!(
-        (channel(&retained, 3) - 0.8).abs() < 1e-6,
-        "retained freeze continues coherent phase"
+        (channel(&frozen_by_infinity, 3) - 1.4).abs() < 1e-6,
+        "the frozen phase advances by the difference learned on the NaN frame"
     );
 
     controller
         .set_control(synth, 0, 0.0)
         .expect("release freeze");
-    for (slot, value) in [21.0, 22.0, 23.0, 1.2].into_iter().enumerate() {
+    for (slot, value) in [25.0, 26.0, 27.0, 1.4].into_iter().enumerate() {
         controller
             .buffer_set_sample(0, slot, value)
             .expect("unfrozen frame");
@@ -371,7 +473,7 @@ fn pv_freeze_three_stage_warmup_freeze_unfreeze_and_size_reset() {
             channel(&unfrozen, 2),
             channel(&unfrozen, 3),
         ),
-        (21.0, 22.0, 23.0, 1.2),
+        (25.0, 26.0, 27.0, 1.4),
         "unfreezing stores and passes the incoming frame"
     );
 
@@ -394,13 +496,38 @@ fn pv_freeze_three_stage_warmup_freeze_unfreeze_and_size_reset() {
             channel(&resized, 3),
         ),
         (31.0, 32.0, 33.0, 1.4),
-        "a size change restarts stage zero and does not reuse stale state"
+        "a size change is left untouched"
+    );
+
+    controller
+        .set_control(synth, 0, 1.0)
+        .expect("freeze retained original-size history");
+    controller
+        .buffer_set(
+            0,
+            Box::new(spectrum_buffer(
+                vec![41.0, 42.0, 43.0, 1.6],
+                SpectrumCoord::Polar,
+            )),
+        )
+        .expect("restore original FFT size");
+    let after_rejection = render_block(&mut world, 4);
+    assert_eq!(
+        (
+            channel(&after_rejection, 0),
+            channel(&after_rejection, 1),
+            channel(&after_rejection, 2),
+            channel(&after_rejection, 3),
+        ),
+        (25.0, 26.0, 27.0, 1.4),
+        "the rejected size change does not reset retained history"
     );
 }
 
-/// Proves invalid tokens and malformed frames are atomic and followed by exact recovery.
+/// Proves finite fractional tokens use scsynth's truncating lookup and non-finite arithmetic
+/// propagates into retained smoothing state.
 #[test]
-fn pv_invalid_tokens_and_frames_are_atomic_then_recover() {
+fn pv_fractional_tokens_truncate_and_non_finite_bins_propagate() {
     let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR,
         output_channels: 4,
@@ -464,8 +591,8 @@ fn pv_invalid_tokens_and_frames_are_atomic_then_recover() {
             channel(&fractional, 2),
             channel(&fractional, 3),
         ),
-        (5.0, 6.0, 7.0, 0.75),
-        "a fractional token is a byte-preserving no-op"
+        (3.0, 4.0, 5.0, 0.75),
+        "a fractional token truncates to buffer zero"
     );
 
     controller.set_control(synth, 0, 0.0).expect("valid token");
@@ -478,16 +605,16 @@ fn pv_invalid_tokens_and_frames_are_atomic_then_recover() {
             channel(&recovered_token, 3),
         ),
         (3.0, 4.0, 5.0, 0.75),
-        "the valid retry uses memory from before the rejected token"
+        "the integer token sees the state committed by the fractional lookup"
     );
 
     controller
         .buffer_set_sample(0, 2, f32::NAN)
         .expect("non-finite bin");
-    let rejected_frame = render_block(&mut world, 4);
+    let non_finite_frame = render_block(&mut world, 4);
     assert!(
-        channel(&rejected_frame, 2).is_nan(),
-        "a rejected spectrum is not partially repaired or converted"
+        channel(&non_finite_frame, 2).is_nan(),
+        "raw source arithmetic propagates the non-finite magnitude"
     );
 
     for (slot, value) in [9.0, 10.0, 11.0, 1.25].into_iter().enumerate() {
@@ -495,17 +622,14 @@ fn pv_invalid_tokens_and_frames_are_atomic_then_recover() {
             .buffer_set_sample(0, slot, value)
             .expect("finite retry");
     }
-    let recovered_frame = render_block(&mut world, 4);
-    assert_eq!(
-        (
-            channel(&recovered_frame, 0),
-            channel(&recovered_frame, 1),
-            channel(&recovered_frame, 2),
-            channel(&recovered_frame, 3),
-        ),
-        (6.0, 7.0, 8.0, 1.25),
-        "the finite retry uses state from before the rejected frame"
+    let following_frame = render_block(&mut world, 4);
+    assert_eq!(channel(&following_frame, 0), 6.0, "finite DC history");
+    assert_eq!(channel(&following_frame, 1), 7.0, "finite Nyquist history");
+    assert!(
+        channel(&following_frame, 2).is_nan(),
+        "the retained non-finite magnitude remains observable"
     );
+    assert_eq!(channel(&following_frame, 3), 1.25, "phase remains incoming");
 }
 
 /// Verifies magnitude smoothing while preserving incoming decoded phases.
@@ -584,16 +708,28 @@ fn pv_mag_smooth_retains_and_updates_decoded_components() {
             .buffer_set_sample(0, slot, value)
             .expect("change spectrum");
     }
-    let clamped = render_block(&mut world, 4);
-    assert_eq!(channel(&clamped, 0), 3.0, "factor clamps to one");
-    assert_eq!(channel(&clamped, 1), 4.0, "factor clamps to one");
-    assert_eq!(channel(&clamped, 2), 5.0, "factor clamps to one");
-    assert_eq!(channel(&clamped, 3), 1.25, "phase is never smoothed");
+    let extrapolated = render_block(&mut world, 4);
+    assert_eq!(
+        channel(&extrapolated, 0),
+        -3.0,
+        "raw factor extrapolates DC"
+    );
+    assert_eq!(
+        channel(&extrapolated, 1),
+        -2.0,
+        "raw factor extrapolates Nyquist"
+    );
+    assert_eq!(
+        channel(&extrapolated, 2),
+        -1.0,
+        "raw factor extrapolates magnitude"
+    );
+    assert_eq!(channel(&extrapolated, 3), 1.25, "phase is never smoothed");
 }
 
-/// Verifies that morphing reads the B spectrum without changing its bytes or coordinate tag.
+/// Verifies that morphing converts B to polar in place before reading it.
 #[test]
-fn pv_morph_decodes_b_without_mutating_it() {
+fn pv_morph_converts_b_to_polar_in_place() {
     let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR,
         output_channels: 6,
@@ -667,13 +803,20 @@ fn pv_morph_decodes_b_without_mutating_it() {
         (channel(&output, 3) - expected_phase).abs() < 1e-6,
         "raw phase interpolation"
     );
-    assert_eq!(channel(&output, 4), 3.0, "B real component unchanged");
-    assert_eq!(channel(&output, 5), 4.0, "B imaginary component unchanged");
+    assert_eq!(
+        channel(&output, 4),
+        5.0,
+        "B magnitude after in-place conversion"
+    );
+    assert!(
+        (channel(&output, 5) - expected_phase * 2.0).abs() < 1e-6,
+        "B phase after in-place conversion"
+    );
 }
 
-/// Rejects non-finite morph results atomically and recovers on the next valid frame.
+/// Preserves sc3-plugins' raw non-finite morph arithmetic.
 #[test]
-fn pv_morph_rejects_overflowing_complex_bins_then_recovers() {
+fn pv_morph_propagates_overflowing_complex_bins() {
     let (mut controller, _nrt, mut world) = engine(Options {
         sample_rate: SR,
         output_channels: 2,
@@ -729,9 +872,15 @@ fn pv_morph_rejects_overflowing_complex_bins_then_recovers() {
         .synth_new("recover", ROOT_GROUP_ID, AddAction::Tail)
         .expect("PV_Morph recovery graph");
 
-    let rejected = render_block(&mut world, 2);
-    assert_eq!(channel(&rejected, 0), f32::MAX);
-    assert_eq!(channel(&rejected, 1), f32::MAX);
+    let overflowed = render_block(&mut world, 2);
+    assert!(
+        channel(&overflowed, 0).is_nan(),
+        "zero times an infinite converted magnitude remains observable"
+    );
+    assert!(
+        (channel(&overflowed, 1) - core::f32::consts::FRAC_PI_2).abs() < 1e-6,
+        "morph one selects B's phase"
+    );
 
     controller
         .buffer_set_sample(0, 2, 3.0)

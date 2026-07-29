@@ -320,16 +320,15 @@ fn validate_exact_chaos(
     Ok(())
 }
 
-/// Read one coordinate sample, expanding scalar/control values and sanitizing non-finite input.
+/// Read one coordinate sample while expanding scalar and control values.
 fn coordinate(ctx: &ProcessCtx<'_>, inlet: usize, sample: usize) -> f32 {
     use plyphon_dsp::rate::Rate;
 
-    let value = if ctx.ins.rate(inlet) == Rate::Audio {
+    if ctx.ins.rate(inlet) == Rate::Audio {
         ctx.ins.audio(inlet).get(sample).copied().unwrap_or(0.0)
     } else {
         ctx.ins.control(inlet)
-    };
-    if value.is_finite() { value } else { 0.0 }
+    }
 }
 
 /// Ken Perlin's improved three-dimensional gradient-noise function.
@@ -411,7 +410,7 @@ fn perlin_gradient(hash: u8, x: f32, y: f32, z: f32) -> f32 {
 /// `Perlin3(x, y, z)`: stateless improved gradient noise at audio or control rate.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct Perlin3;
+struct Perlin3;
 
 impl Unit for Perlin3 {
     /// Evaluates gradient noise for every requested audio sample.
@@ -422,14 +421,14 @@ impl Unit for Perlin3 {
                 coordinate(ctx, 1, sample),
                 coordinate(ctx, 2, sample),
             );
-            ctx.outs.audio(0)[sample] = if value.is_finite() { value } else { 0.0 };
+            ctx.outs.audio(0)[sample] = value;
         }
         DoneAction::Nothing
     }
 }
 
 /// Constructor for [`Perlin3`].
-pub struct Perlin3Ctor;
+pub(super) struct Perlin3Ctor;
 
 impl UnitDef for Perlin3Ctor {
     /// Validates the fixed ABI and constructs the stateless noise unit.
@@ -444,7 +443,7 @@ impl UnitDef for Perlin3Ctor {
 /// One retained Rössler state machine with linearly interpolated audio-rate output.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct RosslerL {
+struct RosslerL {
     xn: f64,
     yn: f64,
     zn: f64,
@@ -453,27 +452,13 @@ pub struct RosslerL {
     znm1: f64,
     counter: f64,
     frac: f64,
-    frequency: f32,
-    a: f32,
-    b: f32,
-    c: f32,
-    h: f32,
     xi: f32,
     yi: f32,
     zi: f32,
-    restart_pending: u32,
     _pad: u32,
 }
 
 impl RosslerL {
-    /// Remember one finite callback control, retaining the prior value for NaN or infinity.
-    fn control(input: f32, remembered: &mut f32) -> f32 {
-        if input.is_finite() {
-            *remembered = input;
-        }
-        *remembered
-    }
-
     /// Apply one textbook fourth-order Runge-Kutta step to the Rössler equations.
     fn rk4(x: f64, y: f64, z: f64, a: f64, b: f64, c: f64, h: f64) -> (f64, f64, f64) {
         let (k1x, k1y, k1z) = rossler_derivative(x, y, z, a, b, c);
@@ -506,14 +491,10 @@ impl RosslerL {
 impl Unit for RosslerL {
     /// Initializes retained coordinates and integration cadence from scalar controls.
     fn init(&mut self, ctx: &InitCtx<'_>) {
-        self.frequency = finite_or(ctx.ins.control(0), 22_050.0);
-        self.a = finite_or(ctx.ins.control(1), 0.2);
-        self.b = finite_or(ctx.ins.control(2), 0.2);
-        self.c = finite_or(ctx.ins.control(3), 5.7);
-        self.h = finite_or(ctx.ins.control(4), 0.05);
-        self.xi = finite_or(ctx.ins.control(5), 0.1);
-        self.yi = finite_or(ctx.ins.control(6), 0.0);
-        self.zi = finite_or(ctx.ins.control(7), 0.0);
+        let frequency = ctx.ins.control(0);
+        self.xi = ctx.ins.control(5);
+        self.yi = ctx.ins.control(6);
+        self.zi = ctx.ins.control(7);
         self.xn = self.xi as f64;
         self.yn = self.yi as f64;
         self.zn = self.zi as f64;
@@ -521,25 +502,28 @@ impl Unit for RosslerL {
         self.ynm1 = self.yn;
         self.znm1 = self.zn;
 
-        let samples = rossler_samples_per_cycle(self.frequency, ctx.own.sample_rate as f32);
+        let samples = rossler_samples_per_cycle(frequency, ctx.own.sample_rate as f32);
         self.counter = 1.0;
         self.frac = 1.0 / samples;
     }
 
     /// Advances and interpolates the Rössler trajectory for one callback.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let frequency = Self::control(ctx.ins.control(0), &mut self.frequency);
-        let a = Self::control(ctx.ins.control(1), &mut self.a) as f64;
-        let b = Self::control(ctx.ins.control(2), &mut self.b) as f64;
-        let c = Self::control(ctx.ins.control(3), &mut self.c) as f64;
-        let h = Self::control(ctx.ins.control(4), &mut self.h) as f64;
+        let frequency = ctx.ins.control(0);
+        let a = ctx.ins.control(1) as f64;
+        let b = ctx.ins.control(2) as f64;
+        let c = ctx.ins.control(3) as f64;
+        let h = ctx.ins.control(4) as f64;
 
         let prior_xi = self.xi;
         let prior_yi = self.yi;
         let prior_zi = self.zi;
-        let xi = Self::control(ctx.ins.control(5), &mut self.xi);
-        let yi = Self::control(ctx.ins.control(6), &mut self.yi);
-        let zi = Self::control(ctx.ins.control(7), &mut self.zi);
+        let xi = ctx.ins.control(5);
+        let yi = ctx.ins.control(6);
+        let zi = ctx.ins.control(7);
+        self.xi = xi;
+        self.yi = yi;
+        self.zi = zi;
         if xi != prior_xi || yi != prior_yi || zi != prior_zi {
             self.xnm1 = self.xn;
             self.ynm1 = self.yn;
@@ -560,45 +544,20 @@ impl Unit for RosslerL {
                 self.ynm1 = self.yn;
                 self.znm1 = self.zn;
 
-                if self.restart_pending != 0 {
-                    self.xn = self.xi as f64;
-                    self.yn = self.yi as f64;
-                    self.zn = self.zi as f64;
-                    self.xnm1 = self.xn;
-                    self.ynm1 = self.yn;
-                    self.znm1 = self.zn;
-                    self.restart_pending = 0;
-                }
-
-                let next = Self::rk4(self.xn, self.yn, self.zn, a, b, c, h);
-                if next.0.is_finite() && next.1.is_finite() && next.2.is_finite() {
-                    self.xn = next.0;
-                    self.yn = next.1;
-                    self.zn = next.2;
-                } else {
-                    self.xn = self.xnm1;
-                    self.yn = self.ynm1;
-                    self.zn = self.znm1;
-                    self.restart_pending = 1;
-                }
+                (self.xn, self.yn, self.zn) = Self::rk4(self.xn, self.yn, self.zn, a, b, c, h);
             }
 
             self.counter += 1.0;
             let x = self.xnm1 + (self.xn - self.xnm1) * self.frac;
             let y = self.ynm1 + (self.yn - self.ynm1) * self.frac;
             let z = self.znm1 + (self.zn - self.znm1) * self.frac;
-            ctx.outs.audio(0)[sample] = finite_scaled(x, 0.5);
-            ctx.outs.audio(1)[sample] = finite_scaled(y, 0.5);
-            ctx.outs.audio(2)[sample] = finite_scaled(z, 1.0);
+            ctx.outs.audio(0)[sample] = (x * 0.5) as f32;
+            ctx.outs.audio(1)[sample] = (y * 0.5) as f32;
+            ctx.outs.audio(2)[sample] = z as f32;
             self.frac += slope;
         }
         DoneAction::Nothing
     }
-}
-
-/// Use `fallback` when an initial runtime control is not finite.
-fn finite_or(value: f32, fallback: f32) -> f32 {
-    if value.is_finite() { value } else { fallback }
 }
 
 /// Derivatives of the standard three-coordinate Rössler system.
@@ -615,14 +574,8 @@ fn rossler_samples_per_cycle(frequency: f32, sample_rate: f32) -> f64 {
     }
 }
 
-/// Scale one finite interpolated coordinate, returning zero only as a final safety guard.
-fn finite_scaled(value: f64, scale: f64) -> f32 {
-    let output = (value * scale) as f32;
-    if output.is_finite() { output } else { 0.0 }
-}
-
 /// Constructor for [`RosslerL`].
-pub struct RosslerLCtor;
+pub(super) struct RosslerLCtor;
 
 impl UnitDef for RosslerLCtor {
     /// Validates the fixed ABI and constructs a retained Rössler state machine.
@@ -639,15 +592,9 @@ impl UnitDef for RosslerLCtor {
             znm1: 0.0,
             counter: 0.0,
             frac: 0.0,
-            frequency: 22_050.0,
-            a: 0.2,
-            b: 0.2,
-            c: 5.7,
-            h: 0.05,
             xi: 0.1,
             yi: 0.0,
             zi: 0.0,
-            restart_pending: 0,
             _pad: 0,
         }))
     }

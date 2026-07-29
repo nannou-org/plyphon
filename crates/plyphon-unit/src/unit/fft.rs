@@ -62,6 +62,17 @@ impl Fft {
 }
 
 impl Unit for Fft {
+    /// Publishes the source buffer token when construction resolves a valid chain buffer.
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let token = ctx.ins.control(Self::BUFFER);
+        let bufnum = token.max(0.0) as usize;
+        let valid_size = resolve_fftsize(ctx.buffers, &ctx.local_bufs, bufnum)
+            .is_some_and(|size| self.fftsize == 0 || size == self.fftsize as usize);
+        if valid_size {
+            *ctx.outs.control(0) = token;
+        }
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bs = ctx.audio.block_size;
         let ins = ctx.ins; // `Copy`; borrows the wires, not `ctx`.

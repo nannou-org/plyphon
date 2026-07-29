@@ -6,6 +6,7 @@ use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
+use plyphon_dsp::rng::Rng;
 use plyphon_dsp::{math, ops};
 
 /// `a <op> b`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
@@ -56,6 +57,12 @@ impl BinaryOp {
 }
 
 impl Unit for BinaryOp {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        if let Some(op) = binary_op(self.op as i16) {
+            ctx.outs.audio(0)[0] = op(ctx.ins.control(0), ctx.ins.control(1));
+        }
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // The hot arithmetic operators - typically the most numerous units in a real graph -
         // dispatch to monomorphised loops; the rest fall back to the table's fn pointer, whose
@@ -65,8 +72,8 @@ impl Unit for BinaryOp {
             1 => self.run(ctx, |a, b| a - b),
             2 => self.run(ctx, |a, b| a * b),
             4 => self.run(ctx, |a, b| a / b),
-            12 => self.run(ctx, |a, b| a.min(b)),
-            13 => self.run(ctx, |a, b| a.max(b)),
+            12 => self.run(ctx, |a, b| if a < b { a } else { b }),
+            13 => self.run(ctx, |a, b| if a > b { a } else { b }),
             op => {
                 let Some(f) = binary_op(op as i16) else {
                     return DoneAction::Nothing;
@@ -129,7 +136,25 @@ pub struct RandBinaryOp {
     b_audio: u32,
 }
 
+impl RandBinaryOp {
+    /// Draw one source-compatible value between `a` and `b`.
+    fn draw(&self, rgen: &mut Rng, a: f32, b: f32) -> f32 {
+        let (lo, hi) = if b > a { (a, b) } else { (b, a) };
+        if self.exponential != 0 {
+            rgen.next_exprand_f64(lo as f64, hi as f64) as f32
+        } else if self.audio != 0 {
+            lo + rgen.next_bipolar() * (hi - lo)
+        } else {
+            lo + rgen.next_unipolar() * (hi - lo)
+        }
+    }
+}
+
 impl Unit for RandBinaryOp {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        ctx.outs.audio(0)[0] = self.draw(ctx.rgen, ctx.ins.control(0), ctx.ins.control(1));
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ProcessCtx {
             ins, outs, rgen, ..
@@ -138,19 +163,10 @@ impl Unit for RandBinaryOp {
         let b_ctrl = ins.control(1);
         let a_sig = (self.a_audio != 0).then(|| ins.audio(0));
         let b_sig = (self.b_audio != 0).then(|| ins.audio(1));
-        let exponential = self.exponential != 0;
-        let bipolar = self.audio != 0 && !exponential;
         for (i, o) in outs.audio(0).iter_mut().enumerate() {
             let xa = a_sig.map_or(a_ctrl, |s| s[i]);
             let xb = b_sig.map_or(b_ctrl, |s| s[i]);
-            let (lo, hi) = if xb > xa { (xa, xb) } else { (xb, xa) };
-            *o = if exponential {
-                math::exp(math::ln(hi / lo) * rgen.next_unipolar()) * lo
-            } else if bipolar {
-                lo + rgen.next_bipolar() * (hi - lo)
-            } else {
-                lo + rgen.next_unipolar() * (hi - lo)
-            };
+            *o = self.draw(rgen, xa, xb);
         }
         DoneAction::Nothing
     }
@@ -175,8 +191,8 @@ fn binary_op(index: i16) -> Option<fn(f32, f32) -> f32> {
         9 => |a, b| if a > b { 1.0 } else { 0.0 },   // opGT
         10 => |a, b| if a <= b { 1.0 } else { 0.0 }, // opLE
         11 => |a, b| if a >= b { 1.0 } else { 0.0 }, // opGE
-        12 => |a, b| a.min(b),                       // opMin
-        13 => |a, b| a.max(b),                       // opMax
+        12 => |a, b| if a < b { a } else { b },      // opMin
+        13 => |a, b| if a > b { a } else { b },      // opMax
         14 => ops::bit_and,                          // opBitAnd
         15 => ops::bit_or,                           // opBitOr
         16 => ops::bit_xor,                          // opBitXor

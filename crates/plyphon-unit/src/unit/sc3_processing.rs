@@ -1,7 +1,6 @@
 //! Translated sc3-plugins envelope and Moog-family processing units.
 //!
-//! The implementations preserve the pinned server arithmetic and coefficient cadence, with
-//! deterministic finite-input recovery at the host boundary.
+//! The implementations preserve the pinned server arithmetic and coefficient cadence.
 //!
 //! `EnvDetect` is translated from SLUGens:
 //! Copyright (c) 2002 James McCartney. All rights reserved.
@@ -30,13 +29,13 @@
 //! PURPOSE. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
 //! INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES, HOWEVER CAUSED.
 
-use core::f32::consts::TAU;
+use core::f64::consts::TAU;
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, Inputs, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 
@@ -62,66 +61,27 @@ fn validate_calc(
     if !node_rates.contains(&ctx.rate) {
         return Err(BuildError::UnsupportedUnitRate);
     }
-    if ctx
-        .input_rates
-        .iter()
-        .any(|rate| *rate == Rate::Demand || (ctx.rate == Rate::Control && *rate == Rate::Audio))
-    {
+    if ctx.input_rates.iter().any(|rate| *rate == Rate::Demand) {
         return Err(BuildError::UnsupportedUnitRate);
     }
     Ok(())
 }
 
-/// Read a signal inlet at `sample`, expanding scalar/control values and replacing non-finite input
-/// samples with zero before they can enter recursive state.
+/// Read a signal inlet at `sample`, expanding scalar and control values.
 #[inline]
 fn signal(ins: &Inputs<'_>, inlet: usize, sample: usize) -> f32 {
-    let value = if ins.rate(inlet) == Rate::Audio {
-        ins.audio(inlet).get(sample).copied().unwrap_or(0.0)
+    if ins.rate(inlet) == Rate::Audio {
+        ins.audio(inlet)[sample]
     } else {
         ins.control(inlet)
-    };
-    if value.is_finite() { value } else { 0.0 }
-}
-
-/// Read a block-sampled control, retaining the previous finite bounded value across invalid blocks.
-#[inline]
-fn block_control(ins: &Inputs<'_>, inlet: usize, remembered: &mut f32, min: f32, max: f32) -> f32 {
-    let value = ins.control(inlet);
-    if value.is_finite() {
-        *remembered = value.clamp(min, max);
     }
-    *remembered
-}
-
-/// Read an audio-specialized control at one sample, retaining its last finite bounded value.
-#[inline]
-fn sample_control(
-    ins: &Inputs<'_>,
-    inlet: usize,
-    sample: usize,
-    remembered: &mut f32,
-    min: f32,
-    max: f32,
-) -> f32 {
-    let value = if ins.rate(inlet) == Rate::Audio {
-        ins.audio(inlet).get(sample).copied().unwrap_or(*remembered)
-    } else {
-        ins.control(inlet)
-    };
-    if value.is_finite() {
-        *remembered = value.clamp(min, max);
-    }
-    *remembered
 }
 
 /// `EnvDetect.ar(in, attack, release)`: asymmetric absolute-value envelope follower.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct EnvDetect {
+struct EnvDetect {
     envelope: f32,
-    attack: f32,
-    release: f32,
 }
 
 impl EnvDetect {
@@ -133,20 +93,17 @@ impl EnvDetect {
 impl Unit for EnvDetect {
     /// Follows the absolute input envelope for one audio callback.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let attack = block_control(&ctx.ins, Self::ATTACK, &mut self.attack, 0.0, f32::MAX);
-        let release = block_control(&ctx.ins, Self::RELEASE, &mut self.release, 0.0, f32::MAX);
-        let ga = time_coefficient(attack, ctx.own.sample_rate as f32);
-        let gr = time_coefficient(release, ctx.own.sample_rate as f32);
+        let attack = ctx.ins.control(Self::ATTACK);
+        let release = ctx.ins.control(Self::RELEASE);
+        let ga = time_coefficient(attack, ctx.own.sample_rate);
+        let gr = time_coefficient(release, ctx.own.sample_rate);
         let mut envelope = self.envelope;
         let input = ctx.ins.audio(Self::IN);
         for (out, &input) in ctx.outs.audio(0).iter_mut().zip(input) {
-            let next = if input.is_finite() { input.abs() } else { 0.0 };
+            let next = input.abs();
             let coefficient = if envelope < next { ga } else { gr };
             envelope *= coefficient;
             envelope += (1.0 - coefficient) * next;
-            if !envelope.is_finite() {
-                envelope = 0.0;
-            }
             *out = envelope;
         }
         self.envelope = envelope;
@@ -155,16 +112,12 @@ impl Unit for EnvDetect {
 }
 
 /// Convert attack/release seconds to the source one-pole coefficient.
-fn time_coefficient(time: f32, sample_rate: f32) -> f32 {
-    if time == 0.0 {
-        0.0
-    } else {
-        math::exp(-1.0f64 / (sample_rate as f64 * time as f64)) as f32
-    }
+fn time_coefficient(time: f32, sample_rate: f64) -> f32 {
+    math::exp(-1.0 / (sample_rate * time as f64)) as f32
 }
 
 /// Constructor for [`EnvDetect`].
-pub struct EnvDetectCtor;
+pub(super) struct EnvDetectCtor;
 
 impl UnitDef for EnvDetectCtor {
     /// Validates the audio-input ABI and constructs an envelope follower.
@@ -173,18 +126,14 @@ impl UnitDef for EnvDetectCtor {
         if ctx.input_rates[0] != Rate::Audio {
             return Err(BuildError::UnsupportedUnitRate);
         }
-        Ok(unit_spec(EnvDetect {
-            envelope: 0.0,
-            attack: 100.0,
-            release: 0.0,
-        }))
+        Ok(unit_spec(EnvDetect { envelope: 0.0 }))
     }
 }
 
 /// `DFM1.ar(in, freq, res, inputgain, type, noiselevel)`: nonlinear two-stage analog-model filter.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct Dfm1 {
+struct Dfm1 {
     l: f64,
     h: f64,
     a: f64,
@@ -200,12 +149,6 @@ pub struct Dfm1 {
     noise_y: u32,
     noise_z: u32,
     noise_w: u32,
-    frequency: f32,
-    resonance: f32,
-    input_gain: f32,
-    filter_type: f32,
-    noise_level: f32,
-    _pad: u32,
 }
 
 impl Dfm1 {
@@ -232,31 +175,29 @@ impl Unit for Dfm1 {
 
     /// Filters one callback while interpolating block-rate coefficients.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let nyquist = (ctx.own.sample_rate as f32 * 0.5).max(1.0);
-        let frequency = block_control(&ctx.ins, Self::FREQ, &mut self.frequency, 1.0, nyquist);
-        let resonance = block_control(&ctx.ins, Self::RES, &mut self.resonance, 0.0, 10.0);
-        let raw_input_gain = ctx.ins.control(Self::INPUT_GAIN);
-        if raw_input_gain.is_finite() {
-            self.input_gain = raw_input_gain;
+        let mut frequency = ctx.ins.control(Self::FREQ);
+        if frequency < 1.0 || frequency.is_nan() {
+            // A NaN would reach an undefined float-to-integer LUT index conversion in the source.
+            frequency = 1.0;
         }
-        let raw_type = ctx.ins.control(Self::TYPE);
-        if raw_type.is_finite() {
-            self.filter_type = raw_type;
+        let mut resonance = ctx.ins.control(Self::RES);
+        if resonance < 0.0 {
+            resonance = 0.0;
         }
-        let noise_level = block_control(
-            &ctx.ins,
-            Self::NOISE_LEVEL,
-            &mut self.noise_level,
-            0.0,
-            f32::MAX,
-        );
+        if resonance > 10.0 {
+            resonance = 10.0;
+        }
+        let input_gain = ctx.ins.control(Self::INPUT_GAIN);
+        let filter_type = ctx.ins.control(Self::TYPE);
+        let noise_level = ctx.ins.control(Self::NOISE_LEVEL);
 
+        let source_sample_rate = ctx.own.sample_rate as f32 as f64;
         let [at, bt, resonance_correction] =
-            dfm1_coefficients(frequency as f64, ctx.own.sample_rate);
+            dfm1_coefficients(frequency as f64, source_sample_rate);
         let rt = resonance_correction * resonance as f64;
-        let mut lt = self.input_gain as f64 * DFM1_PRE_GAIN;
+        let mut lt = input_gain as f64 * DFM1_PRE_GAIN;
         let mut ht = lt;
-        if self.filter_type < 0.5 {
+        if filter_type < 0.5 {
             ht = 0.0;
         } else {
             lt = 0.0;
@@ -268,13 +209,13 @@ impl Unit for Dfm1 {
             noise_level as f64 * DFM1_NOISE_GAIN
         };
 
-        let count = ctx.outs.audio(0).len().max(1) as f64;
-        let li = dfm1_increment((lt - self.l) / count);
-        let hi = dfm1_increment((ht - self.h) / count);
-        let ai = dfm1_increment((at - self.a) / count);
-        let bi = dfm1_increment((bt - self.b) / count);
-        let ri = dfm1_increment((rt - self.r) / count);
-        let si = dfm1_increment((st - self.s) / count);
+        let interpolation = 1.0 / ctx.outs.audio(0).len().max(1) as f64;
+        let li = dfm1_increment((lt - self.l) * interpolation);
+        let hi = dfm1_increment((ht - self.h) * interpolation);
+        let ai = dfm1_increment((at - self.a) * interpolation);
+        let bi = dfm1_increment((bt - self.b) * interpolation);
+        let ri = dfm1_increment((rt - self.r) * interpolation);
+        let si = dfm1_increment((st - self.s) * interpolation);
 
         let mut l = self.l;
         let mut h = self.h;
@@ -308,20 +249,7 @@ impl Unit for Dfm1 {
             let nx = DFM1_N * zb;
             zy = zb - 2.0 * nx * nx * nx;
             zy += s * dfm1_normal(&mut noise);
-            let value = zy * DFM1_POST_GAIN;
-            *output = if value.is_finite() { value as f32 } else { 0.0 };
-            if !za.is_finite()
-                || !zb.is_finite()
-                || !zh.is_finite()
-                || !zr.is_finite()
-                || !zy.is_finite()
-            {
-                za = 0.0;
-                zb = 0.0;
-                zh = 0.0;
-                zr = 0.0;
-                zy = 0.0;
-            }
+            *output = (zy * DFM1_POST_GAIN) as f32;
         }
 
         self.l = lt;
@@ -391,10 +319,9 @@ fn dfm1_xor128(state: &mut [u32; 4]) -> i32 {
     state[3] as i32
 }
 
-/// Converts one xor128 draw to a strictly positive uniform variate.
+/// Converts one xor128 draw to the source's uniform variate.
 fn dfm1_uniform(state: &mut [u32; 4]) -> f64 {
-    let value = 0.5 + dfm1_xor128(state) as f64 * (1.0 / 4_294_967_296.0);
-    value.max(f64::MIN_POSITIVE)
+    0.5 + dfm1_xor128(state) as f64 * (1.0 / 4_294_967_296.0)
 }
 
 /// Draws one standard-normal variate using the fixed ziggurat tables.
@@ -438,7 +365,7 @@ fn dfm1_normal_tail(mut hz: i32, mut iz: usize, state: &mut [u32; 4]) -> f64 {
 }
 
 /// Constructor for [`Dfm1`].
-pub struct Dfm1Ctor;
+pub(super) struct Dfm1Ctor;
 
 impl UnitDef for Dfm1Ctor {
     /// Validates the fixed ABI and constructs a deterministically seeded filter.
@@ -461,12 +388,6 @@ impl UnitDef for Dfm1Ctor {
             noise_y: base.wrapping_add(1),
             noise_z: base.wrapping_add(2),
             noise_w: base.wrapping_add(3),
-            frequency: 1000.0,
-            resonance: 0.1,
-            input_gain: 1.0,
-            filter_type: 0.0,
-            noise_level: 0.0003,
-            _pad: 0,
         }))
     }
 }
@@ -474,7 +395,7 @@ impl UnitDef for Dfm1Ctor {
 /// `MoogLadder.ar/kr(in, ffreq, res)`: Huovilainen/Lazzarini nonlinear four-pole ladder.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct MoogLadder {
+struct MoogLadder {
     fco: f32,
     k2v: f32,
     res: f32,
@@ -488,8 +409,6 @@ pub struct MoogLadder {
     y3n: f32,
     y4n: f32,
     y1n1: f32,
-    last_cutoff: f32,
-    last_res: f32,
 }
 
 impl MoogLadder {
@@ -499,24 +418,20 @@ impl MoogLadder {
 }
 
 impl Unit for MoogLadder {
-    /// Initializes retained coefficients and controls before the first callback.
-    fn init(&mut self, ctx: &InitCtx<'_>) {
-        let nyquist = ctx.own.sample_rate as f32 * 0.5;
-        let cutoff = initial_control(ctx.ins.control(Self::FREQ), 440.0, 0.0, nyquist);
-        let res = initial_control(ctx.ins.control(Self::RES), 0.0, 0.0, 1.0);
+    /// Initializes retained coefficients and controls at source-constructor time.
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let cutoff = ctx.ins.control(Self::FREQ);
+        let res = ctx.ins.control(Self::RES);
         self.fco = cutoff;
-        self.k2v = moog_ladder_ctor_coefficient(cutoff, ctx.own.sample_dur as f32);
+        self.k2v = moog_ladder_ctor_coefficient(cutoff, ctx.own.sample_dur);
         self.res = res;
-        self.last_cutoff = cutoff;
-        self.last_res = res;
     }
 
     /// Runs two ladder stages per output sample while preserving pole state.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let cutoff_audio = ctx.ins.rate(Self::FREQ) == Rate::Audio;
         let res_audio = ctx.ins.rate(Self::RES) == Rate::Audio;
-        let nyquist = ctx.own.sample_rate as f32 * 0.5;
-        let count = ctx.outs.audio(0).len().max(1) as f32;
+        let slope_factor = ctx.own.slope_factor as f32;
         let mut fco = self.fco;
         let mut k2v = self.k2v;
         let mut res = self.res;
@@ -524,15 +439,17 @@ impl Unit for MoogLadder {
         let mut res_slope = 0.0;
 
         if !cutoff_audio {
-            let next = block_control(&ctx.ins, Self::FREQ, &mut self.last_cutoff, 0.0, nyquist);
+            let next = ctx.ins.control(Self::FREQ);
             if next != fco {
-                let target = moog_ladder_coefficient(next, ctx.own.sample_dur as f32, 1.25);
-                cutoff_slope = (target - k2v) / count;
+                let target = moog_ladder_coefficient(next, ctx.own.sample_dur, 1.25);
+                cutoff_slope = (target - k2v) * slope_factor;
             }
         }
         if !res_audio {
-            let next = block_control(&ctx.ins, Self::RES, &mut self.last_res, 0.0, 1.0);
-            res_slope = (next - res) / count;
+            let next = ctx.ins.control(Self::RES);
+            if next != res {
+                res_slope = (next - res) * slope_factor;
+            }
         }
 
         let mut xnm1 = self.xnm1;
@@ -550,23 +467,15 @@ impl Unit for MoogLadder {
 
         for (sample_index, output) in out.iter_mut().enumerate() {
             if cutoff_audio {
-                let cutoff = sample_control(
-                    ins,
-                    Self::FREQ,
-                    sample_index,
-                    &mut self.last_cutoff,
-                    0.0,
-                    nyquist,
-                );
+                let cutoff = ins.audio(Self::FREQ)[sample_index];
                 if cutoff != fco {
                     let scale = if res_audio { 1.220_703_1 } else { 1.25 };
-                    k2v = moog_ladder_coefficient(cutoff, ctx.own.sample_dur as f32, scale);
+                    k2v = moog_ladder_coefficient(cutoff, ctx.own.sample_dur, scale);
                     fco = cutoff;
                 }
             }
             let sample_res = if res_audio {
-                let next =
-                    sample_control(ins, Self::RES, sample_index, &mut self.last_res, 0.0, 1.0);
+                let next = ins.audio(Self::RES)[sample_index];
                 res = next;
                 next
             } else {
@@ -581,20 +490,25 @@ impl Unit for MoogLadder {
                 input, sample_res, k2v, &mut xnm1, &mut y1nm1, &mut y2nm1, &mut y3nm1, &mut y4nm1,
                 &mut y1n, &mut y2n, &mut y3n, &mut y4n, &mut y1n1,
             );
-            *output = if y4n.is_finite() { y4n } else { 0.0 };
-            k2v += cutoff_slope;
-            res += res_slope;
+            *output = y4n;
+            if cutoff_slope != 0.0 {
+                k2v += cutoff_slope;
+            }
+            if res_slope != 0.0 {
+                res += res_slope;
+            }
         }
 
         if !cutoff_audio {
-            fco = self.last_cutoff;
+            fco = ctx.ins.control(Self::FREQ);
         }
+        if !(cutoff_audio && res_audio) {
+            self.fco = fco;
+        }
+        self.k2v = k2v;
         if !res_audio {
-            res = self.last_res;
+            self.res = res;
         }
-        self.fco = fco;
-        self.k2v = finite_or_zero(k2v);
-        self.res = res;
         self.xnm1 = zap_f32(xnm1);
         self.y1nm1 = zap_f32(y1nm1);
         self.y2nm1 = zap_f32(y2nm1);
@@ -609,29 +523,25 @@ impl Unit for MoogLadder {
     }
 }
 
-/// Sanitizes an initial bounded control without retained prior state.
-fn initial_control(value: f32, fallback: f32, min: f32, max: f32) -> f32 {
-    if value.is_finite() {
-        value.clamp(min, max)
-    } else {
-        fallback.clamp(min, max)
-    }
-}
-
 /// Computes the constructor's ladder cutoff coefficient.
-fn moog_ladder_ctor_coefficient(cutoff: f32, sample_dur: f32) -> f32 {
-    let fc = cutoff * sample_dur;
-    let f = fc * 0.5;
-    let fcr = 1.8730 * fc * fc * fc + 0.4955 * fc * fc - 0.6490 * fc + 0.9988;
-    1.25 * (1.0 - math::exp(-TAU * fcr * f))
+fn moog_ladder_ctor_coefficient(cutoff: f32, sample_dur: f64) -> f32 {
+    let fc = (cutoff as f64 * sample_dur) as f32;
+    let f = (cutoff as f64 * sample_dur * 0.5) as f32;
+    let fcr = (1.8730 * fc as f64 * fc as f64 * fc as f64 + 0.4955 * fc as f64 * fc as f64
+        - 0.6490 * fc as f64
+        + 0.9988) as f32;
+    (1.25 * (1.0 - math::exp(-TAU * fcr as f64 * f as f64))) as f32
 }
 
 /// Computes a runtime ladder cutoff coefficient with the selected source specialization scale.
-fn moog_ladder_coefficient(cutoff: f32, sample_dur: f32, scale: f32) -> f32 {
-    let fc = cutoff * sample_dur;
-    let f = fc * 0.5;
-    let fcr = 1.8730 * (fc * fc * fc + 0.4955 * (fc * fc)) - 0.6490 * fc + 0.9988;
-    scale * (1.0 - math::exp(-TAU * fcr * f))
+fn moog_ladder_coefficient(cutoff: f32, sample_dur: f64, scale: f32) -> f32 {
+    let fc = (cutoff as f64 * sample_dur) as f32;
+    let f = (cutoff as f64 * sample_dur * 0.5) as f32;
+    let fc_squared = fc * fc;
+    let fc_cubed = fc_squared * fc;
+    let fcr = (1.8730 * (fc_cubed as f64 + 0.4955 * fc_squared as f64) - 0.6490 * fc as f64
+        + 0.9988) as f32;
+    (scale as f64 * (1.0 - math::exp(-TAU * fcr as f64 * f as f64))) as f32
 }
 
 /// Advances one oversampled nonlinear four-pole ladder stage.
@@ -673,7 +583,7 @@ fn moog_ladder_stage(
 }
 
 /// Constructor for [`MoogLadder`].
-pub struct MoogLadderCtor;
+pub(super) struct MoogLadderCtor;
 
 impl UnitDef for MoogLadderCtor {
     /// Validates the supported rate specializations and constructs a ladder voice.
@@ -693,8 +603,6 @@ impl UnitDef for MoogLadderCtor {
             y3n: 0.0,
             y4n: 0.0,
             y1n1: 0.0,
-            last_cutoff: 440.0,
-            last_res: 0.0,
         }))
     }
 }
@@ -702,7 +610,7 @@ impl UnitDef for MoogLadderCtor {
 /// `MoogVCF.ar(in, fco, res)`: four cascaded bilinear one-poles with nonlinear feedback limiting.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct MoogVcf {
+struct MoogVcf {
     fco: f32,
     res: f32,
     xnm1: f32,
@@ -716,8 +624,6 @@ pub struct MoogVcf {
     kp: f32,
     pp1d2: f32,
     k: f32,
-    last_cutoff: f32,
-    last_res: f32,
 }
 
 impl MoogVcf {
@@ -727,16 +633,15 @@ impl MoogVcf {
 }
 
 impl Unit for MoogVcf {
-    /// Initializes normalized cutoff, resonance, and retained filter coefficients.
-    fn init(&mut self, ctx: &InitCtx<'_>) {
-        let nyquist = ctx.own.sample_rate as f32 * 0.5;
-        let cutoff = initial_control(ctx.ins.control(Self::FREQ), 440.0, 0.0, nyquist);
-        let res = initial_control(ctx.ins.control(Self::RES), 0.0, 0.0, 1.0);
-        self.fco = cutoff * 2.0 * ctx.own.sample_dur as f32;
+    /// Initializes normalized cutoff, resonance, and retained filter coefficients at construction.
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let cutoff = ctx.ins.control(Self::FREQ);
+        let res = ctx.ins.control(Self::RES);
+        self.fco = moog_vcf_constructor_normalize(cutoff, ctx.own.sample_dur);
         self.res = res;
-        [self.kp, self.pp1d2, self.k] = moog_vcf_parameters(self.fco, res);
-        self.last_cutoff = cutoff;
-        self.last_res = res;
+        if ctx.ins.rate(Self::FREQ) == Rate::Scalar && ctx.ins.rate(Self::RES) == Rate::Scalar {
+            [self.kp, self.pp1d2, self.k] = moog_vcf_parameters(self.fco, res);
+        }
     }
 
     /// Filters one callback using the selected scalar, control, or audio specialization.
@@ -748,21 +653,22 @@ impl Unit for MoogVcf {
         // audio rate; that variant samples resonance once and ramps it across the callback.
         let res_audio = res_rate == Rate::Audio && cutoff_rate != Rate::Scalar;
         let scalar_pair = cutoff_rate == Rate::Scalar && res_rate == Rate::Scalar;
-        let nyquist = ctx.own.sample_rate as f32 * 0.5;
-        let normalized_scale = 2.0 * ctx.own.sample_dur as f32;
-        let count = ctx.outs.audio(0).len().max(1) as f32;
+        let sample_dur = ctx.own.sample_dur;
+        let audio_cutoff_multiplier = (2.0 * sample_dur) as f32;
+        let slope_factor = ctx.own.slope_factor as f32;
         let mut fco = self.fco;
         let mut res = self.res;
         let mut fco_slope = 0.0;
         let mut res_slope = 0.0;
         if !cutoff_audio {
-            let cutoff = block_control(&ctx.ins, Self::FREQ, &mut self.last_cutoff, 0.0, nyquist);
-            fco_slope = (cutoff * normalized_scale - fco) / count;
+            let cutoff = ctx.ins.control(Self::FREQ);
+            let normalized = moog_vcf_control_normalize(cutoff, sample_dur);
+            fco_slope = (normalized - fco) * slope_factor;
         }
         if !res_audio {
-            let next = block_control(&ctx.ins, Self::RES, &mut self.last_res, 0.0, 1.0);
+            let next = ctx.ins.control(Self::RES);
             if !(cutoff_rate == Rate::Control && res_rate == Rate::Scalar) {
-                res_slope = (next - res) / count;
+                res_slope = (next - res) * slope_factor;
             }
         }
 
@@ -778,19 +684,12 @@ impl Unit for MoogVcf {
         let out = ctx.outs.audio(0);
         for (sample_index, output) in out.iter_mut().enumerate() {
             let sample_fco = if cutoff_audio {
-                sample_control(
-                    ins,
-                    Self::FREQ,
-                    sample_index,
-                    &mut self.last_cutoff,
-                    0.0,
-                    nyquist,
-                ) * normalized_scale
+                ins.audio(Self::FREQ)[sample_index] * audio_cutoff_multiplier
             } else {
                 fco
             };
             let sample_res = if res_audio {
-                sample_control(ins, Self::RES, sample_index, &mut self.last_res, 0.0, 1.0)
+                ins.audio(Self::RES)[sample_index]
             } else {
                 res
             };
@@ -810,16 +709,18 @@ impl Unit for MoogVcf {
             y1nm1 = y1n;
             y2nm1 = y2n;
             y3nm1 = y3n;
-            *output = if y4n.is_finite() { y4n } else { 0.0 };
+            *output = y4n;
             fco += fco_slope;
             res += res_slope;
         }
-        fco = self.last_cutoff * normalized_scale;
-        if res_audio || res_slope != 0.0 {
-            res = self.last_res;
+        if !cutoff_audio {
+            fco = moog_vcf_control_normalize(ctx.ins.control(Self::FREQ), sample_dur);
+            self.fco = fco;
         }
-        self.fco = fco;
-        self.res = res;
+        if !res_audio {
+            res = ctx.ins.control(Self::RES);
+            self.res = res;
+        }
         self.xnm1 = zap_f32(xnm1);
         self.y1nm1 = zap_f32(y1nm1);
         self.y2nm1 = zap_f32(y2nm1);
@@ -830,6 +731,16 @@ impl Unit for MoogVcf {
         self.y4n = zap_f32(y4n);
         DoneAction::Nothing
     }
+}
+
+/// Normalizes the constructor cutoff after the source's `f32` multiplication by two.
+fn moog_vcf_constructor_normalize(cutoff: f32, sample_dur: f64) -> f32 {
+    ((cutoff * 2.0) as f64 * sample_dur) as f32
+}
+
+/// Normalizes a block-sampled cutoff using the source's double-precision control expression.
+fn moog_vcf_control_normalize(cutoff: f32, sample_dur: f64) -> f32 {
+    (cutoff as f64 * 2.0 * sample_dur) as f32
 }
 
 /// Derives the one-pole and feedback parameters from normalized cutoff and resonance.
@@ -862,7 +773,7 @@ fn moog_vcf_limit(value: f32) -> f32 {
 }
 
 /// Constructor for [`MoogVcf`].
-pub struct MoogVcfCtor;
+pub(super) struct MoogVcfCtor;
 
 impl UnitDef for MoogVcfCtor {
     /// Validates the supported rate specializations and constructs a filter voice.
@@ -882,15 +793,8 @@ impl UnitDef for MoogVcfCtor {
             kp: 0.0,
             pp1d2: 0.0,
             k: 0.0,
-            last_cutoff: 440.0,
-            last_res: 0.0,
         }))
     }
-}
-
-/// Replaces non-finite retained state with silence.
-fn finite_or_zero(value: f32) -> f32 {
-    if value.is_finite() { value } else { 0.0 }
 }
 
 /// Clears denormal, overflow-scale, and non-finite retained filter state.
@@ -1535,15 +1439,14 @@ const DFM1_FN: [f64; 128] = [
 
 /// `Decimator.ar(in, rate, bits)`: block-controlled sample-and-hold with PCM-style quantization.
 ///
-/// The constructor advances the held-sample phase once with a zero input. Subsequent callbacks
-/// retain both phase and held output, while `rate` and `bits` are sampled once per callback.
+/// The constructor advances the held-sample phase once with the first input sample. Subsequent
+/// callbacks retain both phase and held output, while `rate` and `bits` are sampled once per
+/// callback.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct Decimator {
+struct Decimator {
     count: f32,
     last: f32,
-    rate: f32,
-    bits: f32,
 }
 
 impl Decimator {
@@ -1553,35 +1456,26 @@ impl Decimator {
 }
 
 impl Unit for Decimator {
-    /// Initializes the held-sample phase using the constructor control values.
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    /// Runs the source's hidden one-sample pre-calculation and publishes its output.
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
         let sample_rate = ctx.own.sample_rate as f32;
-        let rate = remembered_finite_control(
-            ctx.ins.control(Self::RATE),
-            &mut self.rate,
-            0.0,
-            sample_rate,
-        );
-        let bits = remembered_unbounded_control(ctx.ins.control(Self::BITS), &mut self.bits);
+        let rate = upper_clip_control(ctx.ins.control(Self::RATE), sample_rate);
+        let bits = ctx.ins.control(Self::BITS);
         decimator_sample(
-            0.0,
+            signal(&ctx.ins, Self::IN, 0),
             rate / sample_rate,
             bits,
             &mut self.count,
             &mut self.last,
         );
+        ctx.outs.audio(0)[0] = self.last;
     }
 
     /// Quantizes and holds the input for one audio callback.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let sample_rate = ctx.own.sample_rate as f32;
-        let rate = remembered_finite_control(
-            ctx.ins.control(Self::RATE),
-            &mut self.rate,
-            0.0,
-            sample_rate,
-        );
-        let bits = remembered_unbounded_control(ctx.ins.control(Self::BITS), &mut self.bits);
+        let rate = upper_clip_control(ctx.ins.control(Self::RATE), sample_rate);
+        let bits = ctx.ins.control(Self::BITS);
         let ratio = rate / sample_rate;
 
         for sample in 0..ctx.outs.audio(0).len() {
@@ -1593,25 +1487,14 @@ impl Unit for Decimator {
     }
 }
 
-/// Retain a finite control after clamping it to the supplied safety range.
-fn remembered_finite_control(value: f32, remembered: &mut f32, min: f32, max: f32) -> f32 {
-    if value.is_finite() {
-        *remembered = value.clamp(min, max);
-    }
-    *remembered
-}
-
-/// Retain a finite control without changing its valid finite range.
-fn remembered_unbounded_control(value: f32, remembered: &mut f32) -> f32 {
-    if value.is_finite() {
-        *remembered = value;
-    }
-    *remembered
+/// Clamp only the upper rate boundary while preserving negative and NaN arithmetic.
+fn upper_clip_control(value: f32, max: f32) -> f32 {
+    if value > max { max } else { value }
 }
 
 /// Advance one decimator sample in the normative `f32` arithmetic order.
 fn decimator_sample(input: f32, ratio: f32, bits: f32, count: &mut f32, last: &mut f32) {
-    let step = if !(1.0..31.0).contains(&bits) {
+    let step = if bits < 1.0 || bits >= 31.0 {
         0.0
     } else {
         math::powf(0.5_f32, bits - 0.999)
@@ -1625,14 +1508,11 @@ fn decimator_sample(input: f32, ratio: f32, bits: f32, count: &mut f32, last: &m
         let value = (input + signed_half_step) * inv_step;
         let fraction = value - math::trunc(value);
         *last = input - fraction * step;
-        if !last.is_finite() {
-            *last = 0.0;
-        }
     }
 }
 
 /// Constructor for [`Decimator`].
-pub struct DecimatorCtor;
+pub(super) struct DecimatorCtor;
 
 impl UnitDef for DecimatorCtor {
     /// Validates the fixed ABI and constructs a decimator voice.
@@ -1641,8 +1521,6 @@ impl UnitDef for DecimatorCtor {
         Ok(unit_spec(Decimator {
             count: 0.0,
             last: 0.0,
-            rate: 44_100.0,
-            bits: 24.0,
         }))
     }
 }
@@ -1653,13 +1531,11 @@ impl UnitDef for DecimatorCtor {
 /// and every other finite mode selects low-pass without resetting retained poles.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct BMoog {
+struct BMoog {
     poles: [f32; 4],
     feedback: f32,
     retained_gain: f32,
     frequency: f32,
-    resonance: f32,
-    mode: f32,
 }
 
 impl BMoog {
@@ -1672,24 +1548,23 @@ impl BMoog {
 impl Unit for BMoog {
     /// Filters one callback and retains the next callback's gain compensation.
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let nyquist = ctx.own.sample_rate as f32 * 0.5;
-        let frequency = remembered_finite_control(
-            ctx.ins.control(Self::FREQ),
-            &mut self.frequency,
-            20.0,
-            nyquist,
-        );
-        let resonance =
-            remembered_finite_control(ctx.ins.control(Self::RES), &mut self.resonance, 0.0, 1.0);
-        let mode = remembered_unbounded_control(ctx.ins.control(Self::MODE), &mut self.mode);
+        let supplied_frequency = ctx.ins.control(Self::FREQ);
+        let frequency = if supplied_frequency.is_finite() {
+            self.frequency = supplied_frequency;
+            supplied_frequency
+        } else {
+            self.frequency
+        };
+        let resonance = ctx.ins.control(Self::RES);
+        let mode = ctx.ins.control(Self::MODE);
 
         let fc = 2.0 * frequency / ctx.own.sample_rate as f32;
         let fc2 = fc * fc;
         let p = -0.69346 * fc2 * fc - 0.59515 * fc2 + 3.2937 * fc - 1.0072;
-        let ix = (p * 99.0).clamp(-99.0, 98.0);
+        let ix = p * 99.0;
         let ixint = math::floor(ix) as i32;
-        let ixfrac = (ix - ixint as f32).clamp(0.0, 1.0);
-        let table_index = (ixint + 99) as usize;
+        let ixfrac = ix - ixint as f32;
+        let table_index = (ixint + 99).clamp(0, BMOOG_GAIN.len() as i32 - 2) as usize;
         let gain = BMOOG_GAIN[table_index] * (1.0 - ixfrac) + BMOOG_GAIN[table_index + 1] * ixfrac;
         let retained_gain = self.retained_gain;
 
@@ -1711,7 +1586,7 @@ impl Unit for BMoog {
                 y
             };
             self.feedback = y * retained_gain;
-            ctx.outs.audio(0)[sample] = if output.is_finite() { output } else { 0.0 };
+            ctx.outs.audio(0)[sample] = output;
         }
         self.retained_gain = resonance * gain;
         DoneAction::Nothing
@@ -1719,7 +1594,7 @@ impl Unit for BMoog {
 }
 
 /// Constructor for [`BMoog`].
-pub struct BMoogCtor;
+pub(super) struct BMoogCtor;
 
 impl UnitDef for BMoogCtor {
     /// Validates the fixed ABI and constructs a compensated filter voice.
@@ -1730,8 +1605,6 @@ impl UnitDef for BMoogCtor {
             feedback: 0.0,
             retained_gain: 0.0,
             frequency: 440.0,
-            resonance: 0.2,
-            mode: 0.0,
         }))
     }
 }

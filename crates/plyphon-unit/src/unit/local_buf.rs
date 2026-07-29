@@ -38,6 +38,11 @@ pub struct LocalBuf {
 }
 
 impl Unit for LocalBuf {
+    /// Publishes this graph-local buffer's runtime number during synth construction.
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        *ctx.outs.control(0) = (unit::num_buffers(ctx.buffers) + self.index as usize) as f32;
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // The number every consumer resolves back through the buffer io fns: table capacity + index
         // (scsynth's `bufnum + world->mNumSndBufs`). Read from the live table so the def stays

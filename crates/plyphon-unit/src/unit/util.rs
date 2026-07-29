@@ -52,22 +52,64 @@ fn lag3ud_step(y1a: &mut f32, y1b: &mut f32, y1c: &mut f32, x: f32, b1u: f32, b1
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct MulAdd {
-    /// `0`/`1`: whether `in` is audio-rate.
-    in_audio: u32,
+    /// Bit flags for audio-rate unit, `in`, `mul`, and `add` specialization.
+    rates: u32,
 }
 
 impl MulAdd {
     const IN: usize = 0;
     const MUL: usize = 1;
     const ADD: usize = 2;
+    const IN_AUDIO: u32 = 1 << 0;
+    const UNIT_AUDIO: u32 = 1 << 1;
+    const MUL_AUDIO: u32 = 1 << 2;
+    const ADD_AUDIO: u32 = 1 << 3;
+    const MUL_SCALAR: u32 = 1 << 4;
+    const ADD_SCALAR: u32 = 1 << 5;
 }
 
 impl Unit for MulAdd {
+    fn construct(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let input = ctx.ins.control(Self::IN);
+        let mul = ctx.ins.control(Self::MUL);
+        let add = ctx.ins.control(Self::ADD);
+        let unit_audio = self.rates & Self::UNIT_AUDIO != 0;
+        let mul_audio = self.rates & Self::MUL_AUDIO != 0;
+        let add_audio = self.rates & Self::ADD_AUDIO != 0;
+        let mul_scalar = self.rates & Self::MUL_SCALAR != 0;
+        let add_scalar = self.rates & Self::ADD_SCALAR != 0;
+        ctx.outs.audio(0)[0] = if !unit_audio {
+            input * mul + add
+        } else if mul_audio {
+            if !add_audio && add == 0.0 {
+                input * mul
+            } else {
+                input * mul + add
+            }
+        } else if mul == 0.0 {
+            if mul_scalar && add_scalar && add == 0.0 {
+                0.0
+            } else {
+                add
+            }
+        } else if mul == 1.0 {
+            if !add_audio && add == 0.0 {
+                input
+            } else {
+                input + add
+            }
+        } else if !add_audio && add == 0.0 {
+            input * mul
+        } else {
+            input * mul + add
+        };
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let mul = ctx.ins.control(Self::MUL);
         let add = ctx.ins.control(Self::ADD);
         let out = ctx.outs.audio(0);
-        if self.in_audio != 0 {
+        if self.rates & Self::IN_AUDIO != 0 {
             for (o, &x) in out.iter_mut().zip(ctx.ins.audio(Self::IN)) {
                 *o = x * mul + add;
             }
@@ -84,7 +126,16 @@ pub struct MulAddCtor;
 impl UnitDef for MulAddCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(MulAdd {
-            in_audio: (ctx.input_rates.first() == Some(&Rate::Audio)) as u32,
+            rates: ((ctx.input_rates.first() == Some(&Rate::Audio)) as u32) * MulAdd::IN_AUDIO
+                | ((ctx.rate == Rate::Audio) as u32) * MulAdd::UNIT_AUDIO
+                | ((ctx.input_rates.get(MulAdd::MUL) == Some(&Rate::Audio)) as u32)
+                    * MulAdd::MUL_AUDIO
+                | ((ctx.input_rates.get(MulAdd::ADD) == Some(&Rate::Audio)) as u32)
+                    * MulAdd::ADD_AUDIO
+                | ((ctx.input_rates.get(MulAdd::MUL) == Some(&Rate::Scalar)) as u32)
+                    * MulAdd::MUL_SCALAR
+                | ((ctx.input_rates.get(MulAdd::ADD) == Some(&Rate::Scalar)) as u32)
+                    * MulAdd::ADD_SCALAR,
         }))
     }
 }

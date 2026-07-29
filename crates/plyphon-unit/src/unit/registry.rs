@@ -28,6 +28,7 @@ use crate::unit::delay::{
 };
 use crate::unit::deltap::{DelTapRdCtor, DelTapWrCtor};
 use crate::unit::demand::BuiltDemandUnit;
+use crate::unit::demand::DNoiseRingCtor;
 use crate::unit::demand::dbrown::DbrownCtor;
 use crate::unit::demand::dbufrd::DbufrdCtor;
 use crate::unit::demand::dbufwr::DbufwrCtor;
@@ -35,7 +36,6 @@ use crate::unit::demand::demand_ugen::DemandCtor;
 use crate::unit::demand::dgeom::DgeomCtor;
 use crate::unit::demand::dibrown::DibrownCtor;
 use crate::unit::demand::diwhite::DiwhiteCtor;
-use crate::unit::demand::dnoise_ring::DNoiseRingCtor;
 use crate::unit::demand::dpoll::DpollCtor;
 use crate::unit::demand::drand::DrandCtor;
 use crate::unit::demand::dseq::DseqCtor;

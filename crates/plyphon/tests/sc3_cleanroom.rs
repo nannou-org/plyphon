@@ -90,6 +90,29 @@ fn assert_oracle(label: &str, actual: &[f32], expected: &[f32]) {
     );
 }
 
+/// Compares source behavior that intentionally includes NaN or infinity.
+fn assert_raw_oracle(label: &str, actual: &[f32], expected: &[f32]) {
+    assert_eq!(actual.len(), expected.len(), "{label} value count");
+    for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+        if actual.is_nan() && expected.is_nan() {
+            continue;
+        }
+        if actual.is_infinite() || expected.is_infinite() {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "{label} non-finite value {index}"
+            );
+            continue;
+        }
+        let tolerance = 1.0e-4 + 1.0e-3 * expected.abs();
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "{label} value {index}: expected {expected}, got {actual}, tolerance {tolerance}"
+        );
+    }
+}
+
 /// Express `actual` on the phase branch nearest `expected` without changing angular distance.
 fn nearest_phase(actual: f32, expected: f32) -> f32 {
     let difference = actual - expected;
@@ -181,6 +204,57 @@ fn decimator_matches_sc314() {
     );
 }
 
+/// Matches the pinned Decimator rate boundaries without normalizing source controls.
+#[test]
+fn decimator_boundaries_match_sc314() {
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR,
+        block_size: BLOCK,
+        output_channels: 4,
+        ..Options::default()
+    });
+    let mut units = vec![sc_started_phasor(Rate::Audio, 0.03125, -1.0, 1.0)];
+    for rate in [-12_000.0, 0.0, 48_000.0, 96_000.0] {
+        units.push(UnitSpec::new(
+            "Decimator",
+            Rate::Audio,
+            vec![u(0), c(rate), c(24.0)],
+            1,
+        ));
+    }
+    units.push(UnitSpec::new(
+        "Out",
+        Rate::Audio,
+        vec![c(0.0), u(1), u(2), u(3), u(4)],
+        0,
+    ));
+    controller.add_synthdef(SynthDef {
+        name: "cleanroom-decimator-boundaries".to_string(),
+        params: vec![],
+        units,
+    });
+    controller
+        .synth_new(
+            "cleanroom-decimator-boundaries",
+            ROOT_GROUP_ID,
+            AddAction::Tail,
+        )
+        .expect("spawn Decimator boundary graph");
+
+    let mut actual = Vec::with_capacity(448 * 4);
+    for _ in 0..7 {
+        actual.extend(render_block(&mut world, 4));
+    }
+    let expected = fixture(include_bytes!(
+        "fixtures/sc3_processing/decimator_boundaries.f32"
+    ))
+    .chunks_exact(5)
+    .flat_map(|frame| frame[1..].iter().copied())
+    .take(actual.len())
+    .collect::<Vec<_>>();
+    assert_raw_oracle("Decimator boundaries", &actual, &expected);
+}
+
 /// Matches all retained BMoog output modes across cutoff and resonance changes.
 #[test]
 fn bmoog_matches_sc314() {
@@ -233,6 +307,83 @@ fn bmoog_matches_sc314() {
         &actual,
         &fixture(include_bytes!("fixtures/sc3_processing/bmoog.f32")),
     );
+}
+
+/// Matches every pinned finite out-of-range BMoog case without clamping it to the nominal range.
+#[test]
+fn bmoog_boundaries_match_sc314() {
+    let cases = [
+        (
+            19.0,
+            0.5,
+            include_bytes!("fixtures/sc3_processing/bmoog_boundaries_0.f32").as_slice(),
+        ),
+        (
+            -100.0,
+            0.5,
+            include_bytes!("fixtures/sc3_processing/bmoog_boundaries_1.f32").as_slice(),
+        ),
+        (
+            24_001.0,
+            0.5,
+            include_bytes!("fixtures/sc3_processing/bmoog_boundaries_2.f32").as_slice(),
+        ),
+        (
+            440.0,
+            -0.5,
+            include_bytes!("fixtures/sc3_processing/bmoog_boundaries_3.f32").as_slice(),
+        ),
+        (
+            440.0,
+            1.5,
+            include_bytes!("fixtures/sc3_processing/bmoog_boundaries_4.f32").as_slice(),
+        ),
+    ];
+    for (case_index, (frequency, resonance, expected)) in cases.into_iter().enumerate() {
+        let (mut controller, _nrt, mut world) = engine(Options {
+            sample_rate: SR,
+            block_size: BLOCK,
+            output_channels: 4,
+            ..Options::default()
+        });
+        let mut units = vec![sc_started_phasor(Rate::Audio, 0.021875, -0.8, 0.8)];
+        for mode in 0..4 {
+            units.push(UnitSpec::new(
+                "BMoog",
+                Rate::Audio,
+                vec![u(0), c(frequency), c(resonance), c(mode as f32)],
+                1,
+            ));
+        }
+        units.push(UnitSpec::new(
+            "Out",
+            Rate::Audio,
+            vec![c(0.0), u(1), u(2), u(3), u(4)],
+            0,
+        ));
+        controller.add_synthdef(SynthDef {
+            name: format!("cleanroom-bmoog-boundary-{case_index}"),
+            params: vec![],
+            units,
+        });
+        controller
+            .synth_new(
+                &format!("cleanroom-bmoog-boundary-{case_index}"),
+                ROOT_GROUP_ID,
+                AddAction::Tail,
+            )
+            .expect("spawn BMoog boundary graph");
+
+        let mut actual = Vec::with_capacity(448 * 4);
+        for _ in 0..7 {
+            actual.extend(render_block(&mut world, 4));
+        }
+        assert_raw_oracle(
+            &format!("BMoog boundary {case_index}"),
+            &actual,
+            &fixture(expected)[..actual.len()],
+        );
+    }
 }
 
 /// Renders three deterministic Perlin coordinate lanes at one calculation rate.
@@ -307,6 +458,73 @@ fn perlin3_ar_and_kr_match_sc314() {
     );
 }
 
+/// Matches the pinned Perlin negative-cell and 256-periodicity probes.
+#[test]
+fn perlin3_boundaries_match_sc314() {
+    let coordinates = [
+        (-256.000_98, 0.375, -0.625),
+        (-256.0, 0.375, -0.625),
+        (-255.999_02, 0.375, -0.625),
+        (-0.000_976_562_5, 0.375, -0.625),
+        (0.0, 0.375, -0.625),
+        (0.000_976_562_5, 0.375, -0.625),
+        (255.999_02, 0.375, -0.625),
+        (256.0, 0.375, -0.625),
+        (256.000_98, 0.375, -0.625),
+        (-0.25, 0.375, -0.625),
+        (255.75, 0.375, -0.625),
+        (-0.25, 256.375, -0.625),
+        (-0.25, 0.375, 255.375),
+        (255.75, 256.375, 255.375),
+    ];
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR,
+        block_size: BLOCK,
+        output_channels: coordinates.len(),
+        ..Options::default()
+    });
+    let mut units = Vec::new();
+    let mut outputs = Vec::new();
+    for (x, y, z) in coordinates {
+        let sources = [x, y, z].map(|coordinate| {
+            let index = units.len() as u32;
+            units.push(UnitSpec::new("K2A", Rate::Audio, vec![c(coordinate)], 1));
+            u(index)
+        });
+        let perlin = units.len() as u32;
+        units.push(UnitSpec::new("Perlin3", Rate::Audio, sources.to_vec(), 1));
+        outputs.push(u(perlin));
+    }
+    units.push(UnitSpec::new(
+        "Out",
+        Rate::Audio,
+        core::iter::once(c(0.0)).chain(outputs).collect(),
+        0,
+    ));
+    controller.add_synthdef(SynthDef {
+        name: "cleanroom-perlin-boundaries".to_string(),
+        params: vec![],
+        units,
+    });
+    controller
+        .synth_new(
+            "cleanroom-perlin-boundaries",
+            ROOT_GROUP_ID,
+            AddAction::Tail,
+        )
+        .expect("spawn Perlin3 boundary graph");
+
+    let mut actual = Vec::with_capacity(64 * 14);
+    actual.extend(render_block(&mut world, 14));
+    assert_raw_oracle(
+        "Perlin3 boundaries",
+        &actual,
+        &fixture(include_bytes!(
+            "fixtures/sc3_processing/perlin3_boundaries.f32"
+        ))[..actual.len()],
+    );
+}
+
 /// Matches the retained Rössler trajectory across coordinate and parameter changes.
 #[test]
 fn rossler_l_matches_sc314() {
@@ -366,6 +584,63 @@ fn rossler_l_matches_sc314() {
         "RosslerL",
         &actual,
         &fixture(include_bytes!("fixtures/sc3_processing/rossler_l.f32")),
+    );
+}
+
+/// Matches the pinned low-frequency floor and finite destabilization trajectory.
+#[test]
+fn rossler_l_boundaries_match_sc314() {
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR,
+        block_size: BLOCK,
+        output_channels: 12,
+        ..Options::default()
+    });
+    let mut units = Vec::new();
+    for controls in [
+        [0.0, 0.2, 0.2, 5.7, 0.05, 0.1, 0.0, 0.0],
+        [-1.0, 0.2, 0.2, 5.7, 0.05, 0.1, 0.0, 0.0],
+        [0.0005, 0.2, 0.2, 5.7, 0.05, 0.1, 0.0, 0.0],
+        [48_000.0, 0.2, 0.2, 5.7, 5.0, 0.1, 0.0, 0.0],
+    ] {
+        units.push(UnitSpec::new(
+            "RosslerL",
+            Rate::Audio,
+            controls.into_iter().map(c).collect(),
+            3,
+        ));
+    }
+    units.push(UnitSpec::new(
+        "Out",
+        Rate::Audio,
+        core::iter::once(c(0.0))
+            .chain((0..4).flat_map(|unit| (0..3).map(move |lane| output(unit, lane))))
+            .collect(),
+        0,
+    ));
+    controller.add_synthdef(SynthDef {
+        name: "cleanroom-rossler-boundaries".to_string(),
+        params: vec![],
+        units,
+    });
+    controller
+        .synth_new(
+            "cleanroom-rossler-boundaries",
+            ROOT_GROUP_ID,
+            AddAction::Tail,
+        )
+        .expect("spawn RosslerL boundary graph");
+
+    let mut actual = Vec::with_capacity(448 * 12);
+    for _ in 0..7 {
+        actual.extend(render_block(&mut world, 12));
+    }
+    assert_raw_oracle(
+        "RosslerL boundaries",
+        &actual,
+        &fixture(include_bytes!(
+            "fixtures/sc3_processing/rossler_l_boundaries.f32"
+        ))[..actual.len()],
     );
 }
 

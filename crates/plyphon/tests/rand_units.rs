@@ -112,6 +112,40 @@ fn exprand_holds_one_draw_in_range() {
 }
 
 #[test]
+fn randseed_constructor_reseeds_before_later_rand_constructors() {
+    let buf = render(
+        vec![
+            UnitSpec::new(
+                "RandSeed",
+                Rate::Scalar,
+                vec![InputRef::Constant(1.0), InputRef::Constant(42.0)],
+                1,
+            ),
+            UnitSpec::new(
+                "Rand",
+                Rate::Scalar,
+                vec![InputRef::Constant(0.0), InputRef::Constant(1.0)],
+                1,
+            ),
+            UnitSpec::new(
+                "K2A",
+                Rate::Audio,
+                vec![InputRef::Unit { unit: 1, output: 0 }],
+                1,
+            ),
+            out(2),
+        ],
+        1,
+    );
+    assert_eq!(
+        buf[0].to_bits(),
+        0x3ecb_6f74,
+        "Rand uses the first scsynth RGen draw after constructor-time seed 42"
+    );
+    assert!(buf.iter().all(|sample| *sample == buf[0]));
+}
+
+#[test]
 fn trand_redraws_on_trigger_and_holds_between() {
     // A one-sample impulse at the start of every 64-sample block drives TRand: the first block
     // keeps the init draw (the trigger level is latched at spawn), every later block re-draws on

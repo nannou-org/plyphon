@@ -192,14 +192,6 @@ pub fn bin_as_polar(coord: SpectrumCoord, b: Bin) -> Bin {
     }
 }
 
-/// Read `b` as SuperCollider-compatible approximate polar coordinates without mutating its buffer.
-pub(crate) fn bin_as_polar_apx(coord: SpectrumCoord, b: Bin) -> Bin {
-    match coord {
-        SpectrumCoord::Polar => b,
-        SpectrumCoord::Complex => complex_to_polar_apx(b),
-    }
-}
-
 /// A read-only packed view of the bins (skipping `dc`/`nyq`), for the second buffer of a two-buffer
 /// op (`PV_MagMul` reads `B` while rewriting `A`). Empty if the slice is too short or odd.
 pub fn bins(data: &[f32]) -> &[Bin] {

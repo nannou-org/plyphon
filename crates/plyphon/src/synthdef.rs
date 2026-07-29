@@ -19,7 +19,8 @@ use plyphon_dsp::math;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_unit::error::BuildError;
 use plyphon_unit::graphdef::{
-    AudioParam, GraphDef, LagParam, LocalBufSpec, OutputWire, UnitVtbl, build_layout,
+    AudioParam, ConstructorUnit, GraphDef, LagParam, LocalBufSpec, OutputWire, UnitVtbl,
+    build_layout,
 };
 use plyphon_unit::unit::demand::{BuiltDemandUnit, DemandVtbl, MAX_DEMAND_DEPTH, MAX_DEMAND_STATE};
 use plyphon_unit::unit::registry::{BuildContext, UnitRegistry};
@@ -260,6 +261,15 @@ impl SynthDef {
                 next_calc += 1;
             }
         }
+        let constructor_units: Vec<ConstructorUnit> = calc_index
+            .iter()
+            .zip(&demand_index)
+            .map(|(calc, demand)| match (*calc, *demand) {
+                (Some(index), None) => ConstructorUnit::Calc(index),
+                (None, Some(index)) => ConstructorUnit::Demand(index),
+                _ => unreachable!("each SynthDef unit has exactly one runtime kind"),
+            })
+            .collect();
 
         // Pre-scan the feedback bus (`LocalIn`/`LocalOut`): at most one of each in v1. The bus width
         // is the `LocalIn`'s output count; a `LocalOut`, if present, must write that many channels.
@@ -536,8 +546,15 @@ impl SynthDef {
         // pack each arena's initial image from the units' initial state bytes.
         let state_slots: Vec<(usize, usize)> =
             calc_built.iter().map(|b| (b.size, b.align)).collect();
-        let demand_state_slots: Vec<(usize, usize)> =
-            demand_built.iter().map(|b| (b.size, b.align)).collect();
+        let demand_state_slots: Vec<(usize, usize)> = demand_built
+            .iter()
+            .map(|b| {
+                (
+                    ((b.size + 3) & !3) + core::mem::size_of::<f32>(),
+                    b.align.max(4),
+                )
+            })
+            .collect();
         // Per-calc-unit auxiliary memory (delay lines), in calc order - parallel to `state_slots`.
         let aux_slots: Vec<(usize, usize)> = calc_built
             .iter()
@@ -575,6 +592,7 @@ impl SynthDef {
                 |(((((b, inputs), outputs), rate), state_offset), aux_offset)| UnitVtbl {
                     rate,
                     process: b.process,
+                    construct: b.construct,
                     init: b.init,
                     reseed: b.reseed,
                     inputs,
@@ -592,18 +610,21 @@ impl SynthDef {
             .zip(demand_inputs)
             .zip(demand_offsets)
             .map(|((b, inputs), state_offset)| DemandVtbl {
+                init: b.init,
                 produce: b.produce,
                 reset: b.reset,
                 reseed: b.reseed,
                 inputs,
                 state_offset,
                 state_size: b.size,
+                output_offset: state_offset + ((b.size + 3) & !3),
             })
             .collect();
 
         Ok(GraphDef::new(
             units.into_boxed_slice(),
             demand_units.into_boxed_slice(),
+            constructor_units.into_boxed_slice(),
             layout,
             state_image.into_boxed_slice(),
             demand_state_image.into_boxed_slice(),

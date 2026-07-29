@@ -30,10 +30,10 @@ use plyphon_dsp::math;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::Wavetables;
-use plyphon_unit::graphdef::GraphDef;
+use plyphon_unit::graphdef::{ConstructorUnit, GraphDef};
 use plyphon_unit::unit::{
-    self, Aux, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBufs, LocalBus, NodeMsg,
-    NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger, TriggerSink,
+    self, Aux, DemandAccess, DemandWorld, DoneAction, DoneState, InitCtx, Inputs, LocalBufs,
+    LocalBus, NodeMsg, NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger, TriggerSink,
 };
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
@@ -293,6 +293,112 @@ impl Graph {
                 let y = x + lp.b1 * (lag_state[li] - x);
                 lag_state[li] = y;
                 ctrl[lp.wire as usize] = y;
+            }
+
+            if first {
+                for constructor in def.constructor_units() {
+                    match *constructor {
+                        ConstructorUnit::Calc(index) => {
+                            let v = &def.units()[index as usize];
+                            let own = match v.rate {
+                                Rate::Audio => def.audio_rate(),
+                                _ => def.control_rate(),
+                            };
+                            let calc_len = match v.rate {
+                                Rate::Audio => bs,
+                                _ => 1,
+                            };
+                            let output_len = v.outputs.len() * calc_len;
+                            scratch[..output_len].fill(0.0);
+                            let state =
+                                &mut state_arena[v.state_offset..v.state_offset + v.state_size];
+                            let aux = &mut aux_arena[v.aux_offset..v.aux_offset + v.aux_size];
+                            let mut done_flag = done_flags[index as usize];
+                            let mut construct_ctx = ProcessCtx {
+                                audio: def.audio_rate(),
+                                control: def.control_rate(),
+                                own,
+                                wavetables: block.wavetables,
+                                fft: block.fft,
+                                ins: Inputs::new(&v.inputs, &*audio, &*ctrl, bs),
+                                outs: Outputs::new(&mut scratch[..output_len], calc_len),
+                                buses: &mut *block.buses,
+                                buffers: &mut *block.buffers,
+                                buf_counter: block.buf_counter,
+                                tick,
+                                resample_factor: resample,
+                                sample_offset,
+                                subsample_offset,
+                                demand: DemandAccess::new(
+                                    def.demand_units(),
+                                    &mut *demand_state,
+                                    &*audio,
+                                    &*ctrl,
+                                    bs,
+                                ),
+                                node_id,
+                                triggers: TriggerSink::new(&mut *block.triggers, block.trigger_cap),
+                                node_msgs: NodeMsgSink::new(
+                                    &mut *block.node_msgs,
+                                    block.node_msg_cap,
+                                ),
+                                running_synths: block.running_synths,
+                                done: DoneState::new(&*done_flags, &mut done_flag),
+                                node_ops: NodeOpSink::new(&mut *block.node_ops, block.node_op_cap),
+                                local: LocalBus::new(&mut *local, bs),
+                                local_bufs: LocalBufs::new(
+                                    def.local_buf_specs(),
+                                    &mut *lbuf_samples,
+                                    &mut *lbuf_coords,
+                                    def.audio_rate().sample_rate,
+                                ),
+                                aux: Aux::new(aux),
+                                rgen: &mut *rgen,
+                            };
+                            (v.construct)(state, &mut construct_ctx);
+                            done_flags[index as usize] = done_flag;
+                            for (output, wire) in v.outputs.iter().enumerate() {
+                                let source = output * calc_len;
+                                match wire.rate {
+                                    Rate::Audio => {
+                                        let destination = wire.wire as usize * bs;
+                                        audio[destination..destination + bs]
+                                            .copy_from_slice(&scratch[source..source + bs]);
+                                    }
+                                    Rate::Control | Rate::Scalar => {
+                                        ctrl[wire.wire as usize] = scratch[source];
+                                    }
+                                    Rate::Demand => {}
+                                }
+                            }
+                        }
+                        ConstructorUnit::Demand(index) => {
+                            let mut local_bufs = LocalBufs::new(
+                                def.local_buf_specs(),
+                                &mut *lbuf_samples,
+                                &mut *lbuf_coords,
+                                def.audio_rate().sample_rate,
+                            );
+                            let mut node_msgs =
+                                NodeMsgSink::new(&mut *block.node_msgs, block.node_msg_cap);
+                            let mut world = DemandWorld {
+                                buffers: &mut *block.buffers,
+                                local_bufs: &mut local_bufs,
+                                node_id,
+                                node_msgs: &mut node_msgs,
+                                rgen: &mut *rgen,
+                            };
+                            DemandAccess::new(
+                                def.demand_units(),
+                                &mut *demand_state,
+                                &*audio,
+                                &*ctrl,
+                                bs,
+                            )
+                            .init(&mut world, index as usize);
+                        }
+                    }
+                }
             }
 
             if tracing && tick == 0 {

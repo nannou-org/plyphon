@@ -27,7 +27,7 @@ pub mod demand_ugen;
 pub mod dgeom;
 pub mod dibrown;
 pub mod diwhite;
-pub mod dnoise_ring;
+mod dnoise_ring;
 pub mod dpoll;
 pub mod drand;
 pub mod dseq;
@@ -55,7 +55,7 @@ pub use demand_ugen::Demand;
 pub use dgeom::Dgeom;
 pub use dibrown::Dibrown;
 pub use diwhite::Diwhite;
-pub use dnoise_ring::DNoiseRing;
+pub(in crate::unit) use dnoise_ring::DNoiseRingCtor;
 pub use dpoll::Dpoll;
 pub use drand::Drand;
 pub use dseq::Dseq;
@@ -76,10 +76,10 @@ pub const MAX_DEMAND_STATE: usize = 64;
 /// thread's stack, so compilation rejects deeper graphs (off-RT) to keep the recursion bounded.
 pub const MAX_DEMAND_DEPTH: usize = 16;
 
-/// Which side of scsynth's `inNumSamples` flag a pull is: produce the next value (`> 0`) or reset
-/// (`== 0`).
+/// Which demand-unit callback to invoke.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum Op {
+    Init,
     Produce,
     Reset,
 }
@@ -101,6 +101,13 @@ pub trait DemandUnit: Pod {
     /// default is a no-op; `Dwhite`-style sources override it so two instances decorrelate.
     fn reseed(&mut self, _seed: u64) {}
 
+    /// Run constructor-time demand initialization once, before the graph's first visible callback.
+    ///
+    /// Most demand units encode their complete constructor image in [`demand_unit_spec`] and leave
+    /// this as a no-op. Units whose source constructor pulls or resets nested demand inputs override
+    /// it.
+    fn init(&mut self, _ctx: &mut DemandCtx<'_>) {}
+
     /// Reset internal state to the start of the sequence (scsynth's `inNumSamples == 0` branch). The
     /// default is a no-op; sequence sources zero their counters here and reset their demand inputs.
     fn reset(&mut self, _ctx: &mut DemandCtx<'_>) {}
@@ -113,11 +120,19 @@ pub trait DemandUnit: Pod {
 /// A type-erased "produce next value" function over a demand unit's pool-resident state bytes.
 pub type ProduceFn = fn(&mut [u8], &mut DemandCtx<'_>) -> f32;
 
+/// A type-erased constructor-time initialization function.
+pub type DemandInitFn = fn(&mut [u8], &mut DemandCtx<'_>);
+
 /// A type-erased "reset" function over a demand unit's pool-resident state bytes.
 pub type ResetFn = fn(&mut [u8], &mut DemandCtx<'_>);
 
 fn produce_thunk<T: DemandUnit>(bytes: &mut [u8], ctx: &mut DemandCtx<'_>) -> f32 {
     bytemuck::from_bytes_mut::<T>(bytes).produce(ctx)
+}
+
+/// Dispatches constructor initialization through a demand unit's type-erased state bytes.
+fn init_thunk<T: DemandUnit>(bytes: &mut [u8], ctx: &mut DemandCtx<'_>) {
+    bytemuck::from_bytes_mut::<T>(bytes).init(ctx);
 }
 
 fn reset_thunk<T: DemandUnit>(bytes: &mut [u8], ctx: &mut DemandCtx<'_>) {
@@ -131,6 +146,8 @@ fn demand_reseed_thunk<T: DemandUnit>(bytes: &mut [u8], seed: u64) {
 /// One demand unit's compiled record: its pull/reset/seed vtable, resolved input wiring, and state
 /// slot in the demand arena - the demand-plan analogue of [`UnitVtbl`](crate::graphdef::UnitVtbl).
 pub struct DemandVtbl {
+    /// One-time constructor initialization.
+    pub init: DemandInitFn,
     /// Produce the next value.
     pub produce: ProduceFn,
     /// Reset to the start of the sequence.
@@ -143,12 +160,16 @@ pub struct DemandVtbl {
     pub state_offset: usize,
     /// Exactly `size_of::<T>()` - the bytes this unit's state occupies (`<= MAX_DEMAND_STATE`).
     pub state_size: usize,
+    /// Byte offset of this unit's retained output value within the demand-state span.
+    pub output_offset: usize,
 }
 
 /// A built demand unit: its vtable plus the initial state image. Produced off the audio thread by a
 /// [`UnitDef`](crate::unit::registry::UnitDef) (via [`demand_unit_spec`]) and baked into a
 /// [`GraphDef`](crate::graphdef::GraphDef).
 pub struct BuiltDemandUnit {
+    /// Constructor-time initialization function.
+    pub init: DemandInitFn,
     /// Produce-next function.
     pub produce: ProduceFn,
     /// Reset function.
@@ -167,6 +188,7 @@ pub struct BuiltDemandUnit {
 /// analogue of [`unit_spec`](crate::unit::unit_spec)).
 pub fn demand_unit_spec<T: DemandUnit>(state: T) -> BuiltDemandUnit {
     BuiltDemandUnit {
+        init: init_thunk::<T>,
         produce: produce_thunk::<T>,
         reset: reset_thunk::<T>,
         reseed: demand_reseed_thunk::<T>,
@@ -212,6 +234,7 @@ pub struct DemandCtx<'a> {
     audio_wires: &'a [f32],
     control_wires: &'a [f32],
     block_size: usize,
+    offset: usize,
     buffers: &'a mut BufferTable,
     local_bufs: LocalBufs<'a>,
     node_id: i32,
@@ -244,6 +267,7 @@ impl DemandCtx<'_> {
                 self.audio_wires,
                 self.control_wires,
                 self.block_size,
+                self.offset,
                 &mut DemandWorld {
                     buffers: &mut *self.buffers,
                     local_bufs: &mut self.local_bufs,
@@ -256,7 +280,13 @@ impl DemandCtx<'_> {
             ),
             InputSource::Constant(v) => v,
             InputSource::Control(w) => self.control_wires[w as usize],
-            InputSource::Audio(w) => self.audio_wires[w as usize * self.block_size],
+            InputSource::Audio(w) => {
+                let frame = self
+                    .offset
+                    .saturating_sub(1)
+                    .min(self.block_size.saturating_sub(1));
+                self.audio_wires[w as usize * self.block_size + frame]
+            }
         }
     }
 
@@ -270,6 +300,7 @@ impl DemandCtx<'_> {
                 self.audio_wires,
                 self.control_wires,
                 self.block_size,
+                0,
                 &mut DemandWorld {
                     buffers: &mut *self.buffers,
                     local_bufs: &mut self.local_bufs,
@@ -280,6 +311,33 @@ impl DemandCtx<'_> {
                 d as usize,
                 Op::Reset,
             );
+        }
+    }
+
+    /// Reset a demand input and return its retained output, matching constructor-time
+    /// `DEMANDINPUT_A(..., 0)`. Constants and calc wires simply return their current value.
+    pub fn reset_value(&mut self, k: usize) -> f32 {
+        match self.inputs[k] {
+            InputSource::Demand(d) => pull(
+                self.plan,
+                &mut *self.arena,
+                self.audio_wires,
+                self.control_wires,
+                self.block_size,
+                0,
+                &mut DemandWorld {
+                    buffers: &mut *self.buffers,
+                    local_bufs: &mut self.local_bufs,
+                    node_id: self.node_id,
+                    node_msgs: &mut self.node_msgs,
+                    rgen: &mut *self.rgen,
+                },
+                d as usize,
+                Op::Reset,
+            ),
+            InputSource::Constant(value) => value,
+            InputSource::Control(wire) => self.control_wires[wire as usize],
+            InputSource::Audio(wire) => self.audio_wires[wire as usize * self.block_size],
         }
     }
 
@@ -309,6 +367,11 @@ impl DemandCtx<'_> {
         self.rgen.next_unipolar()
     }
 
+    /// Draw an integer from the enclosing synth's shared random stream.
+    fn random_irand(&mut self, n: i32) -> i32 {
+        self.rgen.next_irand(n)
+    }
+
     /// Post one polled `value` to the host (`Dpoll`): a [`NodeMsg`] of kind [`NodeMsgKind::Poll`]
     /// carrying the baked `label` and the optional `trigid` (echoed as `reply_id`). Best-effort - it
     /// is dropped if the block's message capacity is reached, like every other node message.
@@ -327,7 +390,7 @@ impl DemandCtx<'_> {
     }
 }
 
-/// Run one pull of demand unit `unit`: produce its next value or reset it.
+/// Run one demand-unit callback and maintain its retained output value.
 ///
 /// The borrow-safety trick that keeps this `unsafe`-free under recursion: copy the unit's `Pod` state
 /// into a stack buffer, run produce/reset against that copy while the [`DemandCtx`] holds `&mut` the
@@ -344,6 +407,7 @@ fn pull(
     audio_wires: &[f32],
     control_wires: &[f32],
     block_size: usize,
+    offset: usize,
     world: &mut DemandWorld<'_, '_>,
     unit: usize,
     op: Op,
@@ -351,6 +415,9 @@ fn pull(
     let v = &plan[unit];
     let off = v.state_offset;
     let size = v.state_size;
+    let retained_output = *bytemuck::from_bytes::<f32>(
+        &arena[v.output_offset..v.output_offset + core::mem::size_of::<f32>()],
+    );
     debug_assert!(
         size <= MAX_DEMAND_STATE,
         "demand state exceeds MAX_DEMAND_STATE"
@@ -365,6 +432,7 @@ fn pull(
             audio_wires,
             control_wires,
             block_size,
+            offset,
             // Reborrow the world for this level; the inner `node_msgs` sink is reborrowed by value so
             // `DemandCtx` keeps a single lifetime while still being able to recurse.
             buffers: &mut *world.buffers,
@@ -374,14 +442,23 @@ fn pull(
             rgen: &mut *world.rgen,
         };
         match op {
+            Op::Init => {
+                (v.init)(&mut buf.0[..size], &mut ctx);
+                retained_output
+            }
             Op::Produce => (v.produce)(&mut buf.0[..size], &mut ctx),
             Op::Reset => {
                 (v.reset)(&mut buf.0[..size], &mut ctx);
-                0.0
+                retained_output
             }
         }
     };
     arena[off..off + size].copy_from_slice(&buf.0[..size]);
+    if op == Op::Produce {
+        *bytemuck::from_bytes_mut::<f32>(
+            &mut arena[v.output_offset..v.output_offset + core::mem::size_of::<f32>()],
+        ) = out;
+    }
     out
 }
 
@@ -419,14 +496,30 @@ impl<'a> DemandAccess<'a> {
         }
     }
 
-    /// Pull the next value of demand unit `unit`, threading the consumer's [`DemandWorld`] reach.
-    pub fn produce(&mut self, world: &mut DemandWorld<'_, '_>, unit: usize) -> f32 {
+    /// Run one demand unit's constructor callback.
+    pub fn init(&mut self, world: &mut DemandWorld<'_, '_>, unit: usize) {
         pull(
             self.plan,
             &mut *self.state,
             self.audio_wires,
             self.control_wires,
             self.block_size,
+            0,
+            world,
+            unit,
+            Op::Init,
+        );
+    }
+
+    /// Pull the next value of demand unit `unit`, threading the consumer's [`DemandWorld`] reach.
+    pub fn produce(&mut self, world: &mut DemandWorld<'_, '_>, unit: usize, offset: usize) -> f32 {
+        pull(
+            self.plan,
+            &mut *self.state,
+            self.audio_wires,
+            self.control_wires,
+            self.block_size,
+            offset,
             world,
             unit,
             Op::Produce,
@@ -441,6 +534,7 @@ impl<'a> DemandAccess<'a> {
             self.audio_wires,
             self.control_wires,
             self.block_size,
+            0,
             world,
             unit,
             Op::Reset,
@@ -461,9 +555,11 @@ pub fn demand_next(
     demand: &mut DemandAccess<'_>,
     world: &mut DemandWorld<'_, '_>,
     input: usize,
+    offset: usize,
 ) -> f32 {
     match ins.source(input) {
-        InputSource::Demand(d) => demand.produce(world, d as usize),
+        InputSource::Demand(d) => demand.produce(world, d as usize, offset),
+        InputSource::Audio(_) => ins.audio(input)[offset.saturating_sub(1)],
         _ => ins.control(input),
     }
 }
