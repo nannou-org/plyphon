@@ -91,3 +91,22 @@ description of those prohibited implementations as a substitute.
   conformance pack.
 - I found no evidence that prohibited server implementation material entered the clean-room
   implementation.
+
+## Independent delta-review attestation — 2026-07-29
+
+- Reviewers: fresh independent clean-room delta reviewers
+- Date: 2026-07-29
+- Reviewed Plyphon range:
+  `86b5d040592ace4dfbb6a4b3c2b2cd05a629b669..65fb4e2e9eb796945d571f8e22b34ce9290e8d99`
+- Families reviewed: `Decimator`, `BMoog`, `Perlin3`, `RosslerL`, `PV_Freeze`
+- Permitted inputs used: the source-exact Spec 100 contract; the verified primary and boundary
+  black-box conformance packs and their manifests, capture scripts, verifiers, and retained
+  vectors; the public BMoog functional table retained in the pack; Ken Perlin's published
+  permutation and improved-noise equations; standard Rössler equations, fourth-order Runge–Kutta,
+  and linear interpolation; existing Plyphon unit, buffer, and phase-vocoder primitives
+- The reviewers compared the aggregate implementation and tests only against the permitted
+  materials above. Direct-source families were reviewed separately against their permitted pinned
+  sources.
+- The reviewers did not inspect, transcribe, summarize, or receive implementation details from any
+  prohibited server file listed above and found no evidence that such material entered the
+  clean-room implementation.
