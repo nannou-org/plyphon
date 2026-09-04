@@ -562,6 +562,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-filtered-saw"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "example-audio",
+ "plyphon",
+ "plyphon-synthdef",
+]
+
+[[package]]
 name = "example-filters"
 version = "0.1.0"
 dependencies = [
@@ -1520,6 +1530,13 @@ dependencies = [
  "plyphon-unit",
  "rt-alloc",
  "rtrb",
+]
+
+[[package]]
+name = "plyphon-synthdef"
+version = "0.1.0"
+dependencies = [
+ "plyphon",
 ]
 
 [[package]]
