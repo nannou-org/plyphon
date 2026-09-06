@@ -165,7 +165,7 @@ use plyphon_synthdef::{Rate, ugen};
 
 ugen!(
     /// Resonant two-pole low-pass.
-    RLPF => RLPFBuilder [ar: Rate::Audio, kr: Rate::Control](
+    "RLPF" => RLPF [ar: Rate::Audio, kr: Rate::Control](
         input = 0.0,
         freq = 440.0,
         rq = 1.0,
@@ -174,8 +174,9 @@ ugen!(
 ```
 
 The generated builder is indistinguishable from a built-in one: defaults, setters, operators,
-the `UGenBuilder` math methods, finalize-on-use, `#[must_use]`. The struct name doubles as the
-engine registry name (via `stringify!`), so it must match the unit's registered name exactly.
+the `UGenBuilder` math methods, finalize-on-use, `#[must_use]`. The string is the engine
+registry name and must match the unit's registered name exactly; the ident is the Rust type
+(a `RLPFBuilder` is generated automatically).
 
 Units with special input shapes are hand-written against the public core API, mirroring `In`
 (structural `num_outputs` as a constructor argument) or `Out` (a sink with an inherent `.emit()`

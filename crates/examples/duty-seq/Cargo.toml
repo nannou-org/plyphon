@@ -12,6 +12,7 @@ repository.workspace = true
 [dependencies]
 example-audio.workspace = true
 plyphon.workspace = true
+plyphon-synthdef.workspace = true
 
 # Web-only: the wasm panic hook for readable console errors.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

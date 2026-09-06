@@ -63,6 +63,7 @@ pub use plyphon::{Param, Rate};
 pub mod __private {
     pub use crate::ops::{binary_op, unary_op};
     pub use alloc::vec;
+    pub use paste;
 }
 
 /// Build a multichannel [`UGenInput`] from mixed element types (an array literal requires one

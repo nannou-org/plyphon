@@ -33,7 +33,7 @@ use plyphon_synthdef::{Out, Rate, Saw, SynthDefBuilder, UGenBuilder, ugen};
 // redefining it locally proves downstream crates can wrap units the builder doesn't cover yet.
 ugen!(
     /// Resonant two-pole low-pass (locally declared custom wrapper).
-    RLPF => RLPFBuilder [ar: Rate::Audio, kr: Rate::Control](
+    "RLPF" => RLPF [ar: Rate::Audio, kr: Rate::Control](
         /// The signal to filter (default 0).
         input = 0.0,
         /// Cutoff frequency in Hz (default 440).

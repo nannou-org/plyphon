@@ -27,7 +27,7 @@ use crate::{impl_builder_ops, ugen};
 
 ugen!(
     /// Band-limited sawtooth.
-    Saw => SawBuilder [ar: Rate::Audio, kr: Rate::Control](
+    "Saw" => Saw [ar: Rate::Audio, kr: Rate::Control](
         /// Frequency in Hz (default 440).
         freq = 440.0,
     ) -> 1
@@ -35,7 +35,7 @@ ugen!(
 
 ugen!(
     /// Sine oscillator.
-    SinOsc => SinOscBuilder [ar: Rate::Audio, kr: Rate::Control](
+    "SinOsc" => SinOsc [ar: Rate::Audio, kr: Rate::Control](
         /// Frequency in Hz (default 440).
         freq = 440.0,
         /// Phase offset in radians (default 0).
@@ -45,7 +45,7 @@ ugen!(
 
 ugen!(
     /// Second-order Butterworth low-pass.
-    LPF => LPFBuilder [ar: Rate::Audio, kr: Rate::Control](
+    "LPF" => LPF [ar: Rate::Audio, kr: Rate::Control](
         /// The signal to filter (default 0).
         input = 0.0,
         /// Cutoff frequency in Hz (default 440).
@@ -55,7 +55,7 @@ ugen!(
 
 ugen!(
     /// Resonant two-pole low-pass.
-    RLPF => RLPFBuilder [ar: Rate::Audio, kr: Rate::Control](
+    "RLPF" => RLPF [ar: Rate::Audio, kr: Rate::Control](
         /// The signal to filter (default 0).
         input = 0.0,
         /// Cutoff frequency in Hz (default 440).
@@ -67,7 +67,7 @@ ugen!(
 
 ugen!(
     /// Equal-power stereo panner: 2 outputs.
-    Pan2 => Pan2Builder [ar: Rate::Audio, kr: Rate::Control](
+    "Pan2" => Pan2 [ar: Rate::Audio, kr: Rate::Control](
         /// The signal to pan (default 0).
         input = 0.0,
         /// Pan position, -1 (left) to 1 (right) (default 0).
@@ -75,6 +75,16 @@ ugen!(
         /// Level scale (default 1).
         level = 1.0,
     ) -> 2
+);
+
+ugen!(
+    /// Demand-rate sequence: yields `list` items in order, looping `repeats` times.
+    "Dseq" => DSeq [new: Rate::Demand](
+        /// Number of repeats (default 1).
+        repeats = 1.0,
+        /// Sequence items.
+        list = [],
+    ) -> 1
 );
 
 /// Bus input: `num_channels` outputs read from consecutive buses starting at `bus` (default 0).

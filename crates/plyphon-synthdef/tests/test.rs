@@ -1,6 +1,6 @@
 use plyphon::{InputRef, Rate, SynthDef};
 use plyphon_synthdef::{
-    In, LPF, Out, Pan2, Saw, Signal, SinOsc, SynthDefBuilder, UGenBuilder, mce,
+    DSeq, In, LPF, Out, Pan2, Saw, Signal, SinOsc, SynthDefBuilder, UGenBuilder, mce,
 };
 
 /// Every `InputRef::Unit` must reference an *earlier* unit - the SynthDef ordering contract.
@@ -357,6 +357,33 @@ fn out_expands_over_bus_array() {
 fn empty_multi_input_panics() {
     let g = SynthDefBuilder::new();
     let _ = SinOsc::ar(&g).freq(Vec::<f32>::new()).signal();
+}
+
+#[test]
+fn dseq_flattens_list_without_expanding() {
+    // `list = []` is flat-spread: the array becomes consecutive inputs, not parallel Dseq units.
+    let g = SynthDefBuilder::new();
+    let _ = DSeq::new(&g)
+        .repeats(f32::INFINITY)
+        .list([0.1, 0.2, 0.3])
+        .signal();
+
+    let def = g.build("t");
+    assert_eq!(def.units.len(), 1, "list must not multichannel-expand");
+    assert_eq!(def.units[0].name, "Dseq");
+    assert_eq!(def.units[0].rate, Rate::Demand);
+    assert_eq!(def.units[0].inputs.len(), 4);
+    assert!(is_const(&def.units[0].inputs[0], f32::INFINITY));
+    assert!(is_const(&def.units[0].inputs[1], 0.1));
+    assert!(is_const(&def.units[0].inputs[2], 0.2));
+    assert!(is_const(&def.units[0].inputs[3], 0.3));
+
+    // Defaults: repeats = 1, empty list → a single input.
+    let g = SynthDefBuilder::new();
+    let _ = DSeq::new(&g).signal();
+    let def = g.build("t");
+    assert_eq!(def.units[0].inputs.len(), 1);
+    assert!(is_const(&def.units[0].inputs[0], 1.0));
 }
 
 /// The extended operator surface maps onto the engine's selector table: `%`/`!` operators, the
