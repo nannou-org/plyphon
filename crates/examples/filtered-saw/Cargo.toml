@@ -1,8 +1,8 @@
 [package]
-name = "example-duty-seq"
+name = "example-filtered-saw"
 version = "0.1.0"
 publish = false
-description = "A plyphon example: a self-driving melodic sequencer clocked by Duty.kr pulling Dseq/Dseries/Dwhite demand-rate sources entirely on the audio thread."
+description = "The anatomy of a hand-written SynthDef: a parameterised filtered saw driven from the control plane."
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
