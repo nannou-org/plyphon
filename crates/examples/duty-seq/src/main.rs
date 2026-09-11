@@ -32,7 +32,7 @@ plyphon_synthdef::ugen!(
 );
 
 plyphon_synthdef::ugen!(
-    /// DWhite returns numbers in the continuous range between lo and hi. Returns integer values.
+    /// DWhite returns numbers in the continuous range between lo and hi.
     "Dwhite" => DWhite [new: Rate::Demand](
         /// Number of values to create (default infinity).
         length = f32::INFINITY,

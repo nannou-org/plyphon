@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::fmt;
 
-use plyphon::{InputRef, Param, Rate, SynthDef, UnitSpec};
+use plyphon::{DoneAction, InputRef, Param, Rate, SynthDef, UnitSpec};
 
 /// The synthdef under construction: an arena of units plus the declared parameters.
 ///
@@ -167,6 +167,12 @@ impl<'g> From<f32> for UGenInput<'g> {
 impl<'g> From<i32> for UGenInput<'g> {
     fn from(v: i32) -> Self {
         UGenInput::Constant(v as f32)
+    }
+}
+
+impl<'g> From<DoneAction> for UGenInput<'g> {
+    fn from(value: DoneAction) -> Self {
+        UGenInput::Constant(value.to_tag() as f32)
     }
 }
 
