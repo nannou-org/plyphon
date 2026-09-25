@@ -121,14 +121,17 @@ use crate::unit::pv_ops::{
 };
 use crate::unit::ramp::{RampCtor, VarLagCtor};
 use crate::unit::rand::{
-    ExpRandCtor, RandCtor, RandIDCtor, RandSeedCtor, TExpRandCtor, TIRandCtor, TRandCtor,
+    CoinGateCtor, ExpRandCtor, IRandCtor, LinRandCtor, NRandCtor, RandCtor, RandIDCtor,
+    RandSeedCtor, TExpRandCtor, TIRandCtor, TRandCtor,
 };
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
 use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::section::{FOSCtor, SOSCtor};
-use crate::unit::select::{DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor};
+use crate::unit::select::{
+    DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor, TWindexCtor,
+};
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::shape::{
@@ -408,9 +411,13 @@ impl UnitRegistry {
         // the free-running noise generators above each embed their own.
         registry.register("Rand", Box::new(RandCtor));
         registry.register("ExpRand", Box::new(ExpRandCtor));
+        registry.register("IRand", Box::new(IRandCtor));
+        registry.register("LinRand", Box::new(LinRandCtor));
+        registry.register("NRand", Box::new(NRandCtor));
         registry.register("TRand", Box::new(TRandCtor));
         registry.register("TExpRand", Box::new(TExpRandCtor));
         registry.register("TIRand", Box::new(TIRandCtor));
+        registry.register("CoinGate", Box::new(CoinGateCtor));
         registry.register("RandSeed", Box::new(RandSeedCtor));
         registry.register("RandID", Box::new(RandIDCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
@@ -451,6 +458,7 @@ impl UnitRegistry {
         registry.register("ScopeOut", Box::new(ScopeOutCtor));
         // Selection / buffer indexing.
         registry.register("Select", Box::new(SelectCtor));
+        registry.register("TWindex", Box::new(TWindexCtor));
         registry.register("Index", Box::new(IndexCtor(IndexMode::Clip)));
         registry.register("IndexL", Box::new(IndexCtor(IndexMode::Lin)));
         registry.register("WrapIndex", Box::new(IndexCtor(IndexMode::Wrap)));
