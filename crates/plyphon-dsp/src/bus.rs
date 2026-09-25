@@ -66,23 +66,27 @@ impl AudioBus {
 
     /// Write `src` into channel `ch` for block `buf_counter`.
     ///
-    /// If the channel was already written this block it accumulates (sums); otherwise it overwrites
-    /// and marks the channel touched. `src` shorter than a block leaves the remainder zeroed on a
-    /// fresh write, mirroring scsynth's `Out` semantics.
+    /// If the channel was already written this block it accumulates (sums); otherwise it copies
+    /// `src` over the channel and marks it touched (scsynth's `Out_next_a`: `Accum` or `Copy`).
+    /// `src` shorter than a block leaves the remainder zeroed on a fresh write.
     pub fn write_accumulate(&mut self, ch: usize, buf_counter: u64, src: &[f32]) {
         self.write_accumulate_decimated(ch, buf_counter, 0, src, 1);
     }
 
     /// Write `src` into channel `ch` at sample `offset` for block `buf_counter`, taking every
-    /// `factor`-th sample of `src` - the reblock/resample boundary form. A graph running at a smaller
-    /// block and/or oversampled rate writes each sub-block tick into its own slice of the
-    /// World-block-wide channel, decimating its `factor`x-oversampled interior down to the World rate
-    /// (scsynth's `Out_next_a_reblock`, which zeroes the channel on the first writer).
+    /// `factor`-th sample of `src`.
     ///
-    /// The first writer of the channel this block clears the **whole** channel and marks it touched,
-    /// so every later tick (and every other synth) then accumulates into its own slice over a clean
-    /// zero (or a co-writer's signal). `offset == 0`, `factor == 1`, full-block `src` reduces to
-    /// [`write_accumulate`](Self::write_accumulate).
+    /// A whole block written at once (`offset == 0`, `factor == 1`, `src` a full block - an
+    /// ordinary graph) is scsynth's `Out_next_a`: the first writer of the channel this block copies
+    /// `src` over it and marks it touched, and later writers sum onto it. Copying rather than
+    /// summing onto zero keeps a `-0.0` sample `-0.0`.
+    ///
+    /// Anything else is the reblock/resample boundary form, scsynth's `Out_next_a_reblock`: a graph
+    /// running at a smaller block and/or oversampled rate writes each sub-block tick into its own
+    /// slice of the World-block-wide channel, decimating its `factor`x-oversampled interior down to
+    /// the World rate. There the first writer of the channel this block clears the **whole**
+    /// channel and marks it touched, and every tick (and every other synth) then sums into its own
+    /// slice.
     pub fn write_accumulate_decimated(
         &mut self,
         ch: usize,
@@ -102,6 +106,10 @@ impl AudioBus {
         let start = ch * bs;
         let dst = &mut self.data[start..start + bs];
         if first {
+            if offset == 0 && factor == 1 && src.len() == bs {
+                dst.copy_from_slice(src);
+                return;
+            }
             dst.fill(0.0);
         }
         // World-rate output samples = the decimated source length, clamped into the channel slice.

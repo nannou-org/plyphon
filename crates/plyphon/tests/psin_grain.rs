@@ -50,16 +50,13 @@ fn grain_matches_scsynth_and_frees_its_synth() {
     world.fill(&mut third, 1);
     buf.extend_from_slice(&third);
 
-    // The grain's first sample is -0 (a negative resonator sample at level 0); the bus it is
-    // summed onto turns that into +0.
-    assert_eq!(buf[0], 0.0);
-    let picks = [1, 2, 3, 62, 63, 64, 100, 127, 128, 143, 144, 150];
+    let picks = [0, 1, 2, 3, 62, 63, 64, 100, 127, 128, 143, 144, 150];
     let got: Vec<u32> = picks.iter().map(|&i| buf[i].to_bits()).collect();
     assert_eq!(
         got,
         [
-            0x3aebf72a, 0x3be84f91, 0x3c7fcd77, 0x3ef28216, 0x3ee8d1b6, 0x3edaf7a6, 0x3e5946e8,
-            0xbe292af7, 0xbe2f2bab, 0xbaec07f3, 0x00000000, 0x00000000,
+            0x80000000, 0x3aebf72a, 0x3be84f91, 0x3c7fcd77, 0x3ef28216, 0x3ee8d1b6, 0x3edaf7a6,
+            0x3e5946e8, 0xbe292af7, 0xbe2f2bab, 0xbaec07f3, 0x00000000, 0x00000000,
         ]
     );
     assert!(

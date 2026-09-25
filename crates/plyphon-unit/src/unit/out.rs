@@ -11,6 +11,10 @@ use plyphon_dsp::rate::Rate;
 /// `Out.ar(bus, signals)` / `Out.kr(bus, signals)`: writes each signal input to a consecutive bus
 /// channel starting at `bus`, summing with anything already written to that channel this block.
 /// `Out.ar` targets the audio bus bank, `Out.kr` the control bus bank, chosen by the unit's rate.
+///
+/// As in scsynth, the first write to a channel in a block copies the signal over it; only later
+/// writes sum (a reblocked graph's `Out.ar` clears the channel and sums instead, as
+/// `Out_next_a_reblock` does). A reblocked graph writes a control bus on its first tick only.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Out {
@@ -48,7 +52,8 @@ impl Unit for Out {
                     factor,
                 );
             }
-        } else {
+        } else if ctx.tick == 0 {
+            // A reblocked graph writes a control bus on its first tick only (`Out_next_k_reblock`).
             for k in 1..ctx.ins.len() {
                 unit::control_out(
                     ctx.buses,
@@ -108,7 +113,9 @@ impl Unit for ReplaceOut {
                     factor,
                 );
             }
-        } else {
+        } else if ctx.tick == 0 {
+            // A reblocked graph writes a control bus on its first tick only
+            // (`ReplaceOut_next_k_reblock`).
             for k in 1..ctx.ins.len() {
                 unit::control_replace(
                     ctx.buses,
@@ -279,12 +286,25 @@ impl Unit for OffsetOut {
             let bus_offset = ctx.tick * (bs / factor);
             let staged = ctx.outs.audio(0);
             shift_and_carry(&mut staged[..bs], signal, carry, offset, first);
+            // On the first block of an ordinary graph, a channel another writer has already
+            // touched keeps its leading `offset` samples as they are ("just keep the existing bus
+            // content") and only the signal is summed in after them; an untouched one is copied
+            // whole, the leading samples cleared (`OffsetOut_next_a`).
+            let whole_block = factor == 1 && bs == ctx.buses.audio().block_size();
+            let keep = if first
+                && whole_block
+                && unit::audio_in_touched(ctx.buses, base + channel, ctx.buf_counter)
+            {
+                offset.min(bs)
+            } else {
+                0
+            };
             unit::audio_out_decimated(
                 ctx.buses,
                 ctx.buf_counter,
                 base + channel,
-                bus_offset,
-                &staged[..bs],
+                bus_offset + keep,
+                &staged[keep..bs],
                 factor,
             );
         }
