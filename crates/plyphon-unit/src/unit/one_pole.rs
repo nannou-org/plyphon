@@ -11,7 +11,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::filter::zap;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `OnePole.ar(in, coef)`: a one-pole filter, `out(i) = (1 - |coef|) * in(i) + coef * out(i-1)`.
 #[repr(C)]
@@ -66,9 +66,10 @@ pub struct OneZero {
 }
 
 impl Unit for OneZero {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Seed the input history with the current input (scsynth's `m_x1 = ZIN0(0)`).
         self.x1 = ctx.ins.control(0) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -114,6 +115,12 @@ pub struct Integrator {
 }
 
 impl Unit for Integrator {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let b1 = ctx.ins.control(1) as f64;
         let mut y1 = self.y1;
@@ -149,9 +156,10 @@ pub struct LeakDC {
 }
 
 impl Unit for LeakDC {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Seed the input history (scsynth's `m_x1 = ZIN0(0)`), so the first sample does not step.
         self.x1 = ctx.ins.control(0) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

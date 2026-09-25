@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::io::sample_channel;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 use plyphon_dsp::ops;
 use plyphon_dsp::rate::Rate;
@@ -150,11 +150,12 @@ impl Lag {
 }
 
 impl Unit for Lag {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Start at the input value (scsynth's `m_y1 = ZIN0(0)`) so the first block holds steady
         // instead of ramping up from zero - the coefficient is still computed lazily in `process`,
         // whose sentinel also catches later `lagTime` changes.
         self.y = ctx.ins.control(Self::IN);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -215,10 +216,11 @@ impl Lag2 {
 }
 
 impl Unit for Lag2 {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let x = ctx.ins.control(Self::IN);
         self.y1a = x;
         self.y1b = x;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -283,11 +285,12 @@ impl Lag3 {
 }
 
 impl Unit for Lag3 {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let x = ctx.ins.control(Self::IN);
         self.y1a = x;
         self.y1b = x;
         self.y1c = x;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -370,8 +373,9 @@ impl LagUD {
 }
 
 impl Unit for LagUD {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.y1 = ctx.ins.control(Self::IN);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -446,10 +450,11 @@ impl Lag2UD {
 }
 
 impl Unit for Lag2UD {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let x = ctx.ins.control(Self::IN);
         self.y1a = x;
         self.y1b = x;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -531,11 +536,12 @@ impl Lag3UD {
 }
 
 impl Unit for Lag3UD {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let x = ctx.ins.control(Self::IN);
         self.y1a = x;
         self.y1b = x;
         self.y1c = x;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

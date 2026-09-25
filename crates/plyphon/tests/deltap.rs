@@ -156,16 +156,26 @@ fn one_line_feeds_several_taps() {
     );
 
     // Before either tap opens: silence. Between k1 and k2: exactly one tap (1.0). After k2: both (2.0).
+    // The writer's constructor writes the first input sample and advances the write phase, as
+    // scsynth's `DelTapWr_first` does, so a tap of `k` samples opens at sample `k - 1`.
     assert!(
-        out[..k1].iter().all(|&s| s.abs() < 1e-6),
+        out[..k1 - 1].iter().all(|&s| s.abs() < 1e-6),
         "silent before k1"
     );
     assert!(
-        out[k1 + 1..k2].iter().all(|&s| (s - 1.0).abs() < 1e-6),
+        out[k1..k2 - 1].iter().all(|&s| (s - 1.0).abs() < 1e-6),
         "one tap open between k1 and k2"
     );
     assert!(
-        out[k2 + 1..].iter().all(|&s| (s - 2.0).abs() < 1e-6),
+        out[k2..].iter().all(|&s| (s - 2.0).abs() < 1e-6),
         "both taps open after k2"
+    );
+    assert!(
+        (out[k1 - 1] - 1.0).abs() < 1e-6,
+        "the first tap opens at sample k1 - 1"
+    );
+    assert!(
+        (out[k2 - 1] - 2.0).abs() < 1e-6,
+        "the second tap opens at sample k2 - 1"
     );
 }

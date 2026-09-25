@@ -11,7 +11,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::trigger::{drive, sig};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
 use plyphon_dsp::{math, ops};
 
@@ -220,7 +220,7 @@ pub struct Unwrap {
 }
 
 impl Unit for Unwrap {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let input = ctx.ins.control(0);
         let mut lo = ctx.ins.control(1);
         let mut hi = ctx.ins.control(2);
@@ -235,6 +235,7 @@ impl Unit for Unwrap {
         } else {
             0.0
         };
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

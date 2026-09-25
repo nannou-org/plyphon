@@ -34,6 +34,10 @@ impl SelfTrig {
 }
 
 impl Unit for SelfTrig {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let trig = ctx.ins.control(Self::IN);
         if self.has_output != 0 {
@@ -204,6 +208,12 @@ impl Free {
 }
 
 impl Unit for Free {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let trig = ctx.ins.control(Self::TRIG);
         let id = ctx.ins.control(Self::ID) as i32;
@@ -251,6 +261,12 @@ impl Pause {
 }
 
 impl Unit for Pause {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let gate = ctx.ins.control(Self::GATE);
         let id = ctx.ins.control(Self::ID) as i32;

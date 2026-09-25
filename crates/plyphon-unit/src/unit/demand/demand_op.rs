@@ -52,9 +52,9 @@ fn unary_kernel(index: i16) -> fn(f32) -> f32 {
 /// side stays in step with the other even when its sibling is exhausted - and the result is
 /// [`f32::NAN`] (exhausted) if either operand is `NaN`. A reset propagates to both operands.
 ///
-/// The constructor does not prime: the unit's first pull is its first operand pull (the reference's
-/// binary constructor writes `0` into its output and pulls nothing). This is asymmetric with
-/// [`DemandUnaryOp`], and the asymmetry is the reference's.
+/// The constructor does not prime: the reference's binary constructor writes `0` into its output
+/// and pulls nothing. This is asymmetric with [`DemandUnaryOp`], and the asymmetry is the
+/// reference's.
 ///
 /// `NaN` never reaches the operator: the protocol above handles it first.
 #[repr(C)]
@@ -65,6 +65,8 @@ pub struct DemandBinaryOp {
 }
 
 impl DemandUnit for DemandBinaryOp {
+    fn init(&mut self, _ctx: &mut DemandCtx<'_>) {}
+
     fn reset(&mut self, ctx: &mut DemandCtx<'_>) {
         ctx.reset(A);
         ctx.reset(B);
@@ -109,35 +111,24 @@ impl DemandUnitDef for DemandBinaryOpCtor {
 /// differences from the reference's own math library.
 ///
 /// The reference's constructor runs the unit's calc function once, which consumes one element of
-/// the operand before any consumer pulls. plyphon compiles off the audio thread, where there is no
-/// operand to pull and no `init` hook on a demand unit, so the first produce performs that
-/// constructor pull and then the pull it returns - two pulls, one value. A reset does not re-arm
-/// the prime: the reference's constructor runs once per instantiation. Deferring the prime is
-/// observable only when two unary operators share one source - the reference consumes both prime
-/// elements at construction, this port one per operator's first pull.
+/// the operand before any consumer pulls; the constructor here does the same.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct DemandUnaryOp {
     /// The SuperCollider unary operator index, resolved to a kernel on each produce.
     op: u32,
-    /// `0` until the first produce has performed the constructor's operand pull.
-    primed: u32,
 }
 
 impl DemandUnit for DemandUnaryOp {
+    fn init(&mut self, ctx: &mut DemandCtx<'_>) {
+        let _ = self.produce(ctx);
+    }
+
     fn reset(&mut self, ctx: &mut DemandCtx<'_>) {
-        // A reset rewinds the source, which also undoes the reference's construction-time
-        // prime pull - so the prime is spent here too, and the next produce reads the
-        // source's first element rather than its second.
-        self.primed = 1;
         ctx.reset(A);
     }
 
     fn produce(&mut self, ctx: &mut DemandCtx<'_>) -> f32 {
-        if self.primed == 0 {
-            self.primed = 1;
-            let _ = ctx.demand(A);
-        }
         let a = ctx.demand(A);
         if a.is_nan() {
             return f32::NAN;
@@ -161,7 +152,6 @@ impl DemandUnitDef for DemandUnaryOpCtor {
         }
         Ok(demand_unit_spec(DemandUnaryOp {
             op: ctx.special_index as u32,
-            primed: 0,
         }))
     }
 }

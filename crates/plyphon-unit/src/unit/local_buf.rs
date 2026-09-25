@@ -16,12 +16,10 @@
 //! And growing the block may copy the synth's earlier state once, on its first block, where scsynth
 //! allocates each buffer separately.
 //!
-//! `SetBuf` and `ClearBuf` apply their write on the unit's **first process**. scsynth applies it at
-//! ctor - before any unit's first calc - so a consumer ordered *before* the writer would see the
-//! write one block earlier there; sclang always orders these writers before the consumers that read
-//! the buffer, where the two schedules agree. Both output a constant `0` as scsynth does; sclang
-//! reads the buffer number from the `LocalBuf` itself (`.set`/`.clear` return the receiver), never
-//! from these units' outputs.
+//! `SetBuf` and `ClearBuf` apply their write once, in their constructor, as scsynth does - before any
+//! unit's first calc (their first `process` runs as their constructor). Both output a constant `0`
+//! as scsynth does; sclang reads the buffer number from the `LocalBuf` itself (`.set`/`.clear`
+//! return the receiver), never from these units' outputs.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -90,6 +88,11 @@ pub struct MaxLocalBufs {
 }
 
 impl Unit for MaxLocalBufs {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         *ctx.outs.control(0) = 0.0;
         DoneAction::Nothing
@@ -108,7 +111,7 @@ impl UnitDef for MaxLocalBufsCtor {
     }
 }
 
-/// `ClearBuf(buf)`: zeroes every sample of buffer `buf` once, on the unit's first process. Outputs
+/// `ClearBuf(buf)`: zeroes every sample of buffer `buf` once, when the synth is constructed. Outputs
 /// a constant `0` (scsynth's `OUT0(0) = 0.f`). Works on world and graph-local buffers alike (they
 /// share the buffer io resolution). A missing buffer is a no-op, like scsynth's "no valid buffer".
 #[repr(C)]
@@ -147,7 +150,7 @@ impl UnitDef for ClearBufCtor {
 }
 
 /// `SetBuf(buf, offset, numValues, values...)`: writes `numValues` values into buffer `buf` starting
-/// at flat (interleaved) sample `offset`, once, on the unit's first process. Outputs a constant `0`
+/// at flat (interleaved) sample `offset`, once, when the synth is constructed. Outputs a constant `0`
 /// (scsynth's `OUT0(0) = 0.f`). The input layout matches scsynth's `SetBuf_Ctor` (`IN0(1)` offset,
 /// `IN0(2)` count, values from `IN0(3)`); the write is clamped to the buffer's samples
 /// (`sc_min(buf->samples, ...)`) and to the values actually supplied. Works on world and graph-local

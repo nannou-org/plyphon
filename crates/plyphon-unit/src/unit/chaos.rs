@@ -23,7 +23,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 
 const TWO_PI: f64 = 2.0 * PI;
@@ -174,18 +174,6 @@ fn chaos_interp(
     (x, xm1)
 }
 
-/// Seed the counter and interpolation phase of an `*L` unit for its first block.
-///
-/// scsynth's `*L` constructors seed their state and then run one sample of their calc function,
-/// which advances the counter and the phase without iterating the map (the hold length is never
-/// below one sample). Reproducing that here keeps the first emitted sample - and every hold boundary
-/// after it - aligned with the reference.
-fn init_interp_phase(ctx: &InitCtx<'_>, counter: &mut f32, frac: &mut f64) {
-    let (_, slope) = samples_per_cycle_slope(ctx.ins.control(0), ctx.own.sample_rate);
-    *counter = 1.0;
-    *frac = slope;
-}
-
 /// `CuspN.ar(freq, a, b, xi)`: the cusp map `x = a - b*sqrt(|x|)`.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -196,8 +184,9 @@ pub struct CuspN {
 }
 
 impl Unit for CuspN {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.xn = ctx.ins.control(3) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -224,8 +213,9 @@ pub struct QuadN {
 }
 
 impl Unit for QuadN {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.xn = ctx.ins.control(4) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -253,8 +243,9 @@ pub struct LinCongN {
 }
 
 impl Unit for LinCongN {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.xn = ctx.ins.control(4) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -283,9 +274,10 @@ pub struct GbmanN {
 }
 
 impl Unit for GbmanN {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.xn = ctx.ins.control(1) as f64;
         self.yn = ctx.ins.control(2) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -317,9 +309,10 @@ pub struct StandardN {
 }
 
 impl Unit for StandardN {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.xn = ctx.ins.control(2) as f64;
         self.yn = ctx.ins.control(3) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -353,9 +346,10 @@ pub struct LatoocarfianN {
 }
 
 impl Unit for LatoocarfianN {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.xn = ctx.ins.control(5) as f64;
         self.yn = ctx.ins.control(6) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -399,11 +393,11 @@ pub struct CuspL {
 }
 
 impl Unit for CuspL {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.x0 = f64::from(ctx.ins.control(3));
         self.xn = self.x0;
         self.xnm1 = self.x0;
-        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -448,11 +442,11 @@ pub struct QuadL {
 }
 
 impl Unit for QuadL {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.x0 = f64::from(ctx.ins.control(4));
         self.xn = self.x0;
         self.xnm1 = self.x0;
-        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -511,7 +505,7 @@ pub struct HenonL {
 }
 
 impl Unit for HenonL {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.a = f64::from(ctx.ins.control(1));
         self.b = f64::from(ctx.ins.control(2));
         self.x0 = f64::from(ctx.ins.control(3));
@@ -520,7 +514,7 @@ impl Unit for HenonL {
         self.xnm1 = self.x0;
         self.xnm2 = self.x1;
         self.stable = 1;
-        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -615,7 +609,7 @@ pub struct LorenzL {
 }
 
 impl Unit for LorenzL {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.x0 = f64::from(ctx.ins.control(5));
         self.y0 = f64::from(ctx.ins.control(6));
         self.z0 = f64::from(ctx.ins.control(7));
@@ -623,7 +617,7 @@ impl Unit for LorenzL {
         self.yn = self.y0;
         self.zn = self.z0;
         self.xnm1 = self.x0;
-        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -719,13 +713,13 @@ pub struct StandardL {
 }
 
 impl Unit for StandardL {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.x0 = f64::from(ctx.ins.control(2));
         self.y0 = f64::from(ctx.ins.control(3));
         self.xn = self.x0;
         self.yn = self.y0;
         self.xnm1 = self.x0;
-        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

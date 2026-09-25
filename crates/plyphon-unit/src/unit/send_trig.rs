@@ -27,6 +27,11 @@ impl SendTrig {
 }
 
 impl Unit for SendTrig {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let id = ctx.ins.control(Self::ID) as i32;
         let node = ctx.node_id;

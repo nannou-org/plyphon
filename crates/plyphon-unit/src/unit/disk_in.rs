@@ -20,6 +20,11 @@ impl DiskIn {
 }
 
 impl Unit for DiskIn {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let num_channels = self.num_channels as usize;
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;

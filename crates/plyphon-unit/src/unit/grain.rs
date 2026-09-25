@@ -1123,6 +1123,11 @@ impl TGrains {
 }
 
 impl Unit for TGrains {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let num_out = self.num_channels as usize;
         let block = ctx.outs.audio(0).len();
@@ -1275,6 +1280,11 @@ impl Warp1 {
 }
 
 impl Unit for Warp1 {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn reseed(&mut self, seed: u64) {
         self.rng = Rng::new(seed);
     }

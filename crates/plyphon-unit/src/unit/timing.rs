@@ -39,6 +39,10 @@ impl PulseCount {
 }
 
 impl Unit for PulseCount {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -73,6 +77,10 @@ impl PulseDivider {
 }
 
 impl Unit for PulseDivider {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -126,6 +134,10 @@ impl Stepper {
 }
 
 impl Unit for Stepper {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -167,6 +179,13 @@ impl ZeroCrossing {
 }
 
 impl Unit for ZeroCrossing {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor seeds the previous input and writes a zero level, without running the calc.
+        self.prev_in = ctx.ins.control(0);
+        *ctx.outs.control(0) = 0.0;
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let input = sig(&ctx.ins, 0);
@@ -202,6 +221,10 @@ impl Timer {
 }
 
 impl Unit for Timer {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -236,6 +259,10 @@ impl Sweep {
 }
 
 impl Unit for Sweep {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -295,6 +322,10 @@ impl Phasor {
 }
 
 impl Unit for Phasor {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);

@@ -310,7 +310,7 @@ impl Unit for GVerb {
         ];
     }
 
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let sr = ctx.own.sample_rate;
         let revtime = ctx.ins.control(Self::REVTIME);
         self.alpha = math::powf(0.001f64, 1.0 / (sr * revtime as f64));
@@ -327,6 +327,7 @@ impl Unit for GVerb {
         self.earlylevel = ctx.ins.control(Self::EARLYLEVEL);
         self.taillevel = ctx.ins.control(Self::TAILLEVEL);
         self.inited = 1;
+        DoneAction::Nothing
     }
 
     #[allow(clippy::needless_range_loop)]

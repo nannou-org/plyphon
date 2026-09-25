@@ -10,7 +10,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `DC.ar/kr(value)`: a constant signal. `value` is taken at scalar rate (the same every block).
 #[repr(C)]
@@ -54,9 +54,10 @@ impl K2A {
 }
 
 impl Unit for K2A {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Start at the input value so the first block holds steady instead of ramping up from zero.
         self.prev = ctx.ins.control(Self::IN);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -129,6 +130,10 @@ impl T2A {
 }
 
 impl Unit for T2A {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let level = ctx.ins.control(Self::IN);
         let offset = ctx.ins.control(Self::OFFSET);
@@ -168,6 +173,12 @@ impl T2K {
 }
 
 impl Unit for T2K {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // scsynth starts the accumulator at 0 and keeps the largest sample, so NaN inputs (which
         // never compare `>`) are ignored and the output floors at 0.

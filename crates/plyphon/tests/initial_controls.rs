@@ -5,15 +5,15 @@
 
 use bytemuck::{Pod, Zeroable};
 use plyphon::{
-    AddAction, BuildContext, BuildError, BuiltUnit, ControllerBatchCommand, DoneAction, InitCtx,
-    InputRef, Options, Param, ProcessCtx, ROOT_GROUP_ID, Rate, SynthDef, Unit, UnitDef, UnitSpec,
-    engine, unit_spec,
+    AddAction, BuildContext, BuildError, BuiltUnit, ControllerBatchCommand, DoneAction, InputRef,
+    Options, Param, ProcessCtx, ROOT_GROUP_ID, Rate, SynthDef, Unit, UnitDef, UnitSpec, engine,
+    unit_spec,
 };
 
 const BLOCK: usize = 64;
 
-/// A unit whose steady output is the value its one-time `init` pass observed on input zero,
-/// proving what the ctor-equivalent saw.
+/// A unit whose steady output is the value its constructor (`init`) observed on input zero,
+/// proving what the constructor saw.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct InitProbe {
@@ -21,8 +21,9 @@ struct InitProbe {
 }
 
 impl Unit for InitProbe {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.initial = ctx.ins.control(0);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -94,7 +95,7 @@ fn create_with_control(controller: &mut plyphon::Controller, def_name: &str, id:
         .unwrap();
 }
 
-/// The batched value reaches the first `init` pass and the first `process` tick, for every
+/// The batched value reaches the constructor pass and the first `process` tick, for every
 /// parameter rate.
 #[test]
 fn batched_create_applies_controls_before_first_init_and_process() {

@@ -10,7 +10,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::demand::{DemandWorld, demand_next};
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{self, BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, pv, unit_spec};
+use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, pv, unit_spec};
 use plyphon_dsp::math;
 
 /// `PackFFT.kr(chain, bufsize, frombin, tobin, zeroothers, numinvals, magsphases...)`: write a
@@ -75,11 +75,14 @@ fn with_spectrum(ctx: &mut ProcessCtx<'_>, bufnum: usize, write: impl FnOnce(pv:
 }
 
 impl Unit for PackFft {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.frombin = ctx.ins.control(Self::FROMBIN) as i32;
         self.tobin = ctx.ins.control(Self::TOBIN) as i32;
         self.zeroothers = u32::from(ctx.ins.control(Self::ZEROOTHERS) > 0.0);
         self.numinvals = ctx.ins.control(Self::NUMINVALS) as i32;
+        // The constructor passes the chain (input 0) straight through.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

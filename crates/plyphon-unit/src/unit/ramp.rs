@@ -10,7 +10,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::io::sample_channel;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// `Ramp.ar/kr(in, lagTime)`: a linear-interpolating sample-and-hold. Every `lagTime` seconds it reads
 /// the input and ramps linearly toward it over the next interval, so a stepped control becomes a
@@ -30,9 +30,11 @@ impl Ramp {
 }
 
 impl Unit for Ramp {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.level = ctx.ins.control(Self::IN) as f64;
         self.counter = 1;
+        *ctx.outs.control(0) = self.level as f32;
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -107,7 +109,7 @@ impl VarLag {
 }
 
 impl Unit for VarLag {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let in0 = ctx.ins.control(Self::IN);
         let lag = ctx.ins.control(Self::TIME);
         self.level = ctx.ins.control(Self::START) as f64;
@@ -115,6 +117,8 @@ impl Unit for VarLag {
         self.slope = (in0 as f64 - self.level) / self.counter as f64;
         self.in_prev = in0;
         self.lag_prev = lag;
+        *ctx.outs.control(0) = self.level as f32;
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

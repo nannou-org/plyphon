@@ -152,6 +152,11 @@ impl DetectSilence {
 }
 
 impl Unit for DetectSilence {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let thresh = ctx.ins.control(Self::THRESH);

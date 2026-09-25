@@ -40,6 +40,10 @@ pub struct Decay {
 }
 
 impl Unit for Decay {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let decay_time = ctx.ins.control(1);
         if decay_time != self.decay_time {
@@ -91,6 +95,10 @@ pub struct Decay2 {
 }
 
 impl Unit for Decay2 {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let sr = ctx.own.sample_rate;
         let attack_time = ctx.ins.control(1);

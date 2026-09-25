@@ -82,6 +82,10 @@ impl Trig1 {
 }
 
 impl Unit for Trig1 {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -120,6 +124,10 @@ impl Trig {
 }
 
 impl Unit for Trig {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -159,6 +167,10 @@ impl TDelay {
 }
 
 impl Unit for TDelay {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -189,6 +201,10 @@ impl ToggleFF {
 }
 
 impl Unit for ToggleFF {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -222,6 +238,10 @@ impl SetResetFF {
 }
 
 impl Unit for SetResetFF {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let trig = sig(&ctx.ins, 0);
@@ -251,6 +271,10 @@ impl Latch {
 }
 
 impl Unit for Latch {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let input = sig(&ctx.ins, 0);
@@ -278,6 +302,10 @@ impl Gate {
 }
 
 impl Unit for Gate {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let input = sig(&ctx.ins, 0);
@@ -310,6 +338,10 @@ impl Schmidt {
 }
 
 impl Unit for Schmidt {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio_out = self.audio != 0;
         let input = sig(&ctx.ins, 0);

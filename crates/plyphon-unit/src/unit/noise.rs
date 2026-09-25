@@ -13,7 +13,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
 use plyphon_dsp::rng::{Rng, hash};
 
@@ -247,6 +247,12 @@ pub struct BrownNoise {
 }
 
 impl Unit for BrownNoise {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor writes the seeded level, without running the calc.
+        *ctx.outs.control(0) = self.level;
+        DoneAction::Nothing
+    }
+
     fn reseed(&mut self, seed: u64) {
         self.rng = Rng::new(seed);
         self.level = self.rng.next_bipolar();
@@ -430,8 +436,14 @@ pub struct Logistic {
 }
 
 impl Unit for Logistic {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.y1 = ctx.ins.control(2) as f64;
+        // scsynth's constructor iterates the map once with `Logistic_next_1`, which leaves the
+        // sample counter at zero, so the first block iterates again at its first sample.
+        let param = ctx.ins.control(0) as f64;
+        self.y1 = param * self.y1 * (1.0 - self.y1);
+        *ctx.outs.control(0) = self.y1 as f32;
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

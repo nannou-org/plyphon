@@ -60,6 +60,11 @@ impl Poll {
 }
 
 impl Unit for Poll {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ins = ctx.ins; // `Inputs` is `Copy` (borrows the wires, not `ctx`).
         let node = ctx.node_id;

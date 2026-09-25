@@ -59,6 +59,11 @@ pub struct LocalOut {
 }
 
 impl Unit for LocalOut {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if self.num_channels as usize != ctx.local.num_channels() {
             return DoneAction::Nothing;

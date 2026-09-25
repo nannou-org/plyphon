@@ -13,7 +13,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::trigger::{drive, sig};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
 
 /// `Peak.ar/kr(in, trig)`: the running peak of `|in|`; a rising edge of `trig` resets it to the
@@ -27,8 +27,9 @@ pub struct Peak {
 }
 
 impl Unit for Peak {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.level = ctx.ins.control(0).abs();
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -60,8 +61,10 @@ pub struct RunningMin {
 }
 
 impl Unit for RunningMin {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.level = ctx.ins.control(0);
+        *ctx.outs.control(0) = self.level;
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -93,8 +96,10 @@ pub struct RunningMax {
 }
 
 impl Unit for RunningMax {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.level = ctx.ins.control(0);
+        *ctx.outs.control(0) = self.level;
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -126,8 +131,9 @@ pub struct PeakFollower {
 }
 
 impl Unit for PeakFollower {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.level = ctx.ins.control(0).abs();
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -160,9 +166,10 @@ pub struct MostChange {
 }
 
 impl Unit for MostChange {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.prev_a = ctx.ins.control(0);
         self.prev_b = ctx.ins.control(1);
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -204,9 +211,10 @@ pub struct LeastChange {
 }
 
 impl Unit for LeastChange {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.prev_a = ctx.ins.control(0);
         self.prev_b = ctx.ins.control(1);
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -249,10 +257,11 @@ pub struct LastValue {
 }
 
 impl Unit for LastValue {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let v = ctx.ins.control(0);
         self.prev = v;
         self.curr = v;
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

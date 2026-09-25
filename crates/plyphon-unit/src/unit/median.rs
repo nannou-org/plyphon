@@ -9,7 +9,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 
 /// scsynth's `kMAXMEDIANSIZE`.
 const MAX_MEDIAN: usize = 32;
@@ -66,7 +66,7 @@ impl Median {
 }
 
 impl Unit for Median {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // scsynth's `Median_Ctor`: `sc_clip((int)ZIN0(0), 1, kMAXMEDIANSIZE)`.
         self.size = (ctx.ins.control(Self::LENGTH) as i32).clamp(1, MAX_MEDIAN as i32) as u32;
         // Seed the window with the first input, ages ascending (scsynth's `Median_InitMedian`).
@@ -75,6 +75,7 @@ impl Unit for Median {
             self.values[i] = v;
             self.ages[i] = i as i32;
         }
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

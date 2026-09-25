@@ -762,10 +762,10 @@ pub struct ProcessCtx<'a> {
     pub rgen: &'a mut Rng,
 }
 
-/// What a unit may touch while *seeding* state on the first block - see [`Unit::init`].
+/// What a unit may touch while sizing its memory on the first block - see [`Unit::alloc`].
 ///
-/// Like [`ProcessCtx`] but read-only on the world and without [`outs`](ProcessCtx::outs): `init`
-/// seeds the unit's own state from live inputs; it does not produce output or mutate the world.
+/// Like [`ProcessCtx`] but read-only on the world and without [`outs`](ProcessCtx::outs): `alloc`
+/// sizes the unit's memory from live inputs; it does not produce output or mutate the world.
 pub struct InitCtx<'a> {
     /// Audio-rate constants.
     pub audio: &'a RateInfo,
@@ -828,6 +828,8 @@ pub struct Inputs<'a> {
     audio_wires: &'a [f32],
     control_wires: &'a [f32],
     block_size: usize,
+    /// Samples an audio input yields: `block_size`, or one during the constructor calc.
+    calc_len: usize,
 }
 
 impl<'a> Inputs<'a> {
@@ -843,7 +845,15 @@ impl<'a> Inputs<'a> {
             audio_wires,
             control_wires,
             block_size,
+            calc_len: block_size,
         }
+    }
+
+    /// The same view yielding `len` samples per audio input instead of a whole block - the
+    /// constructor calc, which scsynth runs for exactly one sample.
+    pub fn with_len(mut self, len: usize) -> Self {
+        self.calc_len = len.min(self.block_size);
+        self
     }
 
     /// Number of inputs.
@@ -867,7 +877,8 @@ impl<'a> Inputs<'a> {
         self.sources[i]
     }
 
-    /// Audio-rate input `i` as a `block_size` slice.
+    /// Audio-rate input `i` as a slice of the calc length: `block_size`, or one sample during the
+    /// constructor calc.
     ///
     /// Only meaningful when input `i` is audio-rate; units select by [`Inputs::rate`] (they chose
     /// their calc variant at build time from these same rates), so a correctly-built graph never
@@ -876,7 +887,7 @@ impl<'a> Inputs<'a> {
         match self.sources[i] {
             InputSource::Audio(w) => {
                 let start = w as usize * self.block_size;
-                &self.audio_wires[start..start + self.block_size]
+                &self.audio_wires[start..start + self.calc_len]
             }
             _ => &self.audio_wires[..0],
         }
@@ -956,23 +967,35 @@ pub trait Unit: Pod {
     /// plyphon's stand-in for scsynth seeding each `Graph`'s `RGen`. Must not allocate or block.
     fn reseed(&mut self, _seed: u64) {}
 
-    /// Seed state from the unit's initial inputs.
+    /// Construct the unit - scsynth's `*_Ctor`.
     ///
-    /// Called once, on the first control block, in topological order immediately before this unit's
-    /// first [`Unit::process`] - on the audio thread, where inputs are live. By then every input is
-    /// readable at its real starting value: constants, control parameters (including `/s_new` args
-    /// and `/n_map`ped buses), and the first-block outputs of upstream units. Stateful units seed
-    /// here so their first block is already correct - e.g. a smoother starts *at* its input rather
-    /// than ramping up from zero - which is what avoids onset clicks.
+    /// scsynth's `Graph_FirstCalc` runs every unit's constructor, in SynthDef order, before any
+    /// unit's first calc. plyphon does the same on the synth's first block: each unit's `init` runs
+    /// on the audio thread, in SynthDef order, right after [`Unit::alloc`], before any
+    /// [`Unit::process`]. `ctx` views exactly one sample, as a constructor's calc does
+    /// (`inNumSamples == 1`): every input reads its real starting value - constants, control
+    /// parameters (including `/s_new` args and `/n_map`ped buses), and the sample each earlier
+    /// unit's constructor wrote - which is what a constructor reads with `ZIN0`. The one sample
+    /// `init` writes to `ctx.outs` is what later constructors read; the first block then
+    /// overwrites it.
     ///
-    /// This mirrors the seeding an scsynth `*_Ctor` does at its first calc. Memory sized from inputs
-    /// is allocated just before, in [`Unit::alloc`]; `init` itself, like [`Unit::process`], must not
-    /// allocate, block, or take locks. The default is a no-op.
-    fn init(&mut self, _ctx: &InitCtx<'_>) {}
+    /// Stateful units seed here, so their first block is already correct - e.g. a smoother starts
+    /// *at* its input rather than ramping up from zero, which is what avoids onset clicks. Most
+    /// scsynth constructors then run the calc for one sample, and so does the default. A unit whose
+    /// constructor does anything else overrides it to match: writing a value without advancing,
+    /// clearing its output, or running the calc and putting its state back.
+    ///
+    /// Like [`Unit::process`], `init` must not allocate, block, or take locks; memory sized from
+    /// inputs is allocated just before, in [`Unit::alloc`].
+    #[must_use]
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.process(ctx)
+    }
 
     /// Allocate the unit's input-sized memory - scsynth's constructor-time `RTAlloc`.
     ///
-    /// Called once, on the first control block, immediately before [`Unit::init`], for units built
+    /// Called once, in SynthDef order on the synth's first block, immediately before
+    /// [`Unit::init`], for units built
     /// with [`unit_spec_pool`]. Like `init` it sees live inputs, so a size read from `ctx.ins` is the
     /// first-sample value a scsynth constructor reads with `ZIN0`. The unit computes its size, calls
     /// [`Aux::alloc`], and may prepare the fresh memory (or derived state such as a wrap mask). If the
@@ -993,9 +1016,8 @@ pub trait Unit: Pod {
 /// `UnitCalcFunc`/`mCalcFunc`. `state` is exactly `size_of::<T>()` bytes, aligned for `T`.
 pub type ProcessFn = fn(&mut [u8], &mut ProcessCtx<'_>) -> DoneAction;
 
-/// A type-erased one-time seeding function over a unit's pool-resident state bytes (see
-/// [`Unit::init`]).
-pub type InitFn = fn(&mut [u8], &InitCtx<'_>);
+/// A type-erased constructor over a unit's pool-resident state bytes (see [`Unit::init`]).
+pub type InitFn = fn(&mut [u8], &mut ProcessCtx<'_>) -> DoneAction;
 
 /// A type-erased per-instance re-seed function over a unit's pool-resident state bytes (see
 /// [`Unit::reseed`]).
@@ -1012,8 +1034,8 @@ fn process_thunk<T: Unit>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) -> DoneAct
 }
 
 /// As [`process_thunk`], for [`Unit::init`].
-fn init_thunk<T: Unit>(bytes: &mut [u8], ctx: &InitCtx<'_>) {
-    bytemuck::from_bytes_mut::<T>(bytes).init(ctx);
+fn init_thunk<T: Unit>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) -> DoneAction {
+    bytemuck::from_bytes_mut::<T>(bytes).init(ctx)
 }
 
 /// As [`process_thunk`], for [`Unit::reseed`].
@@ -1026,13 +1048,23 @@ fn alloc_thunk<T: Unit>(bytes: &mut [u8], ctx: &InitCtx<'_>, aux: &mut Aux<'_>) 
     bytemuck::from_bytes_mut::<T>(bytes).alloc(ctx, aux);
 }
 
+/// The body of [`Unit::init`] for a scsynth constructor that runs the calc for one sample and then
+/// puts the state it seeded back - `LFSaw_next_k(unit, 1); unit->mPhase = initPhase;` - so later
+/// constructors read the sample while the unit's first block starts from the seeded state.
+pub fn calc_and_restore<T: Unit>(unit: &mut T, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+    let seeded = *unit;
+    let action = unit.process(ctx);
+    *unit = seeded;
+    action
+}
+
 /// A built unit: its calc/seed vtable plus the initial state image to copy into the pool. Produced
 /// off the audio thread by a [`UnitDef`] (via [`unit_spec`]) and baked into a
 /// [`GraphDef`](crate::graphdef::GraphDef).
 pub struct BuiltUnit {
     /// Per-block calc function.
     pub process: ProcessFn,
-    /// One-time first-block seeding function.
+    /// Constructor, run once in SynthDef order on the synth's first block.
     pub init: InitFn,
     /// Per-instance re-seed function (no-op for units without randomness).
     pub reseed: ReseedFn,
@@ -1066,7 +1098,7 @@ pub struct BuiltUnit {
     pub local_buf: Option<LocalBufShapeFn>,
 }
 
-/// Reads a `LocalBuf`'s `(channels, frames)` from its first-block inputs (scsynth's
+/// Reads a `LocalBuf`'s `(channels, frames)` from its inputs as its constructor runs (scsynth's
 /// `(int)IN0(0), (int)IN0(1)` in `LocalBuf_Ctor`).
 pub type LocalBufShapeFn = fn(&Inputs<'_>) -> (f32, f32);
 

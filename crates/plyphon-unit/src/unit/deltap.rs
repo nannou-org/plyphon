@@ -17,9 +17,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{
-    BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, buffer_at, buffer_at_mut, unit_spec,
-};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, buffer_at, buffer_at_mut, unit_spec};
 use plyphon_dsp::interp::{cubicinterp, lininterp};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
@@ -145,8 +143,9 @@ impl DelTapRd {
 }
 
 impl Unit for DelTapRd {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.del_time = ctx.ins.control(Self::DELTIME) * ctx.own.sample_rate as f32;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

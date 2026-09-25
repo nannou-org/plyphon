@@ -58,6 +58,11 @@ pub struct PitchShift {
 }
 
 impl Unit for PitchShift {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn reseed(&mut self, seed: u64) {
         self.rng = Rng::new(seed);
     }

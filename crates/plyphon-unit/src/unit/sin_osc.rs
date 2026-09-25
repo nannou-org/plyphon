@@ -7,7 +7,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 use plyphon_dsp::wavetable::lookup_cycle;
@@ -39,6 +39,10 @@ impl SinOsc {
 }
 
 impl Unit for SinOsc {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let table = ctx.wavetables.sine();
         let sample_dur = ctx.own.sample_dur as f32;
@@ -97,7 +101,7 @@ pub struct FSinOsc {
 }
 
 impl Unit for FSinOsc {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let freq = ctx.ins.control(0);
         let iphase = ctx.ins.control(1) as f64;
         let w = freq as f64 * TAU as f64 * ctx.own.sample_dur;
@@ -106,6 +110,8 @@ impl Unit for FSinOsc {
         self.y1 = math::sin(iphase - w);
         self.y2 = math::sin(iphase - 2.0 * w);
         self.freq = freq;
+        *ctx.outs.control(0) = (self.b1 * self.y1 - self.y2) as f32;
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -163,6 +169,10 @@ impl SinOscFB {
 }
 
 impl Unit for SinOscFB {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let table = ctx.wavetables.sine();
         let inc = ctx.ins.control(Self::FREQ) * ctx.own.sample_dur as f32;

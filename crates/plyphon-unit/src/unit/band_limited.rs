@@ -26,6 +26,10 @@ pub struct Saw {
 }
 
 impl Unit for Saw {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let inc = ctx.ins.control(0) * ctx.own.sample_dur as f32;
         let dt = inc.abs().max(f32::MIN_POSITIVE);
@@ -59,6 +63,11 @@ impl Pulse {
 }
 
 impl Unit for Pulse {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let inc = ctx.ins.control(Self::FREQ) * ctx.own.sample_dur as f32;
         let width = if ctx.ins.len() > Self::WIDTH {
@@ -106,6 +115,10 @@ impl Blip {
 }
 
 impl Unit for Blip {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let freq = ctx.ins.control(Self::FREQ);
         let numharm = if ctx.ins.len() > Self::NUMHARM {

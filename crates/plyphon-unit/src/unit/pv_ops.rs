@@ -93,6 +93,12 @@ pub struct PvMagThresh {
 }
 
 impl Unit for PvMagThresh {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let kind = self.kind;
         let thresh = ctx.ins.control(1);
@@ -133,6 +139,12 @@ pub struct PvLocalMax {
 }
 
 impl Unit for PvLocalMax {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let thresh = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
@@ -197,6 +209,12 @@ pub struct PvPhaseQuarter {
 }
 
 impl Unit for PvPhaseQuarter {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let negate = self.negate != 0;
         if let Some(bufnum) = pv::pv_frame(ctx)
@@ -243,6 +261,12 @@ pub struct PvBrickWall {
 }
 
 impl Unit for PvBrickWall {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let wipe_frac = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
@@ -295,6 +319,12 @@ pub struct PvConj {
 }
 
 impl Unit for PvConj {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if let Some(bufnum) = pv::pv_frame(ctx)
             && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
@@ -350,6 +380,12 @@ pub struct PvDiffuser {
 }
 
 impl Unit for PvDiffuser {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Sample the trigger every block (frames are intermittent), latching a rising edge to
         // re-randomise on the next ready frame - scsynth's `m_prevtrig`/`m_triggered`.
@@ -471,6 +507,12 @@ pub struct PvBinShift {
 }
 
 impl Unit for PvBinShift {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let Some(bufnum) = pv::pv_frame(ctx) else {
             return DoneAction::Nothing;
@@ -563,6 +605,12 @@ pub struct PvMagSmear {
 }
 
 impl Unit for PvMagSmear {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let Some(bufnum) = pv::pv_frame(ctx) else {
             return DoneAction::Nothing;
@@ -628,6 +676,12 @@ pub struct PvRectComb {
 }
 
 impl Unit for PvRectComb {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let num_teeth = ctx.ins.control(1);
         let start_phase = ctx.ins.control(2);

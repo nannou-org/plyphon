@@ -14,9 +14,8 @@
 //! exactly one stream, so `RandID` keeps its shape (inputs consumed, `0.0` output) but selects
 //! nothing. Cross-synth correlated randomness via a shared `RandID` stream is not expressible.
 //!
-//! The one-time draws happen on the first `process` call, which runs at the same topological
-//! position as scsynth's constructor calc, so draw interleaving within a synth matches unit order
-//! exactly as it does there.
+//! The one-time draws happen in the first `process` call, which runs as the unit's constructor, in
+//! SynthDef order before any unit's first calc, as scsynth's constructor draws do.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -61,7 +60,7 @@ fn hold(outs: &mut Outputs<'_>, audio: bool, value: f32) {
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Rand {
     value: f32,
-    /// `0` until the one-time draw has happened on the first `process`.
+    /// `0` until the one-time draw has happened, in the first `process` (the constructor).
     primed: u32,
     /// `0`/`1`: audio-rate (a full block) vs control-rate (one value).
     audio: u32,

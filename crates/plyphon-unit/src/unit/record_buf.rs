@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::io::sample_channel;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, Inputs, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::buffer::BufViewMut;
 
 /// `RecordBuf.ar(inputArray, bufnum, offset, recLevel, preLevel, run, loop, trigger, doneAction)`:
@@ -79,7 +79,7 @@ impl RecordBuf {
 }
 
 impl Unit for RecordBuf {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Latch the levels and the done action from the initial inputs (scsynth's `*_Ctor`), and seed
         // the head from `offset` (scaled by the input count, as scsynth's ctor does).
         self.rec_level = read_input(&ctx.ins, Self::REC_LEVEL, 1.0);
@@ -90,6 +90,7 @@ impl Unit for RecordBuf {
         } else {
             DoneAction::Nothing.to_tag()
         };
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

@@ -48,6 +48,11 @@ impl PlayBuf {
 }
 
 impl Unit for PlayBuf {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let buffer = match unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum) {

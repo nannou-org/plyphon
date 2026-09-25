@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 
@@ -49,7 +49,7 @@ impl Line {
 }
 
 impl Unit for Line {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Latch the ramp arguments from the (now live) inputs, as SuperCollider does at first calc.
         let start = ctx.ins.control(Self::START) as f64;
         let end = ctx.ins.control(Self::END) as f64;
@@ -67,6 +67,15 @@ impl Unit for Line {
             DoneAction::Nothing
         };
         self.done_action = done_action.to_tag();
+        // The constructor writes the start level, or the end level when the ramp rounds to no
+        // samples (scsynth's `(int)(dur * sampleRate + .5f) == 0`).
+        let frames = ctx.ins.control(Self::DUR) as f64 * ctx.own.sample_rate + 0.5;
+        *ctx.outs.control(0) = if frames as i32 == 0 {
+            self.end
+        } else {
+            self.value
+        } as f32;
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -150,7 +159,7 @@ impl XLine {
 }
 
 impl Unit for XLine {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let start = ctx.ins.control(Self::START) as f64;
         let end = ctx.ins.control(Self::END) as f64;
         let dur = (ctx.ins.control(Self::DUR) as f64).max(0.0);
@@ -167,6 +176,15 @@ impl Unit for XLine {
             DoneAction::Nothing
         };
         self.done_action = done_action.to_tag();
+        // The constructor writes the start level, or the end level when the ramp rounds to no
+        // samples (scsynth's `(int)(dur * sampleRate + .5f) == 0`).
+        let frames = ctx.ins.control(Self::DUR) as f64 * ctx.own.sample_rate + 0.5;
+        *ctx.outs.control(0) = if frames as i32 == 0 {
+            self.end
+        } else {
+            self.value
+        } as f32;
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
