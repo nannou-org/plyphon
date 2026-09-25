@@ -124,28 +124,77 @@ fn try_compile(def: &SynthDef) -> Result<(), BuildError> {
     .map(|_| ())
 }
 
-#[test]
-fn local_bus_channel_mismatch_rejected() {
-    // LocalIn declares 1 channel; LocalOut writes 2 -> mismatch.
-    let def = SynthDef {
-        name: "bad".to_string(),
-        params: vec![],
-        units: vec![
-            UnitSpec::new("LocalIn", Rate::Audio, vec![], 1),
-            UnitSpec::new(
-                "LocalOut",
-                Rate::Audio,
-                vec![InputRef::Constant(0.0), InputRef::Constant(0.0)],
-                0,
-            ),
-        ],
+/// `LocalIn.ar(1) -> Out.ar(0)` plus `LocalOut.ar` writing `DC.ar(1)` on `local_out` channels, or
+/// no `LocalIn` at all (the synth then plays `DC.ar(0.25)` so its output shows it runs).
+fn local_width_def(local_in: bool, local_out: usize) -> SynthDef {
+    let dc = |v: f32| UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(v)], 1);
+    let out = |unit: u32| {
+        UnitSpec::new(
+            "Out",
+            Rate::Audio,
+            vec![InputRef::Constant(0.0), InputRef::Unit { unit, output: 0 }],
+            0,
+        )
     };
+    let write = UnitSpec::new(
+        "LocalOut",
+        Rate::Audio,
+        vec![InputRef::Unit { unit: 0, output: 0 }; local_out],
+        0,
+    );
+    let units = if local_in {
+        vec![
+            dc(1.0),
+            UnitSpec::new("LocalIn", Rate::Audio, vec![], 1),
+            out(1),
+            write,
+        ]
+    } else {
+        vec![dc(1.0), dc(0.25), out(1), write]
+    };
+    SynthDef {
+        name: "local-width".to_string(),
+        params: vec![],
+        units,
+    }
+}
+
+/// Start `def` and return the first sample of each of `blocks` blocks.
+fn render_blocks(def: SynthDef, blocks: usize) -> Vec<f32> {
+    let (mut controller, _nrt, mut world) = engine(opts());
+    let name = def.name.clone();
+    controller.add_synthdef(def);
+    controller
+        .synth_new(&name, ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    (0..blocks).map(|_| one(&mut world)).collect()
+}
+
+#[test]
+fn local_out_of_the_bus_width_feeds_back() {
+    // The control: a `LocalOut` as wide as the `LocalIn` feeds `1` back from the second block.
+    assert_eq!(render_blocks(local_width_def(true, 1), 3), [0.0, 1.0, 1.0]);
+}
+
+#[test]
+fn local_out_of_another_width_writes_nothing() {
+    // scsynth's `LocalOut_next_a` returns when `numChannels != localIn->mNumOutputs`: the synth
+    // still plays, and the `LocalIn` never sees a write.
+    for width in [2, 3] {
+        assert_eq!(
+            render_blocks(local_width_def(true, width), 3),
+            [0.0, 0.0, 0.0],
+            "a {width}-channel LocalOut into a 1-channel LocalIn"
+        );
+    }
+}
+
+#[test]
+fn local_out_without_local_in_writes_nothing() {
+    // scsynth's `LocalOut_next_a` returns when the synth has no `LocalIn`; the rest still plays.
     assert_eq!(
-        try_compile(&def),
-        Err(BuildError::LocalBusMismatch {
-            local_in: 1,
-            local_out: 2
-        })
+        render_blocks(local_width_def(false, 1), 3),
+        [0.25, 0.25, 0.25]
     );
 }
 
