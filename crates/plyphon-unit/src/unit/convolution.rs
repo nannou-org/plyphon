@@ -39,9 +39,9 @@ const AUX_FRAMES: usize = 9;
 /// `framesize` is read when the synth starts (`Convolution_Ctor`), which allocates the whole working
 /// set and zeroes the output and overlap spans. The reference fails its FFT setup, and so silences
 /// the unit and marks it done (`ClearUnitIfMemFailed`), when `2 * framesize` is outside its FFT size
-/// range; here the same happens for any `2 * framesize` the engine has no plan for (a power of two in
-/// `[64, 16384]`) and for a `framesize` the unit's block size does not divide, which the reference
-/// would overrun.
+/// range, `[8, 262144]`. The same happens here, and also for a `2 * framesize` that is not a power of
+/// two (the engine plans only powers of two) or a `framesize` the unit's calc length does not
+/// divide, which the reference would overrun.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Convolution {
