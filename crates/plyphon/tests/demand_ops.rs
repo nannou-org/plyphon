@@ -7,8 +7,7 @@
 //! held (exhausted) value can be told apart from a pull that did not happen.
 
 use plyphon::{
-    AddAction, BuildError, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, SynthNewError,
-    UnitSpec, World, engine,
+    AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
 };
 
 const SR: f64 = 48_000.0;
@@ -145,24 +144,6 @@ fn reset(controller: &mut plyphon::Controller, world: &mut World, channels: usiz
     held(world, channels);
     controller.set_control_bus(RESET_BUS, 0.0).expect("set bus");
     held(world, channels);
-}
-
-/// A def whose only unit is `unit`, so a rejected build surfaces as that unit's own error.
-fn reject(unit: UnitSpec) -> SynthNewError {
-    let (mut controller, _nrt, _world) = engine(Options {
-        sample_rate: SR,
-        block_size: BLOCK,
-        output_channels: 1,
-        ..Options::default()
-    });
-    controller.add_synthdef(SynthDef {
-        name: "bad".to_string(),
-        params: vec![],
-        units: vec![unit],
-    });
-    controller
-        .synth_new("bad", ROOT_GROUP_ID, AddAction::Tail)
-        .expect_err("the def should have been rejected")
 }
 
 #[test]
@@ -340,30 +321,6 @@ fn demand_op_unlisted_special_falls_through_like_the_reference() {
             pull(&mut controller, &mut world, channels),
             [3.0],
             "unary {op} passes through"
-        );
-    }
-}
-
-#[test]
-fn demand_random_ops_are_build_errors() {
-    // The random operators draw from the synth's random stream, which a demand unit cannot reach,
-    // so they are rejected rather than quietly losing their randomness.
-    for op in [47i16, 48] {
-        assert!(
-            matches!(
-                reject(binary(op, c(1.0), c(2.0))),
-                SynthNewError::Build(BuildError::UnsupportedOp(o)) if o == op
-            ),
-            "binary operator {op}"
-        );
-    }
-    for op in [37i16, 38, 39, 40, 41, 44] {
-        assert!(
-            matches!(
-                reject(unary(op, c(1.0))),
-                SynthNewError::Build(BuildError::UnsupportedOp(o)) if o == op
-            ),
-            "unary operator {op}"
         );
     }
 }

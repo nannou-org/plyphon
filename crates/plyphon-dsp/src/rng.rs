@@ -100,6 +100,33 @@ impl Rng {
     pub fn next_exprand(&mut self, lo: f64, hi: f64) -> f64 {
         lo * crate::math::exp(crate::math::ln(hi / lo) * self.next_unipolar_f64())
     }
+
+    /// A draw in `[0, 1)` leaning linearly toward 0 (scsynth's `RGen::flinrand`: the smaller of two
+    /// [`frand`](Self::next_unipolar) draws).
+    #[inline]
+    pub fn next_linrand(&mut self) -> f32 {
+        let a = self.next_unipolar();
+        let b = self.next_unipolar();
+        if a < b { a } else { b }
+    }
+
+    /// A draw in `(-1, 1)` leaning linearly toward 0 (scsynth's `RGen::fbilinrand`: the difference of
+    /// two [`frand`](Self::next_unipolar) draws).
+    #[inline]
+    pub fn next_bilinrand(&mut self) -> f32 {
+        let a = self.next_unipolar();
+        let b = self.next_unipolar();
+        a - b
+    }
+
+    /// A bell-shaped draw in `[-1, 1)` (scsynth's `RGen::fsum3rand`: three
+    /// [`frand`](Self::next_unipolar) draws summed in single precision, then
+    /// `(sum - 1.5) * 0.666666667` in double precision).
+    #[inline]
+    pub fn next_sum3rand(&mut self) -> f32 {
+        let sum = self.next_unipolar() + self.next_unipolar() + self.next_unipolar();
+        ((sum as f64 - 1.5) * 0.666666667) as f32
+    }
 }
 
 /// Thomas Wang's integer hash (scsynth's `Hash(int32)`): it scrambles an [`Rng::init`] seed, and
