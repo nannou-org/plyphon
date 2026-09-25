@@ -46,6 +46,7 @@ pub mod io;
 pub mod lf;
 pub mod lf_noise;
 pub mod line;
+pub mod linen;
 pub mod local_buf;
 pub mod local_io;
 pub mod measure;

@@ -83,6 +83,7 @@ use crate::unit::lf_noise::{
     LFNoise1Ctor, LFNoise2Ctor,
 };
 use crate::unit::line::{LineCtor, XLineCtor};
+use crate::unit::linen::LinenCtor;
 use crate::unit::local_buf::{ClearBufCtor, LocalBufCtor, MaxLocalBufsCtor, SetBufCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
 use crate::unit::measure::{
@@ -550,6 +551,7 @@ impl UnitRegistry {
         );
         registry.register("EnvGen", Box::new(EnvGenCtor));
         registry.register("IEnvGen", Box::new(IEnvGenCtor));
+        registry.register("Linen", Box::new(LinenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
         registry.register("Poll", Box::new(PollCtor));
         registry.register("Trig", Box::new(TrigCtor));
