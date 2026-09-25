@@ -408,6 +408,12 @@ impl SynthDef {
                                 if output != 0 {
                                     return Err(BuildError::BadInputRef);
                                 }
+                                // A demand unit may only pull an earlier unit: the pull lends each
+                                // unit's aux region by splitting the demand arena below it, which
+                                // relies on nested units coming first (and it rules out cycles).
+                                if spec.rate == Rate::Demand && unit as usize >= u {
+                                    return Err(BuildError::BadInputRef);
+                                }
                                 InputSource::Demand(di)
                             }
                             None => {
@@ -519,8 +525,13 @@ impl SynthDef {
         // pack each arena's initial image from the units' initial state bytes.
         let state_slots: Vec<(usize, usize)> =
             calc_built.iter().map(|b| (b.size, b.align)).collect();
-        let demand_state_slots: Vec<(usize, usize)> =
-            demand_built.iter().map(|b| (b.size, b.align)).collect();
+        // The demand arena holds every demand unit's state, then every demand unit's aux region, both
+        // in demand-plan order: the order the demand pull's arena split relies on.
+        let demand_state_slots: Vec<(usize, usize)> = demand_built
+            .iter()
+            .map(|b| (b.size, b.align))
+            .chain(demand_built.iter().map(|b| (b.aux_bytes, b.aux_align)))
+            .collect();
         // Per-calc-unit auxiliary memory (delay lines), in calc order - parallel to `state_slots`.
         let aux_slots: Vec<(usize, usize)> = calc_built
             .iter()
@@ -583,17 +594,21 @@ impl SynthDef {
             )
             .collect();
 
+        let (demand_state_offsets, demand_aux_offsets) =
+            demand_offsets.split_at(demand_built.len());
         let demand_units: Vec<DemandVtbl> = demand_built
             .into_iter()
             .zip(demand_inputs)
-            .zip(demand_offsets)
-            .map(|((b, inputs), state_offset)| DemandVtbl {
+            .zip(demand_state_offsets.iter().zip(demand_aux_offsets))
+            .map(|((b, inputs), (&state_offset, &aux_offset))| DemandVtbl {
                 produce: b.produce,
                 reset: b.reset,
                 init: b.init,
                 inputs,
                 state_offset,
                 state_size: b.size,
+                aux_offset,
+                aux_size: b.aux_bytes,
             })
             .collect();
 
