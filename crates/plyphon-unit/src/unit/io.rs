@@ -111,6 +111,12 @@ pub fn control_in(buses: &Buses, ch: usize) -> f32 {
     buses.control().read(ch)
 }
 
+/// Whether control bus channel `ch` was written during block `buf_counter` (scsynth's
+/// `mControlBusTouched[ch] == mBufCounter`), for `InTrig`. Out of range reads as untouched.
+pub fn control_in_touched(buses: &Buses, ch: usize, buf_counter: u64) -> bool {
+    buses.control().is_touched(ch, buf_counter)
+}
+
 /// Local feedback-bus channel `ch` for this block (read), for `LocalIn` - the value `LocalOut` wrote
 /// last block. An empty slice if `ch` is out of range.
 pub fn local_in<'a>(local: &'a LocalBus<'_>, ch: usize) -> &'a [f32] {

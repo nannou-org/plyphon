@@ -15,7 +15,7 @@ use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 
 /// `ln(0.001)` - the `-60 dB` decay target scsynth uses for its smoothing coefficients.
-const LOG001: f64 = -6.907_755_278_982_137;
+pub(crate) const LOG001: f64 = -6.907_755_278_982_137;
 
 /// The per-sample feedback coefficient that decays to `-60 dB` over `time` seconds (0 for an
 /// immediate response), matching scsynth's `decayTime == 0 ? 0 : exp(log001 / (decayTime * SR))`.

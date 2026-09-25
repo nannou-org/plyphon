@@ -254,6 +254,11 @@ impl ControlBus {
         self.data.get(ch).copied().unwrap_or(0.0)
     }
 
+    /// Has channel `ch` been written during block `buf_counter`? An out-of-range channel has not.
+    pub fn is_touched(&self, ch: usize, buf_counter: u64) -> bool {
+        self.touched.get(ch) == Some(&buf_counter)
+    }
+
     /// Write `value` to channel `ch` for block `buf_counter`, summing if the channel was already
     /// written this block, overwriting otherwise (scsynth's `Out.kr` semantics).
     pub fn write_accumulate(&mut self, ch: usize, buf_counter: u64, value: f32) {

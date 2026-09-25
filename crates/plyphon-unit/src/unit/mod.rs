@@ -210,8 +210,9 @@ pub use input::In;
 pub use io::{
     audio_crossfade, audio_in, audio_in_touched, audio_out, audio_out_decimated,
     audio_replace_decimated, buffer_at, buffer_at_mut, buffer_pair_mut, control_crossfade,
-    control_in, control_out, control_replace, local_in, local_out, num_audio_buses, num_buffers,
-    num_control_buses, num_input_buses, num_output_buses, recording_at_mut, stream_at_mut,
+    control_in, control_in_touched, control_out, control_replace, local_in, local_out,
+    num_audio_buses, num_buffers, num_control_buses, num_input_buses, num_output_buses,
+    recording_at_mut, stream_at_mut,
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;

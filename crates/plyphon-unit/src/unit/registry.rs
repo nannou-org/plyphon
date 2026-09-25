@@ -73,7 +73,7 @@ use crate::unit::grain::{
 use crate::unit::gverb::GVerbCtor;
 use crate::unit::hilbert::{FreqShiftCtor, HilbertCtor};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
-use crate::unit::input::InCtor;
+use crate::unit::input::{InCtor, InTrigCtor, LagInCtor};
 use crate::unit::lf::{
     ImpulseCtor, LFCubCtor, LFGaussCtor, LFParCtor, LFPulseCtor, LFSawCtor, LFTriCtor, SyncSawCtor,
     VarSawCtor,
@@ -248,6 +248,8 @@ impl UnitRegistry {
         // The same unit with the touched check disabled: `InFeedback` reads a bus channel written
         // by a *later* (or freed) node - last block's signal - for deliberate one-block feedback.
         registry.register("InFeedback", Box::new(InCtor { feedback: true }));
+        registry.register("InTrig", Box::new(InTrigCtor));
+        registry.register("LagIn", Box::new(LagInCtor));
         registry.register("LocalIn", Box::new(LocalInCtor));
         registry.register("LocalOut", Box::new(LocalOutCtor));
         registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));
