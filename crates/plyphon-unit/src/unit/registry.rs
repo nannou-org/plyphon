@@ -47,6 +47,7 @@ use crate::unit::demand::dseries::DseriesCtor;
 use crate::unit::demand::dswitch::{Dswitch1Ctor, DswitchCtor};
 use crate::unit::demand::duty::{DutyCtor, TDutyCtor};
 use crate::unit::demand::dwhite::DwhiteCtor;
+use crate::unit::demand::dwrand::DwrandCtor;
 use crate::unit::demand::dxrand::DxrandCtor;
 #[cfg(feature = "fft")]
 use crate::unit::demand::unpack1fft::Unpack1FftCtor;
@@ -641,6 +642,7 @@ impl UnitRegistry {
         registry.register_demand("Dreset", Box::new(DresetCtor));
         registry.register_demand("Dswitch1", Box::new(Dswitch1Ctor));
         registry.register_demand("Dswitch", Box::new(DswitchCtor));
+        registry.register_demand("Dwrand", Box::new(DwrandCtor));
         // The math operators also run at demand rate, where they pull their operands and yield the
         // operator applied to them (the calc-rate registrations above are untouched).
         registry.register_demand("BinaryOpUGen", Box::new(DemandBinaryOpCtor));

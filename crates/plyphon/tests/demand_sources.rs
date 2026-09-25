@@ -281,3 +281,61 @@ fn dswitch1_reset_resets_every_input() {
     ];
     assert_segments(units, &[1.0, 2.0, 9.0, 1.0, 2.0, 9.0, NAN]);
 }
+
+#[test]
+fn dwrand_picks_by_weight_from_the_synths_stream() {
+    // Dwrand([1, Dseq([10, 11], 1), 3], [0.2, 0.5, 0.3], 8): the constructor picks, then each value
+    // picks again; the nested Dseq is played to its end (one repeat) and reset when picked again.
+    let units = vec![
+        dseq(&[10.0, 11.0], 1.0),
+        dem(
+            "Dwrand",
+            vec![c(8.0), c(3.0), c(0.2), c(0.5), c(0.3), c(1.0), u(0), c(3.0)],
+        ),
+    ];
+    let expected = [
+        3.0, 1.0, 1.0, 10.0, 11.0, 10.0, 11.0, 10.0, 11.0, 10.0, 11.0, 3.0, NAN,
+    ];
+    assert_segments(units, &expected);
+}
+
+#[test]
+fn dwrand_without_a_pick_is_exhausted() {
+    // Dseq([Dwrand([1, 2], [0, 0], 3), 9], 1): no weight sum reaches the draw, so no item is ever
+    // picked. scsynth then reads an uninitialised index; plyphon yields NaN.
+    let units = vec![
+        dem(
+            "Dwrand",
+            vec![c(3.0), c(2.0), c(0.0), c(0.0), c(1.0), c(2.0)],
+        ),
+        dem("Dseq", vec![c(1.0), u(0), c(9.0)]),
+    ];
+    assert_segments(units, &[9.0, NAN]);
+}
+
+#[test]
+fn dwrand_shares_the_stream_with_its_items() {
+    // Dwrand([Dwhite(0, 1, 2), 5], [0.5, 0.5], inf): picks and the nested Dwhite's values interleave
+    // on the one stream.
+    let units = vec![
+        dem("Dwhite", vec![c(2.0), c(0.0), c(1.0)]),
+        dem(
+            "Dwrand",
+            vec![c(f32::INFINITY), c(2.0), c(0.5), c(0.5), u(0), c(5.0)],
+        ),
+    ];
+    let expected = [
+        0x40a0_0000,
+        0x3e1d_9c70,
+        0x3f0a_0d84,
+        0x3eb7_798c,
+        0x3f22_5838,
+        0x40a0_0000,
+        0x3f6f_b806,
+        0x3ed2_b5bc,
+        0x40a0_0000,
+        0x3f59_4fec,
+    ]
+    .map(f32::from_bits);
+    assert_segments(units, &expected);
+}

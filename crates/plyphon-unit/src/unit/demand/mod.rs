@@ -41,6 +41,7 @@ pub mod dseries;
 pub mod dswitch;
 pub mod duty;
 pub mod dwhite;
+pub mod dwrand;
 pub mod dxrand;
 #[cfg(feature = "fft")]
 pub mod unpack1fft;
@@ -75,6 +76,7 @@ pub use dseries::Dseries;
 pub use dswitch::{Dswitch, Dswitch1};
 pub use duty::Duty;
 pub use dwhite::Dwhite;
+pub use dwrand::Dwrand;
 pub use dxrand::Dxrand;
 #[cfg(feature = "fft")]
 pub use unpack1fft::Unpack1Fft;
