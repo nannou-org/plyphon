@@ -2,6 +2,8 @@
 
 use alloc::string::String;
 
+use plyphon_dsp::rate::Rate;
+
 use thiserror::Error;
 
 /// Errors from compiling a `SynthDef` into a [`GraphDef`](crate::graphdef::GraphDef).
@@ -13,6 +15,11 @@ pub enum BuildError {
     /// An input reference (parameter or unit index) is out of range.
     #[error("input reference out of range")]
     BadInputRef,
+    /// A unit was instantiated at a calculation rate it has no calc function for. `IRand`, `LinRand`
+    /// and `NRand` are constructor-only in scsynth (they never set a calc function), so only scalar
+    /// rate is defined for them.
+    #[error("unsupported calculation rate: {0:?}")]
+    UnsupportedRate(Rate),
     /// A unit used a `special_index` operator that is not implemented.
     #[error("unsupported operator index: {0}")]
     UnsupportedOp(i16),

@@ -1,5 +1,6 @@
 //! The init- and trigger-time random units - plyphon's ports of scsynth's `Rand`, `ExpRand`,
-//! `TRand`, `TExpRand`, `TIRand`, `RandSeed` and `RandID` (`NoiseUGens.cpp`).
+//! `IRand`, `LinRand`, `NRand`, `TRand`, `TExpRand`, `TIRand`, `RandSeed` and `RandID`
+//! (`NoiseUGens.cpp`).
 //!
 //! Like every random unit, this family draws from the synth's random stream
 //! ([`ProcessCtx::rgen`]), scsynth's `mParent->mRGen`: one of the World's streams, stream 0
@@ -7,8 +8,10 @@
 //! interleave in node order, and a `RandSeed` re-seed restarts the stream for every synth on it -
 //! the noise generators included, as in scsynth.
 //!
-//! The one-time draws happen in the first `process` call, which runs as the unit's constructor, in
-//! SynthDef order before any unit's first calc, as scsynth's constructor draws do.
+//! The one-time draws happen in the unit's constructor ([`Unit::init`], which for most of these
+//! runs the first `process` call), in SynthDef order before any unit's first calc, as scsynth's
+//! constructor draws do. `IRand`, `LinRand` and `NRand` are constructor-only, as in scsynth, so
+//! they exist at scalar rate only.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -120,6 +123,141 @@ impl UnitDef for ExpRandCtor {
             primed: 0,
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
+    }
+}
+
+/// Reject every rate but scalar for a constructor-only unit. scsynth's `IRand`, `LinRand` and
+/// `NRand` constructors write their one value and never set a calc function, so only a scalar-rate
+/// instance (which scsynth leaves out of the calc list) is defined.
+fn scalar_only(ctx: &BuildContext<'_>, num_inputs: usize) -> Result<(), BuildError> {
+    if ctx.input_rates.len() < num_inputs {
+        return Err(BuildError::WrongInputCount);
+    }
+    if ctx.rate != Rate::Scalar {
+        return Err(BuildError::UnsupportedRate(ctx.rate));
+    }
+    Ok(())
+}
+
+/// `IRand.new(lo, hi)`: one uniform integer draw in `[lo, hi]` (as a float) in the constructor.
+///
+/// Both bounds truncate to integers first, as scsynth's `(int)` casts do; a `lo` above `hi` gives
+/// `irand` a non-positive range, and the draw follows its `floor(range * drand())` there too.
+/// Scalar rate only.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct IRand;
+
+impl Unit for IRand {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        *ctx.outs.control(0) = integer(ctx.rgen, ctx.ins.control(0), ctx.ins.control(1));
+        DoneAction::Nothing
+    }
+
+    /// Never runs: a scalar-rate unit only runs its constructor.
+    fn process(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`IRand`].
+pub struct IRandCtor;
+
+impl UnitDef for IRandCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        scalar_only(ctx, 2)?;
+        Ok(unit_spec(IRand))
+    }
+}
+
+/// `LinRand.new(lo, hi, minmax)`: one linearly distributed draw in `[lo, hi)` in the constructor.
+///
+/// It draws two uniform values and keeps the smaller when `minmax` (truncated to an integer) is
+/// `<= 0`, skewing towards `lo`, else the larger, skewing towards `hi`. Scalar rate only.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct LinRand;
+
+impl Unit for LinRand {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let ProcessCtx {
+            ins, outs, rgen, ..
+        } = ctx;
+        let lo = ins.control(0);
+        let hi = ins.control(1);
+        let n = ins.control(2) as i32;
+        let range = hi - lo;
+        let a = rgen.next_unipolar();
+        let b = rgen.next_unipolar();
+        // scsynth's `sc_min`/`sc_max` comparisons, spelled out.
+        let pick = if n <= 0 {
+            if a < b { a } else { b }
+        } else if a > b {
+            a
+        } else {
+            b
+        };
+        *outs.control(0) = pick * range + lo;
+        DoneAction::Nothing
+    }
+
+    /// Never runs: a scalar-rate unit only runs its constructor.
+    fn process(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`LinRand`].
+pub struct LinRandCtor;
+
+impl UnitDef for LinRandCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        scalar_only(ctx, 3)?;
+        Ok(unit_spec(LinRand))
+    }
+}
+
+/// `NRand.new(lo, hi, n)`: the mean of `n` uniform draws, scaled into `[lo, hi)`, in the
+/// constructor - uniform for `n = 1`, triangular for `n = 2`, tending towards a gaussian as `n`
+/// grows.
+///
+/// `n` truncates to an integer. A non-positive `n` draws nothing and divides the zero sum by `n`,
+/// as scsynth does: `n = 0` (the language-side default) gives `NaN`, a negative `n` gives `lo` (for
+/// a finite range). Scalar rate only.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct NRand;
+
+impl Unit for NRand {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let ProcessCtx {
+            ins, outs, rgen, ..
+        } = ctx;
+        let lo = ins.control(0);
+        let hi = ins.control(1);
+        let n = ins.control(2) as i32;
+        let range = hi - lo;
+        let mut sum = 0.0f32;
+        for _ in 0..n {
+            sum += rgen.next_unipolar();
+        }
+        *outs.control(0) = (sum / n as f32) * range + lo;
+        DoneAction::Nothing
+    }
+
+    /// Never runs: a scalar-rate unit only runs its constructor.
+    fn process(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`NRand`].
+pub struct NRandCtor;
+
+impl UnitDef for NRandCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        scalar_only(ctx, 3)?;
+        Ok(unit_spec(NRand))
     }
 }
 
