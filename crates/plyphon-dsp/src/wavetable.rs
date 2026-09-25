@@ -53,7 +53,8 @@ pub fn lookup_cycle(table: &[f32], phase: f32) -> f32 {
     let n = table.len() - 1; // last entry is the guard sample
     let frac_phase = phase - math::floor(phase); // wrap into [0, 1)
     let pos = frac_phase * n as f32;
-    let i = pos as usize; // 0..=n-1 (frac_phase < 1)
+    // The largest f32 below 1.0 can round up to `n` during the multiply.
+    let i = (pos as usize).min(n - 1);
     let frac = pos - i as f32;
     let a = table[i];
     let b = table[i + 1];
@@ -190,5 +191,13 @@ mod tests {
                 lookup_cycle(&plain, phase)
             ));
         }
+    }
+
+    #[test]
+    fn cycle_lookup_handles_the_largest_phase_below_one() {
+        let tables = Wavetables::new();
+        let phase = f32::from_bits(1.0f32.to_bits() - 1);
+
+        assert!(close(lookup_cycle(tables.sine(), phase), tables.sine()[0]));
     }
 }
