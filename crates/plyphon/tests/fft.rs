@@ -5,7 +5,8 @@
 //! Requires the default `fft` feature (the FFT units are gated on it).
 
 use plyphon::{
-    AddAction, Buffer, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
+    AddAction, Buffer, Event, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World,
+    engine,
 };
 
 const SR: f64 = 48_000.0;
@@ -189,46 +190,164 @@ fn fft_winsize_zero_resolves_from_the_chain_buffer() {
     );
 }
 
-#[test]
-fn unsupported_fft_size_is_rejected_at_build() {
-    // winsize 1000 is not a power of two - the def must fail to compile.
-    let (mut controller, _nrt, _world) = engine(Options {
+/// `FFT(buffer 0, SinOsc.ar(440), 0.5, 0, 1, winsize)` written to the output through `K2A`, so the
+/// test reads the chain signal: the buffer number on a frame, `-1` otherwise.
+fn fft_signal_def(winsize: f32, watch_done: bool) -> SynthDef {
+    let mut units = vec![
+        UnitSpec::new(
+            "SinOsc",
+            Rate::Audio,
+            vec![InputRef::Constant(440.0), InputRef::Constant(0.0)],
+            1,
+        ),
+        UnitSpec::new(
+            "FFT",
+            Rate::Control,
+            vec![
+                InputRef::Constant(0.0),
+                InputRef::Unit { unit: 0, output: 0 },
+                InputRef::Constant(0.5),
+                InputRef::Constant(0.0),
+                InputRef::Constant(1.0),
+                InputRef::Constant(winsize),
+            ],
+            1,
+        ),
+        UnitSpec::new(
+            "K2A",
+            Rate::Audio,
+            vec![InputRef::Unit { unit: 1, output: 0 }],
+            1,
+        ),
+        UnitSpec::new(
+            "Out",
+            Rate::Audio,
+            vec![
+                InputRef::Constant(0.0),
+                InputRef::Unit { unit: 2, output: 0 },
+            ],
+            0,
+        ),
+    ];
+    if watch_done {
+        units.push(UnitSpec::new(
+            "FreeSelfWhenDone",
+            Rate::Control,
+            vec![InputRef::Unit { unit: 1, output: 0 }],
+            1,
+        ));
+    }
+    SynthDef {
+        name: "fft-signal".to_string(),
+        params: vec![],
+        units,
+    }
+}
+
+/// Start [`fft_signal_def`] on an engine with `options`, installing a `buffer_frames` chain buffer
+/// before (`buffer_first`) or after the synth starts, and render `frames` of its chain signal.
+fn fft_signal(
+    options: Options,
+    def: SynthDef,
+    buffer_frames: usize,
+    buffer_first: bool,
+    frames: usize,
+) -> (Vec<f32>, Vec<Event>) {
+    let (mut controller, mut nrt, mut world) = engine(options);
+    let chain = || Box::new(Buffer::from_interleaved(vec![0.0; buffer_frames], 1, SR));
+    if buffer_first {
+        controller.buffer_set(0, chain()).unwrap();
+    }
+    controller.add_synthdef(def);
+    controller
+        .synth_new("fft-signal", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    if !buffer_first {
+        world.fill(&mut [0.0; 64], 1);
+        controller.buffer_set(0, chain()).unwrap();
+    }
+    let out = render(&mut world, frames);
+    let events = std::iter::from_fn(|| nrt.poll()).collect();
+    (out, events)
+}
+
+fn opts() -> Options {
+    Options {
         sample_rate: SR,
         output_channels: 1,
         ..Options::default()
-    });
-    let def = SynthDef {
-        name: "bad-fft".to_string(),
-        params: vec![],
-        units: vec![
-            UnitSpec::new(
-                "SinOsc",
-                Rate::Audio,
-                vec![InputRef::Constant(440.0), InputRef::Constant(0.0)],
-                1,
-            ),
-            UnitSpec::new(
-                "FFT",
-                Rate::Control,
-                vec![
-                    InputRef::Constant(0.0),
-                    InputRef::Unit { unit: 0, output: 0 },
-                    InputRef::Constant(0.5),
-                    InputRef::Constant(0.0),
-                    InputRef::Constant(1.0),
-                    InputRef::Constant(1000.0), // not a power of two
-                ],
-                1,
-            ),
-        ],
+    }
+}
+
+#[test]
+fn fft_frames_carry_the_chain_buffer_number() {
+    // The control: with a usable chain buffer the FFT emits buffer 0 on its frames.
+    let (out, _) = fft_signal(opts(), fft_signal_def(0.0, false), FFT_SIZE, true, 4096);
+    assert!(out.contains(&0.0), "the FFT emits frames");
+}
+
+#[test]
+fn a_window_other_than_the_chain_buffer_leaves_the_fft_idle() {
+    // scsynth zero-pads a window smaller than the buffer; plyphon does not, so the FFT never
+    // starts and outputs `-1` (no frame) like scsynth's failed `FFTBase_Ctor`. The same holds for a
+    // window that is not a power of two.
+    for winsize in [512.0, 1000.0] {
+        let (out, _) = fft_signal(opts(), fft_signal_def(winsize, false), FFT_SIZE, true, 4096);
+        assert!(
+            out[64..].iter().all(|&s| s == -1.0),
+            "winsize {winsize}: no frames"
+        );
+    }
+}
+
+#[test]
+fn an_fft_started_before_its_chain_buffer_stays_idle() {
+    // scsynth's `FFT_Ctor` reads the chain buffer when the synth starts; a buffer installed later
+    // is never picked up.
+    let (out, _) = fft_signal(opts(), fft_signal_def(0.0, false), FFT_SIZE, false, 4096);
+    assert!(out[64..].iter().all(|&s| s == -1.0), "no frames");
+}
+
+#[test]
+fn a_failed_fft_allocation_outputs_no_frames_and_marks_the_unit_done() {
+    // A unit pool too small for the FFT's rings: scsynth's `ClearFFTUnitIfMemFailed` switches the
+    // unit to `FFT_ClearUnitOutputs` (`-1`, so no downstream unit sees a frame) and sets its done
+    // flag, which `FreeSelfWhenDone` acts on.
+    let small = Options {
+        unit_pool_bytes: 1024,
+        ..opts()
     };
-    controller.add_synthdef(def);
-    // A def naming an uncompilable unit fails when a synth is created from it.
+    let (out, _) = fft_signal(small, fft_signal_def(0.0, false), FFT_SIZE, true, 4096);
+    assert!(out[64..].iter().all(|&s| s == -1.0), "no frames");
+
+    let (_, events) = fft_signal(small, fft_signal_def(0.0, true), FFT_SIZE, true, 256);
     assert!(
-        controller
-            .synth_new("bad-fft", ROOT_GROUP_ID, AddAction::Tail)
-            .is_err(),
-        "an unsupported FFT size should be rejected"
+        events.iter().any(|e| matches!(e, Event::NodeEnded(_))),
+        "the watcher frees the synth"
+    );
+}
+
+#[test]
+fn fft_ifft_size_themselves_from_a_16384_frame_chain_buffer() {
+    // The largest supported size, with `winsize = 0`: each unit allocates exactly what the buffer
+    // needs, so no size ceiling applies below the engine's largest FFT plan.
+    const BIG: usize = 16_384;
+    let freq = 20.0 * SR as f32 / FFT_SIZE as f32; // bin-aligned for both 1024 and 16384
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller
+        .buffer_set(0, Box::new(Buffer::from_interleaved(vec![0.0; BIG], 1, SR)))
+        .unwrap();
+    controller.add_synthdef(chain_def_winsize(freq, 0.5, 0.0));
+    controller
+        .synth_new("fft-chain", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    let out = render(&mut world, 4 * BIG);
+    let tail = &out[2 * BIG..];
+    let at = goertzel(tail, freq);
+    let off = goertzel(tail, freq * 2.0);
+    assert!(
+        at > 8.0 * off && at > 0.05,
+        "expected {freq} Hz to dominate (at={at:.4}, off={off:.4})"
     );
 }
 

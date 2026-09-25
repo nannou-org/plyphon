@@ -65,14 +65,23 @@ fn goertzel(samples: &[f32], freq: f32) -> f32 {
 /// `bin_index`, or the same chain without the diffuser when `trig` is `None`. The diffuser adds a
 /// fixed random phase to the first `trig * numbins` bins.
 fn diffuser_chain(trig: Option<f32>, bin_index: f32, blocks: usize) -> Vec<f32> {
-    const FFT_SIZE: usize = 1024;
-    let bin = SR as f32 / FFT_SIZE as f32;
+    diffuser_chain_sized(1024, trig, bin_index, blocks)
+}
+
+/// [`diffuser_chain`] over an `fft_size`-frame chain buffer.
+fn diffuser_chain_sized(
+    fft_size: usize,
+    trig: Option<f32>,
+    bin_index: f32,
+    blocks: usize,
+) -> Vec<f32> {
+    let bin = SR as f32 / fft_size as f32;
     let freq = bin_index * bin;
     let mut units = vec![
         UnitSpec::new(
             "LocalBuf",
             Rate::Scalar,
-            vec![c(1.0), c(FFT_SIZE as f32)],
+            vec![c(1.0), c(fft_size as f32)],
             1,
         ),
         UnitSpec::new("SinOsc", Rate::Audio, vec![c(freq), c(0.0)], 1),
@@ -86,7 +95,7 @@ fn diffuser_chain(trig: Option<f32>, bin_index: f32, blocks: usize) -> Vec<f32> 
         UnitSpec::new(
             "FFT",
             Rate::Control,
-            vec![u(0), u(2), c(0.5), c(0.0), c(1.0), c(FFT_SIZE as f32)],
+            vec![u(0), u(2), c(0.5), c(0.0), c(1.0), c(fft_size as f32)],
             1,
         ),
     ];
@@ -105,7 +114,7 @@ fn diffuser_chain(trig: Option<f32>, bin_index: f32, blocks: usize) -> Vec<f32> 
     units.push(UnitSpec::new(
         "IFFT",
         Rate::Audio,
-        vec![u(chain), c(0.0), c(FFT_SIZE as f32)],
+        vec![u(chain), c(0.0), c(fft_size as f32)],
         1,
     ));
     units.push(out(chain + 1));
@@ -140,6 +149,25 @@ fn pv_diffuser_preserves_magnitude_but_alters_the_waveform() {
     let diff: f32 = tail
         .iter()
         .zip(plain_tail)
+        .map(|(a, b)| (a - b).abs())
+        .sum();
+    assert!(
+        diff > 1.0,
+        "diffuser did not alter the waveform (diff={diff:.4})"
+    );
+}
+
+/// The diffuser sizes its offset table from the chain buffer on the first frame, so it diffuses a
+/// frame of any size, up to the largest FFT the engine plans.
+#[test]
+fn pv_diffuser_diffuses_a_16384_frame_chain() {
+    const BIG: usize = 16_384;
+    let blocks = 4 * BIG / BLOCK;
+    let diffused = diffuser_chain_sized(BIG, Some(1.0), 320.0, blocks);
+    let plain = diffuser_chain_sized(BIG, None, 320.0, blocks);
+    let diff: f32 = diffused[2 * BIG..]
+        .iter()
+        .zip(&plain[2 * BIG..])
         .map(|(a, b)| (a - b).abs())
         .sum();
     assert!(

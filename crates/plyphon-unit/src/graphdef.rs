@@ -74,6 +74,9 @@ pub struct UnitVtbl {
     /// from the engine's pool at synth start ([`unit_spec_pool`](crate::unit::unit_spec_pool)).
     /// `None` for every other unit.
     pub pool_slot: Option<u32>,
+    /// The value written to every output once this unit's allocation fails (see
+    /// [`BuiltUnit::cleared_output`](crate::unit::BuiltUnit::cleared_output)).
+    pub cleared_output: f32,
     /// For a `LocalBuf`: its declaration index and the function reading its shape from its inputs,
     /// so the synth can append its storage on the first block. `None` for every other unit.
     pub local_buf: Option<(u32, LocalBufShapeFn)>,

@@ -10,9 +10,8 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::unit::fft::{DEFAULT_MAX_FFT, resolve_fftsize};
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, pv, unit_spec, unit_spec_aux};
+use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, pv, unit_spec, unit_spec_pool};
 use core::f32::consts::TAU;
 
 /// Which magnitude-threshold operation a [`PvMagThresh`] applies.
@@ -325,10 +324,6 @@ fn zero() -> pv::Bin {
     pv::Bin { x: 0.0, y: 0.0 }
 }
 
-/// The most bins a deferred-size [`PvDiffuser`] reserves phase state for: one per bin of the largest
-/// supported FFT (`[dc, nyq, bins...]` packs `(N - 2) / 2` bins).
-const MAX_DIFFUSER_BINS: usize = (DEFAULT_MAX_FFT - 2) / 2;
-
 /// `PV_Diffuser(buffer, trig)`: add a fixed, random phase offset per bin, re-randomising the
 /// offsets on each rising `trig`. Smears transients over time (each bin's phase is decorrelated)
 /// while leaving magnitudes untouched, so a steady tone is unchanged but an impulse is diffused.
@@ -337,18 +332,20 @@ const MAX_DIFFUSER_BINS: usize = (DEFAULT_MAX_FFT - 2) / 2;
 /// `clip(trig * numbins, 0, numbins)` bins (scsynth's `PV_Diffuser_next`), so `0` leaves every
 /// phase untouched, `0.5` diffuses the lower half of the spectrum and `>= 1` the whole frame.
 ///
-/// The offsets are drawn from the synth's shared random stream, held in `aux` (one `f32` per bin),
-/// and reserved for the largest supported FFT since the chain buffer - hence the bin count - is not
-/// known until the first frame. scsynth's `PV_Diffuser`, which lazily allocates the same table.
+/// The offsets are drawn from the synth's shared random stream and held in `aux`, one `f32` per bin.
+/// Like scsynth's `PV_Diffuser_next`, the unit allocates that table from the engine's pool on the
+/// first frame, when the chain buffer's size gives the bin count.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct PvDiffuser {
-    /// Number of bins the offset table currently covers; `0` until the first frame resolves it.
+    /// Number of bins the offset table covers, from the first frame's chain buffer.
     numbins: u32,
     /// Previous-block `trig` value, for rising-edge detection across blocks.
     prev_trig: f32,
     /// `1` once a rising `trig` has been seen since the last frame applied the offsets.
     retrigger: u32,
+    /// `1` once the offset table is allocated (scsynth's non-null `m_shift`).
+    allocated: u32,
 }
 
 impl Unit for PvDiffuser {
@@ -364,31 +361,33 @@ impl Unit for PvDiffuser {
         let Some(bufnum) = pv::pv_frame(ctx) else {
             return DoneAction::Nothing;
         };
-        // The bin count is fixed by the chain buffer's size; resolve it once, capped at the aux
-        // reservation, randomising the table on first resolve.
-        if self.numbins == 0 {
-            match resolve_fftsize(ctx.buffers, &ctx.local_bufs, bufnum) {
-                Some(n) => {
-                    self.numbins = ((n.saturating_sub(2)) / 2).min(MAX_DIFFUSER_BINS) as u32;
-                    self.retrigger = 1;
-                }
-                None => return DoneAction::Nothing,
-            }
-        } else if unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum)
-            .is_none_or(|b| (b.num_frames().saturating_sub(2)) / 2 != self.numbins as usize)
-        {
-            // A frame of a different size passes through untouched - scsynth's
-            // `numbins != m_numbins` bail - and processing resumes if the original size returns.
+        let Some(frames) =
+            unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum).map(|b| b.num_frames())
+        else {
             return DoneAction::Nothing;
-        }
-        let numbins = self.numbins as usize;
+        };
+        let numbins = frames.saturating_sub(2) / 2;
+        // The first frame fixes the bin count: allocate the table and randomise it. After that a
+        // frame of a different size passes through untouched (scsynth's `numbins != m_numbins`
+        // bail), and a latched trigger re-randomises.
+        let choose = if self.allocated == 0 {
+            if !ctx.aux.alloc(numbins * core::mem::size_of::<f32>()) {
+                return DoneAction::Nothing;
+            }
+            self.allocated = 1;
+            self.numbins = numbins as u32;
+            true
+        } else if numbins != self.numbins as usize {
+            return DoneAction::Nothing;
+        } else {
+            core::mem::take(&mut self.retrigger) != 0
+        };
 
         let shifts = &mut ctx.aux.f32_mut()[..numbins];
-        if self.retrigger != 0 {
+        if choose {
             for shift in shifts.iter_mut() {
                 *shift = ctx.rgen.next_unipolar() * TAU;
             }
-            self.retrigger = 0;
         }
         // The trigger level also scales how many bins are offset - scsynth's
         // `n = sc_clip((int)(trig * numbins), 0, numbins)` - so a zero trig converts the frame to
@@ -405,8 +404,7 @@ impl Unit for PvDiffuser {
     }
 }
 
-/// Constructor for [`PvDiffuser`]: reserves phase state for the largest supported FFT, since the
-/// chain buffer's size is not known until the first frame.
+/// Constructor for [`PvDiffuser`]: the unit allocates its offset table on the first frame.
 pub struct PvDiffuserCtor;
 
 impl UnitDef for PvDiffuserCtor {
@@ -414,14 +412,9 @@ impl UnitDef for PvDiffuserCtor {
         if ctx.input_rates.len() < 2 {
             return Err(BuildError::WrongInputCount);
         }
-        Ok(unit_spec_aux(
-            PvDiffuser {
-                numbins: 0,
-                prev_trig: 0.0,
-                retrigger: 0,
-            },
-            MAX_DIFFUSER_BINS * core::mem::size_of::<f32>(),
-            core::mem::align_of::<f32>(),
-        ))
+        Ok(BuiltUnit {
+            cleared_output: -1.0,
+            ..unit_spec_pool(PvDiffuser::zeroed())
+        })
     }
 }
