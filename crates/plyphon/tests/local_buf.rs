@@ -1,7 +1,8 @@
 //! Graph-owned buffers (`LocalBuf`, `MaxLocalBufs`, `SetBuf`, `ClearBuf`): the encoded buffer
 //! number, transparent resolution through every buffer consumer (`BufWr`/`BufRd`, `SetBuf`,
 //! `ClearBuf`, `BufFrames`/`BufChannels`, the FFT chain), per-instance isolation of the storage,
-//! and world buffers continuing to resolve below the table capacity.
+//! world buffers continuing to resolve below the table capacity, and storage allocated when the
+//! synth starts from each `LocalBuf`'s live inputs (a failed allocation yields buffer `-1`).
 
 use plyphon::{
     AddAction, Buffer, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
@@ -456,4 +457,109 @@ fn two_buffer_pv_ops_tolerate_a_one_sample_buffer() {
     ];
     let buf = render(units, 2);
     assert_eq!(buf.len(), 2 * BLOCK);
+}
+
+#[test]
+fn local_buf_shape_is_read_from_its_inputs_at_start() {
+    // scsynth's `LocalBuf_Ctor` reads `IN0(0)`/`IN0(1)`, whatever they are wired to. Here the frame
+    // count is `SampleRate.ir * 0.001` = 48 frames: a ramp written through it wraps at 48.
+    let buf = render(
+        vec![
+            // 0: SampleRate.ir, 1: * 0.001.
+            UnitSpec::new("SampleRate", Rate::Scalar, vec![], 1),
+            UnitSpec {
+                special_index: 2, // opMul
+                ..UnitSpec::new("BinaryOpUGen", Rate::Scalar, vec![u(0), c(0.001)], 1)
+            },
+            // 2: LocalBuf(1, SampleRate.ir * 0.001).
+            UnitSpec::new("LocalBuf", Rate::Scalar, vec![c(1.0), u(1)], 1),
+            // 3: frame counter 0..48.
+            frame_phasor(48.0),
+            // 4: BufWr the counter, 5: BufRd it back.
+            UnitSpec::new("BufWr", Rate::Audio, vec![u(2), u(3), c(1.0), u(3)], 1),
+            buf_rd(u(2), u(3)),
+            out(5),
+        ],
+        2,
+    );
+    for (i, &s) in buf.iter().enumerate() {
+        assert_eq!(s, (i % 48) as f32, "sample {i}");
+    }
+}
+
+#[test]
+fn a_later_local_buf_keeps_an_earlier_buffers_writes() {
+    // The block grows when each LocalBuf starts. A buffer written before a later LocalBuf grows the
+    // block (all within the first block) must keep what was written.
+    let buf = render(
+        vec![
+            // 0: the first buffer, 1 x 64.
+            local_buf(1.0, 64.0),
+            // 1: frame counter, 2: BufWr it into buffer 0.
+            frame_phasor(64.0),
+            UnitSpec::new("BufWr", Rate::Audio, vec![u(0), u(1), c(1.0), u(1)], 1),
+            // 3: a second buffer, declared after the write, 2 x 1000.
+            local_buf(2.0, 1000.0),
+            // 4: BufRd buffer 0 after the growth.
+            buf_rd(u(0), u(1)),
+            out(4),
+        ],
+        1,
+    );
+    for (i, &s) in buf.iter().enumerate() {
+        assert_eq!(
+            s, i as f32,
+            "sample {i}: written before the growth, read after"
+        );
+    }
+}
+
+#[test]
+fn a_local_buf_the_pool_cannot_hold_outputs_minus_one_and_is_done() {
+    // scsynth's `LocalBuf_Ctor`: `fbufnum = -1` when the allocation fails. The unit reports done,
+    // so a watcher frees the synth; the huge and non-finite shapes fail without panicking.
+    for frames in [1.0e9, 1.0e30, f32::INFINITY] {
+        let (mut controller, mut nrt, mut world) = engine(opts());
+        controller.add_synthdef(SynthDef {
+            name: "huge".to_string(),
+            params: vec![],
+            units: vec![
+                local_buf(2.0, frames),
+                UnitSpec::new("K2A", Rate::Audio, vec![u(0)], 1),
+                out(1),
+                UnitSpec::new("FreeSelfWhenDone", Rate::Control, vec![u(0)], 1),
+            ],
+        });
+        let id = controller
+            .synth_new("huge", ROOT_GROUP_ID, AddAction::Tail)
+            .expect("synth_new");
+        assert_eq!(first_sample(&mut world), -1.0, "frames {frames}: no buffer");
+        let mut ended = false;
+        while let Some(event) = nrt.poll() {
+            ended |= matches!(event, plyphon::Event::NodeEnded(info) if info.node == id);
+        }
+        assert!(ended, "frames {frames}: the failed LocalBuf reports done");
+    }
+}
+
+#[test]
+fn local_buffer_storage_returns_when_the_synth_ends() {
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller.add_synthdef(SynthDef {
+        name: "t".to_string(),
+        params: vec![],
+        units: vec![local_buf(2.0, 48_000.0), local_buf(1.0, 1024.0)],
+    });
+    let baseline = world.rt_memory_used();
+    let id = controller
+        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("synth_new");
+    first_sample(&mut world);
+    assert!(
+        world.rt_memory_used() >= baseline + (2 * 48_000 + 1024) * 4,
+        "both buffers are allocated"
+    );
+    controller.free(id).expect("free");
+    first_sample(&mut world);
+    assert_eq!(world.rt_memory_used(), baseline);
 }

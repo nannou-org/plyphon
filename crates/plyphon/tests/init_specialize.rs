@@ -88,11 +88,6 @@ fn rate_expression_is_proven() {
             UnitSpec::new("LocalBuf", Rate::Scalar, vec![c(1.0), u(1)], 1),
         ],
     );
-    assert!(matches!(
-        compile(&d),
-        Err(BuildError::AuxRequiresConstant { input: 1 })
-    ));
-
     let s = d.specialize_init(&rate(), &[]).unwrap();
     assert_eq!(s.rewritten, vec![(2, 1)]);
     assert_eq!(constant_at(&s.def, 2, 1), SR as f32 * 0.1);
