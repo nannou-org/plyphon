@@ -359,8 +359,8 @@ fn convolution_with_an_unusable_framesize_is_silenced_and_done() {
     // isolated at a graph block that carries only its own condition.
     for (why, framesize, reblock) in [
         ("not a power of two", 100usize, Some(1usize)),
-        ("twice the frame below the plan range", 16, Some(16)),
-        ("twice the frame above the plan range", 16_384, None),
+        ("twice the frame below the plan range", 2, Some(2)),
+        ("twice the frame above the plan range", 262_144, None),
         ("not divisible by the graph block", 32, None),
     ] {
         let def = framesize_def(InputRef::Constant(framesize as f32), vec![]);
