@@ -29,6 +29,7 @@ use crate::unit::demand::BuiltDemandUnit;
 use crate::unit::demand::dbrown::DbrownCtor;
 use crate::unit::demand::dbufrd::DbufrdCtor;
 use crate::unit::demand::dbufwr::DbufwrCtor;
+use crate::unit::demand::demand_op::{DemandBinaryOpCtor, DemandUnaryOpCtor};
 use crate::unit::demand::demand_ugen::DemandCtor;
 use crate::unit::demand::dgeom::DgeomCtor;
 use crate::unit::demand::dibrown::DibrownCtor;
@@ -630,6 +631,10 @@ impl UnitRegistry {
         registry.register_demand("Dbufrd", Box::new(DbufrdCtor));
         registry.register_demand("Dbufwr", Box::new(DbufwrCtor));
         registry.register_demand("Dpoll", Box::new(DpollCtor));
+        // The math operators also run at demand rate, where they pull their operands and yield the
+        // operator applied to them (the calc-rate registrations above are untouched).
+        registry.register_demand("BinaryOpUGen", Box::new(DemandBinaryOpCtor));
+        registry.register_demand("UnaryOpUGen", Box::new(DemandUnaryOpCtor));
         // FFT / spectral - only when built with the `fft` feature.
         #[cfg(feature = "fft")]
         {

@@ -80,7 +80,11 @@ impl UnitDef for UnaryOpCtor {
 /// `UnaryOpUGens.cpp`). The RNG-driven ops (`opRand`/`opRand2`/`opLinRand`/`opBiLinRand`/
 /// `opSum3Rand`/`opCoin`) and the remaining non-signal ops (`opIsNil`/...) are absent;
 /// `opAsFloat`/`opAsInt` pass through, matching scsynth's `thru` default for both.
-fn unary_op(index: i16) -> Option<fn(f32) -> f32> {
+///
+/// Shared with the demand-rate `UnaryOpUGen`
+/// ([`DemandUnaryOp`](crate::unit::demand::DemandUnaryOp)), which wraps the same kernels in the
+/// demand pull protocol, so an operator behaves identically at every rate.
+pub(crate) fn unary_op(index: i16) -> Option<fn(f32) -> f32> {
     Some(match index {
         0 => |a| -a,                    // opNeg
         1 => ops::not,                  // opNot
