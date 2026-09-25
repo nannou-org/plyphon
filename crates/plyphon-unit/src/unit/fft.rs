@@ -13,8 +13,8 @@
 //! starts (`FFTBase_Ctor`); `IFFT` reads it from the chain's first ready frame, the first block its
 //! input carries the buffer number. A positive `winsize` may only name the buffer's own size:
 //! scsynth's zero-padded analysis (a window smaller than the buffer) is not supported, and such a
-//! unit stays silent. The size must be a power of two in `[64, 16384]`. For the overlap-add to line
-//! up, `hop * fftsize` should be a whole number of control blocks.
+//! unit stays silent. The size must be a power of two in `[8, 262144]`, scsynth's range. For the
+//! overlap-add to line up, `hop * fftsize` should be a whole number of control blocks.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -223,8 +223,10 @@ impl Unit for Ifft {
                 // before the inverse transform (scsynth's `ToComplexApx` in `IFFT_next`).
                 pv::to_complex(&mut buffer);
                 if ctx.fft.inverse(n, &buffer.data()[..n], temp) {
-                    for (j, w) in win.iter().enumerate().take(n) {
-                        ola[(self.pos as usize + j) % n] += temp[j] * w;
+                    // An empty window is the rectangular one: all ones.
+                    for (j, &t) in temp.iter().enumerate() {
+                        let w = win.get(j).copied().unwrap_or(1.0);
+                        ola[(self.pos as usize + j) % n] += t * w;
                     }
                 }
             }
@@ -265,7 +267,7 @@ fn sample_in(ins: &Inputs<'_>, i: usize, k: usize) -> f32 {
 
 /// The FFT size for chain buffer `bufnum` - scsynth's `FFTBase_Ctor`: the buffer's frame count,
 /// which a positive `winsize` caps (`m_audiosize = min(buf->samples, winsize)`). `None` when the
-/// buffer does not exist, its size is not a power of two in `[64, 16384]`, or `winsize` asks for a
+/// buffer does not exist, its size is not a power of two in `[8, 262144]`, or `winsize` asks for a
 /// window smaller than the buffer (scsynth's zero-padded analysis, which plyphon does not support).
 fn chain_fftsize(
     buffers: &BufferTable,
