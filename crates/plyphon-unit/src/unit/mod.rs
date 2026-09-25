@@ -83,6 +83,7 @@ pub mod resonant;
 pub mod scope_out;
 pub mod section;
 pub mod select;
+pub mod send_peak_rms;
 pub mod send_reply;
 pub mod send_trig;
 pub mod shape;

@@ -139,6 +139,7 @@ use crate::unit::section::{FOSCtor, SOSCtor};
 use crate::unit::select::{
     DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor, TWindexCtor,
 };
+use crate::unit::send_peak_rms::SendPeakRMSCtor;
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::shape::{
@@ -582,6 +583,7 @@ impl UnitRegistry {
         registry.register("LeastChange", Box::new(LeastChangeCtor));
         registry.register("LastValue", Box::new(LastValueCtor));
         registry.register("SendReply", Box::new(SendReplyCtor));
+        registry.register("SendPeakRMS", Box::new(SendPeakRMSCtor));
         // Info: engine constants and per-buffer info.
         registry.register("SampleRate", Box::new(InfoCtor(InfoKind::SampleRate)));
         registry.register("SampleDur", Box::new(InfoCtor(InfoKind::SampleDur)));
