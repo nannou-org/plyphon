@@ -1,5 +1,5 @@
 //! The init- and trigger-time random units - plyphon's ports of scsynth's `Rand`, `ExpRand`,
-//! `IRand`, `LinRand`, `NRand`, `TRand`, `TExpRand`, `TIRand`, `RandSeed` and `RandID`
+//! `IRand`, `LinRand`, `NRand`, `TRand`, `TExpRand`, `TIRand`, `CoinGate`, `RandSeed` and `RandID`
 //! (`NoiseUGens.cpp`).
 //!
 //! Like every random unit, this family draws from the synth's random stream
@@ -400,6 +400,64 @@ pub struct TIRandCtor;
 impl UnitDef for TIRandCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(TIRand(TrigRand::new(ctx.rate == Rate::Audio))))
+    }
+}
+
+/// `CoinGate.ar/kr(prob, in)`: passes each trigger in `in` with probability `prob`, else outputs
+/// `0`.
+///
+/// On each rising edge of `in` (a sample `> 0` after one `<= 0`) it draws one uniform value and
+/// outputs the trigger's value if the draw is below `prob`; every other sample outputs `0`. No draw
+/// happens between triggers. The constructor draws nothing: it latches the trigger's first value,
+/// so a trigger already high at spawn does not fire, and outputs `0`. `prob` is read once per
+/// block.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct CoinGate {
+    /// The previous trigger value (scsynth's `m_trig`).
+    prev_trig: f32,
+}
+
+impl CoinGate {
+    const PROB: usize = 0;
+    const IN: usize = 1;
+}
+
+impl Unit for CoinGate {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.prev_trig = ctx.ins.control(Self::IN);
+        *ctx.outs.control(0) = 0.0;
+        DoneAction::Nothing
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let ProcessCtx {
+            ins, outs, rgen, ..
+        } = ctx;
+        let prob = ins.control(Self::PROB);
+        let trig = sig(ins, Self::IN);
+        // The calc length: one sample at control rate (`CoinGate_next_k`), a block at audio rate
+        // (`CoinGate_next`).
+        for (i, o) in outs.audio(0).iter_mut().enumerate() {
+            let cur = trig.at(i);
+            // The draw happens only on an edge; below `prob` the trigger passes.
+            let pass = self.prev_trig <= 0.0 && cur > 0.0 && rgen.next_unipolar() < prob;
+            *o = if pass { cur } else { 0.0 };
+            self.prev_trig = cur;
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`CoinGate`].
+pub struct CoinGateCtor;
+
+impl UnitDef for CoinGateCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 2 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(CoinGate { prev_trig: 0.0 }))
     }
 }
 

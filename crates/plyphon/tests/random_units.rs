@@ -1,5 +1,5 @@
-//! The constructor-only randoms (`IRand`, `LinRand`, `NRand`) and `TWindex`, drawing from the
-//! synth's random stream. Each expected value is what scsynth's own `RGen` gives after
+//! The constructor-only randoms (`IRand`, `LinRand`, `NRand`), `TWindex` and `CoinGate`, drawing
+//! from the synth's random stream. Each expected value is what scsynth's own `RGen` gives after
 //! `RGen::init(0)` (stream 0 of a fresh World), following the `NoiseUGens.cpp` and `OscUGens.cpp`
 //! code for the same inputs and trigger streams.
 
@@ -318,5 +318,106 @@ fn scalar_twindex_draws_only_in_its_constructor() {
 #[test]
 fn twindex_needs_its_trigger_and_normalize_inputs() {
     let unit = UnitSpec::new("TWindex", Rate::Control, vec![c(1.0)], 1);
+    assert_eq!(try_compile(unit), Err(BuildError::WrongInputCount));
+}
+
+/// `a * b` at `rate`.
+fn mul(rate: Rate, a: InputRef, b: InputRef) -> UnitSpec {
+    UnitSpec {
+        name: "BinaryOpUGen".to_string(),
+        rate,
+        inputs: vec![a, b],
+        num_outputs: 1,
+        special_index: 2,
+    }
+}
+
+#[test]
+fn audio_rate_coingate_passes_each_trigger_edge_by_chance() {
+    // `Impulse.ar(6000) * 0.75`: a 0.75 impulse every 8 samples from sample 0, and 0.75 in its
+    // constructor too, which `CoinGate_Ctor` latches - so the impulse at sample 0 is no edge.
+    let units = vec![
+        impulse(Rate::Audio, 6000.0, 0.0),
+        mul(Rate::Audio, u(0), c(0.75)),
+        UnitSpec::new("CoinGate", Rate::Audio, vec![c(0.5), u(1)], 1),
+    ];
+    let taps = render(units, &[1, 2], 4);
+    let (trig, out) = (&taps[0], &taps[1]);
+    for (i, &t) in trig.iter().enumerate() {
+        assert_eq!(t, if i % 8 == 0 { 0.75 } else { 0.0 }, "trigger at {i}");
+    }
+    for (i, &o) in out.iter().enumerate() {
+        if i % 8 != 0 {
+            assert_eq!(o, 0.0, "no output between triggers at {i}");
+        }
+    }
+    let passed: Vec<u8> = every(out, 0, 8)
+        .iter()
+        .map(|&o| u8::from(o == 0.75))
+        .collect();
+    assert_eq!(
+        passed,
+        [
+            0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1,
+            1, 0, 0
+        ]
+    );
+
+    // With phase 0.5 the constructor sample is low, so the first impulse (sample 4) is an edge.
+    let units = vec![
+        impulse(Rate::Audio, 6000.0, 0.5),
+        UnitSpec::new("CoinGate", Rate::Audio, vec![c(0.5), u(0)], 1),
+    ];
+    let taps = render(units, &[0, 1], 2);
+    assert_eq!(every(&taps[0], 4, 8), vec![1.0; 16], "impulses at 4 + 8k");
+    assert_eq!(
+        every(&taps[1], 4, 8),
+        [
+            0., 1., 1., 0., 1., 1., 0., 0., 1., 0., 1., 0., 1., 0., 0., 1.
+        ],
+    );
+}
+
+#[test]
+fn control_rate_coingate_checks_one_edge_a_block() {
+    // `Impulse.kr(375)` is high every other block from block 0 (and in its constructor).
+    let units = vec![
+        impulse(Rate::Control, 375.0, 0.0),
+        UnitSpec::new("CoinGate", Rate::Control, vec![c(0.5), u(0)], 1),
+    ];
+    let taps = render(units, &[0, 1], 16);
+    let trig = per_block(&taps[0]);
+    for (b, &t) in trig.iter().enumerate() {
+        assert_eq!(
+            t,
+            if b % 2 == 0 { 1.0 } else { 0.0 },
+            "trigger in block {b}"
+        );
+    }
+    assert_eq!(
+        per_block(&taps[1]),
+        [
+            0., 0., 0., 0., 1., 0., 1., 0., 0., 0., 1., 0., 1., 0., 0., 0.
+        ],
+    );
+}
+
+#[test]
+fn coingate_draws_on_every_edge_even_when_it_cannot_pass() {
+    // `rgen.frand() < NaN` never passes, but the draw still happens, shifting the `TWindex` after
+    // it: alone, the `TWindex` would hold 2, 2, 0, 0, 0, 0, 1, 1.
+    let units = vec![
+        impulse(Rate::Control, 375.0, 0.0),
+        UnitSpec::new("CoinGate", Rate::Control, vec![c(f32::NAN), u(0)], 1),
+        twindex(Rate::Control, u(0), 0.0, &[0.2, 0.5, 0.3]),
+    ];
+    let taps = render(units, &[1, 2], 8);
+    assert_eq!(per_block(&taps[0]), vec![0.0; 8]);
+    assert_eq!(per_block(&taps[1]), [2., 2., 0., 0., 1., 1., 1., 1.]);
+}
+
+#[test]
+fn coingate_needs_its_probability_and_trigger_inputs() {
+    let unit = UnitSpec::new("CoinGate", Rate::Control, vec![c(0.5)], 1);
     assert_eq!(try_compile(unit), Err(BuildError::WrongInputCount));
 }

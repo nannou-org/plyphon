@@ -121,8 +121,8 @@ use crate::unit::pv_ops::{
 };
 use crate::unit::ramp::{RampCtor, VarLagCtor};
 use crate::unit::rand::{
-    ExpRandCtor, IRandCtor, LinRandCtor, NRandCtor, RandCtor, RandIDCtor, RandSeedCtor,
-    TExpRandCtor, TIRandCtor, TRandCtor,
+    CoinGateCtor, ExpRandCtor, IRandCtor, LinRandCtor, NRandCtor, RandCtor, RandIDCtor,
+    RandSeedCtor, TExpRandCtor, TIRandCtor, TRandCtor,
 };
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
@@ -417,6 +417,7 @@ impl UnitRegistry {
         registry.register("TRand", Box::new(TRandCtor));
         registry.register("TExpRand", Box::new(TExpRandCtor));
         registry.register("TIRand", Box::new(TIRandCtor));
+        registry.register("CoinGate", Box::new(CoinGateCtor));
         registry.register("RandSeed", Box::new(RandSeedCtor));
         registry.register("RandID", Box::new(RandIDCtor));
         registry.register("ClipNoise", Box::new(ClipNoiseCtor));
