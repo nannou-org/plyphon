@@ -1,7 +1,7 @@
 //! Chaotic map generators - plyphon's ports of scsynth's `CuspN`, `QuadN`, `GbmanN`, `LinCongN`,
 //! `StandardN`, `LatoocarfianN`, `FBSineN`, `HenonN`, `CuspL`, `QuadL`, `HenonL`, `LorenzL`,
-//! `StandardL`, `FBSineL`, `LatoocarfianL`, `LinCongL`, `FBSineC`, `HenonC`, `LatoocarfianC` and
-//! `LinCongC` (`ChaosUGens.cpp`).
+//! `StandardL`, `FBSineL`, `LatoocarfianL`, `LinCongL`, `GbmanL`, `FBSineC`, `HenonC`,
+//! `LatoocarfianC`, `LinCongC` and `QuadC` (`ChaosUGens.cpp`).
 //!
 //! Each unit iterates a chaotic map - or, for `LorenzL`, integrates a system of ODEs - at a `freq`
 //! rate. The `*N` (non-interpolating) forms hold the iterate between iterations; the `*L` (linearly
@@ -12,9 +12,9 @@
 //!
 //! The units differ in three ways:
 //!
-//! - `FBSineN`, `HenonN` and the `*L` and `*C` units other than `LinCongL` and `LinCongC` re-seed
-//!   their state when an init input changes at run time (the Hénon units only once their stability
-//!   latch has tripped), while the other units seed once and ignore later changes;
+//! - `FBSineN`, `HenonN` and the `*L` and `*C` units other than `GbmanL`, `LinCongL` and `LinCongC`
+//!   re-seed their state when an init input changes at run time (the Hénon units only once their
+//!   stability latch has tripped), while the other units seed once and ignore later changes;
 //! - the hold length of the `*L` and `*C` units, `FBSineN` and `HenonN` divides in `f64` and
 //!   narrows to `f32`, while that of the other `*N` units divides in pure `f32`;
 //! - `StandardL` wraps its phase with a C-style truncating remainder, while `StandardN` wraps with a
@@ -124,6 +124,12 @@ fn cusp_map(a: f64, b: f64, x: f64) -> f64 {
 /// The quadratic map `x = a*x^2 + b*x + c`, shared by `QuadN` and `QuadL`.
 fn quad_map(a: f64, b: f64, c: f64, x: f64) -> f64 {
     a * x * x + b * x + c
+}
+
+/// The Gingerbreadman map `x = 1 - y + |x|`, shared by `GbmanN` and `GbmanL`. Returns the new `x`;
+/// the new `y` is the old `x`.
+fn gbman_map(x: f64, y: f64) -> f64 {
+    if x < 0.0 { 1.0 - y - x } else { 1.0 - y + x }
 }
 
 /// The Latoocarfian map `x = sin(b*y) + c*sin(b*x)`, `y = sin(a*x) + d*sin(a*y)`, shared by
@@ -361,10 +367,7 @@ impl Unit for GbmanN {
             &mut self.counter,
             self.xn,
             self.yn,
-            |x, y| {
-                let nx = if x < 0.0 { 1.0 - y - x } else { 1.0 - y + x };
-                (nx, x)
-            },
+            |x, y| (gbman_map(x, y), x),
             |x| x,
         );
         self.xn = x;
@@ -1504,6 +1507,114 @@ impl Unit for LinCongC {
     }
 }
 
+/// `GbmanL.ar(freq, xi, yi)`: the Gingerbreadman map, linearly interpolated.
+///
+/// The map's second variable is the previous iterate, so it doubles as the ramp's start. Until the
+/// first iteration the unit ramps from `yi` towards `xi`. `xi` and `yi` are read only by the
+/// constructor: a run-time change does not re-seed.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct GbmanL {
+    /// The iterate the current hold ramps towards.
+    xn: f64,
+    /// The previous iterate, which the current hold ramps from.
+    yn: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for GbmanL {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.xn = f64::from(ctx.ins.control(1));
+        self.yn = f64::from(ctx.ins.control(2));
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let (spc, slope) = samples_per_cycle_slope(ctx.ins.control(0), ctx.own.sample_rate);
+        let (mut x, mut y) = (self.xn, self.yn);
+        let (mut counter, mut frac) = (self.counter, self.frac);
+        let mut diff = x - y;
+        for o in ctx.outs.audio(0).iter_mut() {
+            if counter >= spc {
+                counter -= spc;
+                frac = 0.0;
+                let prev = x;
+                x = gbman_map(prev, y);
+                y = prev;
+                diff = x - prev;
+            }
+            counter += 1.0;
+            *o = (y + (frac * diff)) as f32;
+            frac += slope;
+        }
+        self.xn = x;
+        self.yn = y;
+        self.counter = counter;
+        self.frac = frac;
+        DoneAction::Nothing
+    }
+}
+
+/// `QuadC.ar(freq, a, b, c, xi)`: the quadratic map `x = a*x^2 + b*x + c`, cubically interpolated.
+///
+/// A run-time change of `xi` shifts the running iterate into the history and re-seeds the map. The
+/// constructor fills the history and all four cubic coefficients with `xi`, exactly as the
+/// reference does, so the first hold plays `xi*(1 + t + t^2 + t^3)` rather than holding `xi`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct QuadC {
+    /// The newest iterate.
+    xn: f64,
+    /// The previous three iterates, newest first (`xnm1`, `xnm2`, `xnm3`).
+    history: [f64; 3],
+    /// The coefficients of the cubic the current hold plays.
+    coefs: [f64; 4],
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for QuadC {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.x0 = f64::from(ctx.ins.control(4));
+        self.xn = self.x0;
+        self.history = [self.x0; 3];
+        self.coefs = [self.x0; 4];
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let a = f64::from(ctx.ins.control(1));
+        let b = f64::from(ctx.ins.control(2));
+        let c = f64::from(ctx.ins.control(3));
+        let xi = f64::from(ctx.ins.control(4));
+        if self.x0 != xi {
+            self.history = [self.xn, self.history[0], self.history[1]];
+            self.x0 = xi;
+            self.xn = xi;
+        }
+
+        self.xn = chaos_cubic(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            &mut self.history,
+            &mut self.coefs,
+            self.xn,
+            |x| quad_map(a, b, c, x),
+        );
+        DoneAction::Nothing
+    }
+}
+
 /// Build a chaos generator with zeroed state and the given minimum input count. Every unit here
 /// seeds its own state in [`Unit::init`], on the audio thread, where the init inputs are readable,
 /// so the constructor never carries a meaningful value.
@@ -1543,3 +1654,5 @@ chaos_ctor!(LatoocarfianLCtor, LatoocarfianL, 7);
 chaos_ctor!(LatoocarfianCCtor, LatoocarfianC, 7);
 chaos_ctor!(LinCongLCtor, LinCongL, 5);
 chaos_ctor!(LinCongCCtor, LinCongC, 5);
+chaos_ctor!(GbmanLCtor, GbmanL, 3);
+chaos_ctor!(QuadCCtor, QuadC, 5);

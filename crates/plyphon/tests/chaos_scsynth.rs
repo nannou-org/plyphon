@@ -193,6 +193,8 @@ const UNITS: &[(&str, &[f32])] = &[
     ("LatoocarfianC", LATOOCARFIAN),
     ("LinCongL", LIN_CONG),
     ("LinCongC", LIN_CONG),
+    ("GbmanL", GBMAN),
+    ("QuadC", QUAD),
 ];
 
 // ---------------------------------------------------------------------------------------------
@@ -401,8 +403,74 @@ fn lin_cong_ignores_seed_changes() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Arity
+// GbmanL and QuadC
 // ---------------------------------------------------------------------------------------------
+
+/// `GbmanL(freq, xi=1.2, yi=2.1)`, the reference's defaults bar `freq`.
+const GBMAN: &[f32] = &[SLOW, 1.2, 2.1];
+/// `QuadC(freq, a=1, b=-1, c=-0.75, xi=0)`, the reference's defaults bar `freq`.
+const QUAD: &[f32] = &[SLOW, 1.0, -1.0, -0.75, 0.0];
+
+/// `GbmanL`'s first hold ramps from `yi` towards `xi`.
+#[test]
+fn gbman_l_matches_scsynth() {
+    assert_pinned(
+        "GbmanL",
+        &GBMAN[1..],
+        (&GBMAN_L_SLOW_BLOCK, &GBMAN_L_SLOW_LATER),
+        (&GBMAN_L_FAST_BLOCK, &GBMAN_L_FAST_LATER),
+    );
+}
+
+/// Only the constructor reads `xi` and `yi`, so a run-time change is ignored.
+#[test]
+fn gbman_l_ignores_seed_changes() {
+    assert_change_ignored("GbmanL", GBMAN, 1, 0.5);
+    assert_change_ignored("GbmanL", GBMAN, 2, 0.5);
+}
+
+/// `QuadC`'s constructor sets every cubic coefficient to `xi`; at `xi = 0` its first hold is silent.
+#[test]
+fn quad_c_matches_scsynth() {
+    assert_pinned(
+        "QuadC",
+        &QUAD[1..],
+        (&QUAD_C_SLOW_BLOCK, &QUAD_C_SLOW_LATER),
+        (&QUAD_C_FAST_BLOCK, &QUAD_C_FAST_LATER),
+    );
+}
+
+/// A run-time change of `xi` shifts the running iterate into the history and re-seeds the map.
+#[test]
+fn quad_c_reseeds_like_scsynth() {
+    assert_reseed("QuadC", QUAD, 4, 0.5, &QUAD_C_RESEED);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reblocking and arity
+// ---------------------------------------------------------------------------------------------
+
+/// With constant controls every unit renders the same samples however finely the graph is ticked.
+#[test]
+fn units_are_reblock_invariant_with_constant_controls() {
+    const FRAMES: usize = 8 * BLOCK;
+    for &(name, consts) in UNITS {
+        let want: Vec<u32> = render(name, consts, FRAMES)
+            .iter()
+            .map(|s| s.to_bits())
+            .collect();
+        for block in [1usize, 8, 16, 32] {
+            let (mut controller, _nrt, mut world) = engine(options());
+            let def = chaos_def(name, constant_inputs(consts), vec![]);
+            controller.add_synthdef_reblocked(def, block);
+            controller
+                .synth_new("c", ROOT_GROUP_ID, AddAction::Tail)
+                .expect("synth_new");
+            let got = drain(&mut world, FRAMES / BLOCK);
+            assert_bits(&got, &want, &format!("{name} reblocked to {block}"));
+        }
+    }
+}
 
 /// Each constructor rejects an input list one short of its full arity.
 #[test]
@@ -988,4 +1056,101 @@ const LIN_CONG_C_WIDE: [u32; 64] = [
     0x3f19_4f72, 0x3efd_8bf1, 0x3eb0_e728, 0x3e36_c3e3, 0x3cba_daef, 0xbe0d_967f, 0xbdf3_cd44,
     0xbd31_0c7a, 0x3d88_b9a6, 0x3e41_01f7, 0x3e99_5a8b, 0x3ec1_3f7d, 0x3ecd_3e61, 0x3ebd_0083,
     0x3e94_9557,
+];
+#[rustfmt::skip]
+const GBMAN_L_SLOW_BLOCK: [u32; 64] = [
+    0x3ffb_ffff, 0x3feb_3333, 0x3fda_6666, 0x3fc9_999a, 0x3fb8_cccd, 0x3fa8_0000, 0x3f99_999a,
+    0x3f85_1112, 0x3f61_1113, 0x3f38_0002, 0x3f0e_eef1, 0x3ecb_bbc1, 0x3e73_333e, 0x3dcc_cce0,
+    0x3d91_1123, 0x3d2a_aace, 0x3c4c_cd53, 0xbc88_8849, 0xbd3b_bb9d, 0xbd99_998b, 0xbdcc_ccc0,
+    0x3d77_7783, 0x3e62_2221, 0x3ec3_3331, 0x3f0a_aaa9, 0x3f33_bbb9, 0x3f5c_ccc9, 0x3f7f_fffc,
+    0x3f94_8886, 0x3fa9_110f, 0x3fbd_9997, 0x3fd2_221f, 0x3fe6_aaa8, 0x3ffb_3330, 0x4006_6665,
+    0x4006_6665, 0x4006_6665, 0x4006_6665, 0x4006_6666, 0x4006_6666, 0x4006_6666, 0x4006_6666,
+    0x3ff8_4444, 0x3fe3_bbbc, 0x3fcf_3334, 0x3fba_aaac, 0x3fa6_2224, 0x3f91_999c, 0x3f80_0002,
+    0x3f56_eef3, 0x3f2d_dde3, 0x3f04_ccd2, 0x3eb7_7782, 0x3e4a_aac1, 0xbdcc_cca0, 0xbd91_10f6,
+    0xbd2a_aa99, 0xbc4c_cd13, 0x3c88_881e, 0x3d3b_bb63, 0x3d99_995b, 0x3dcc_cc80, 0x3e85_5540,
+    0x3ed7_7761,
+];
+
+const GBMAN_L_SLOW_LATER: [(usize, u32); 4] = [
+    (511, 0x3ff9_9c8b),
+    (1023, 0x3fe7_a35a),
+    (2047, 0x4011_2191),
+    (4095, 0xbe75_d6aa),
+];
+
+#[rustfmt::skip]
+const GBMAN_L_FAST_BLOCK: [u32; 64] = [
+    0x3f99_999a, 0x3dcc_cce0, 0xbdcc_ccc0, 0x3f7f_fffc, 0x4006_6665, 0x4006_6666, 0x3f80_0002,
+    0xbdcc_cca0, 0x3dcc_cc80, 0x3f99_9992, 0x4006_6665, 0x3ff3_3338, 0x3f4c_ccdc, 0xbdcc_cca0,
+    0x3e99_9970, 0x3fb3_3326, 0x4006_6665, 0x3fd9_99a4, 0x3f19_99b4, 0xbdcc_cca0, 0x3eff_ffc0,
+    0x3fcc_ccba, 0x4006_6665, 0x3fc0_0010, 0x3ecc_cd18, 0xbdcc_cca0, 0x3f33_3308, 0x3fe6_664e,
+    0x4006_6665, 0x3fa6_667c, 0x3e4c_cd90, 0xbdcc_cca0, 0x3f66_6630, 0x3fff_ffe2, 0x4006_6665,
+    0x3f8c_cce8, 0x3670_0000, 0xbdcc_cca0, 0x3f8c_ccac, 0x400c_ccbb, 0x4006_6665, 0x3f66_66a8,
+    0xbe4c_cbb0, 0x3e99_9888, 0x3fbf_ff98, 0x400c_ccbb, 0x3fd9_99de, 0x3f00_00d0, 0xbe4c_cbb0,
+    0x3f33_321c, 0x3ff3_3284, 0x400c_ccbb, 0x3fa6_66f2, 0x3dcc_d7c0, 0xbe4c_cbb0, 0x3f8c_cbfa,
+    0x4013_32b8, 0x400c_ccbb, 0x3f66_680c, 0xbe99_95c0, 0x3ecc_c5a8, 0x3fd9_96da, 0x4013_32b8,
+    0x3fcc_ce96,
+];
+
+const GBMAN_L_FAST_LATER: [(usize, u32); 4] = [
+    (511, 0x3fd3_c272),
+    (1023, 0x404b_5bf5),
+    (2047, 0x3f32_0bec),
+    (4095, 0x4069_1b69),
+];
+
+#[rustfmt::skip]
+const QUAD_C_SLOW_BLOCK: [u32; 64] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000,
+    0x3bdf_38e3, 0x3cb9_1c71, 0x3d25_6000, 0x3d59_c71c, 0x3d5d_2e39, 0x3d13_0000, 0x0000_0000,
+    0xbdb4_a6aa, 0xbe67_6fff, 0xbec6_4500, 0xbf0b_b555, 0xbf2c_e180, 0xbf3f_f400, 0xbf40_0000,
+    0xbf24_69e6, 0xbedc_fa64, 0xbe27_e920, 0x3dea_f389, 0x3eb7_992b, 0x3f05_8fc0, 0x3f10_0000,
+    0x3ee8_30a0, 0x3e50_994b, 0xbdff_b2ee, 0xbef0_bc49, 0xbf45_3167, 0xbf76_908c, 0xbf7f_0000,
+    0xbf56_1b8e, 0xbf00_eb97, 0xbd8e_9f94, 0x3ec9_8f0a, 0x3f50_82fa, 0x3f8f_7d4b, 0x3f9e_8080,
+    0x3f97_3ee8, 0x3f78_4223, 0x3f28_9113, 0x3e9b_5b7d, 0xbd22_4c00, 0xbea1_469d, 0xbee8_eb0c,
+    0xbf00_a705, 0xbef0_ee03, 0xbec6_0ccd, 0xbe8e_ec41, 0xbe33_9c65, 0xbdb4_7e15, 0xbe0a_62d6,
+    0xbe6d_4723, 0xbeb5_9fa4, 0xbef6_4f4e, 0xbf16_6e1e, 0xbf26_b80e, 0xbf27_7337, 0xbf12_7356,
+    0xbed2_78a5,
+];
+
+const QUAD_C_SLOW_LATER: [(usize, u32); 4] = [
+    (511, 0xbed4_cf57),
+    (1023, 0xbefb_6c9e),
+    (2047, 0xbf0a_520f),
+    (4095, 0xbeee_4de3),
+];
+
+#[rustfmt::skip]
+const QUAD_C_FAST_BLOCK: [u32; 64] = [
+    0x0000_0000, 0x0000_0000, 0xbf40_0000, 0x3f10_0000, 0xbf7f_0000, 0x3f9e_8080, 0xbee8_eb0c,
+    0xbdb4_7e15, 0xbf27_7337, 0x3ea9_f57a, 0xbf78_c53b, 0x3f95_41fb, 0xbf0e_6c79, 0x3ded_47e3,
+    0xbf5a_3944, 0x3f54_3ed8, 0xbf64_46b3, 0x3f6f_d4b5, 0xbf4f_25da, 0x3f36_c416, 0xbf74_48b0,
+    0x3f8e_b1ab, 0xbf1f_3d03, 0x3e84_93b5, 0xbf71_1fb1, 0x3f8a_1e2f, 0xbf2a_2a24, 0x3eb6_8c45,
+    0xbf7a_bb33, 0x3f98_26ad, 0xbf06_958c, 0x3d55_6711, 0xbf4c_a48c, 0x3f30_3b36, 0xbf76_e9be,
+    0x3f92_87e6, 0xbf15_92a1, 0x3e33_da92, 0xbf65_10ee, 0x3f72_083a, 0xbf4d_34ac, 0x3f31_b213,
+    0xbf76_5a59, 0x3f91_b60e, 0xbf17_ad27, 0x3e46_2b80, 0xbf67_f46b, 0x3f7a_1f6d, 0xbf45_be08,
+    0x3f1e_7c0d, 0xbf7c_5eb1, 0x3f9a_94a0, 0xbeff_994a, 0xbacd_5710, 0xbf3f_992b, 0x3f0e_ff16,
+    0xbf7f_1f1b, 0x3f9e_af0c, 0xbee7_d7dc, 0xbdbc_b206, 0xbf26_3d67, 0x3ea4_6231, 0xbf77_cd9b,
+    0x3f93_d601,
+];
+
+const QUAD_C_FAST_LATER: [(usize, u32); 4] = [
+    (511, 0x3e9d_6a9d),
+    (1023, 0x3ecf_d9e4),
+    (2047, 0x3f5d_1075),
+    (4095, 0x3f32_c72f),
+];
+
+#[rustfmt::skip]
+const QUAD_C_RESEED: [u32; 64] = [
+    0xbe53_d338, 0x3b9e_4986, 0x3e40_c4ba, 0x3e9d_84c5, 0xbf78_c53b, 0xbf60_b6e5, 0xbf27_f258,
+    0xbeb8_5037, 0xbd30_8b93, 0x3e76_ed1e, 0x3ee0_e6bf, 0x3f00_0000, 0x3ecf_81bf, 0x3e2a_f7a8,
+    0xbe1c_1865, 0xbefb_10c3, 0xbf48_c628, 0xbf78_bca7, 0xbf80_0000, 0xbf55_ea9d, 0xbeff_bf1d,
+    0xbd81_7400, 0x3ecd_b1c5, 0x3f52_e6f0, 0x3f90_d600, 0x3fa0_0000, 0x3f98_fba9, 0x3f7c_4c96,
+    0x3f2d_26b8, 0x3ea5_5957, 0xbc9f_5427, 0xbe97_5080, 0xbee0_0000, 0xbefb_3186, 0xbeef_558a,
+    0xbec9_d338, 0xbe98_11bc, 0xbe4e_f087, 0xbdf8_0000, 0xbe26_167b, 0xbe7c_3f53, 0xbeb4_f4e0,
+    0xbeed_427d, 0xbf0e_600f, 0xbf1c_92af, 0xbf1d_3f00, 0xbf0a_f26a, 0xbecd_e87d, 0xbe65_44c6,
+    0xbd21_5f93, 0x3df5_85b3, 0x3e63_d8a2, 0x3e77_5556, 0x3e19_1cf3, 0xbd43_bdb4, 0xbe9a_ab5e,
+    0xbf10_a7f8, 0xbf49_d474, 0xbf6c_7cde, 0xbf6e_e5f9, 0xbf47_1696, 0xbef1_e2cb, 0xbda7_1ce2,
+    0x3ea9_4b17,
 ];
