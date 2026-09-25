@@ -129,7 +129,9 @@ use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
 use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::section::{FOSCtor, SOSCtor};
-use crate::unit::select::{DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor};
+use crate::unit::select::{
+    DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor, TWindexCtor,
+};
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::shape::{
@@ -455,6 +457,7 @@ impl UnitRegistry {
         registry.register("ScopeOut", Box::new(ScopeOutCtor));
         // Selection / buffer indexing.
         registry.register("Select", Box::new(SelectCtor));
+        registry.register("TWindex", Box::new(TWindexCtor));
         registry.register("Index", Box::new(IndexCtor(IndexMode::Clip)));
         registry.register("IndexL", Box::new(IndexCtor(IndexMode::Lin)));
         registry.register("WrapIndex", Box::new(IndexCtor(IndexMode::Wrap)));

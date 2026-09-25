@@ -1,7 +1,8 @@
-//! Selection and buffer-lookup units - plyphon's ports of scsynth's `Select`, the `Index`/`IndexL`/
-//! `WrapIndex`/`FoldIndex` family, `Shaper` and `DegreeToKey` (`OscUGens.cpp`).
+//! Selection and buffer-lookup units - plyphon's ports of scsynth's `Select`, `TWindex`, the
+//! `Index`/`IndexL`/`WrapIndex`/`FoldIndex` family, `Shaper` and `DegreeToKey` (`OscUGens.cpp`).
 //!
-//! `Select` passes through one of its trailing signal inputs, chosen by an index. The rest read a value
+//! `Select` passes through one of its trailing signal inputs, chosen by an index. `TWindex` chooses an
+//! index at random on each trigger, weighted by its trailing inputs. The rest read a value
 //! out of a `/b_alloc`'d buffer: the `Index` family treats the buffer as a lookup table indexed by
 //! `in` (differing only in how an out-of-range or fractional index is treated - `Index` clips, `IndexL`
 //! interpolates, `WrapIndex`/`FoldIndex` wrap/fold); `Shaper` treats it as a `(a, b)`-format transfer
@@ -15,11 +16,12 @@ use crate::error::BuildError;
 use crate::unit::io::{buffer_at, sample_channel};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::trigger::{drive, sig};
-use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::interp::lininterp;
 use plyphon_dsp::math;
 use plyphon_dsp::ops;
 use plyphon_dsp::rate::Rate;
+use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::shape_wavetable;
 
 /// The input index a `Select` reads for selector `which`: truncate toward zero, then clamp into
@@ -61,6 +63,115 @@ impl UnitDef for SelectCtor {
         }
         Ok(unit_spec(Select {
             audio: (ctx.rate == Rate::Audio) as u32,
+        }))
+    }
+}
+
+/// `TWindex.ar/kr(in, array, normalize)`: on each rising edge of the trigger `in`, a random index
+/// into `array` chosen with probability proportional to its weights, held between triggers. Input
+/// `0` is `in`, `1` is `normalize`, `2..` are the weights.
+///
+/// A draw scales one uniform value by the weights' total (their sum when `normalize` is exactly
+/// `1`, else `1`) and picks the first weight at which the running sum reaches it. When no running
+/// sum reaches it - weights summing below `1` without `normalize`, or a `NaN` weight - the index is
+/// the unit's input count, as in scsynth. Weights and `normalize` are read once per block, as is
+/// the total, however many triggers the block holds.
+///
+/// The constructor draws the first index and outputs it, then treats the trigger as high, so a
+/// trigger already high on the first sample does not draw again and the first block starts with
+/// the constructor's index. The trigger is edge-detected per sample when it is audio-rate.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct TWindex {
+    /// The index chosen on the last trigger (scsynth's `m_prevIndex`).
+    prev_index: i32,
+    /// The previous trigger value (scsynth's `m_trig`).
+    prev_trig: f32,
+    /// The weights' total for this block, negative until the first draw computes it (scsynth's
+    /// `m_maxSum`).
+    max_sum: f32,
+}
+
+impl TWindex {
+    const TRIG: usize = 0;
+    const NORMALIZE: usize = 1;
+    const WEIGHTS: usize = 2;
+
+    /// Draw a new index (scsynth's `TWindex_chooseNewIndex`), computing this block's weight total
+    /// first if it has not been yet.
+    fn choose(&mut self, ins: &Inputs<'_>, rgen: &mut Rng) -> i32 {
+        let max_index = ins.len() as i32;
+        let mut index = max_index;
+        let normalize = ins.control(Self::NORMALIZE);
+        let mut max_sum = self.max_sum;
+        if max_sum < 0.0 {
+            max_sum = 0.0;
+            if normalize == 1.0 {
+                for k in Self::WEIGHTS..ins.len() {
+                    max_sum += ins.control(k);
+                }
+            } else {
+                max_sum = 1.0;
+            }
+            self.max_sum = max_sum;
+        }
+        let max = max_sum * rgen.next_unipolar();
+        let mut sum = 0.0f32;
+        for k in Self::WEIGHTS..ins.len() {
+            sum += ins.control(k);
+            if sum >= max {
+                index = (k - Self::WEIGHTS) as i32;
+                break;
+            }
+        }
+        index
+    }
+}
+
+impl Unit for TWindex {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.max_sum = -1.0;
+        let index = self.choose(&ctx.ins, ctx.rgen);
+        *ctx.outs.control(0) = index as f32;
+        self.prev_index = index;
+        self.prev_trig = 1.0;
+        DoneAction::Nothing
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let ProcessCtx {
+            ins, outs, rgen, ..
+        } = ctx;
+        self.max_sum = -1.0;
+        let trig = sig(ins, Self::TRIG);
+        // The calc length: one sample at control rate, a block at audio rate. A control-rate trigger
+        // is the same at every sample, so only the first can be an edge (`TWindex_next_k`); an
+        // audio-rate one is checked per sample (`TWindex_next_a`).
+        for (i, o) in outs.audio(0).iter_mut().enumerate() {
+            let cur = trig.at(i);
+            if cur > 0.0 && self.prev_trig <= 0.0 {
+                self.prev_index = self.choose(ins, rgen);
+            }
+            *o = self.prev_index as f32;
+            self.prev_trig = cur;
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`TWindex`].
+pub struct TWindexCtor;
+
+impl UnitDef for TWindexCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        // Needs `trig` and `normalize`; the weights may be empty.
+        if ctx.input_rates.len() < 2 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(TWindex {
+            prev_index: 0,
+            prev_trig: 0.0,
+            max_sum: -1.0,
         }))
     }
 }

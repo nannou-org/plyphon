@@ -1,6 +1,7 @@
-//! The constructor-only randoms (`IRand`, `LinRand`, `NRand`), drawing from the synth's random
-//! stream. Each expected value is what scsynth's own `RGen` gives after `RGen::init(0)` (stream 0 of
-//! a fresh World), following the `NoiseUGens.cpp` constructors for the same inputs.
+//! The constructor-only randoms (`IRand`, `LinRand`, `NRand`) and `TWindex`, drawing from the
+//! synth's random stream. Each expected value is what scsynth's own `RGen` gives after
+//! `RGen::init(0)` (stream 0 of a fresh World), following the `NoiseUGens.cpp` and `OscUGens.cpp`
+//! code for the same inputs and trigger streams.
 
 use plyphon::{
     AddAction, BuildError, InputRef, Options, ROOT_GROUP_ID, Rate, RateInfo, SynthDef,
@@ -198,4 +199,124 @@ fn constructor_only_randoms_exist_only_at_scalar_rate() {
             "{name}"
         );
     }
+}
+
+/// `Impulse` at `rate` with frequency `freq` and phase `phase`.
+fn impulse(rate: Rate, freq: f32, phase: f32) -> UnitSpec {
+    UnitSpec::new("Impulse", rate, vec![c(freq), c(phase)], 1)
+}
+
+/// Every `period`th sample of `signal`, from sample `first`.
+fn every(signal: &[f32], first: usize, period: usize) -> Vec<f32> {
+    signal.iter().skip(first).step_by(period).copied().collect()
+}
+
+/// The value of a held control-rate tap in each block.
+fn per_block(signal: &[f32]) -> Vec<f32> {
+    every(signal, 0, BLOCK)
+}
+
+/// `TWindex` at `rate` over `weights`.
+fn twindex(rate: Rate, trig: InputRef, normalize: f32, weights: &[f32]) -> UnitSpec {
+    let mut inputs = vec![trig, c(normalize)];
+    inputs.extend(weights.iter().map(|&w| c(w)));
+    UnitSpec::new("TWindex", rate, inputs, 1)
+}
+
+/// Render `TWindex.ar(Impulse.ar(6000), weights, normalize)` for two blocks, check each draw is held
+/// until the next impulse, and return the index held from each impulse.
+fn twindex_ar(normalize: f32, weights: &[f32]) -> Vec<f32> {
+    let units = vec![
+        impulse(Rate::Audio, 6000.0, 0.0),
+        twindex(Rate::Audio, u(0), normalize, weights),
+    ];
+    let taps = render(units, &[0, 1], 2);
+    for (i, &t) in taps[0].iter().enumerate() {
+        assert_eq!(t, if i % 8 == 0 { 1.0 } else { 0.0 }, "trigger at {i}");
+    }
+    let held = every(&taps[1], 0, 8);
+    for (i, &o) in taps[1].iter().enumerate() {
+        assert_eq!(o, held[i / 8], "held at {i}");
+    }
+    held
+}
+
+#[test]
+fn audio_rate_twindex_draws_a_weighted_index_per_trigger() {
+    // The constructor's draw (index 2) holds through the impulse at sample 0: `TWindex_Ctor` sets
+    // `m_trig = 1`, so it is no edge. Each later impulse draws again.
+    assert_eq!(
+        twindex_ar(0.0, &[0.2, 0.5, 0.3]),
+        [
+            2., 0., 0., 1., 1., 1., 1., 2., 0., 2., 1., 1., 0., 2., 1., 1.
+        ],
+    );
+}
+
+#[test]
+fn twindex_scales_by_the_weight_sum_only_when_normalize_is_one() {
+    assert_eq!(
+        twindex_ar(1.0, &[3.0, 1.0, 1.0]),
+        [
+            2., 0., 0., 0., 0., 0., 1., 2., 0., 2., 0., 0., 0., 2., 0., 0.
+        ],
+    );
+    // Unnormalized, the draw is scaled by 1, which the first weight always reaches.
+    assert_eq!(twindex_ar(0.0, &[3.0, 1.0, 1.0]), vec![0.0; 16]);
+}
+
+#[test]
+fn twindex_falls_back_to_its_input_count() {
+    // Weights summing below 1 without `normalize`: a draw past their sum yields the unit's input
+    // count (4), as `TWindex_chooseNewIndex` starts its index at `mNumInputs`.
+    assert_eq!(
+        twindex_ar(0.0, &[0.1, 0.2]),
+        [
+            4., 0., 1., 4., 4., 4., 4., 4., 0., 4., 4., 4., 0., 4., 4., 4.
+        ],
+    );
+    // A `NaN` weight poisons the running sum, so only the first weight can be picked; every other
+    // draw falls back to the input count (5).
+    assert_eq!(
+        twindex_ar(0.0, &[0.5, f32::NAN, 0.5]),
+        [
+            5., 0., 0., 5., 0., 0., 5., 5., 0., 5., 0., 5., 0., 5., 5., 0.
+        ],
+    );
+    // No weights at all: always the input count (2).
+    assert_eq!(twindex_ar(0.0, &[]), vec![2.0; 16]);
+}
+
+#[test]
+fn control_rate_twindex_reads_the_first_trigger_sample_of_each_block() {
+    // A control-rate trigger high every other block, and an audio-rate one with an impulse at the
+    // first sample of every other block: both draw on blocks 2, 4 and 6.
+    let expected = [2., 2., 0., 0., 0., 0., 1., 1.];
+    let units = vec![
+        impulse(Rate::Control, 375.0, 0.0),
+        twindex(Rate::Control, u(0), 0.0, &[0.2, 0.5, 0.3]),
+    ];
+    assert_eq!(per_block(&render(units, &[1], 8)[0]), expected);
+    let units = vec![
+        impulse(Rate::Audio, 375.0, 0.0),
+        twindex(Rate::Control, u(0), 0.0, &[0.2, 0.5, 0.3]),
+    ];
+    let taps = render(units, &[0, 1], 8);
+    for (i, &t) in taps[0].iter().enumerate() {
+        assert_eq!(t, if i % 128 == 0 { 1.0 } else { 0.0 }, "trigger at {i}");
+    }
+    assert_eq!(per_block(&taps[1]), expected);
+}
+
+#[test]
+fn scalar_twindex_draws_only_in_its_constructor() {
+    let units = vec![twindex(Rate::Scalar, c(1.0), 0.0, &[0.2, 0.5, 0.3])];
+    let out = &render(units, &[0], 2)[0];
+    assert!(out.iter().all(|&o| o == 2.0));
+}
+
+#[test]
+fn twindex_needs_its_trigger_and_normalize_inputs() {
+    let unit = UnitSpec::new("TWindex", Rate::Control, vec![c(1.0)], 1);
+    assert_eq!(try_compile(unit), Err(BuildError::WrongInputCount));
 }
