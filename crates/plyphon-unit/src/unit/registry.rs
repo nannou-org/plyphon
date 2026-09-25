@@ -109,8 +109,8 @@ use crate::unit::pv_mag_mul::PvMagMulCtor;
 use crate::unit::pv_mag_squared::PvMagSquaredCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_ops::{
-    MagKind, PvBrickWallCtor, PvConjCtor, PvDiffuserCtor, PvLocalMaxCtor, PvMagThreshCtor,
-    PvPhaseQuarterCtor,
+    MagKind, PvBinShiftCtor, PvBrickWallCtor, PvConjCtor, PvDiffuserCtor, PvLocalMaxCtor,
+    PvMagSmearCtor, PvMagThreshCtor, PvPhaseQuarterCtor, PvRectCombCtor,
 };
 use crate::unit::ramp::{RampCtor, VarLagCtor};
 use crate::unit::rand::{
@@ -649,6 +649,9 @@ impl UnitRegistry {
             registry.register("PV_Min", Box::new(PvPolarCtor(PolarKind::Min)));
             registry.register("PV_CopyPhase", Box::new(PvCopyPhaseCtor));
             registry.register("PV_Copy", Box::new(PvCopyCtor));
+            registry.register("PV_BinShift", Box::new(PvBinShiftCtor));
+            registry.register("PV_MagSmear", Box::new(PvMagSmearCtor));
+            registry.register("PV_RectComb", Box::new(PvRectCombCtor));
         }
         registry
     }

@@ -1,6 +1,12 @@
-//! Spectral (`PV_*`) operators inserted into an FFT -> PV -> IFFT chain: `PV_MagAbove` gates the whole
-//! spectrum away above a huge threshold (and passes at threshold 0), and `PV_BrickWall` high/low-passes
-//! by zeroing a fraction of the bins. Requires the default `fft` feature.
+//! Spectral (`PV_*`) operators.
+//!
+//! The first two are inserted into an FFT -> PV -> IFFT chain and judged by what comes out:
+//! `PV_MagAbove` gates the whole spectrum away above a huge threshold (and passes at threshold 0),
+//! and `PV_BrickWall` high/low-passes by zeroing a fraction of the bins. `PV_BinShift`,
+//! `PV_MagSmear` and `PV_RectComb` rewrite the packed frame slot by slot, so they are driven over a
+//! pre-filled chain buffer and the frame is read straight back out of it.
+//!
+//! Requires the default `fft` feature.
 
 use plyphon::{
     AddAction, Buffer, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
@@ -144,4 +150,532 @@ fn pv_brick_wall_high_and_low_passes() {
         highpassed < 0.2 * lowpassed,
         "a high-pass should remove the low tone (high={highpassed}, low={lowpassed})"
     );
+}
+
+// The ops below rewrite the packed frame in ways an RMS-of-the-resynthesis check cannot pin down, so
+// they are driven over a pre-filled chain buffer with the chain signal supplied directly - a
+// constant buffer number, or a control bus where the test needs to change it between blocks - and
+// the frame is read straight back out of the buffer by a counter driving a non-interpolating
+// `BufRd`. One rendered control block then carries the whole packed frame as it stands after that
+// block's spectral units ran.
+
+/// Samples per control block for the frame-inspection tests, chosen equal to [`FRAME`] so one block
+/// reads the whole frame.
+const BLOCK: usize = 64;
+/// Chain-buffer frames: the smallest FFT size plyphon plans for.
+const FRAME: usize = 64;
+/// Bins in a packed [`FRAME`] frame, which holds `[dc, nyq, bins...]`.
+const BINS: usize = (FRAME - 2) / 2;
+/// A second chain buffer of a different supported size, for the frame-size-change case.
+const WIDE_FRAME: usize = 128;
+/// The control bus carrying the chain signal where a test changes it between blocks.
+const CHAIN_BUS: u32 = 0;
+
+/// A constant input.
+fn c(v: f32) -> InputRef {
+    InputRef::Constant(v)
+}
+
+/// Output 0 of unit `unit`.
+fn u(unit: u32) -> InputRef {
+    InputRef::Unit { unit, output: 0 }
+}
+
+/// A packed spectrum with pairwise-distinct, non-zero terms throughout, so a dropped, swapped or
+/// silently converted slot cannot pass unnoticed.
+fn test_frame() -> Vec<f32> {
+    let mut data = vec![0.0f32; FRAME];
+    data[0] = 0.8125;
+    data[1] = -0.4375;
+    for i in 0..BINS {
+        data[2 + 2 * i] = 0.5 + i as f32 / 32.0;
+        data[3 + 2 * i] = -0.25 - i as f32 / 64.0;
+    }
+    data
+}
+
+/// The polar form of a Cartesian bin, as the shared chain plumbing computes it.
+fn to_polar(re: f32, im: f32) -> (f32, f32) {
+    (im.hypot(re), im.atan2(re))
+}
+
+/// An engine holding `frame` in buffer 0 and a wider, distinctly filled buffer 1, running `units` as
+/// one synth over `channels` outputs.
+fn frame_engine(
+    units: Vec<UnitSpec>,
+    frame: &[f32],
+    channels: usize,
+) -> (plyphon::Controller, World) {
+    let (mut controller, _nrt, world) = engine(Options {
+        sample_rate: SR,
+        block_size: BLOCK,
+        output_channels: channels,
+        ..Options::default()
+    });
+    controller
+        .buffer_set(0, Box::new(Buffer::from_interleaved(frame.to_vec(), 1, SR)))
+        .expect("buffer_set");
+    let wide: Vec<f32> = (0..WIDE_FRAME).map(|i| 1.0 + i as f32).collect();
+    controller
+        .buffer_set(1, Box::new(Buffer::from_interleaved(wide, 1, SR)))
+        .expect("buffer_set");
+    controller.add_synthdef(SynthDef {
+        name: "t".to_string(),
+        params: vec![],
+        units,
+    });
+    controller
+        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("synth_new");
+    (controller, world)
+}
+
+/// Render one control block of `channels`-channel output.
+fn one_block(world: &mut World, channels: usize) -> Vec<f32> {
+    let mut buf = vec![0.0f32; BLOCK * channels];
+    world.fill(&mut buf, channels);
+    buf
+}
+
+/// Channel `ch` of an interleaved block.
+fn channel(buf: &[f32], channels: usize, ch: usize) -> Vec<f32> {
+    buf.iter().skip(ch).step_by(channels).copied().collect()
+}
+
+/// A frame counter driving a non-interpolating `BufRd` over buffer `bufnum`, then `Out` - appended
+/// after the units under test, so it reads the frame they just wrote. `extra` goes into the output
+/// channels after the frame.
+fn read_frame(
+    mut units: Vec<UnitSpec>,
+    bufnum: f32,
+    end: usize,
+    extra: Vec<InputRef>,
+) -> Vec<UnitSpec> {
+    let phasor = units.len() as u32;
+    units.push(UnitSpec::new(
+        "Phasor",
+        Rate::Audio,
+        vec![c(0.0), c(1.0), c(0.0), c(end as f32), c(0.0)],
+        1,
+    ));
+    units.push(UnitSpec::new(
+        "BufRd",
+        Rate::Audio,
+        vec![c(bufnum), u(phasor), c(1.0), c(1.0)],
+        1,
+    ));
+    let mut out = vec![c(0.0), u(phasor + 1)];
+    out.extend(extra);
+    units.push(UnitSpec::new("Out", Rate::Audio, out, 0));
+    units
+}
+
+/// The frame left behind by a single control block of `op` over the test spectrum, optionally
+/// chained behind `predecessor`.
+fn frame_after(op: UnitSpec, predecessor: Option<UnitSpec>) -> Vec<f32> {
+    let frame = test_frame();
+    let mut units = Vec::new();
+    if let Some(unit) = predecessor {
+        units.push(unit);
+    }
+    units.push(op);
+    let (_c, mut world) = frame_engine(read_frame(units, 0.0, FRAME, vec![]), &frame, 1);
+    one_block(&mut world, 1)
+}
+
+/// `PV_BinShift(chain, stretch, shift, interp)`.
+fn bin_shift(chain: InputRef, stretch: f32, shift: f32, interp: f32) -> UnitSpec {
+    UnitSpec::new(
+        "PV_BinShift",
+        Rate::Control,
+        vec![chain, c(stretch), c(shift), c(interp)],
+        1,
+    )
+}
+
+/// `PV_MagAbove(chain, 0)`: an identity that leaves the frame in polar form, for the coordinate-form
+/// cases.
+fn polar_identity(chain: InputRef) -> UnitSpec {
+    UnitSpec::new("PV_MagAbove", Rate::Control, vec![chain, c(0.0)], 1)
+}
+
+#[test]
+fn pv_bin_shift_maps_bins_and_leaves_complex() {
+    let frame = test_frame();
+
+    // Nearest-bin mapping (interp <= 0): bin `i` moves to `round(shift + i * stretch)`, whole. The
+    // two bins that would land past the top are dropped and the two bins below the shift stay at the
+    // zero the destination frame starts from, so the accumulation is visibly onto a cleared frame.
+    let got = frame_after(bin_shift(c(0.0), 1.0, 2.0, 0.0), None);
+    let mut want = frame.clone();
+    for k in 0..BINS {
+        let (re, im) = match k.checked_sub(2) {
+            Some(src) if src < BINS => (frame[2 + 2 * src], frame[3 + 2 * src]),
+            _ => (0.0, 0.0),
+        };
+        want[2 + 2 * k] = re;
+        want[3 + 2 * k] = im;
+    }
+    assert_eq!(got, want, "nearest-bin shift by two");
+    assert_eq!(got[0], frame[0], "the DC term passes through a bin shift");
+    assert_eq!(
+        got[1], frame[1],
+        "the Nyquist term passes through a bin shift"
+    );
+
+    // Linear interpolation (interp > 0): a half-bin shift splits each bin evenly between its two
+    // neighbours, and the two halves accumulate into the same destination.
+    let got = frame_after(bin_shift(c(0.0), 1.0, 0.5, 1.0), None);
+    for k in 0..BINS {
+        let lower = if k == 0 {
+            0.0
+        } else {
+            0.5 * frame[2 + 2 * (k - 1)]
+        };
+        let lower_im = if k == 0 {
+            0.0
+        } else {
+            0.5 * frame[3 + 2 * (k - 1)]
+        };
+        let want_re = lower + 0.5 * frame[2 + 2 * k];
+        let want_im = lower_im + 0.5 * frame[3 + 2 * k];
+        assert!(
+            (got[2 + 2 * k] - want_re).abs() < 1e-6 && (got[3 + 2 * k] - want_im).abs() < 1e-6,
+            "interpolated bin {k} is ({}, {}), expected ({want_re}, {want_im})",
+            got[2 + 2 * k],
+            got[3 + 2 * k]
+        );
+    }
+
+    // A non-finite position places no bin, so a NaN stretch silences every bin past the first.
+    let got = frame_after(bin_shift(c(0.0), f32::NAN, 0.0, 0.0), None);
+    assert_eq!(
+        (got[2], got[3]),
+        (frame[2], frame[3]),
+        "the first bin's position is still finite"
+    );
+    assert!(
+        got[4..].iter().all(|&s| s == 0.0),
+        "bins at non-finite positions are dropped"
+    );
+
+    // Behind a polar predecessor the frame arrives as magnitude/phase pairs. The op converts before
+    // it maps, so the shifted frame reads back as Cartesian bins - which the polar pairs are not.
+    let got = frame_after(bin_shift(u(0), 1.0, 1.0, 0.0), Some(polar_identity(c(0.0))));
+    for k in 1..BINS {
+        let (want_re, want_im) = (frame[2 + 2 * (k - 1)], frame[3 + 2 * (k - 1)]);
+        assert!(
+            (got[2 + 2 * k] - want_re).abs() < 1e-5 && (got[3 + 2 * k] - want_im).abs() < 1e-5,
+            "after a polar predecessor bin {k} is ({}, {}), expected ({want_re}, {want_im})",
+            got[2 + 2 * k],
+            got[3 + 2 * k]
+        );
+    }
+    let (polar_mag, polar_phase) = to_polar(frame[2], frame[3]);
+    assert!(
+        (polar_mag - frame[2]).abs() > 1e-3 || (polar_phase - frame[3]).abs() > 1e-3,
+        "the polar and Cartesian forms must differ for the conversion check to discriminate"
+    );
+}
+
+#[test]
+fn pv_mag_smear_averages_and_leaves_polar() {
+    let frame = test_frame();
+    let polar: Vec<(f32, f32)> = (0..BINS)
+        .map(|i| to_polar(frame[2 + 2 * i], frame[3 + 2 * i]))
+        .collect();
+    let smear = |bins: f32| UnitSpec::new("PV_MagSmear", Rate::Control, vec![c(0.0), c(bins)], 1);
+
+    // A width of one averages each magnitude with its two neighbours. The window is truncated at the
+    // edges but the divisor is not, so the outermost bins are attenuated - the reference's shape.
+    let got = frame_after(smear(1.0), None);
+    for j in 0..BINS {
+        let lo = j.saturating_sub(1);
+        let hi = (j + 1).min(BINS - 1);
+        let sum: f32 = polar[lo..=hi].iter().map(|&(mag, _)| mag).sum();
+        let want = sum / 3.0;
+        assert!(
+            (got[2 + 2 * j] - want).abs() < 1e-5,
+            "smeared magnitude {j} is {}, expected {want}",
+            got[2 + 2 * j]
+        );
+        assert!(
+            (got[3 + 2 * j] - polar[j].1).abs() < 1e-6,
+            "phase {j} must survive a magnitude smear"
+        );
+    }
+    assert_eq!(got[0], frame[0], "the DC term passes through a smear");
+    assert_eq!(got[1], frame[1], "the Nyquist term passes through a smear");
+
+    // The frame is left in polar form: the stored pairs are magnitude/phase, not the Cartesian pairs
+    // that went in.
+    assert!(
+        (got[2] - frame[2]).abs() > 1e-3 || (got[3] - frame[3]).abs() > 1e-3,
+        "a polar end state must be visibly different from the Cartesian input"
+    );
+
+    // The width is truncated to an integer and clamped to the spectrum, so a huge width averages the
+    // whole spectrum into every bin.
+    let got = frame_after(smear(1.0e9), None);
+    let total: f32 = polar.iter().map(|&(mag, _)| mag).sum();
+    let want = total / (2 * (BINS - 1) + 1) as f32;
+    for j in 0..BINS {
+        assert!(
+            (got[2 + 2 * j] - want).abs() < 1e-5,
+            "fully smeared magnitude {j} is {}, expected {want}",
+            got[2 + 2 * j]
+        );
+    }
+
+    // A negative width, and a NaN (which reads as zero), both clamp to a window of one: the
+    // magnitudes are untouched, though the frame still ends polar. An infinite width saturates
+    // the cast instead and clamps to the widest window - the full-smear case above.
+    let inf = frame_after(smear(f32::INFINITY), None);
+    let full = frame_after(smear(BINS as f32), None);
+    assert_eq!(
+        inf, full,
+        "an infinite width must smear like the widest window"
+    );
+    for width in [-5.0f32, f32::NAN] {
+        let got = frame_after(smear(width), None);
+        for j in 0..BINS {
+            assert!(
+                (got[2 + 2 * j] - polar[j].0).abs() < 1e-6,
+                "width {width}: magnitude {j} is {}, expected {}",
+                got[2 + 2 * j],
+                polar[j].0
+            );
+        }
+    }
+}
+
+#[test]
+fn pv_rect_comb_zeroes_teeth_without_conversion() {
+    let frame = test_frame();
+    let (num_teeth, start_phase, width) = (4.0f32, 0.0f32, 0.5f32);
+    let comb = |chain: InputRef| {
+        UnitSpec::new(
+            "PV_RectComb",
+            Rate::Control,
+            vec![chain, c(num_teeth), c(start_phase), c(width)],
+            1,
+        )
+    };
+
+    // The reference walks a phase across the frame, one step of `numTeeth / (numbins + 1)` per slot
+    // from the DC term through every bin to the Nyquist term, zeroing a slot whenever the phase is
+    // past `width`. Replaying that here gives the tooth pattern.
+    let step = num_teeth / (BINS + 1) as f32;
+    let wrap = |p: f32| {
+        if p >= 1.0 {
+            p - 1.0
+        } else if p < 0.0 {
+            p + 1.0
+        } else {
+            p
+        }
+    };
+    let mut phase = start_phase;
+    let dc_zeroed = phase > width;
+    phase = wrap(phase + step);
+    let mut zeroed = Vec::with_capacity(BINS);
+    for _ in 0..BINS {
+        zeroed.push(phase > width);
+        phase = wrap(phase + step);
+    }
+    let nyq_zeroed = phase > width;
+    assert!(
+        zeroed.iter().any(|&z| z) && zeroed.iter().any(|&z| !z),
+        "the comb must both keep and zero bins for this to be discriminating"
+    );
+
+    let got = frame_after(comb(c(0.0)), None);
+    assert_eq!(got[0] == 0.0, dc_zeroed, "the DC term follows the comb");
+    assert_eq!(
+        got[1] == 0.0,
+        nyq_zeroed,
+        "the Nyquist term follows the comb"
+    );
+    for (i, &zero) in zeroed.iter().enumerate() {
+        let (re, im) = (got[2 + 2 * i], got[3 + 2 * i]);
+        if !zero {
+            // Bit-identical, not merely close: the op edits the packed frame without converting it,
+            // so a surviving bin cannot have been through a polar round trip.
+            assert_eq!(
+                (re, im),
+                (frame[2 + 2 * i], frame[3 + 2 * i]),
+                "bin {i} is inside a tooth and must be untouched"
+            );
+        } else {
+            assert_eq!((re, im), (0.0, 0.0), "bin {i} is outside every tooth");
+        }
+    }
+    let roundtrip = to_polar(frame[2], frame[3]);
+    assert!(
+        roundtrip != (frame[2], frame[3]),
+        "a polar conversion must change the stored pair for the bit-identity check to discriminate"
+    );
+
+    // Behind a polar predecessor the surviving slots keep the magnitude/phase pairs they arrived
+    // with, so the op left the frame's coordinate form exactly as it found it.
+    let got = frame_after(comb(u(0)), Some(polar_identity(c(0.0))));
+    for (i, &zero) in zeroed.iter().enumerate() {
+        if !zero {
+            let (mag, phase) = to_polar(frame[2 + 2 * i], frame[3 + 2 * i]);
+            assert!(
+                (got[2 + 2 * i] - mag).abs() < 1e-6 && (got[3 + 2 * i] - phase).abs() < 1e-6,
+                "bin {i} should still be the polar pair ({mag}, {phase}), got ({}, {})",
+                got[2 + 2 * i],
+                got[3 + 2 * i]
+            );
+        }
+    }
+}
+
+#[test]
+fn pv_new_units_pass_through_on_missing_chain() {
+    let frame = test_frame();
+    let ops = [
+        bin_shift(u(0), 1.0, 1.0, 0.0),
+        UnitSpec::new("PV_MagSmear", Rate::Control, vec![u(0), c(1.0)], 1),
+        UnitSpec::new(
+            "PV_RectComb",
+            Rate::Control,
+            vec![u(0), c(4.0), c(0.0), c(0.5)],
+            1,
+        ),
+    ];
+    for op in ops {
+        let name = op.name.clone();
+        // Channel 0 reads buffer 1 - the wider frame the size-change case points the op at - and
+        // channel 1 carries the chain index the op passes on. Adding zero at audio rate carries a
+        // control value into a block exactly, where `K2A` would interpolate across the step.
+        let units = vec![
+            UnitSpec::new("In", Rate::Control, vec![c(CHAIN_BUS as f32)], 1),
+            op,
+            UnitSpec {
+                name: "BinaryOpUGen".to_string(),
+                rate: Rate::Audio,
+                inputs: vec![u(1), c(0.0)],
+                num_outputs: 1,
+                special_index: 0,
+            },
+        ];
+        // The counter wraps every block, so channel 0 always reads the wide frame's first `FRAME`
+        // slots - enough to see any edit, since both sizing ops rewrite from bin 0 up.
+        let units = read_frame(units, 1.0, FRAME, vec![u(2)]);
+        let (mut controller, mut world) = frame_engine(units, &frame, 2);
+
+        // No frame ready: the chain index is normalised to -1, which ends the chain downstream.
+        controller
+            .set_control_bus(CHAIN_BUS, -1.0)
+            .expect("set bus");
+        let out = one_block(&mut world, 2);
+        assert_eq!(
+            channel(&out, 2, 1)[0],
+            -1.0,
+            "{name} must emit -1 between frames"
+        );
+
+        // A buffer number with nothing behind it: the index passes through unchanged, because
+        // writing -1 there would end the chain for every unit downstream too.
+        controller.set_control_bus(CHAIN_BUS, 5.0).expect("set bus");
+        let out = one_block(&mut world, 2);
+        assert_eq!(
+            channel(&out, 2, 1)[0],
+            5.0,
+            "{name} must pass a missing buffer's index through"
+        );
+
+        // A first real frame, then one of a different size. `PV_BinShift` and `PV_MagSmear` size
+        // their per-bin state from the first frame they see and pass any other size through
+        // untouched; `PV_RectComb` keeps no per-bin state, so it edits either size.
+        controller.set_control_bus(CHAIN_BUS, 0.0).expect("set bus");
+        one_block(&mut world, 2);
+        controller.set_control_bus(CHAIN_BUS, 1.0).expect("set bus");
+        let out = one_block(&mut world, 2);
+        assert_eq!(
+            channel(&out, 2, 1)[0],
+            1.0,
+            "{name} must pass a differently sized frame's index through"
+        );
+        if name != "PV_RectComb" {
+            let wide = channel(&out, 2, 0);
+            for (i, &s) in wide.iter().enumerate() {
+                assert_eq!(
+                    s,
+                    1.0 + i as f32,
+                    "{name} must leave a differently sized frame untouched (slot {i})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pv_bin_shift_and_mag_smear_size_their_scratch_from_the_frame() {
+    // A 16384-frame chain: the scratch is allocated on the first frame at the chain buffer's own
+    // size (scsynth's `MAKE_TEMP_BUF`), so no size ceiling applies. Reading back the frame's head:
+    // a one-bin shift clears bin 0 and moves the old bin 0 into bin 1.
+    const BIG: usize = 16_384;
+    let big: Vec<f32> = (0..BIG).map(|i| 1.0 + (i % 97) as f32 / 97.0).collect();
+    let (_c, mut world) = frame_engine(
+        read_frame(vec![bin_shift(c(0.0), 1.0, 1.0, 0.0)], 0.0, FRAME, vec![]),
+        &big,
+        1,
+    );
+    let got = one_block(&mut world, 1);
+    assert_eq!((got[2], got[3]), (0.0, 0.0), "bin 0 is cleared");
+    assert_eq!(
+        (got[4], got[5]),
+        (big[2], big[3]),
+        "old bin 0 lands in bin 1"
+    );
+
+    let smear = UnitSpec::new("PV_MagSmear", Rate::Control, vec![c(0.0), c(1.0)], 1);
+    let (_c, mut world) = frame_engine(read_frame(vec![smear], 0.0, FRAME, vec![]), &big, 1);
+    let got = one_block(&mut world, 1);
+    let mag = |k: usize| to_polar(big[2 + 2 * k], big[3 + 2 * k]).0;
+    let want = (mag(0) + mag(1) + mag(2)) / 3.0;
+    assert!(
+        (got[4] - want).abs() < 1e-5,
+        "bin 1 averages bins 0..=2: got {}, want {want}",
+        got[4]
+    );
+}
+
+#[test]
+fn a_failed_scratch_allocation_outputs_no_frame() {
+    // A unit pool too small for the scratch: the op is silenced with `-1` on its chain output
+    // (scsynth's `FFT_ClearUnitOutputs`), so nothing downstream sees a ready frame.
+    for op in ["PV_BinShift", "PV_MagSmear"] {
+        let (mut controller, _nrt, mut world) = engine(Options {
+            sample_rate: SR,
+            block_size: BLOCK,
+            output_channels: 1,
+            unit_pool_bytes: 64,
+            ..Options::default()
+        });
+        controller
+            .buffer_set(0, Box::new(Buffer::from_interleaved(test_frame(), 1, SR)))
+            .unwrap();
+        controller.add_synthdef(SynthDef {
+            name: "t".to_string(),
+            params: vec![],
+            units: vec![
+                UnitSpec::new(op, Rate::Control, vec![c(0.0), c(1.0), c(1.0), c(0.0)], 1),
+                UnitSpec::new("K2A", Rate::Audio, vec![u(0)], 1),
+                UnitSpec::new("Out", Rate::Audio, vec![c(0.0), u(1)], 0),
+            ],
+        });
+        controller
+            .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
+            .unwrap();
+        one_block(&mut world, 1);
+        let got = one_block(&mut world, 1);
+        assert!(
+            got.iter().all(|&s| s == -1.0),
+            "{op}: no frame, got {got:?}"
+        );
+    }
 }

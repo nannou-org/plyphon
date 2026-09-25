@@ -1,6 +1,6 @@
 //! Single-buffer spectral (`PV_*`) operators - plyphon's ports of scsynth's `PV_MagAbove`,
-//! `PV_MagBelow`, `PV_MagClip`, `PV_LocalMax`, `PV_PhaseShift90`, `PV_PhaseShift270`, `PV_BrickWall`
-//! and `PV_Conj` (`PV_UGens.cpp`).
+//! `PV_MagBelow`, `PV_MagClip`, `PV_LocalMax`, `PV_PhaseShift90`, `PV_PhaseShift270`, `PV_BrickWall`,
+//! `PV_Conj`, `PV_Diffuser`, `PV_BinShift`, `PV_MagSmear` and `PV_RectComb` (`PV_UGens.cpp`).
 //!
 //! Each edits the FFT-chain buffer in place each frame, using the shared [`pv`] plumbing:
 //! [`pv::pv_frame`] for the frame preamble, [`pv::to_polar`]/[`pv::to_complex`] for the coordinate
@@ -13,6 +13,7 @@ use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, pv, unit_spec, unit_spec_pool};
 use core::f32::consts::TAU;
+use plyphon_dsp::math;
 
 /// Which magnitude-threshold operation a [`PvMagThresh`] applies.
 #[derive(Copy, Clone)]
@@ -416,5 +417,264 @@ impl UnitDef for PvDiffuserCtor {
             cleared_output: -1.0,
             ..unit_spec_pool(PvDiffuser::zeroed())
         })
+    }
+}
+
+/// scsynth's `MAKE_TEMP_BUF`: on the first frame, allocate a scratch as large as the chain buffer
+/// (`buf->samples` floats) from the engine's pool and latch the frame's bin count; after that, a
+/// frame with a different bin count passes through untouched. Returns the bin count to process, or
+/// `None` to skip the frame - no such buffer, a changed size, or a failed allocation (after which the
+/// engine silences the unit; scsynth leaves the scratch null and writes through it).
+fn make_temp_buf(
+    ctx: &mut ProcessCtx<'_>,
+    bufnum: usize,
+    numbins: &mut u32,
+    allocated: &mut u32,
+) -> Option<usize> {
+    let data = unit::buffer_at(ctx.buffers, &ctx.local_bufs, bufnum)?.data();
+    let (frame_bins, bytes) = (
+        data.len().saturating_sub(2) / 2,
+        core::mem::size_of_val(data),
+    );
+    if *allocated == 0 {
+        if !ctx.aux.alloc(bytes) {
+            return None;
+        }
+        *allocated = 1;
+        *numbins = frame_bins as u32;
+    } else if frame_bins != *numbins as usize {
+        return None;
+    }
+    Some(frame_bins)
+}
+
+/// `PV_BinShift(buffer, stretch, shift, interp)`: move every bin to a new position, stretching the
+/// spectrum by `stretch` and offsetting it by `shift` bins - a frequency shift (linear, so harmonic
+/// ratios change) when `stretch` is `1`, a spectral scaling when it is not.
+///
+/// Bin `i` lands at `shift + i * stretch`. `interp > 0` spreads it linearly across the two bins that
+/// straddle that position; otherwise it goes wholly into the nearest one. Several sources can map
+/// onto the same destination, so the destination spectrum is built from zero in the scratch and
+/// copied back once every source has been read. The DC and Nyquist terms are not bins and pass
+/// through unchanged. A destination outside the spectrum is dropped, as is a bin whose position is
+/// not finite (undefined behaviour in the reference).
+///
+/// The op reads and writes Cartesian bins and leaves the frame in Cartesian form. Its scratch is
+/// allocated on the first frame, as large as the chain buffer (scsynth's `MAKE_TEMP_BUF`).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct PvBinShift {
+    /// Bin count of the first frame.
+    numbins: u32,
+    /// `1` once the scratch is allocated (scsynth's non-null `m_tempbuf`).
+    allocated: u32,
+}
+
+impl Unit for PvBinShift {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let Some(bufnum) = pv::pv_frame(ctx) else {
+            return DoneAction::Nothing;
+        };
+        let Some(numbins) = make_temp_buf(ctx, bufnum, &mut self.numbins, &mut self.allocated)
+        else {
+            return DoneAction::Nothing;
+        };
+        let stretch = ctx.ins.control(1);
+        let shift = ctx.ins.control(2);
+        let interp = ctx.ins.control(3);
+        let dest = &mut ctx.aux.f32_mut()[..2 * numbins];
+        dest.fill(0.0);
+
+        if let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_complex(&mut buffer)
+        {
+            let mut fpos = shift;
+            for bin in spectrum.bins.iter() {
+                if fpos.is_finite() {
+                    if interp > 0.0 {
+                        let floor = math::floor(fpos);
+                        let beta = fpos - floor;
+                        let pos = floor as i64;
+                        accumulate(dest, pos, 1.0 - beta, *bin);
+                        accumulate(dest, pos + 1, beta, *bin);
+                    } else {
+                        // The reference's `(int32)(fpos + 0.5)`: the `0.5` is a `double`, so the
+                        // sum rounds at double precision before truncating.
+                        accumulate(dest, (f64::from(fpos) + 0.5) as i64, 1.0, *bin);
+                    }
+                }
+                fpos += stretch;
+            }
+            for (bin, pair) in spectrum.bins.iter_mut().zip(dest.chunks_exact(2)) {
+                bin.x = pair[0];
+                bin.y = pair[1];
+            }
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Add `weight * bin` into destination bin `pos` of `dest` (two `f32` per bin), dropping it if `pos`
+/// is not a bin.
+fn accumulate(dest: &mut [f32], pos: i64, weight: f32, bin: pv::Bin) {
+    let Some(pair) = usize::try_from(pos)
+        .ok()
+        .and_then(|pos| dest.get_mut(2 * pos..2 * pos + 2))
+    else {
+        return;
+    };
+    pair[0] += weight * bin.x;
+    pair[1] += weight * bin.y;
+}
+
+/// Constructor for [`PvBinShift`]: the unit allocates its scratch on the first frame.
+pub struct PvBinShiftCtor;
+
+impl UnitDef for PvBinShiftCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 4 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(BuiltUnit {
+            cleared_output: -1.0,
+            ..unit_spec_pool(PvBinShift::zeroed())
+        })
+    }
+}
+
+/// `PV_MagSmear(buffer, bins)`: replace each bin's magnitude with the average of the `2 * bins + 1`
+/// magnitudes centred on it, blurring the spectrum along the frequency axis. Phases, and the DC and
+/// Nyquist terms, are untouched.
+///
+/// The window is truncated at the spectrum's edges but the divisor is not, so the outermost bins are
+/// attenuated - the reference's behaviour. `bins` is truncated to an integer and clamped to
+/// `[0, numbins - 1]`, and the cost is `numbins * bins`.
+///
+/// The op reads and writes polar bins and leaves the frame in polar form. The smeared magnitudes go
+/// to a scratch first, so every bin averages the frame's original magnitudes; the scratch is
+/// allocated on the first frame, as large as the chain buffer (scsynth's `MAKE_TEMP_BUF`).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct PvMagSmear {
+    /// Bin count of the first frame.
+    numbins: u32,
+    /// `1` once the scratch is allocated (scsynth's non-null `m_tempbuf`).
+    allocated: u32,
+}
+
+impl Unit for PvMagSmear {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let Some(bufnum) = pv::pv_frame(ctx) else {
+            return DoneAction::Nothing;
+        };
+        let Some(numbins) = make_temp_buf(ctx, bufnum, &mut self.numbins, &mut self.allocated)
+        else {
+            return DoneAction::Nothing;
+        };
+        let width_in = ctx.ins.control(1);
+        let smeared = &mut ctx.aux.f32_mut()[..numbins];
+
+        if numbins > 0
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::to_polar(&mut buffer)
+        {
+            let last = numbins as i32 - 1;
+            let width = (width_in as i32).clamp(0, last);
+            let scale = 1.0 / (2 * width + 1) as f32;
+            for (j, out) in smeared.iter_mut().enumerate() {
+                let lo = (j as i32 - width).max(0) as usize;
+                let hi = (j as i32 + width).min(last) as usize;
+                let sum: f32 = spectrum.bins[lo..=hi].iter().map(|bin| bin.x).sum();
+                *out = sum * scale;
+            }
+            for (bin, &mag) in spectrum.bins.iter_mut().zip(smeared.iter()) {
+                bin.x = mag;
+            }
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`PvMagSmear`]: the unit allocates its scratch on the first frame.
+pub struct PvMagSmearCtor;
+
+impl UnitDef for PvMagSmearCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 2 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(BuiltUnit {
+            cleared_output: -1.0,
+            ..unit_spec_pool(PvMagSmear::zeroed())
+        })
+    }
+}
+
+/// `PV_RectComb(buffer, numTeeth, phase, width)`: zero every slot outside the teeth of a rectangular
+/// comb laid across the spectrum, keeping `width` of each `1 / numTeeth` of the frame.
+///
+/// A running phase walks the spectrum, advancing by `numTeeth / (numbins + 1)` per slot from the DC
+/// term through every bin to the Nyquist term; a slot survives when the phase is at most `width`.
+/// The phase is wrapped by a single addition or subtraction per step, as the reference does, so a
+/// `numTeeth` beyond the frame's slot count sweeps the comb off the spectrum instead of aliasing.
+///
+/// The op zeroes whole slots, which needs neither magnitudes nor real parts, so it edits the packed
+/// frame without converting it and leaves its coordinate form as it found it.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct PvRectComb {
+    /// The unit is stateless; the state block must still be a non-zero-sized `Pod`.
+    _pad: u32,
+}
+
+impl Unit for PvRectComb {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let num_teeth = ctx.ins.control(1);
+        let start_phase = ctx.ins.control(2);
+        let width = ctx.ins.control(3);
+        if let Some(bufnum) = pv::pv_frame(ctx)
+            && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
+            && let Some(spectrum) = pv::spectrum(&mut buffer)
+        {
+            let step = num_teeth / (spectrum.bins.len() + 1) as f32;
+            let mut phase = start_phase;
+            if phase > width {
+                *spectrum.dc = 0.0;
+            }
+            phase = wrap_phase(phase + step);
+            for bin in spectrum.bins.iter_mut() {
+                if phase > width {
+                    *bin = zero();
+                }
+                phase = wrap_phase(phase + step);
+            }
+            if phase > width {
+                *spectrum.nyq = 0.0;
+            }
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Bring a comb phase back toward `[0, 1)` with one addition or subtraction, as the reference does.
+fn wrap_phase(phase: f32) -> f32 {
+    if phase >= 1.0 {
+        phase - 1.0
+    } else if phase < 0.0 {
+        phase + 1.0
+    } else {
+        phase
+    }
+}
+
+/// Constructor for [`PvRectComb`].
+pub struct PvRectCombCtor;
+
+impl UnitDef for PvRectCombCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 4 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(PvRectComb { _pad: 0 }))
     }
 }
