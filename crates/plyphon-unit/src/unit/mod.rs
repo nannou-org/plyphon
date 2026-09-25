@@ -64,6 +64,7 @@ pub mod pitch_shift;
 pub mod play_buf;
 pub mod pluck;
 pub mod poll;
+pub mod psin_grain;
 #[cfg(feature = "fft")]
 pub mod pv;
 #[cfg(feature = "fft")]

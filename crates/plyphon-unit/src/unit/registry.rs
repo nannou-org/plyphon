@@ -113,6 +113,7 @@ use crate::unit::pitch_shift::PitchShiftCtor;
 use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::pluck::PluckCtor;
 use crate::unit::poll::PollCtor;
+use crate::unit::psin_grain::PSinGrainCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_combine::{
     ComplexKind, PolarKind, PvComplexCtor, PvCopyCtor, PvCopyPhaseCtor, PvPolarCtor,
@@ -500,6 +501,7 @@ impl UnitRegistry {
         registry.register("SyncSaw", Box::new(SyncSawCtor));
         registry.register("Vibrato", Box::new(VibratoCtor));
         registry.register("FSinOsc", Box::new(FSinOscCtor));
+        registry.register("PSinGrain", Box::new(PSinGrainCtor));
         registry.register("SinOscFB", Box::new(SinOscFBCtor));
         registry.register("LFGauss", Box::new(LFGaussCtor));
         registry.register("Saw", Box::new(SawCtor));
