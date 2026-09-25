@@ -1,7 +1,7 @@
-//! Chaotic map generators - plyphon's ports of scsynth's `CuspN`, `QuadN`, `GbmanN`, `LinCongN`,
-//! `StandardN`, `LatoocarfianN`, `FBSineN`, `HenonN`, `CuspL`, `QuadL`, `HenonL`, `LorenzL`,
-//! `StandardL`, `FBSineL`, `LatoocarfianL`, `LinCongL`, `GbmanL`, `FBSineC`, `HenonC`,
-//! `LatoocarfianC`, `LinCongC` and `QuadC` (`ChaosUGens.cpp`).
+//! Chaotic map generators - plyphon's ports of every unit in scsynth's `ChaosUGens.cpp`:
+//! `CuspN`/`CuspL`, `FBSineN`/`FBSineL`/`FBSineC`, `GbmanN`/`GbmanL`, `HenonN`/`HenonL`/`HenonC`,
+//! `LatoocarfianN`/`LatoocarfianL`/`LatoocarfianC`, `LinCongN`/`LinCongL`/`LinCongC`, `LorenzL`,
+//! `QuadN`/`QuadL`/`QuadC` and `StandardN`/`StandardL`.
 //!
 //! Each unit iterates a chaotic map - or, for `LorenzL`, integrates a system of ODEs - at a `freq`
 //! rate. The `*N` (non-interpolating) forms hold the iterate between iterations; the `*L` (linearly
@@ -10,9 +10,20 @@
 //! iteration behind the `*L` ramp. Maps and their internal state are computed in `f64`; `freq` and
 //! the map coefficients are read once per block.
 //!
-//! Every unit but `GbmanN`, `GbmanL` and the three `LinCong*` units re-seeds its state when an init
-//! input changes at run time (the Hénon units only once their stability latch has tripped), while
-//! those five read their init inputs only in the constructor.
+//! Each unit follows its scsynth counterpart operation for operation, including where the families
+//! differ:
+//!
+//! - every unit computes its hold length as scsynth's `samplesPerCycle`: the `f64` sample rate
+//!   over the `f32` frequency, narrowed to `f32`, and never below one sample;
+//! - every unit but `GbmanN`, `GbmanL` and the three `LinCong*` units compares its init inputs with
+//!   the values it was last seeded from at the start of each block and re-seeds on a change (the
+//!   Hénon units only once their stability latch has tripped), while those five read their init
+//!   inputs only in the constructor;
+//! - the constructors seed the state as the reference does, which for several interpolating units
+//!   makes the first hold something other than a plain hold of the seed (each unit's doc says how);
+//! - the `Standard*` and `FBSine*` phases wrap through scsynth's truncating `mod2pi` and the
+//!   `LinCong*` iterates through its floored `sc_mod`, both of which part from a Euclidean
+//!   remainder at the edges.
 
 use core::f64::consts::PI;
 
