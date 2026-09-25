@@ -13,7 +13,9 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::trigger::{drive, sig};
-use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec, unit_spec_aux};
+use crate::unit::{
+    Aux, BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec, unit_spec_pool,
+};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 
@@ -240,7 +242,8 @@ fn look_ahead_gain(mode: u32, maxval: f32, amp: f32) -> f32 {
 /// `Limiter.ar(in, level, dur)` / `Normalizer.ar(in, level, dur)`: a look-ahead peak processor. The
 /// signal is delayed by `dur` seconds through a rotating triple-buffer while the peak over the last two
 /// `dur`-length regions sets a gain that ramps in before the peak reaches the output, so limiting is
-/// click-free. `dur` is fixed at build (it sizes the buffer); `level` is read per block. Outputs
+/// click-free. `dur` is read once when the synth starts (it sizes the buffer, allocated then, as
+/// scsynth's constructor reads `ZIN0(2)`); `level` is read per block. Outputs
 /// silence for the first `2*dur` seconds (the look-ahead latency).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -274,6 +277,26 @@ impl LookAhead {
 }
 
 impl Unit for LookAhead {
+    fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
+        // scsynth's `m_bufsize = ceil(dur * SAMPLERATE)`, three regions of it. Saturating, so a huge
+        // `dur` asks for more than any pool holds rather than wrapping.
+        let dur = ctx.ins.control(Self::DUR);
+        let n = (math::ceil(dur as f64 * ctx.audio.sample_rate) as u64).max(1);
+        let bytes = n
+            .checked_mul(3 * core::mem::size_of::<f32>() as u64)
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .unwrap_or(usize::MAX);
+        if !aux.alloc(bytes) {
+            return;
+        }
+        // Three regions of `n` fit in the pool, so `n` fits in `u32`.
+        let n = n as u32;
+        self.bufsize = n;
+        self.slopefactor = 1.0 / n as f32;
+        self.mid_off = n;
+        self.out_off = 2 * n;
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let amp = ctx.ins.control(Self::LEVEL);
         let n = self.bufsize as usize;
@@ -354,31 +377,19 @@ impl UnitDef for LookAheadCtor {
         if ctx.input_rates.len() < 3 {
             return Err(BuildError::WrongInputCount);
         }
-        // `dur` sizes the look-ahead buffer, so it must be a compile-time constant (as in scsynth).
-        let dur = ctx
-            .const_input(LookAhead::DUR)
-            .ok_or(BuildError::AuxRequiresConstant {
-                input: LookAhead::DUR,
-            })?;
-        let n = (math::ceil(dur as f64 * ctx.audio.sample_rate) as usize).max(1);
-        let aux_bytes = 3 * n * core::mem::size_of::<f32>();
-        Ok(unit_spec_aux(
-            LookAhead {
-                level: 1.0,
-                slope: 0.0,
-                curmaxval: 0.0,
-                prevmaxval: 0.0,
-                slopefactor: 1.0 / n as f32,
-                pos: 0,
-                flips: 0,
-                bufsize: n as u32,
-                in_off: 0,
-                mid_off: n as u32,
-                out_off: 2 * n as u32,
-                mode: self.0.to_tag(),
-            },
-            aux_bytes,
-            core::mem::align_of::<f32>(),
-        ))
+        Ok(unit_spec_pool(LookAhead {
+            level: 1.0,
+            slope: 0.0,
+            curmaxval: 0.0,
+            prevmaxval: 0.0,
+            slopefactor: 0.0,
+            pos: 0,
+            flips: 0,
+            bufsize: 0,
+            in_off: 0,
+            mid_off: 0,
+            out_off: 0,
+            mode: self.0.to_tag(),
+        }))
     }
 }

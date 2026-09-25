@@ -351,11 +351,9 @@ fn tduty_gap_first_delays_the_first_impulse() {
 }
 
 #[test]
-fn gendy1_rejects_a_non_constant_init_cps() {
-    // The breakpoint arrays are aux memory sized at compile, so a wired `initCPs` input must be
-    // refused like any other non-constant aux size (a delay's `maxdelaytime`).
-    use plyphon::{BuildError, UnitRegistry};
-    use plyphon_dsp::rate::RateInfo;
+fn gendy1_sizes_its_breakpoints_from_a_wired_init_cps() {
+    // scsynth's `Gendy1_Ctor` reads `initCPs` with `ZIN0(8)`, whatever it is wired to, and allocates
+    // the breakpoint arrays then. A wired `initCPs` plays like a constant one.
     let dc = UnitSpec::new("DC", Rate::Scalar, vec![c(12.0)], 1);
     let mut inputs = vec![
         c(1.0),
@@ -370,27 +368,10 @@ fn gendy1_rejects_a_non_constant_init_cps() {
     inputs.push(u(0)); // initCPs wired to the DC unit.
     inputs.push(c(12.0)); // knum.
     let gendy = UnitSpec::new("Gendy1", Rate::Audio, inputs, 1);
-    let def = SynthDef {
-        name: "bad_gendy".to_string(),
-        params: vec![],
-        units: vec![dc, gendy, out(1)],
-    };
-    let rate = RateInfo::new(SR, BLOCK);
-    let result = def.compile(
-        &UnitRegistry::with_builtins(),
-        &rate,
-        &rate,
-        64,
-        32,
-        None,
-        1,
-    );
+    let output = render(vec![dc, gendy, out(1)], 16);
     assert!(
-        matches!(
-            result.as_ref().map(|_| ()),
-            Err(BuildError::AuxRequiresConstant { input: 8 })
-        ),
-        "expected AuxRequiresConstant for a wired initCPs"
+        output.iter().any(|&s| s.abs() > 1e-3),
+        "a wired initCPs sizes the arrays and the oscillator runs"
     );
 }
 

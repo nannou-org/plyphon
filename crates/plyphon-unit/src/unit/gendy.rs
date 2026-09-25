@@ -7,14 +7,14 @@
 //! successive points. The random steps come from the synth's shared random stream, so two
 //! instances of the same def decorrelate and one instance replays exactly under the same seed.
 //!
-//! The breakpoint arrays live in the unit's [`aux`](crate::unit::Aux) memory, sized at compile
-//! time from the constant `initCPs` input (scsynth `RTAlloc`s them at construction).
+//! The breakpoint arrays live in the unit's [`aux`](crate::unit::Aux) memory, allocated when the
+//! synth starts from the first value of `initCPs` (scsynth `RTAlloc`s them at construction).
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec_aux};
+use crate::unit::{Aux, BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_pool};
 use plyphon_dsp::math;
 use plyphon_dsp::rng::Rng;
 
@@ -106,7 +106,7 @@ pub struct Gendy1 {
     speed: f32,
     /// Index of the current breakpoint within the memory arrays.
     index: u32,
-    /// Number of breakpoints the memory arrays hold (the built `initCPs`).
+    /// Number of breakpoints the memory arrays hold (the first value of `initCPs`).
     memory_size: u32,
     /// `0` until the first block seeds the breakpoint arrays from the shared stream.
     seeded: u32,
@@ -136,6 +136,16 @@ impl Gendy1 {
 }
 
 impl Unit for Gendy1 {
+    fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
+        // scsynth's `Gendy1_Ctor`: `mMemorySize = (int)ZIN0(8)`, at least 1, then one amplitude and
+        // one duration array of that size.
+        let memory_size = (ctx.ins.control(Self::INIT_CPS) as i32).max(1) as u32;
+        let bytes = (memory_size as usize).saturating_mul(2 * core::mem::size_of::<f32>());
+        if aux.alloc(bytes) {
+            self.memory_size = memory_size;
+        }
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let memory_size = self.memory_size as usize;
         let which_amp = ctx.ins.control(Self::AMPDIST) as i32;
@@ -196,7 +206,8 @@ impl Unit for Gendy1 {
     }
 }
 
-/// Constructor for [`Gendy1`]: sizes the breakpoint arrays from the constant `initCPs` input.
+/// Constructor for [`Gendy1`]. The breakpoint arrays are allocated when the synth starts, sized from
+/// the first value of `initCPs`.
 pub struct Gendy1Ctor;
 
 impl UnitDef for Gendy1Ctor {
@@ -204,26 +215,14 @@ impl UnitDef for Gendy1Ctor {
         if ctx.input_rates.len() <= Gendy1::KNUM {
             return Err(BuildError::WrongInputCount);
         }
-        // The breakpoint arrays are aux memory, so `initCPs` must be a compile-time constant like
-        // every other aux-sized input (a delay's `maxdelaytime`); scsynth reads it once at ctor.
-        let memory_size = ctx
-            .const_input(Gendy1::INIT_CPS)
-            .map(|cps| (cps as i32).max(1) as usize)
-            .ok_or(BuildError::AuxRequiresConstant {
-                input: Gendy1::INIT_CPS,
-            })?;
-        Ok(unit_spec_aux(
-            Gendy1 {
-                phase: 1.0,
-                amp: 0.0,
-                next_amp: 0.0,
-                speed: 100.0,
-                index: 0,
-                memory_size: memory_size as u32,
-                seeded: 0,
-            },
-            2 * memory_size * core::mem::size_of::<f32>(),
-            core::mem::align_of::<f32>(),
-        ))
+        Ok(unit_spec_pool(Gendy1 {
+            phase: 1.0,
+            amp: 0.0,
+            next_amp: 0.0,
+            speed: 100.0,
+            index: 0,
+            memory_size: 0,
+            seeded: 0,
+        }))
     }
 }

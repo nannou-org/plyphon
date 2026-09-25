@@ -2,8 +2,9 @@
 //! their buffer-backed twins `BufDelayN/L/C`, `BufCombN/L/C`, `BufAllpassN/L/C` (`DelayUGens.cpp`).
 //!
 //! The plain `Delay*`/`Comb*`/`Allpass*` use per-instance [auxiliary memory](crate::unit::Aux): the
-//! delay line is sized at build time from the scalar `maxdelaytime` and lives in the synth's pool block
-//! (the safe stand-in for scsynth's `RTAlloc`'d `float* m_dlybuf`). The `Buf*` twins instead use a
+//! delay line is allocated from the engine's unit pool when the synth starts, sized from the first
+//! value of `maxdelaytime` - scsynth's constructor `RTAlloc` of `float* m_dlybuf`, so any input,
+//! wired or constant, can size it, and a line the pool cannot hold silences the unit. The `Buf*` twins instead use a
 //! `/b_alloc`'d buffer (addressed by `bufnum`, resolved each block via [`buffer_at_mut`]) as the line -
 //! so the line is shared, resizable and outlives the synth. A buffer of `N` samples is used only up to
 //! its largest power-of-two prefix `2^floor(log2 N)` (scsynth's `BUFMASK`), so the same power-of-two
@@ -14,7 +15,7 @@
 //!   ([`FeedbackDelay`]) recirculates the delayed value with a coefficient derived from `decaytime`;
 //! - **allpass vs comb** - the allpass additionally subtracts the feed-forward path.
 //!
-//! The aux arena is *not* zeroed at instantiation (it may recycle a freed synth's dirty memory), so
+//! The line is *not* zeroed when allocated (it may recycle a freed synth's dirty memory), so
 //! while the line is still filling (`numoutput < len`) reads use scsynth's cold-start (`_z`) guard:
 //! any tap before the start of writing reads `0` rather than stale memory.
 
@@ -23,8 +24,8 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{
-    BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, buffer_at, buffer_at_mut, unit_spec,
-    unit_spec_aux,
+    Aux, BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, buffer_at, buffer_at_mut, unit_spec,
+    unit_spec_pool,
 };
 use plyphon_dsp::interp::{cubicinterp, lininterp};
 use plyphon_dsp::math;
@@ -87,11 +88,23 @@ impl Interp {
 /// scsynth's `DelayUnit_AllocDelayLine` length in `f32`s: `NEXTPOWEROFTWO(ceil(maxdelay*SR + 1) +
 /// BUFLENGTH)`. The `+1` lets a read sit one sample behind a write at the same phase; the `+block`
 /// headroom keeps the write head and any delayed read from colliding within a block; the power-of-two
-/// length makes circular addressing a single mask.
-pub(crate) fn line_len(max_delay: f32, sr: f64, block: usize) -> u32 {
-    let base = math::ceil(max_delay.max(0.0) as f64 * sr + 1.0) as i64;
-    let len = (base + block as i64).max(1) as u64;
-    len.next_power_of_two() as u32
+/// length makes circular addressing a single mask. Saturating, so a huge or non-finite `maxdelay`
+/// yields a length no pool can hold rather than wrapping to a small one.
+pub(crate) fn line_len(max_delay: f32, sr: f64, block: usize) -> u64 {
+    let base = math::ceil(max_delay.max(0.0) as f64 * sr + 1.0) as u64;
+    base.saturating_add(block as u64)
+        .max(1)
+        .checked_next_power_of_two()
+        .unwrap_or(u64::MAX)
+}
+
+/// Allocate a delay line for `max_delay` seconds - scsynth's `DelayUnit_AllocDelayLine`, run from the
+/// constructor. Returns the line's length in `f32`s, or `0` when the pool cannot hold it (the engine
+/// then silences the unit, as scsynth's `ClearUnitIfMemFailed` does).
+pub(crate) fn alloc_line(aux: &mut Aux<'_>, max_delay: f32, sr: f64, block: usize) -> u32 {
+    let len = u32::try_from(line_len(max_delay, sr, block)).unwrap_or(u32::MAX);
+    let bytes = (len as usize).saturating_mul(core::mem::size_of::<f32>());
+    if aux.alloc(bytes) { len } else { 0 }
 }
 
 /// Clamp a delay in samples to `[min, max]` (scsynth's `CalcDelay`/`sc_clip`). NaN-safe: the
@@ -242,8 +255,9 @@ const DELAY: usize = 2;
 const DECAY: usize = 3;
 
 /// `DelayN/L/C.ar(in, maxdelaytime, delaytime)`: a delay line with no feedback, tapped with no,
-/// linear, or cubic interpolation. The line is the [`ProcessCtx::aux`] slice, sized to `len` `f32`s at
-/// build time. Field names mirror scsynth's `DelayUnit` (minus the `float* m_dlybuf` pointer).
+/// linear, or cubic interpolation. The line is the [`ProcessCtx::aux`] slice of `len` `f32`s,
+/// allocated when the synth starts. Field names mirror scsynth's `DelayUnit` (minus the
+/// `float* m_dlybuf` pointer).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Delay {
@@ -268,6 +282,12 @@ pub struct Delay {
 }
 
 impl Unit for Delay {
+    fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
+        let max_delay = ctx.ins.control(MAXDELAY);
+        self.len = alloc_line(aux, max_delay, ctx.audio.sample_rate, ctx.audio.block_size);
+        self.mask = self.len.saturating_sub(1);
+    }
+
     fn init(&mut self, ctx: &InitCtx<'_>) {
         // Seed `dsamp`/`delaytime` from the initial `delaytime` so the first block uses the steady
         // path (no ramp-from-zero), mirroring scsynth's `DelayUnit_Reset`.
@@ -401,6 +421,12 @@ pub struct FeedbackDelay {
 }
 
 impl Unit for FeedbackDelay {
+    fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
+        let max_delay = ctx.ins.control(MAXDELAY);
+        self.len = alloc_line(aux, max_delay, ctx.audio.sample_rate, ctx.audio.block_size);
+        self.mask = self.len.saturating_sub(1);
+    }
+
     fn init(&mut self, ctx: &InitCtx<'_>) {
         let dt = ctx.ins.control(DELAY);
         let decay = ctx.ins.control(DECAY);
@@ -525,27 +551,16 @@ impl Unit for FeedbackDelay {
     }
 }
 
-/// Build a delay line, validating inputs and sizing the aux buffer from the constant `maxdelaytime`.
-/// Returns `(len, mask, calc, aux_bytes)`.
-fn build_line(
-    ctx: &BuildContext<'_>,
-    min_inputs: usize,
-) -> Result<(u32, u32, u32, usize), BuildError> {
+/// Validate a delay's inputs and pick its calc variant from the `delaytime` rate. The line itself is
+/// allocated when the synth starts, from the first value of `maxdelaytime` (see [`alloc_line`]).
+fn build_line(ctx: &BuildContext<'_>, min_inputs: usize) -> Result<u32, BuildError> {
     if ctx.input_rates.len() < min_inputs {
         return Err(BuildError::WrongInputCount);
     }
-    // `maxdelaytime` sizes the line, so it must be a compile-time constant (scsynth reads it once at
-    // ctor and never again).
-    let max_delay = ctx
-        .const_input(MAXDELAY)
-        .ok_or(BuildError::AuxRequiresConstant { input: MAXDELAY })?;
-    let len = line_len(max_delay, ctx.audio.sample_rate, ctx.audio.block_size);
-    let calc = match ctx.input_rates[DELAY] {
+    Ok(match ctx.input_rates[DELAY] {
         Rate::Audio => calc::DELAY_AUDIO,
         _ => calc::DELAY_CONTROL,
-    };
-    let aux_bytes = len as usize * core::mem::size_of::<f32>();
-    Ok((len, len - 1, calc, aux_bytes))
+    })
 }
 
 /// Constructor for [`Delay`] (`DelayN`/`DelayL`/`DelayC`), parameterized by [`Interp`].
@@ -553,21 +568,17 @@ pub struct DelayCtor(pub Interp);
 
 impl UnitDef for DelayCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        let (len, mask, calc, aux_bytes) = build_line(ctx, 3)?;
-        Ok(unit_spec_aux(
-            Delay {
-                dsamp: 0.0,
-                delaytime: 0.0,
-                len,
-                mask,
-                iwrphase: 0,
-                numoutput: 0,
-                calc,
-                interp: self.0.to_tag(),
-            },
-            aux_bytes,
-            core::mem::align_of::<f32>(),
-        ))
+        let calc = build_line(ctx, 3)?;
+        Ok(unit_spec_pool(Delay {
+            dsamp: 0.0,
+            delaytime: 0.0,
+            len: 0,
+            mask: 0,
+            iwrphase: 0,
+            numoutput: 0,
+            calc,
+            interp: self.0.to_tag(),
+        }))
     }
 }
 
@@ -580,24 +591,20 @@ pub struct FeedbackDelayCtor {
 
 impl UnitDef for FeedbackDelayCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        let (len, mask, calc, aux_bytes) = build_line(ctx, 4)?;
-        Ok(unit_spec_aux(
-            FeedbackDelay {
-                dsamp: 0.0,
-                delaytime: 0.0,
-                decaytime: 0.0,
-                feedbk: 0.0,
-                len,
-                mask,
-                iwrphase: 0,
-                numoutput: 0,
-                calc,
-                interp: self.interp.to_tag(),
-                allpass: self.allpass as u32,
-            },
-            aux_bytes,
-            core::mem::align_of::<f32>(),
-        ))
+        let calc = build_line(ctx, 4)?;
+        Ok(unit_spec_pool(FeedbackDelay {
+            dsamp: 0.0,
+            delaytime: 0.0,
+            decaytime: 0.0,
+            feedbk: 0.0,
+            len: 0,
+            mask: 0,
+            iwrphase: 0,
+            numoutput: 0,
+            calc,
+            interp: self.interp.to_tag(),
+            allpass: self.allpass as u32,
+        }))
     }
 }
 

@@ -1,7 +1,8 @@
 //! `PitchShift` - plyphon's port of scsynth's granular pitch shifter (`DelayUGens.cpp`).
 //!
 //! A time-domain pitch shifter: the input is written into a delay line ([aux memory](crate::unit::Aux),
-//! sized at build time from the constant `windowSize`) and read back by **four** overlapping
+//! allocated when the synth starts from the first value of `windowSize`, as scsynth's `PitchShift_Ctor`
+//! does) and read back by **four** overlapping
 //! triangular-windowed grains, each 90 degrees out of phase. Each grain's read head drifts against the
 //! write head at a rate set by `pitchRatio` (so the grain replays the recent past faster or slower =
 //! transposed), and every quarter-window a fresh grain is spawned round-robin, crossfading over the one
@@ -12,7 +13,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec_aux};
+use crate::unit::{Aux, BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_pool};
 use plyphon_dsp::interp::lininterp;
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
@@ -59,6 +60,34 @@ pub struct PitchShift {
 impl Unit for PitchShift {
     fn reseed(&mut self, seed: u64) {
         self.rng = Rng::new(seed);
+    }
+
+    fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
+        let sr = ctx.audio.sample_rate;
+        let block = ctx.audio.block_size;
+        // Clamp to scsynth's 3-sample minimum window (below which its own delay maths misbehaves).
+        let winsize = ctx.ins.control(WINSIZE).max(3.0 / sr as f32);
+        // The line holds three windows plus a little headroom, rounded up to a power of two.
+        // Saturating, so a huge window asks for more than any pool holds rather than wrapping.
+        let base = math::ceil(winsize as f64 * sr * 3.0 + 3.0) as u64;
+        let len = base
+            .saturating_add(block as u64)
+            .max(1)
+            .checked_next_power_of_two()
+            .and_then(|len| u32::try_from(len).ok())
+            .unwrap_or(u32::MAX);
+        let bytes = (len as usize).saturating_mul(core::mem::size_of::<f32>());
+        if !aux.alloc(bytes) {
+            return;
+        }
+        // One window fits in the line, so it fits in `u32`.
+        let framesize = (((winsize as f64 * sr) as u64 + 2) & !3) as u32;
+        let slope = 2.0 / framesize as f32;
+        self.mask = len - 1;
+        self.framesize = framesize;
+        self.slope = slope;
+        self.ramp_slope = [-slope, -slope, slope, slope];
+        self.counter = (framesize >> 2) as i32;
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -151,7 +180,8 @@ impl Unit for PitchShift {
     }
 }
 
-/// Constructor for [`PitchShift`]. Sizes the delay line from the constant `windowSize`.
+/// Constructor for [`PitchShift`]. The delay line is allocated when the synth starts, sized from the
+/// first value of `windowSize`.
 pub struct PitchShiftCtor;
 
 impl UnitDef for PitchShiftCtor {
@@ -159,37 +189,19 @@ impl UnitDef for PitchShiftCtor {
         if ctx.input_rates.len() < 5 {
             return Err(BuildError::WrongInputCount);
         }
-        let sr = ctx.audio.sample_rate;
-        let block = ctx.audio.block_size;
-        // `windowSize` sizes the line, so it must be a compile-time constant; clamp to scsynth's
-        // 3-sample minimum (below which its own delay maths misbehaves).
-        let winsize = ctx
-            .const_input(WINSIZE)
-            .ok_or(BuildError::AuxRequiresConstant { input: WINSIZE })?
-            .max(3.0 / sr as f32);
-        // The line holds three windows plus a little headroom, rounded up to a power of two.
-        let base = math::ceil(winsize as f64 * sr * 3.0 + 3.0) as i64;
-        let len = ((base + block as i64).max(1) as u64).next_power_of_two() as u32;
-        let framesize = (((winsize as f64 * sr) as i64 + 2) & !3) as u32;
-        let slope = 2.0 / framesize as f32;
-        let aux_bytes = len as usize * core::mem::size_of::<f32>();
-        Ok(unit_spec_aux(
-            PitchShift {
-                rng: Rng::new(0),
-                dsamp: [2.0; 4],
-                dsamp_slope: [0.0; 4],
-                ramp: [0.5, 1.0, 0.5, 0.0],
-                ramp_slope: [-slope, -slope, slope, slope],
-                slope,
-                mask: len - 1,
-                framesize,
-                counter: (framesize >> 2) as i32,
-                stage: 3,
-                iwrphase: 0,
-                first: 1,
-            },
-            aux_bytes,
-            core::mem::align_of::<f32>(),
-        ))
+        Ok(unit_spec_pool(PitchShift {
+            rng: Rng::new(0),
+            dsamp: [2.0; 4],
+            dsamp_slope: [0.0; 4],
+            ramp: [0.5, 1.0, 0.5, 0.0],
+            ramp_slope: [0.0; 4],
+            slope: 0.0,
+            mask: 0,
+            framesize: 0,
+            counter: 0,
+            stage: 3,
+            iwrphase: 0,
+            first: 1,
+        }))
     }
 }

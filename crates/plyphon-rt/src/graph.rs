@@ -1,10 +1,12 @@
 //! A live synth instance - plyphon's port of scsynth's `Graph`.
 //!
 //! A `Graph` is constructed on the audio thread from a shared [`GraphDef`] (see
-//! [`crate::world::World`]). It owns exactly one rt-pool allocation - its [`Region`] - holding only
-//! the per-instance *mutable* state: the unit state arena, the control wires (parameters and
-//! control-rate unit outputs), and the per-parameter control-bus map. The immutable plan (vtable,
-//! wiring, layout) is shared via `Arc<GraphDef>`.
+//! [`crate::world::World`]). It owns one graph-pool allocation - its block [`Region`] - holding the
+//! per-instance *mutable* state: the unit state arena, the control wires (parameters and
+//! control-rate unit outputs), and the per-parameter control-bus map. Units whose memory is sized
+//! from live inputs (a delay's `maxdelaytime`) allocate it separately from the World's unit pool on
+//! the first block, as scsynth's constructors call `RTAlloc`; the graph holds those handles in its
+//! [`AuxSlots`]. The immutable plan (vtable, wiring, layout) is shared via `Arc<GraphDef>`.
 //!
 //! Audio wire buffers and per-unit output scratch are *not* in the block: they are World-owned, fixed
 //! at boot, and reused across graphs (matching scsynth's `mWireBufSpace`), threaded in via `Block`.
@@ -12,7 +14,8 @@
 //! The process loop avoids scsynth's aliasing raw `float*` wires while staying `unsafe`-free: it
 //! carves the block into its disjoint state/control/param-map spans in one `get_disjoint_mut` call,
 //! and each unit writes into the shared scratch (disjoint from its inputs), which the loop then
-//! publishes into the wires.
+//! publishes into the wires. Allocated unit memory lives in a *separate* pool, so a unit's region is
+//! borrowed from it while the block's spans stay borrowed from the graph pool.
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -32,12 +35,94 @@ use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
 use plyphon_unit::unit::{
-    self, Aux, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBufs, LocalBus, NodeMsg,
-    NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger, TriggerSink,
+    self, Aux, AuxAlloc, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBufs, LocalBus,
+    NodeMsg, NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger, TriggerSink,
 };
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
 pub(crate) type Pool = RtPool<Box<[Align64]>>;
+
+/// One pool-sized unit's allocation within a synth.
+enum AuxSlot {
+    /// Not allocated yet.
+    Unused,
+    /// The unit's region in the World's unit pool.
+    Live(Region),
+    /// The pool could not satisfy the unit's request; the unit is silenced for the rest of its life
+    /// (scsynth's `ClearUnitOnMemFailed`).
+    Failed,
+}
+
+/// A synth's table of unit-pool allocations: one slot per unit that sizes its memory from live
+/// inputs when the synth starts ([`GraphDef::num_pool_slots`]).
+///
+/// Built control-side, so the audio thread never allocates it, and carried in the synth-creation
+/// command. When the synth ends its regions return to the unit pool on the audio thread and the
+/// table itself goes back to the NRT side to be dropped. Empty (and allocation-free) for synths
+/// with no such unit.
+pub struct AuxSlots(Box<[AuxSlot]>);
+
+impl AuxSlots {
+    /// A table of `len` unallocated slots. An empty table does not allocate.
+    pub fn new(len: usize) -> Self {
+        if len == 0 {
+            return AuxSlots(Box::new([]));
+        }
+        AuxSlots((0..len).map(|_| AuxSlot::Unused).collect())
+    }
+
+    /// Number of slots.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether the table has no slots (dropping it frees nothing).
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Return every live region to `pool`, leaving the slots unallocated. Called on the audio thread
+    /// when the synth ends (scsynth's unit destructors calling `RTFree`).
+    pub(crate) fn release(&mut self, pool: &mut Pool) {
+        for slot in self.0.iter_mut() {
+            if let AuxSlot::Live(region) = core::mem::replace(slot, AuxSlot::Unused) {
+                pool.dealloc(region);
+            }
+        }
+    }
+}
+
+/// A pool-sized unit's allocator for one call: its slot and the World's unit pool.
+struct PoolSlot<'a> {
+    pool: &'a mut Pool,
+    slot: &'a mut AuxSlot,
+}
+
+impl AuxAlloc for PoolSlot<'_> {
+    fn alloc(&mut self, bytes: usize) -> bool {
+        match self.slot {
+            AuxSlot::Live(_) => true,
+            AuxSlot::Failed => false,
+            AuxSlot::Unused => match self.pool.alloc(bytes) {
+                Some(region) => {
+                    *self.slot = AuxSlot::Live(region);
+                    true
+                }
+                None => {
+                    *self.slot = AuxSlot::Failed;
+                    false
+                }
+            },
+        }
+    }
+
+    fn bytes(&mut self) -> &mut [u8] {
+        match &*self.slot {
+            AuxSlot::Live(region) => self.pool.slice_mut(region),
+            AuxSlot::Unused | AuxSlot::Failed => &mut [],
+        }
+    }
+}
 
 /// The per-block materials the process loop draws on to assemble each unit's [`ProcessCtx`] and
 /// [`InitCtx`]. Built once per control block by the [`World`](crate::world::World) and threaded
@@ -60,6 +145,9 @@ pub(crate) struct Block<'a> {
     pub buf_counter: u64,
     /// The rt-pool holding every graph's per-instance block.
     pub pool: &'a mut Pool,
+    /// The rt-pool holding the memory units allocate at synth start, sized from live inputs. Separate
+    /// from [`pool`](Self::pool) so a unit's region can be borrowed while the block's spans are.
+    pub unit_pool: &'a mut Pool,
     /// World-shared audio wire scratch, reused per graph (`max_wire_bufs * block_size` f32).
     pub wire_scratch: &'a mut [f32],
     /// World-shared per-unit output scratch, reused per unit (`max_unit_outputs * block_size` f32).
@@ -89,6 +177,8 @@ pub(crate) struct Block<'a> {
 pub struct Graph {
     /// The one pool allocation: `[ state arena | control wires | param maps ]`.
     block: Region,
+    /// The unit-pool allocations of units that size their memory at synth start.
+    aux: AuxSlots,
     /// The shared, immutable compiled def.
     def: Arc<GraphDef>,
     /// Whether the one-time [`Unit::init`](plyphon_unit::unit::Unit::init) seeding pass has run (it runs on
@@ -117,6 +207,7 @@ impl Graph {
     /// block (0 unless scheduled mid-block).
     pub(crate) fn new(
         block: Region,
+        aux: AuxSlots,
         def: Arc<GraphDef>,
         sample_offset: usize,
         subsample_offset: f32,
@@ -124,6 +215,7 @@ impl Graph {
     ) -> Self {
         Graph {
             block,
+            aux,
             def,
             initialized: false,
             sample_offset,
@@ -133,9 +225,10 @@ impl Graph {
         }
     }
 
-    /// Consume the graph, returning its pool block so the World can `dealloc` it on the audio thread.
-    pub(crate) fn into_block(self) -> Region {
-        self.block
+    /// Consume the graph, returning its graph-pool block and its unit-pool allocations so the World
+    /// can release both on the audio thread.
+    pub(crate) fn into_parts(self) -> (Region, AuxSlots) {
+        (self.block, self.aux)
     }
 
     /// Request a one-block `/n_trace` dump on this synth's next [`process`](Self::process).
@@ -150,6 +243,7 @@ impl Graph {
         // A one-shot `/n_trace`: dump this block's per-unit I/O, then clear (scsynth's `Graph_CalcTrace`).
         let tracing = core::mem::take(&mut self.trace);
         let rgen = &mut self.rgen;
+        let aux_slots = &mut self.aux.0;
         let def = &*self.def;
         let bs = def.block_size();
         let layout = def.layout();
@@ -318,9 +412,9 @@ impl Graph {
                     _ => 1,
                 };
                 let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
-                // This unit's private aux memory (a delay line), a disjoint sub-slice of the aux arena;
-                // empty (`&mut []`) for units that declared none. Persists across blocks like `state`.
-                let aux = &mut aux_arena[v.aux_offset..v.aux_offset + v.aux_size];
+                // A unit that sizes its memory at synth start has a slot in the unit-pool table; every
+                // other unit's memory (if any) is its reserved sub-slice of the block's aux arena.
+                let mut slot = v.pool_slot.and_then(|s| aux_slots.get_mut(s as usize));
                 // This unit's done flag, carried in from last block; written back after `process` so
                 // done-ness persists. A watcher reads earlier units' flags (already written this block).
                 let mut done_flag = done_flags[i];
@@ -365,10 +459,40 @@ impl Graph {
                         ),
                         buf_counter: block.buf_counter,
                     };
-                    (v.init)(state, &init_ctx);
+                    // scsynth's constructor `RTAlloc`: the unit sizes its memory from the same live
+                    // inputs its `init` reads, just before `init`.
+                    if let Some(slot) = slot.as_deref_mut() {
+                        let mut alloc = PoolSlot {
+                            pool: &mut *block.unit_pool,
+                            slot,
+                        };
+                        (v.alloc)(state, &init_ctx, &mut Aux::pending(&mut alloc));
+                    }
+                    if !matches!(slot.as_deref(), Some(AuxSlot::Failed)) {
+                        (v.init)(state, &init_ctx);
+                    }
                 }
+                // A unit whose allocation failed outputs zeros and reports done for the rest of its
+                // life, as scsynth's `ClearUnitOnMemFailed` switches its calc func to
+                // `ClearUnitOutputs`.
+                let silenced = matches!(slot.as_deref(), Some(AuxSlot::Failed));
+                let mut alloc;
+                let aux = match slot.as_deref_mut() {
+                    _ if silenced => Aux::new(&mut []),
+                    Some(AuxSlot::Live(region)) => Aux::new(block.unit_pool.slice_mut(region)),
+                    Some(slot) => {
+                        alloc = PoolSlot {
+                            pool: &mut *block.unit_pool,
+                            slot,
+                        };
+                        Aux::pending(&mut alloc)
+                    }
+                    None => Aux::new(&mut aux_arena[v.aux_offset..v.aux_offset + v.aux_size]),
+                };
                 // Scoped so the context's borrows of the scratch/buses/demand arena end before we publish.
-                done = done.max({
+                done = done.max(if silenced {
+                    DoneAction::Nothing
+                } else {
                     let mut ctx = ProcessCtx {
                         audio: def.audio_rate(),
                         control: def.control_rate(),
@@ -408,11 +532,15 @@ impl Graph {
                             &mut *lbuf_coords,
                             def.audio_rate().sample_rate,
                         ),
-                        aux: Aux::new(aux),
+                        aux,
                         rgen: &mut *rgen,
                     };
                     (v.process)(state, &mut ctx)
                 });
+                if silenced || matches!(slot.as_deref(), Some(AuxSlot::Failed)) {
+                    scratch[..v.outputs.len() * calc_len].fill(0.0);
+                    done_flag = 1;
+                }
                 // Persist this unit's done flag for next block / for later units to read this block.
                 done_flags[i] = done_flag;
                 // `/n_trace`: dump this unit's outputs' first samples (scsynth's `ZOUT0`), read from the

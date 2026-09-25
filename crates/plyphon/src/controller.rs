@@ -30,9 +30,9 @@ use crate::synthdef::{SynthDef, SynthDefLibrary};
 use plyphon_dsp::buffer::Buffer;
 use plyphon_dsp::rate::RateInfo;
 use plyphon_dsp::stream::{StreamConsumer, StreamProducer, cue, cue_recording};
-use plyphon_rt::Options;
 use plyphon_rt::command::{Command, CommandTime, TimedCommand};
 use plyphon_rt::tree::AddAction;
+use plyphon_rt::{AuxSlots, Options};
 use plyphon_unit::error::BuildError;
 use plyphon_unit::graphdef::GraphDef;
 use plyphon_unit::unit::registry::UnitRegistry;
@@ -132,6 +132,9 @@ pub struct Controller {
     compiled: HashMap<String, Arc<GraphDef>>,
     /// Stable name -> `def_id`, assigned on first compile and reused across recompiles.
     def_ids: HashMap<String, u32>,
+    /// `def_id` -> the compiled def's [`num_pool_slots`](GraphDef::num_pool_slots), so a batched
+    /// synth creation (which names only the `def_id`) sizes its allocation table in `O(1)`.
+    pool_slots: Vec<usize>,
     /// Retired compiled defs (superseded by a redefinition, or freed) awaiting their last
     /// audio-thread reference to drop; drained by [`reap_retired_defs`](Self::reap_retired_defs).
     /// A freed def carries its `def_id`, which returns to `free_def_ids` once the def is reaped.
@@ -164,6 +167,7 @@ impl Controller {
             graph_rate: HashMap::new(),
             compiled: HashMap::new(),
             def_ids: HashMap::new(),
+            pool_slots: vec![0; options.max_synthdefs],
             retiring: Vec::new(),
             free_def_ids: Vec::new(),
             next_def_id: 0,
@@ -388,12 +392,14 @@ impl Controller {
         target: i32,
         action: AddAction,
     ) -> Result<(), SynthNewError> {
-        let def_id = self.ensure_compiled(def_name)?;
+        let (def_id, pool_slots) = self.compiled_def(def_name)?;
+        let aux = AuxSlots::new(pool_slots);
         self.send(Command::AddSynth {
             id,
             def_id,
             target,
             action,
+            aux,
         })
         .map_err(|_| SynthNewError::QueueFull)?;
         Ok(())
@@ -412,8 +418,14 @@ impl Controller {
     /// sent immediately (ignoring any open scheduling window), so a
     /// subsequently scheduled `synth_new` finds the def resident.
     pub fn ensure_compiled(&mut self, def_name: &str) -> Result<u32, SynthNewError> {
-        if self.compiled.contains_key(def_name) {
-            return Ok(self.def_ids[def_name]);
+        self.compiled_def(def_name).map(|(def_id, _)| def_id)
+    }
+
+    /// [`ensure_compiled`](Self::ensure_compiled), also returning the compiled def's
+    /// [`num_pool_slots`](GraphDef::num_pool_slots), so creating a synth looks the def up once.
+    fn compiled_def(&mut self, def_name: &str) -> Result<(u32, usize), SynthNewError> {
+        if let Some(def) = self.compiled.get(def_name) {
+            return Ok((self.def_ids[def_name], def.num_pool_slots()));
         }
         // Compile the authored def (the only place unit construction / allocation happens).
         let (reblock, resample) = self.graph_rate.get(def_name).copied().unwrap_or((None, 1));
@@ -457,8 +469,10 @@ impl Controller {
             def: Arc::clone(&def),
         })
         .map_err(|_| SynthNewError::QueueFull)?;
+        let pool_slots = def.num_pool_slots();
+        self.pool_slots[def_id as usize] = pool_slots;
         self.compiled.insert(def_name.to_string(), def);
-        Ok(def_id)
+        Ok((def_id, pool_slots))
     }
 
     /// Create an empty group under group `target`. Returns the new group's client id. On any error
@@ -584,6 +598,7 @@ impl Controller {
     /// on a later block.
     pub fn try_send_batch(&mut self, commands: &[ControllerBatchCommand]) -> Result<(), QueueFull> {
         let time = self.schedule;
+        let pool_slots = &self.pool_slots;
         let chunk = self
             .tx
             .write_chunk_uninit(commands.len())
@@ -601,6 +616,9 @@ impl Controller {
                     def_id,
                     target,
                     action,
+                    // An unknown `def_id` gets an empty table; the World then fails the create if
+                    // the def resident there needs slots.
+                    aux: AuxSlots::new(pool_slots.get(def_id as usize).copied().unwrap_or(0)),
                 },
                 ControllerBatchCommand::SetControl { node, param, value } => {
                     Command::SetControl { node, param, value }
@@ -1077,6 +1095,7 @@ mod tests {
                 def_id,
                 target,
                 action,
+                ..
             } => assert_eq!(
                 (id, def_id, target, action),
                 (7, 3, crate::ROOT_GROUP_ID, AddAction::Tail)

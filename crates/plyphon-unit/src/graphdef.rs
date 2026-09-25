@@ -11,7 +11,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::unit::demand::DemandVtbl;
-use crate::unit::{InitFn, InputSource, ProcessFn, ReseedFn};
+use crate::unit::{AllocFn, InitFn, InputSource, ProcessFn, ReseedFn};
 use plyphon_dsp::rate::{Rate, RateInfo};
 
 /// Where a unit output is published: an audio wire (a full block in the World's shared wire scratch)
@@ -66,6 +66,12 @@ pub struct UnitVtbl {
     pub init: InitFn,
     /// Per-instance re-seed function over the state slot (no-op for units without randomness).
     pub reseed: ReseedFn,
+    /// One-time allocation function for input-sized memory, run on the first block before `init`.
+    pub alloc: AllocFn,
+    /// This unit's index into the per-synth table of pool allocations, when it allocates its memory
+    /// from the engine's pool at synth start ([`unit_spec_pool`](crate::unit::unit_spec_pool)).
+    /// `None` for every other unit.
+    pub pool_slot: Option<u32>,
     /// Resolved input sources, in order.
     pub inputs: Box<[InputSource]>,
     /// Where each output is published.
@@ -131,11 +137,11 @@ pub struct BlockLayout {
     /// Heterogeneous demand-unit state (each demand unit's `Pod` bytes at its `state_offset`). Empty
     /// when the def has no demand units.
     pub demand_state: Span,
-    /// Heterogeneous per-unit auxiliary memory (delay lines / circular buffers): each unit's bytes at
-    /// its `aux_offset`. Empty when no unit declared aux memory. Sized at compile time (e.g. from a
-    /// delay's `maxdelaytime`) and, unlike the state arenas, **not** initialized on instantiation - a
-    /// unit guards its own cold start. This is plyphon's fold of scsynth's per-unit `RTAlloc`'d delay
-    /// buffers into the single per-graph block, keeping one allocation (and one free) per synth.
+    /// Heterogeneous per-unit auxiliary memory whose size is fixed at compile time (a reverb's fixed
+    /// lines, a filter bank's state): each unit's bytes at its `aux_offset`. Empty when no unit
+    /// reserved any. Unlike the state arenas it is **not** initialized on instantiation - a unit
+    /// guards its own cold start. Memory sized from inputs is allocated separately when the synth
+    /// starts (see [`UnitVtbl::pool_slot`]).
     pub aux: Span,
     /// Control wires (`f32`): the parameters first, then control-rate unit outputs.
     pub control: Span,
@@ -203,6 +209,9 @@ pub struct GraphDef {
     /// The graph-local buffers (`LocalBuf`), in declaration order: each one's shape and its sample
     /// offset within the block's `local_bufs` span. Empty when the def has no `LocalBuf`.
     local_bufs: Box<[LocalBufSpec]>,
+    /// Number of units that allocate from the engine's pool at synth start (the length of each
+    /// instance's allocation table).
+    num_pool_slots: usize,
     /// Number of control parameters.
     num_params: usize,
     /// The graph's audio-rate timing. The World's rate for an ordinary def; for a reblocked/resampled
@@ -231,6 +240,7 @@ impl GraphDef {
         trig_params: Box<[u32]>,
         lag_params: Box<[LagParam]>,
         local_bufs: Box<[LocalBufSpec]>,
+        num_pool_slots: usize,
         num_params: usize,
         audio: RateInfo,
         control: RateInfo,
@@ -247,6 +257,7 @@ impl GraphDef {
             trig_params,
             lag_params,
             local_bufs,
+            num_pool_slots,
             num_params,
             audio,
             control,
@@ -307,6 +318,12 @@ impl GraphDef {
     /// The graph-local buffers (`LocalBuf`), in declaration order.
     pub fn local_buf_specs(&self) -> &[LocalBufSpec] {
         &self.local_bufs
+    }
+
+    /// Number of units that allocate from the engine's pool at synth start - the length of the
+    /// allocation table each instance of this def needs.
+    pub fn num_pool_slots(&self) -> usize {
+        self.num_pool_slots
     }
 
     /// Number of control parameters.

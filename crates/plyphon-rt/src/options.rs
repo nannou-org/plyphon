@@ -26,6 +26,11 @@ pub struct Options {
     pub max_synthdefs: usize,
     /// Bytes of real-time pool backing per-synth state blocks (scsynth's `mRealTimeMemorySize`).
     pub pool_bytes: usize,
+    /// Bytes of real-time pool backing the memory units allocate when a synth starts, sized from
+    /// their inputs (delay lines, reverb lines). scsynth draws this from the same pool as the state
+    /// blocks; plyphon keeps it separate so a unit's memory and its synth's block can be borrowed at
+    /// once without `unsafe`.
+    pub unit_pool_bytes: usize,
     /// Max audio wires any one synth may use; sizes the World-shared wire scratch
     /// (`max_wire_bufs * block_size` f32). A def needing more fails to compile.
     pub max_wire_bufs: usize,
@@ -62,6 +67,8 @@ impl Default for Options {
             max_synthdefs: 1024,
             // 8 MiB, matching scsynth's default real-time memory size.
             pool_bytes: 8 * 1024 * 1024,
+            // 32 MiB: one 24 s delay line at 48 kHz needs 8 MiB, so this holds a few long delays.
+            unit_pool_bytes: 32 * 1024 * 1024,
             max_wire_bufs: 1024,
             max_unit_outputs: 128,
             command_capacity: 1024,
