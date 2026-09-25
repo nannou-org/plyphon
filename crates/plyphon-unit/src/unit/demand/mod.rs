@@ -1,5 +1,6 @@
-//! Demand-rate unit generators - plyphon's port of scsynth's `DemandUGens`, plus `Unpack1FFT`
-//! (`UnpackFFTUGens.cpp`), which scsynth also runs at demand rate.
+//! Demand-rate unit generators - plyphon's port of scsynth's `DemandUGens`, plus the units from
+//! other plugin files that scsynth also runs at demand rate: the math operators ([`demand_op`])
+//! and `Unpack1FFT` (`UnpackFFTUGens.cpp`).
 //!
 //! Demand rate is the odd one out: every other rate is *pushed* (a unit's [`process`](super::Unit::process)
 //! runs once per control block and writes a wire), but a demand-rate unit is *pulled* - it produces a
@@ -24,6 +25,7 @@
 pub mod dbrown;
 pub mod dbufrd;
 pub mod dbufwr;
+pub mod demand_op;
 pub mod demand_ugen;
 pub mod dgeom;
 pub mod dibrown;
@@ -52,6 +54,7 @@ use crate::unit::{
 pub use dbrown::Dbrown;
 pub use dbufrd::Dbufrd;
 pub use dbufwr::Dbufwr;
+pub use demand_op::{DemandBinaryOp, DemandUnaryOp};
 pub use demand_ugen::Demand;
 pub use dgeom::Dgeom;
 pub use dibrown::Dibrown;

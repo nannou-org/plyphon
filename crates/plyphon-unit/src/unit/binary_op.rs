@@ -161,7 +161,11 @@ impl Unit for RandBinaryOp {
 /// `BinaryOpUGens.cpp`). The RNG-driven ops (`opRandRange` 47, `opExpRandRange` 48) build into the
 /// stateful [`RandBinaryOp`] instead; the unimplemented-at-audio-rate ops (`opUnsignedShift`,
 /// `opFill`) are absent.
-fn binary_op(index: i16) -> Option<fn(f32, f32) -> f32> {
+///
+/// Shared with the demand-rate `BinaryOpUGen`
+/// ([`DemandBinaryOp`](crate::unit::demand::DemandBinaryOp)), which wraps the same kernels in the
+/// demand pull protocol, so an operator behaves identically at every rate.
+pub(crate) fn binary_op(index: i16) -> Option<fn(f32, f32) -> f32> {
     Some(match index {
         0 => |a, b| a + b,                           // opAdd
         1 => |a, b| a - b,                           // opSub
