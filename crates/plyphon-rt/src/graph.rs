@@ -33,7 +33,7 @@ use plyphon_dsp::math;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::Wavetables;
-use plyphon_unit::graphdef::GraphDef;
+use plyphon_unit::graphdef::{BlockLayout, GraphDef, LocalBufMeta};
 use plyphon_unit::unit::{
     self, Aux, AuxAlloc, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBufs, LocalBus,
     NodeMsg, NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger, TriggerSink,
@@ -175,8 +175,12 @@ pub(crate) struct Block<'a> {
 
 /// A live synth instance.
 pub struct Graph {
-    /// The one pool allocation: `[ state arena | control wires | param maps ]`.
+    /// The one graph-pool allocation: `[ state arena | control wires | param maps | ... ]`, grown
+    /// on the first block by the storage of each `LocalBuf`.
     block: Region,
+    /// Samples of local-buffer storage appended to `block` so far (the length of its `local_bufs`
+    /// span, in `f32`s).
+    local_samples: u32,
     /// The unit-pool allocations of units that size their memory at synth start.
     aux: AuxSlots,
     /// The shared, immutable compiled def.
@@ -215,6 +219,7 @@ impl Graph {
     ) -> Self {
         Graph {
             block,
+            local_samples: 0,
             aux,
             def,
             initialized: false,
@@ -248,59 +253,28 @@ impl Graph {
         let bs = def.block_size();
         let layout = def.layout();
 
-        // Carve the per-graph block into its disjoint spans (proved disjoint once, here). The
-        // calc-unit state and the demand-state arena are separate spans so a calc unit's `&mut` state
-        // slot and the `&mut` demand arena (pulled re-entrantly during its `process`) never alias; the
-        // `aux` arena (delay lines) is likewise separate so a unit holds its `&mut` state and `&mut`
-        // aux slice at once.
-        let buf = block.pool.slice_mut(&self.block);
-        let Ok(
-            [
-                state_arena,
-                demand_state,
-                aux_arena,
-                ctrl_bytes,
-                pmap_bytes,
-                done_bytes,
-                local_bytes,
-                lbuf_coord_bytes,
-                lbuf_bytes,
-                amap_bytes,
-                lag_bytes,
-            ],
-        ) = buf.get_disjoint_mut([
-            layout.state.range(),
-            layout.demand_state.range(),
-            layout.aux.range(),
-            layout.control.range(),
-            layout.pmaps.range(),
-            layout.done_flags.range(),
-            layout.local.range(),
-            layout.local_buf_coords.range(),
-            layout.local_bufs.range(),
-            layout.amaps.range(),
-            layout.lag_state.range(),
-        ])
+        // Carve the per-graph block into its disjoint spans (proved disjoint once, here, and again
+        // only when a `LocalBuf` grows the block on the first block). The calc-unit state and the
+        // demand-state arena are separate spans so a calc unit's `&mut` state slot and the `&mut`
+        // demand arena (pulled re-entrantly during its `process`) never alias; the `aux` arena is
+        // likewise separate so a unit holds its `&mut` state and `&mut` aux slice at once.
+        let Some(Spans {
+            mut state_arena,
+            mut demand_state,
+            mut aux_arena,
+            mut ctrl,
+            mut pmaps,
+            mut done_flags,
+            mut local,
+            mut lbuf_meta,
+            mut amaps,
+            mut lag_state,
+            mut lbuf_samples,
+        }) = carve(block.pool, &self.block, &layout, self.local_samples)
         else {
             // Unreachable: the layout's spans are contiguous and disjoint by construction.
             return DoneAction::Nothing;
         };
-        let ctrl = cast_slice_mut::<u8, f32>(ctrl_bytes);
-        let pmaps = cast_slice::<u8, u32>(pmap_bytes);
-        // Per-unit done flags (scsynth's `mDone`), indexed by calc-unit position. Each unit's flag is
-        // carried forward each block (persisted after its `process`), so done-ness sticks.
-        let done_flags = cast_slice_mut::<u8, u32>(done_bytes);
-        // The synth's private feedback bus (`LocalIn`/`LocalOut`); persists across blocks (never
-        // cleared here), which is what gives the one-block feedback delay.
-        let local = cast_slice_mut::<u8, f32>(local_bytes);
-        // The synth's graph-local buffers (`LocalBuf`): the per-buffer coord tags and the packed
-        // sample storage. Both persist across blocks; the shapes come from the def's specs.
-        let lbuf_coords = cast_slice_mut::<u8, u32>(lbuf_coord_bytes);
-        let lbuf_samples = cast_slice_mut::<u8, f32>(lbuf_bytes);
-        // Per-parameter audio-bus maps (`/n_mapa`); read for audio params in the lift below.
-        let amaps = cast_slice::<u8, u32>(amap_bytes);
-        // Per-lag-param one-pole state (`LagControl`); seeded at build, updated each block below.
-        let lag_state = cast_slice_mut::<u8, f32>(lag_bytes);
         // Audio wires and output scratch are World-shared (separate allocations), reused per graph.
         let audio = &mut *block.wire_scratch;
         let scratch = &mut *block.unit_scratch;
@@ -411,6 +385,42 @@ impl Graph {
                     Rate::Audio => bs,
                     _ => 1,
                 };
+                // scsynth's `LocalBuf_Ctor`: on the first block a `LocalBuf` reads its shape from
+                // its live inputs and its storage is appended to the block, which moves the block,
+                // so every span is carved again from the grown block before the unit runs.
+                if first && let Some((index, shape)) = v.local_buf {
+                    let (channels, frames) = shape(&Inputs::new(&v.inputs, &*audio, &*ctrl, bs));
+                    let grown = grow_local_bufs(
+                        block.pool,
+                        &mut self.block,
+                        &layout,
+                        &mut self.local_samples,
+                        channels,
+                        frames,
+                    );
+                    let Some(spans) = carve(block.pool, &self.block, &layout, self.local_samples)
+                    else {
+                        return DoneAction::Nothing;
+                    };
+                    Spans {
+                        state_arena,
+                        demand_state,
+                        aux_arena,
+                        ctrl,
+                        pmaps,
+                        done_flags,
+                        local,
+                        lbuf_meta,
+                        amaps,
+                        lag_state,
+                        lbuf_samples,
+                    } = spans;
+                    // A failed allocation leaves the record without storage; the `LocalBuf` then
+                    // outputs `-1` and reports done.
+                    if let (Some(meta), Some(slot)) = (grown, lbuf_meta.get_mut(index as usize)) {
+                        *slot = meta;
+                    }
+                }
                 let state = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
                 // A unit that sizes its memory at synth start has a slot in the unit-pool table; every
                 // other unit's memory (if any) is its reserved sub-slice of the block's aux arena.
@@ -452,9 +462,8 @@ impl Graph {
                         buses: &*block.buses,
                         buffers: &*block.buffers,
                         local_bufs: LocalBufs::new(
-                            def.local_buf_specs(),
+                            &mut *lbuf_meta,
                             &mut *lbuf_samples,
-                            &mut *lbuf_coords,
                             def.audio_rate().sample_rate,
                         ),
                         buf_counter: block.buf_counter,
@@ -527,9 +536,8 @@ impl Graph {
                         // A local buffer's own sample rate is the graph's audio rate (scsynth's
                         // `FULLRATE`).
                         local_bufs: LocalBufs::new(
-                            def.local_buf_specs(),
+                            &mut *lbuf_meta,
                             &mut *lbuf_samples,
-                            &mut *lbuf_coords,
                             def.audio_rate().sample_rate,
                         ),
                         aux,
@@ -631,6 +639,114 @@ impl Graph {
             cast_slice_mut::<u8, u32>(bytes)[param] = bus.unwrap_or(u32::MAX);
         }
     }
+}
+
+/// A synth block carved into its disjoint, typed spans (see [`BlockLayout`]).
+struct Spans<'p> {
+    state_arena: &'p mut [u8],
+    demand_state: &'p mut [u8],
+    aux_arena: &'p mut [u8],
+    ctrl: &'p mut [f32],
+    pmaps: &'p [u32],
+    done_flags: &'p mut [u32],
+    local: &'p mut [f32],
+    lbuf_meta: &'p mut [LocalBufMeta],
+    amaps: &'p [u32],
+    lag_state: &'p mut [f32],
+    lbuf_samples: &'p mut [f32],
+}
+
+/// Carve `block` into its spans, with `local_samples` samples of local-buffer storage appended.
+/// `None` only for a malformed layout (the spans are contiguous and disjoint by construction).
+fn carve<'p>(
+    pool: &'p mut Pool,
+    block: &Region,
+    layout: &BlockLayout,
+    local_samples: u32,
+) -> Option<Spans<'p>> {
+    let local_bufs = layout.local_bufs.off..layout.local_bufs.off + local_samples as usize * 4;
+    let [
+        state_arena,
+        demand_state,
+        aux_arena,
+        ctrl,
+        pmaps,
+        done_flags,
+        local,
+        lbuf_meta,
+        amaps,
+        lag_state,
+        lbuf_samples,
+    ] = pool
+        .slice_mut(block)
+        .get_disjoint_mut([
+            layout.state.range(),
+            layout.demand_state.range(),
+            layout.aux.range(),
+            layout.control.range(),
+            layout.pmaps.range(),
+            layout.done_flags.range(),
+            layout.local.range(),
+            layout.local_buf_meta.range(),
+            layout.amaps.range(),
+            layout.lag_state.range(),
+            local_bufs,
+        ])
+        .ok()?;
+    Some(Spans {
+        state_arena,
+        demand_state,
+        aux_arena,
+        ctrl: cast_slice_mut(ctrl),
+        pmaps: cast_slice(pmaps),
+        done_flags: cast_slice_mut(done_flags),
+        local: cast_slice_mut(local),
+        lbuf_meta: cast_slice_mut(lbuf_meta),
+        amaps: cast_slice(amaps),
+        lag_state: cast_slice_mut(lag_state),
+        lbuf_samples: cast_slice_mut(lbuf_samples),
+    })
+}
+
+/// Append a `channels x frames` local buffer to `block` - scsynth's `LocalBuf_allocBuffer`, run
+/// from `LocalBuf_Ctor` with `(int)IN0(0)` channels and `(int)IN0(1)` frames. The block is
+/// reallocated with room for the new storage (allocate, copy, free), and the new samples are
+/// zeroed. Returns the buffer's record, or `None` - leaving `block` untouched - when the shape is
+/// out of range or the pool cannot hold the grown block.
+fn grow_local_bufs(
+    pool: &mut Pool,
+    block: &mut Region,
+    layout: &BlockLayout,
+    local_samples: &mut u32,
+    channels: f32,
+    frames: f32,
+) -> Option<LocalBufMeta> {
+    // A negative shape asks for no storage (scsynth would request a size no pool can hold).
+    let channels = (channels as i32).max(0) as u32;
+    let frames = (frames as i32).max(0) as u32;
+    let offset = *local_samples;
+    // Offsets stay representable in the `u32` records.
+    let grown_samples = offset.checked_add(channels.checked_mul(frames)?)?;
+    let bytes = (grown_samples as usize)
+        .checked_mul(4)?
+        .checked_add(layout.total)?;
+    let grown = pool.alloc(bytes)?;
+    let Some([old, new]) = pool.slices_mut([&*block, &grown]) else {
+        pool.dealloc(grown);
+        return None;
+    };
+    let (kept, fresh) = new.split_at_mut(old.len());
+    kept.copy_from_slice(old);
+    fresh.fill(0);
+    pool.dealloc(core::mem::replace(block, grown));
+    *local_samples = grown_samples;
+    Some(LocalBufMeta {
+        coord: 0,
+        channels,
+        frames,
+        offset,
+        live: 1,
+    })
 }
 
 /// Push a `/n_trace` record, dropping it if the per-block trace sink is full (so the audio thread

@@ -19,9 +19,7 @@ use hashbrown::HashMap;
 use plyphon_dsp::math;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_unit::error::BuildError;
-use plyphon_unit::graphdef::{
-    AudioParam, GraphDef, LagParam, LocalBufSpec, OutputWire, UnitVtbl, build_layout,
-};
+use plyphon_unit::graphdef::{AudioParam, GraphDef, LagParam, OutputWire, UnitVtbl, build_layout};
 use plyphon_unit::unit::demand::{BuiltDemandUnit, DemandVtbl, MAX_DEMAND_DEPTH, MAX_DEMAND_STATE};
 use plyphon_unit::unit::registry::{BuildContext, UnitRegistry};
 use plyphon_unit::unit::{BuiltUnit, InputSource};
@@ -395,11 +393,10 @@ impl SynthDef {
         let mut demand_built: Vec<BuiltDemandUnit> = Vec::new();
         let mut demand_inputs: Vec<Box<[InputSource]>> = Vec::new();
         let mut max_outputs = 0usize;
-        // Graph-local buffers (`LocalBuf`), collected in unit order: each built unit that declares
-        // one gets the next declaration index (which the unit baked into its state from
-        // `local_bufs_so_far`) and the next sample offset in the block's local-buffer span.
-        let mut local_buf_specs: Vec<LocalBufSpec> = Vec::new();
-        let mut local_buf_samples = 0usize;
+        // Graph-local buffers (`LocalBuf`), counted in unit order: each built unit that declares
+        // one gets the next declaration index (which the unit bakes into its state from
+        // `local_bufs_so_far`). Their storage is appended to each synth's block when it starts.
+        let mut num_local_bufs = 0usize;
         for (u, spec) in self.units.iter().enumerate() {
             let mut sources = Vec::with_capacity(spec.inputs.len());
             for input in &spec.inputs {
@@ -462,7 +459,7 @@ impl SynthDef {
                 num_outputs: spec.num_outputs,
                 special_index: spec.special_index,
                 seed: (u as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
-                local_bufs_so_far: local_buf_specs.len(),
+                local_bufs_so_far: num_local_bufs,
             };
 
             if spec.rate == Rate::Demand {
@@ -484,15 +481,10 @@ impl SynthDef {
                     .get(&spec.name)
                     .ok_or_else(|| BuildError::UnknownUnit(spec.name.clone()))?;
                 let built = def.build(&build_ctx)?;
-                // Collect a graph-local buffer declaration (`LocalBuf`), advancing the running
-                // declaration index (`local_bufs_so_far` above) and the sample offset.
-                if let Some((channels, frames)) = built.local_buf {
-                    local_buf_specs.push(LocalBufSpec {
-                        channels: channels as u32,
-                        frames: frames as u32,
-                        offset: local_buf_samples,
-                    });
-                    local_buf_samples += channels * frames;
+                // Count a graph-local buffer declaration (`LocalBuf`), advancing the running
+                // declaration index (`local_bufs_so_far` above).
+                if built.local_buf.is_some() {
+                    num_local_bufs += 1;
                 }
                 calc_built.push(built);
                 calc_inputs.push(sources.into_boxed_slice());
@@ -551,8 +543,7 @@ impl SynthDef {
             num_control_wires as usize,
             num_params,
             num_local_channels,
-            local_buf_specs.len(),
-            local_buf_samples,
+            num_local_bufs,
             lag_params.len(),
             block_size,
         );
@@ -568,6 +559,8 @@ impl SynthDef {
         // Units that allocate from the engine's pool at synth start each get the next slot in the
         // per-instance allocation table, in calc order.
         let mut num_pool_slots = 0u32;
+        // `LocalBuf`s get their declaration index again, in the same calc order as the count above.
+        let mut local_buf_index = 0u32;
         let units: Vec<UnitVtbl> = calc_built
             .into_iter()
             .zip(calc_inputs)
@@ -585,6 +578,10 @@ impl SynthDef {
                     pool_slot: b.pool_aux.then(|| {
                         num_pool_slots += 1;
                         num_pool_slots - 1
+                    }),
+                    local_buf: b.local_buf.map(|shape| {
+                        local_buf_index += 1;
+                        (local_buf_index - 1, shape)
                     }),
                     inputs,
                     outputs,
@@ -621,7 +618,7 @@ impl SynthDef {
             audio_params.into_boxed_slice(),
             trig_params.into_boxed_slice(),
             lag_params.into_boxed_slice(),
-            local_buf_specs.into_boxed_slice(),
+            num_local_bufs,
             num_pool_slots as usize,
             num_params,
             graph_audio,
