@@ -2,17 +2,12 @@
 //! `TRand`, `TExpRand`, `TIRand`, `RandSeed` and `RandID` (`NoiseUGens.cpp`).
 //!
 //! Unlike the noise generators (each with a private [`Rng`] embedded in its own state), this
-//! family draws from the synth's shared random stream ([`ProcessCtx::rgen`]) - the analogue of
-//! scsynth's per-graph `RGen` - so draws interleave deterministically across the units of one
-//! synth and a `RandSeed` re-seed restarts every *Rand-family* sequence together. That scope is
-//! narrower than scsynth's: there the noise generators draw from the same graph `RGen`, so a
-//! `RandSeed` restarts `WhiteNoise` and friends too, an idiom plyphon's private per-unit streams
-//! do not support.
-//!
-//! Scope divergence from scsynth: there, the `RGen`s live in a World-level array and `RandID`
-//! repoints a synth at a numbered stream shared with other synths; here each graph instance owns
-//! exactly one stream, so `RandID` keeps its shape (inputs consumed, `0.0` output) but selects
-//! nothing. Cross-synth correlated randomness via a shared `RandID` stream is not expressible.
+//! family draws from the synth's random stream ([`ProcessCtx::rgen`]), scsynth's `mParent->mRGen`:
+//! one of the World's streams, stream 0 unless `RandID` selects another. Synths drawing from the
+//! same stream share it, so their draws interleave in node order, and a `RandSeed` re-seed
+//! restarts the stream for every synth on it. That scope is narrower than scsynth's: there the
+//! noise generators draw from the same stream, so a `RandSeed` restarts `WhiteNoise` and friends
+//! too, an idiom plyphon's private per-unit streams do not support.
 //!
 //! The one-time draws happen in the first `process` call, which runs as the unit's constructor, in
 //! SynthDef order before any unit's first calc, as scsynth's constructor draws do.
@@ -253,9 +248,9 @@ impl UnitDef for TIRandCtor {
     }
 }
 
-/// `RandSeed.kr(trig, seed)`: on each rising trigger edge, re-seed the synth's shared random
-/// stream from `seed` (truncated to an integer, as scsynth casts it), restarting every
-/// `Rand`-family sequence in the synth. A trigger already high on the first block seeds
+/// `RandSeed.kr(trig, seed)`: on each rising trigger edge, re-seed the random stream the synth
+/// draws from with `seed` (truncated to an integer, as scsynth casts it), restarting it for every
+/// synth drawing from it. A trigger already high on the first block seeds
 /// immediately (scsynth's constructor behaviour). Outputs a constant `0.0`.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -267,14 +262,15 @@ pub struct RandSeed {
 impl Unit for RandSeed {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ProcessCtx {
-            ins,
-            outs,
-            rgen,
-            own,
-            ..
+            ins, outs, rgen, ..
         } = ctx;
         let trig = sig(ins, 0);
-        let frames = if self.audio != 0 { own.block_size } else { 1 };
+        // The calc length: a block at audio rate, one sample at control rate or in the constructor.
+        let frames = if self.audio != 0 {
+            outs.audio(0).len()
+        } else {
+            1
+        };
         for i in 0..frames {
             let t = trig.at(i);
             if self.prev_trig <= 0.0 && t > 0.0 {
@@ -301,17 +297,27 @@ impl UnitDef for RandSeedCtor {
     }
 }
 
-/// `RandID.ir/kr(id)`: in scsynth this repoints the synth at the World random stream numbered
-/// `id`; each plyphon graph owns exactly one stream, so the unit consumes its input and outputs
-/// the constant `0.0` scsynth outputs, selecting nothing.
+/// `RandID.ir/kr(id)`: whenever `id` changes, point the synth at the World's random stream numbered
+/// `id`, so the units after it draw from that stream (scsynth's `RandID_next`). An `id` the World
+/// does not have selects nothing, as in scsynth; a negative `id`, which scsynth converts to an
+/// unsigned index without defining the result, selects nothing too. Outputs a constant `0.0`.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct RandID {
+    /// The last `id` read (scsynth's `m_id`), `-1` until the constructor reads one.
+    id: f32,
     audio: u32,
 }
 
 impl Unit for RandID {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let id = ctx.ins.control(0);
+        if id != self.id {
+            self.id = id;
+            if id >= 0.0 {
+                ctx.rgen_id.select(id as u32);
+            }
+        }
         hold(&mut ctx.outs, self.audio != 0, 0.0);
         DoneAction::Nothing
     }
@@ -323,6 +329,7 @@ pub struct RandIDCtor;
 impl UnitDef for RandIDCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(RandID {
+            id: -1.0,
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }

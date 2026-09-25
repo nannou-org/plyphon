@@ -18,7 +18,7 @@
 //! [`Render::step`] drives [`World::fill_duplex`] (never the `_at` variant), so the engine clock
 //! advances by the constant nominal increment `(block_size * 2^32 / sample_rate) as u64` per block
 //! and the output is a pure function of `(Options, synthdefs, score, input)` - bit-identical across
-//! runs and machines. The engine's per-synth RNG seeding is already deterministic, so randomness is
+//! runs and machines. The engine's random streams are seeded deterministically, so randomness is
 //! reproducible too.
 //!
 //! # Driving a render
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn render_is_deterministic_across_runs() {
-        // White noise: identical only if per-synth RNG seeding is deterministic across engine builds.
+        // White noise: identical only if RNG seeding is deterministic across engine builds.
         let run = || {
             let opts = options();
             let (mut controller, nrt, world) = engine(opts);

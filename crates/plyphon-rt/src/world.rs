@@ -21,7 +21,7 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use bytemuck::cast_slice_mut;
+use bytemuck::{Zeroable, cast_slice_mut};
 use rtrb::{Consumer, Producer, PushError};
 
 use crate::command::{Command, CommandTime, Event, NodeNotify, Reply, TimedCommand, Trash};
@@ -33,6 +33,7 @@ use plyphon_dsp::buffer::{BufferSlot, BufferTable};
 use plyphon_dsp::bus::Buses;
 use plyphon_dsp::fft::FftTables;
 use plyphon_dsp::rate::RateInfo;
+use plyphon_dsp::rng::Rng;
 use plyphon_dsp::stream::StreamRecording;
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
@@ -81,6 +82,9 @@ pub struct World {
     wire_scratch: Box<[f32]>,
     /// World-shared per-unit output scratch, reused per unit (`max_unit_outputs * block_size` f32).
     unit_scratch: Box<[f32]>,
+    /// The World's random streams (scsynth's `mRGen`, `mNumRGens` of them). Every synth draws
+    /// from one of them - stream 0 unless `RandID` selects another - so synths share them.
+    rgens: Box<[Rng]>,
     /// Per-instance RNG seed counter, advanced for each synth built.
     next_seed: u64,
     rx: Consumer<TimedCommand>,
@@ -198,6 +202,15 @@ impl World {
             def_table: vec![None; options.max_synthdefs],
             wire_scratch: vec![0.0f32; options.max_wire_bufs * bs].into_boxed_slice(),
             unit_scratch: vec![0.0f32; options.max_unit_outputs * bs].into_boxed_slice(),
+            // scsynth seeds each stream from the clock (`server_timeseed`); stream `i` is seeded with
+            // `RGen::init(i)` here, so a render is the same every run.
+            rgens: (0..options.num_rgens.max(1) as u32)
+                .map(|i| {
+                    let mut rgen = Rng::zeroed();
+                    rgen.init(i);
+                    rgen
+                })
+                .collect(),
             next_seed: SEED_INIT,
             rx,
             trash_tx,
@@ -370,6 +383,7 @@ impl World {
             unit_pool: &mut self.unit_pool,
             wire_scratch: &mut self.wire_scratch[..],
             unit_scratch: &mut self.unit_scratch[..],
+            rgens: &mut self.rgens[..],
             triggers: &mut self.trigger_buf,
             trigger_cap: self.trigger_cap,
             node_msgs: &mut self.node_msg_buf,
@@ -1126,17 +1140,12 @@ impl World {
             );
         }
 
-        // The graph's shared random stream gets its own seed, displaced off the ladder by an
-        // unrelated odd constant. A plain `seed - SEED_STEP` would equal the *previous* spawn's
-        // unit-0 reseed value (`next_seed` advances one step per spawn), replaying that unit's
-        // stream in this graph's Rand draws; the XOR lands far from every nearby ladder value.
         Ok(Graph::new(
             region,
             aux,
             Arc::clone(def),
             self.current_sample_offset,
             self.current_subsample_offset,
-            seed ^ 0x517c_c1b7_2722_0a95,
         ))
     }
 

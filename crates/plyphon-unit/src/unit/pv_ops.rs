@@ -363,7 +363,7 @@ fn zero() -> pv::Bin {
 /// `clip(trig * numbins, 0, numbins)` bins (scsynth's `PV_Diffuser_next`), so `0` leaves every
 /// phase untouched, `0.5` diffuses the lower half of the spectrum and `>= 1` the whole frame.
 ///
-/// The offsets are drawn from the synth's shared random stream and held in `aux`, one `f32` per bin.
+/// The offsets are drawn from the synth's random stream and held in `aux`, one `f32` per bin.
 /// Like scsynth's `PV_Diffuser_next`, the unit allocates that table from the engine's pool on the
 /// first frame, when the chain buffer's size gives the bin count.
 #[repr(C)]

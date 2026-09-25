@@ -4,8 +4,8 @@
 //! The oscillator walks a set of breakpoints (control points). Each has an amplitude and a
 //! duration; both drift by a bounded random step drawn from one of seven distributions every time
 //! the oscillator reaches the point, and the waveform is the linear interpolation between
-//! successive points. The random steps come from the synth's shared random stream, so two
-//! instances of the same def decorrelate and one instance replays exactly under the same seed.
+//! successive points. The random steps come from the synth's random stream, one of the World's
+//! streams, so two instances of the same def decorrelate and a `RandSeed` replays one exactly.
 //!
 //! The breakpoint arrays live in the unit's [`aux`](crate::unit::Aux) memory, allocated when the
 //! synth starts from the first value of `initCPs` (scsynth `RTAlloc`s them at construction).

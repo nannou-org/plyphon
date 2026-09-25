@@ -51,6 +51,11 @@ pub struct Options {
     /// node-message ring. Excess is dropped, best-effort like `/tr` (scsynth's `NodeReplyMsg` FIFO is
     /// 1024).
     pub max_node_msgs: usize,
+    /// Number of the World's random streams (scsynth's `mNumRGens`, its `-r` option). A synth draws
+    /// from stream 0 unless `RandID` selects another. Stream `i` is seeded as scsynth's
+    /// `RGen::init(i)` does, so a render is the same every run; scsynth seeds each from the clock.
+    /// At least one stream is always made.
+    pub num_rgens: usize,
 }
 
 impl Default for Options {
@@ -75,6 +80,7 @@ impl Default for Options {
             max_scheduled: 2048,
             max_triggers: 1024,
             max_node_msgs: 1024,
+            num_rgens: 64,
         }
     }
 }

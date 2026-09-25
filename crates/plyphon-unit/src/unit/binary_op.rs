@@ -110,7 +110,7 @@ impl UnitDef for BinaryOpCtor {
 
 /// The RNG-driven binary operators, `rrand` (special index 47) and `exprand` (48): a fresh random
 /// draw per output frame, scaled between the two inputs (ordered low-to-high), from the synth's
-/// shared random stream - scsynth's `rrand_1`/`exprand_1`, which read the graph's `RGen`.
+/// random stream - scsynth's `rrand_1`/`exprand_1`, which read `mParent->mRGen`.
 ///
 /// At audio rate scsynth's `rrand` variants (`rrand_aa`/`_ak`/...) draw with the *bipolar*
 /// `frand2`, giving `lo + frand2 * (hi - lo)` - uniform over `[2*lo - hi, hi)`, twice the
