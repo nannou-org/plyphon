@@ -1,6 +1,7 @@
 //! Chaotic map generators - plyphon's ports of scsynth's `CuspN`, `QuadN`, `GbmanN`, `LinCongN`,
 //! `StandardN`, `LatoocarfianN`, `FBSineN`, `HenonN`, `CuspL`, `QuadL`, `HenonL`, `LorenzL`,
-//! `StandardL`, `FBSineL`, `FBSineC` and `HenonC` (`ChaosUGens.cpp`).
+//! `StandardL`, `FBSineL`, `LatoocarfianL`, `FBSineC`, `HenonC` and `LatoocarfianC`
+//! (`ChaosUGens.cpp`).
 //!
 //! Each unit iterates a chaotic map - or, for `LorenzL`, integrates a system of ODEs - at a `freq`
 //! rate. The `*N` (non-interpolating) forms hold the iterate between iterations; the `*L` (linearly
@@ -123,6 +124,15 @@ fn cusp_map(a: f64, b: f64, x: f64) -> f64 {
 /// The quadratic map `x = a*x^2 + b*x + c`, shared by `QuadN` and `QuadL`.
 fn quad_map(a: f64, b: f64, c: f64, x: f64) -> f64 {
     a * x * x + b * x + c
+}
+
+/// The Latoocarfian map `x = sin(b*y) + c*sin(b*x)`, `y = sin(a*x) + d*sin(a*y)`, shared by
+/// `LatoocarfianN`, `LatoocarfianL` and `LatoocarfianC`. Returns the new `(x, y)`.
+fn latoocarfian_map(a: f64, b: f64, c: f64, d: f64, x: f64, y: f64) -> (f64, f64) {
+    (
+        math::sin(y * b) + c * math::sin(x * b),
+        math::sin(x * a) + d * math::sin(y * a),
+    )
 }
 
 /// Drive a one-variable map: iterate `map` every `samples_per_cycle` samples, holding between, and
@@ -427,11 +437,7 @@ impl Unit for LatoocarfianN {
             &mut self.counter,
             self.xn,
             self.yn,
-            |x, y| {
-                let nx = math::sin(y * b) + c * math::sin(x * b);
-                let ny = math::sin(x * a) + d * math::sin(y * a);
-                (nx, ny)
-            },
+            |x, y| latoocarfian_map(a, b, c, d, x, y),
             |x| x,
         );
         self.xn = x;
@@ -1224,6 +1230,149 @@ impl Unit for HenonC {
     }
 }
 
+/// `LatoocarfianL.ar(freq, a, b, c, d, xi, yi)`: the Latoocarfian map, linearly interpolated.
+///
+/// A run-time change of `xi` or `yi` re-seeds both variables, shifting the running iterate into the
+/// history so the output ramps to the new seed.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct LatoocarfianL {
+    /// The iterate the current hold ramps towards.
+    xn: f64,
+    /// The current second variable.
+    yn: f64,
+    /// The iterate the current hold ramps from.
+    xnm1: f64,
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// The `yi` input the state was last seeded from.
+    y0: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for LatoocarfianL {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.x0 = f64::from(ctx.ins.control(5));
+        self.y0 = f64::from(ctx.ins.control(6));
+        self.xn = self.x0;
+        self.yn = self.y0;
+        self.xnm1 = self.x0;
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let a = f64::from(ctx.ins.control(1));
+        let b = f64::from(ctx.ins.control(2));
+        let c = f64::from(ctx.ins.control(3));
+        let d = f64::from(ctx.ins.control(4));
+        let xi = f64::from(ctx.ins.control(5));
+        let yi = f64::from(ctx.ins.control(6));
+        if self.x0 != xi || self.y0 != yi {
+            self.xnm1 = self.xn;
+            self.x0 = xi;
+            self.xn = xi;
+            self.y0 = yi;
+            self.yn = yi;
+        }
+
+        let mut yn = self.yn;
+        let (xn, xnm1) = chaos_interp(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            self.xn,
+            self.xnm1,
+            |x| {
+                let (nx, ny) = latoocarfian_map(a, b, c, d, x, yn);
+                yn = ny;
+                nx
+            },
+            |x| x,
+        );
+        self.xn = xn;
+        self.xnm1 = xnm1;
+        self.yn = yn;
+        DoneAction::Nothing
+    }
+}
+
+/// `LatoocarfianC.ar(freq, a, b, c, d, xi, yi)`: the Latoocarfian map, cubically interpolated.
+///
+/// A run-time change of `xi` or `yi` shifts the running iterate into the history and re-seeds both
+/// variables. The constructor fills the history and all four cubic coefficients with `xi`, exactly
+/// as the reference does, so the first hold plays the cubic `xi*(1 + t + t^2 + t^3)` rather than
+/// holding `xi`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct LatoocarfianC {
+    /// The newest iterate.
+    xn: f64,
+    /// The current second variable.
+    yn: f64,
+    /// The previous three iterates, newest first (`xnm1`, `xnm2`, `xnm3`).
+    history: [f64; 3],
+    /// The coefficients of the cubic the current hold plays.
+    coefs: [f64; 4],
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// The `yi` input the state was last seeded from.
+    y0: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for LatoocarfianC {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.x0 = f64::from(ctx.ins.control(5));
+        self.y0 = f64::from(ctx.ins.control(6));
+        self.xn = self.x0;
+        self.yn = self.y0;
+        self.history = [self.x0; 3];
+        self.coefs = [self.x0; 4];
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let a = f64::from(ctx.ins.control(1));
+        let b = f64::from(ctx.ins.control(2));
+        let c = f64::from(ctx.ins.control(3));
+        let d = f64::from(ctx.ins.control(4));
+        let xi = f64::from(ctx.ins.control(5));
+        let yi = f64::from(ctx.ins.control(6));
+        if self.x0 != xi || self.y0 != yi {
+            self.history = [self.xn, self.history[0], self.history[1]];
+            self.x0 = xi;
+            self.xn = xi;
+            self.y0 = yi;
+            self.yn = yi;
+        }
+
+        let mut yn = self.yn;
+        self.xn = chaos_cubic(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            &mut self.history,
+            &mut self.coefs,
+            self.xn,
+            |x| {
+                let (nx, ny) = latoocarfian_map(a, b, c, d, x, yn);
+                yn = ny;
+                nx
+            },
+        );
+        self.yn = yn;
+        DoneAction::Nothing
+    }
+}
+
 /// Build a chaos generator with zeroed state and the given minimum input count. Every unit here
 /// seeds its own state in [`Unit::init`], on the audio thread, where the init inputs are readable,
 /// so the constructor never carries a meaningful value.
@@ -1259,3 +1408,5 @@ chaos_ctor!(FBSineLCtor, FBSineL, 7);
 chaos_ctor!(FBSineCCtor, FBSineC, 7);
 chaos_ctor!(HenonNCtor, HenonN, 5);
 chaos_ctor!(HenonCCtor, HenonC, 5);
+chaos_ctor!(LatoocarfianLCtor, LatoocarfianL, 7);
+chaos_ctor!(LatoocarfianCCtor, LatoocarfianC, 7);
