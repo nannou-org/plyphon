@@ -1454,6 +1454,7 @@ name = "plyphon"
 version = "0.1.2"
 dependencies = [
  "bytemuck",
+ "criterion",
  "hashbrown",
  "plyphon-dsp",
  "plyphon-rt",
