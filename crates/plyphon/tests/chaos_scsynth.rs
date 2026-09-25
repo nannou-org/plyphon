@@ -169,14 +169,27 @@ fn assert_reseed(name: &str, consts: &[f32], index: usize, value: f32, want: &[u
     );
 }
 
-/// The ported units at their pinned inputs (`freq` first).
-fn units() -> [(&'static str, &'static [f32]); 3] {
-    [
-        ("FBSineN", FB_SINE),
-        ("FBSineL", FB_SINE),
-        ("FBSineC", FB_SINE),
-    ]
+/// Assert a run-time change of input `index` leaves `name(consts)` bit-identical to an untouched
+/// render over eight blocks.
+fn assert_change_ignored(name: &str, consts: &[f32], index: usize, value: f32) {
+    let plain = render_with_change(name, consts, 8, (1, index, consts[index]));
+    let changed = render_with_change(name, consts, 8, (1, index, value));
+    let want: Vec<u32> = plain.iter().map(|s| s.to_bits()).collect();
+    assert_bits(
+        &changed,
+        &want,
+        &format!("{name} after input {index} changed"),
+    );
 }
+
+/// The ported units at their pinned inputs (`freq` first).
+const UNITS: &[(&str, &[f32])] = &[
+    ("FBSineN", FB_SINE),
+    ("FBSineL", FB_SINE),
+    ("FBSineC", FB_SINE),
+    ("HenonN", HENON),
+    ("HenonC", HENON),
+];
 
 // ---------------------------------------------------------------------------------------------
 // FBSine
@@ -229,13 +242,67 @@ fn fb_sine_reseeds_like_scsynth() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Henon
+// ---------------------------------------------------------------------------------------------
+
+/// `Henon*(freq, a=1.4, b=0.3, x0=0.3, x1=0.5)`: the classic stable coefficients.
+const HENON: &[f32] = &[SLOW, 1.4, 0.3, 0.3, 0.5];
+/// `a = 20` sends the first iterate to `1 - 20*0.5^2 + 0.3*0.8 = -3.76`, outside the stable band,
+/// at a hold of exactly 48 samples.
+const HENON_ESCAPE: &[f32] = &[1_000.0, 20.0, 0.3, 0.5, 0.8];
+
+/// `HenonN` emits the older history term, so its first hold is `x1`.
+#[test]
+fn henon_n_matches_scsynth() {
+    assert_pinned(
+        "HenonN",
+        &HENON[1..],
+        (&HENON_N_SLOW_BLOCK, &HENON_N_SLOW_LATER),
+        (&HENON_N_FAST_BLOCK, &HENON_N_FAST_LATER),
+    );
+}
+
+/// `HenonC` starts from a zeroed cubic, so its first hold is silent.
+#[test]
+fn henon_c_matches_scsynth() {
+    assert_pinned(
+        "HenonC",
+        &HENON[1..],
+        (&HENON_C_SLOW_BLOCK, &HENON_C_SLOW_LATER),
+        (&HENON_C_FAST_BLOCK, &HENON_C_FAST_LATER),
+    );
+}
+
+/// An escaping iterate latches both units until an input changes, and the change re-seeds them.
+///
+/// The iterate escapes at sample 47. `HenonN` then holds `x0` rather than falling silent, and
+/// `HenonC` keeps replaying the small cubic arc through `(0, 0, 0, 1)` on every hold. Setting `a`
+/// back to 1.4 at sample 128 re-seeds the history from `x0`, and the map runs again from the next
+/// hold boundary.
+#[test]
+fn henon_latches_and_recovers_like_scsynth() {
+    for (name, want) in [("HenonN", &HENON_N_LATCH), ("HenonC", &HENON_C_LATCH)] {
+        let out = render_with_change(name, HENON_ESCAPE, 3, (2, 1, 1.4));
+        assert_bits(&out, want, &format!("{name} latch and recovery"));
+    }
+}
+
+/// While the map is stable, an input change only refreshes the cached comparison values: the
+/// running iterates are untouched.
+#[test]
+fn henon_ignores_seed_changes_while_stable() {
+    assert_change_ignored("HenonN", HENON, 4, -0.4);
+    assert_change_ignored("HenonC", HENON, 4, -0.4);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Arity
 // ---------------------------------------------------------------------------------------------
 
 /// Each constructor rejects an input list one short of its full arity.
 #[test]
 fn units_reject_short_input_lists() {
-    for (name, consts) in units() {
+    for &(name, consts) in UNITS {
         let short = consts.len() - 1;
         let (mut controller, _nrt, _world) = engine(options());
         controller.add_synthdef(chaos_def(name, constant_inputs(&consts[..short]), vec![]));
@@ -447,4 +514,151 @@ const FB_SINE_C_RESEED_Y: [u32; 64] = [
     0xbf2e_af86, 0xbf43_bbda, 0xbf55_7d2a, 0xbf61_595b, 0xbf6c_4eaf, 0xbf75_36de, 0xbf7b_6db3,
     0xbf7e_4efd, 0xbf7d_3688, 0xbf77_8020, 0xbf6e_7170, 0xbf5e_19d1, 0xbf47_d829, 0xbf2c_e57f,
     0xbf0e_7ad9,
+];
+#[rustfmt::skip]
+const HENON_N_SLOW_BLOCK: [u32; 64] = [
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3e99_999a,
+    0x3e99_999a, 0x3e99_999a, 0x3e99_999a, 0x3e99_999a, 0x3e99_999a, 0x3e99_999a, 0x3f83_126f,
+    0x3f83_126f, 0x3f83_126f, 0x3f83_126f, 0x3f83_126f, 0x3f83_126f, 0x3f83_126f, 0xbec1_8a0d,
+    0xbec1_8a0d, 0xbec1_8a0d, 0xbec1_8a0d, 0xbec1_8a0d, 0xbec1_8a0d, 0xbec1_8a0d, 0x3f8d_b747,
+    0x3f8d_b747, 0x3f8d_b747, 0x3f8d_b747, 0x3f8d_b747, 0x3f8d_b747, 0x3f8d_b747, 0xbf54_5af8,
+    0xbf54_5af8, 0xbf54_5af8, 0xbf54_5af8, 0xbf54_5af8, 0xbf54_5af8, 0xbf54_5af8, 0x3ebc_d5b8,
+    0x3ebc_d5b8, 0x3ebc_d5b8, 0x3ebc_d5b8, 0x3ebc_d5b8, 0x3ebc_d5b8, 0x3ebc_d5b8, 0x3f0f_8a9a,
+    0x3f0f_8a9a, 0x3f0f_8a9a, 0x3f0f_8a9a, 0x3f0f_8a9a, 0x3f0f_8a9a, 0x3f2b_a578, 0x3f2b_a578,
+    0x3f2b_a578, 0x3f2b_a578, 0x3f2b_a578, 0x3f2b_a578, 0x3f2b_a578, 0x3f09_f085, 0x3f09_f085,
+    0x3f09_f085,
+];
+
+const HENON_N_SLOW_LATER: [(usize, u32); 4] = [
+    (511, 0x3f9e_a210),
+    (1023, 0x3f2e_13ac),
+    (2047, 0x3e28_d7c5),
+    (4095, 0x3c9f_a789),
+];
+
+#[rustfmt::skip]
+const HENON_N_FAST_BLOCK: [u32; 64] = [
+    0x3e99_999a, 0x3f83_126f, 0xbec1_8a0d, 0x3f8d_b747, 0xbf54_5af8, 0x3ebc_d5b8, 0x3f0f_8a9a,
+    0x3f2b_a578, 0x3f09_f085, 0x3f4b_7033, 0x3e8e_178a, 0x3f90_b6c2, 0xbf34_cb80, 0x3f24_1287,
+    0x3e5a_2d3a, 0x3f90_79d5, 0xbf38_3d6d, 0x3f1d_0d67, 0x3e83_ad82, 0x3f8b_b47b, 0xbf17_3180,
+    0x3f56_cf7c, 0xbe26_d273, 0x3f9b_772e, 0xbf8e_9c2f, 0xbebf_368d, 0x3ef0_e477, 0x3f13_fb35,
+    0x3f2c_606d, 0x3f09_e5c3, 0x3f4b_b884, 0x3e8c_cf08, 0x3f91_0123, 0xbf36_d426, 0x3f20_33d0,
+    0x3e73_301d, 0x3f8d_ec61, 0xbf26_5f56, 0x3f3d_c7be, 0x3d11_f71e, 0x3f9c_3d4e, 0xbf89_9fd7,
+    0xbe81_287b, 0x3f16_9e42, 0x3ee1_204d, 0x3f67_e4d9, 0xbc89_fbf9, 0x3fa2_bbb6, 0xbfa2_4b7e,
+    0xbf5e_8a19, 0xbee0_6ba5, 0x3ef0_c2c0, 0x3f0f_163f, 0x3f34_25cf, 0x3ef2_e536, 0x3f65_61fd,
+    0x3c96_04ad, 0x3fa2_58ea, 0xbf9f_929b, 0xbf4b_9ab3, 0xbe84_e5e8, 0x3f2a_c587, 0x3e99_2937,
+    0x3f89_946e,
+];
+
+const HENON_N_FAST_LATER: [(usize, u32); 4] = [
+    (511, 0x3f55_ffe5),
+    (1023, 0xbf1f_df64),
+    (2047, 0x3f5d_aa03),
+    (4095, 0x3ea1_79ec),
+];
+
+#[rustfmt::skip]
+const HENON_C_SLOW_BLOCK: [u32; 64] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x3e99_999a,
+    0x3e9d_73b3, 0x3ea7_dd4c, 0x3eb7_1f5c, 0x3ec9_82d8, 0x3edd_50b6, 0x3ef0_d1ec, 0x3f00_0000,
+    0x3f09_cd74, 0x3f15_c5c9, 0x3f22_64c9, 0x3f2e_263f, 0x3f37_85f4, 0x3f3c_ffb4, 0x3f3d_70a4,
+    0x3f35_f349, 0x3f26_5ac9, 0x3f12_6e5c, 0x3efb_ea6d, 0x3ed9_6d1e, 0x3ec4_f337, 0x3ec4_47c3,
+    0x3ee1_ca6d, 0x3f0e_21d7, 0x3f32_c702, 0x3f57_c1f6, 0x3f75_fff5, 0x3f83_371f, 0x3f82_1474,
+    0x3f66_411a, 0x3f2e_d6e8, 0x3ed2_be31, 0x3e05_39d0, 0xbdef_31fa, 0xbe91_9477, 0xbea9_6665,
+    0xbe6e_2c23, 0x3b2d_f5b1, 0x3ea1_5a71, 0x3f25_282c, 0x3f6e_d441, 0x3f8f_3374, 0x3f93_6846,
+    0x3f80_dfbe, 0x3f34_8e6a, 0x3e9e_7db6, 0xbdf1_6d5a, 0xbf03_b5a6, 0xbf74_bae7, 0xbf78_4fdb,
+    0xbf60_1a8c, 0xbf34_77a3, 0xbefb_8795, 0xbe88_b756, 0xbd84_df6b, 0x3d87_3e90, 0x3e41_ac06,
+    0x3e9f_ad94,
+];
+
+const HENON_C_SLOW_LATER: [(usize, u32); 4] = [
+    (511, 0x3f1f_2700),
+    (1023, 0x3cb6_db46),
+    (2047, 0x3f5c_8e8d),
+    (4095, 0x3f30_a106),
+];
+
+#[rustfmt::skip]
+const HENON_C_FAST_BLOCK: [u32; 64] = [
+    0x3e99_999a, 0x3f00_0000, 0x3f3d_70a4, 0x3ec4_47c3, 0x3f82_1474, 0xbea9_6665, 0x3f93_6846,
+    0xbf74_bae7, 0x3d87_3e90, 0x3f35_049d, 0x3ea3_bfa2, 0x3f88_d2b7, 0xbf00_f330, 0x3f77_28b4,
+    0xbee9_83e6, 0x3f7f_9889, 0xbf08_4bea, 0x3f67_1652, 0xbe99_dabf, 0x3f92_7b4a, 0xbf6c_7269,
+    0x3e18_9648, 0x3f31_1ba1, 0x3ebf_cf21, 0x3f81_6a91, 0xbea3_3514, 0x3f94_9dc3, 0xbf7b_a12f,
+    0xbb8c_7ef5, 0x3f34_8128, 0x3e9a_fa22, 0x3f8a_a83e, 0xbf0d_5175, 0x3f65_fa95, 0xbe97_4738,
+    0x3f92_da4c, 0xbf6e_7120, 0x3e04_c0ef, 0x3f32_719a, 0x3eb7_a3a6, 0x3f83_b6a7, 0xbebf_e709,
+    0x3f8e_56f2, 0xbf57_fc42, 0x3eac_939f, 0x3f16_7c61, 0x3f1e_0a8f, 0x3f24_8d78, 0x3f1b_54fc,
+    0x3f2d_6a69, 0x3f0a_234e, 0x3f4b_ab69, 0x3e8d_2e5d, 0x3f90_eccb, 0xbf36_44d6, 0x3f21_45c1,
+    0x3e6c_55ab, 0x3f8e_a53f, 0xbf2b_61b6, 0x3f34_f600, 0x3dcc_0244, 0x3f99_5db0, 0xbf7a_dfc5,
+    0x3c75_046e,
+];
+
+const HENON_C_FAST_LATER: [(usize, u32); 4] = [
+    (511, 0xbf07_eace),
+    (1023, 0x3e8d_46b5),
+    (2047, 0xbf65_f2e8),
+    (4095, 0x3f30_7eb6),
+];
+
+#[rustfmt::skip]
+const HENON_N_LATCH: [u32; 192] = [
+    0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd,
+    0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd,
+    0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd,
+    0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd,
+    0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd,
+    0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd,
+    0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f4c_cccd, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+    0x3f00_0000, 0x3f00_0000, 0x3f4c_cccd,
+];
+
+#[rustfmt::skip]
+const HENON_C_LATCH: [u32; 192] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000,
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000,
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000,
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000,
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000,
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000,
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0xb95e_d099,
+    0xba5a_12f7, 0xbaf0_0000, 0xbb50_97b5, 0xbb9f_4260, 0xbbe0_0000, 0xbc14_d099, 0xbc3d_a130,
+    0xbc6a_0000, 0xbc8c_bda2, 0xbca5_d098, 0xbcc0_0000, 0xbcdb_12f7, 0xbcf6_d099, 0xbd09_8000,
+    0xbd17_b426, 0xbd25_e84d, 0xbd34_0000, 0xbd41_ded1, 0xbd4f_684d, 0xbd5c_8000, 0xbd69_097c,
+    0xbd74_e84d, 0xbd80_0000, 0xbd85_1a14, 0xbd89_b426, 0xbd8d_c000, 0xbd91_2f69, 0xbd93_f426,
+    0xbd96_0000, 0xbd97_44be, 0xbd97_b426, 0xbd97_4000, 0xbd95_da13, 0xbd93_7426, 0xbd90_0000,
+    0xbd8b_6f68, 0xbd85_b426, 0xbd7d_8000, 0xbd6d_0979, 0xbd59_e84b, 0xbd44_0000, 0xbd2b_3423,
+    0xbd0f_684a, 0xbce1_0000, 0xbc9c_bd98, 0xbc23_a126, 0x0000_0000, 0xb95e_d099, 0xba5a_12f7,
+    0xbaf0_0000, 0xbb50_97b5, 0xbb9f_4260, 0xbbe0_0000, 0xbc14_d099, 0xbc3d_a130, 0xbc6a_0000,
+    0xbc8c_bda2, 0xbca5_d098, 0xbcc0_0000, 0xbcdb_12f7, 0xbcf6_d099, 0xbd09_8000, 0xbd17_b426,
+    0xbd25_e84d, 0xbd34_0000, 0xbd41_ded1, 0xbd4f_684d, 0xbd5c_8000, 0xbd69_097c, 0xbd74_e84d,
+    0xbd80_0000, 0xbd85_1a14, 0xbd89_b426, 0xbd8d_c000, 0xbd91_2f69, 0xbd93_f426, 0xbd96_0000,
+    0xbd97_44be, 0xbd97_b426, 0xbd97_4000, 0xbd95_da13, 0xbd93_7426, 0xbd90_0000, 0xbd8b_6f68,
+    0xbd85_b426, 0xbd7d_8000, 0xbd6d_0979, 0xbd59_e84b, 0xbd44_0000, 0xbd2b_3423, 0xbd0f_684a,
+    0xbce1_0000, 0xbc9c_bd98, 0xbc23_a126, 0x3f00_0000, 0x3f00_e107, 0x3f01_e925, 0x3f03_1652,
+    0x3f04_6684, 0x3f05_d7b0, 0x3f07_67cf, 0x3f09_14d6, 0x3f0a_dcbb, 0x3f0c_bd75, 0x3f0e_b4fa,
+    0x3f10_c142, 0x3f12_e042, 0x3f15_0ff0, 0x3f17_4e44, 0x3f19_9933, 0x3f1b_eeb5, 0x3f1e_4cbf,
+    0x3f20_b148, 0x3f23_1a46, 0x3f25_85b1, 0x3f27_f17d, 0x3f2a_5ba2, 0x3f2c_c217, 0x3f2f_22d1,
+    0x3f31_7bc8, 0x3f33_caf0, 0x3f36_0e42, 0x3f38_43b3, 0x3f3a_693a, 0x3f3c_7ccd, 0x3f3e_7c63,
+    0x3f40_65f2, 0x3f42_3771, 0x3f43_eed6, 0x3f45_8a17, 0x3f47_072b, 0x3f48_6409, 0x3f49_9ea6,
+    0x3f4a_b4fa, 0x3f4b_a4fb, 0x3f4c_6c9e, 0x3f4d_09db, 0x3f4d_7aa9, 0x3f4d_bcfc, 0x3f4d_cecd,
+    0x3f4d_ae11, 0x3f4d_58bf, 0x3f4c_cccd,
 ];

@@ -1,6 +1,6 @@
 //! Chaotic map generators - plyphon's ports of scsynth's `CuspN`, `QuadN`, `GbmanN`, `LinCongN`,
-//! `StandardN`, `LatoocarfianN`, `FBSineN`, `CuspL`, `QuadL`, `HenonL`, `LorenzL`, `StandardL`,
-//! `FBSineL` and `FBSineC` (`ChaosUGens.cpp`).
+//! `StandardN`, `LatoocarfianN`, `FBSineN`, `HenonN`, `CuspL`, `QuadL`, `HenonL`, `LorenzL`,
+//! `StandardL`, `FBSineL`, `FBSineC` and `HenonC` (`ChaosUGens.cpp`).
 //!
 //! Each unit iterates a chaotic map - or, for `LorenzL`, integrates a system of ODEs - at a `freq`
 //! rate. The `*N` (non-interpolating) forms hold the iterate between iterations; the `*L` (linearly
@@ -11,11 +11,11 @@
 //!
 //! The units differ in three ways:
 //!
-//! - the `*L` and `*C` units and `FBSineN` re-seed their state when an init input changes at run
-//!   time (`HenonL` only once its stability latch has tripped), while the other `*N` units seed once
-//!   and ignore later changes;
-//! - the hold length of the `*L` and `*C` units and `FBSineN` divides in `f64` and narrows to `f32`,
-//!   while that of the other `*N` units divides in pure `f32`;
+//! - the `*L` and `*C` units, `FBSineN` and `HenonN` re-seed their state when an init input changes
+//!   at run time (the Hénon units only once their stability latch has tripped), while the other
+//!   `*N` units seed once and ignore later changes;
+//! - the hold length of the `*L` and `*C` units, `FBSineN` and `HenonN` divides in `f64` and
+//!   narrows to `f32`, while that of the other `*N` units divides in pure `f32`;
 //! - `StandardL` wraps its phase with a C-style truncating remainder, while `StandardN` wraps with a
 //!   Euclidean one, so the two disagree for phases far outside `[0, 2π)`.
 
@@ -1027,6 +1027,203 @@ impl Unit for FBSineC {
     }
 }
 
+/// `HenonN.ar(freq, a, b, x0, x1)`: the Hénon map `x = 1 - a*x'^2 + b*x''`, held.
+///
+/// The unit emits the older of its two history terms, so its output runs two iterations behind the
+/// map. It carries the same stability latch as [`HenonL`], but an escaping iterate re-seeds the
+/// history from the current `x0` and `x1` inputs rather than zeroing it, so a latched unit holds
+/// `x0` rather than falling silent. While the map is stable, a change of an input only refreshes
+/// the cached values.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct HenonN {
+    /// The newer history term.
+    xnm1: f64,
+    /// The older history term, which the unit holds.
+    xnm2: f64,
+    /// The `a` input the state was last compared against.
+    a: f64,
+    /// The `b` input the state was last compared against.
+    b: f64,
+    /// The `x0` input the state was last compared against.
+    x0: f64,
+    /// The `x1` input the state was last compared against.
+    x1: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    /// Nonzero while the map is iterating; zeroed once an iterate has escaped `[-1.5, 1.5]`.
+    stable: u32,
+}
+
+impl Unit for HenonN {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.x0 = f64::from(ctx.ins.control(3));
+        self.x1 = f64::from(ctx.ins.control(4));
+        self.xnm1 = self.x0;
+        self.xnm2 = self.x1;
+        self.a = f64::from(ctx.ins.control(1));
+        self.b = f64::from(ctx.ins.control(2));
+        self.stable = 1;
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let spc = hold_length(ctx.ins.control(0), ctx.own.sample_rate);
+        let a = f64::from(ctx.ins.control(1));
+        let b = f64::from(ctx.ins.control(2));
+        let x0 = f64::from(ctx.ins.control(3));
+        let x1 = f64::from(ctx.ins.control(4));
+        let mut stable = self.stable != 0;
+        if self.a != a || self.b != b || self.x0 != x0 || self.x1 != x1 {
+            if !stable {
+                // The reference also parks `x1` in its newest-iterate member here; that member is
+                // written before every read, so the port keeps the iterate as a loop local.
+                self.xnm2 = x0;
+                self.xnm1 = x0;
+            }
+            stable = true;
+            self.a = a;
+            self.b = b;
+            self.x0 = x0;
+            self.x1 = x1;
+        }
+
+        let (mut xnm1, mut xnm2) = (self.xnm1, self.xnm2);
+        let mut counter = self.counter;
+        for o in ctx.outs.audio(0).iter_mut() {
+            if counter >= spc {
+                counter -= spc;
+                if stable {
+                    let xn = 1.0 - (a * xnm1 * xnm1) + (b * xnm2);
+                    // Two comparisons rather than a range test: both are false for a NaN iterate, so
+                    // NaN leaves the latch untripped and keeps iterating, as the reference does.
+                    #[allow(clippy::manual_range_contains)]
+                    if xn > 1.5 || xn < -1.5 {
+                        stable = false;
+                        xnm2 = x0;
+                        xnm1 = x1;
+                    } else {
+                        xnm2 = xnm1;
+                        xnm1 = xn;
+                    }
+                }
+            }
+            counter += 1.0;
+            *o = xnm2 as f32;
+        }
+
+        self.xnm1 = xnm1;
+        self.xnm2 = xnm2;
+        self.counter = counter;
+        self.stable = u32::from(stable);
+        DoneAction::Nothing
+    }
+}
+
+/// `HenonC.ar(freq, a, b, x0, x1)`: the Hénon map `x = 1 - a*x'^2 + b*x''`, cubically interpolated.
+///
+/// It carries the same stability latch as [`HenonL`], with two differences taken from the
+/// reference. An escaping iterate leaves the history at `(0, 0, 0)` and the newest iterate at `1`,
+/// and the cubic fitted through those points keeps playing - the phase still resets at every hold
+/// boundary - so a latched unit repeats a small cubic arc rather than falling silent. And until the
+/// first iteration the unit plays its zeroed cubic, so it emits silence for the first hold.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct HenonC {
+    /// The newest iterate.
+    xn: f64,
+    /// The previous three iterates, newest first (`xnm1`, `xnm2`, `xnm3`).
+    history: [f64; 3],
+    /// The coefficients of the cubic the current hold plays.
+    coefs: [f64; 4],
+    /// The `a` input the state was last compared against.
+    a: f64,
+    /// The `b` input the state was last compared against.
+    b: f64,
+    /// The `x0` input the state was last compared against.
+    x0: f64,
+    /// The `x1` input the state was last compared against.
+    x1: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    /// Nonzero while the map is iterating; zeroed once an iterate has escaped `[-1.5, 1.5]`.
+    stable: u32,
+}
+
+impl Unit for HenonC {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.x0 = f64::from(ctx.ins.control(3));
+        self.x1 = f64::from(ctx.ins.control(4));
+        self.xn = self.x1;
+        self.history = [self.x0, self.x1, self.x1];
+        self.a = f64::from(ctx.ins.control(1));
+        self.b = f64::from(ctx.ins.control(2));
+        self.stable = 1;
+        self.coefs = [0.0; 4];
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let (spc, slope) = samples_per_cycle_slope(ctx.ins.control(0), ctx.own.sample_rate);
+        let a = f64::from(ctx.ins.control(1));
+        let b = f64::from(ctx.ins.control(2));
+        let x0 = f64::from(ctx.ins.control(3));
+        let x1 = f64::from(ctx.ins.control(4));
+        let mut stable = self.stable != 0;
+        if self.a != a || self.b != b || self.x0 != x0 || self.x1 != x1 {
+            if !stable {
+                self.history = [x0, x0, self.history[1]];
+                self.xn = x1;
+            }
+            stable = true;
+            self.a = a;
+            self.b = b;
+            self.x0 = x0;
+            self.x1 = x1;
+        }
+
+        let mut xn = self.xn;
+        let [mut xnm1, mut xnm2, mut xnm3] = self.history;
+        let (mut counter, mut frac, mut coefs) = (self.counter, self.frac, self.coefs);
+        for o in ctx.outs.audio(0).iter_mut() {
+            if counter >= spc {
+                counter -= spc;
+                frac = 0.0;
+                if stable {
+                    xnm3 = xnm2;
+                    xnm2 = xnm1;
+                    xnm1 = xn;
+                    xn = 1.0 - (a * xnm1 * xnm1) + (b * xnm2);
+                    // Two comparisons rather than a range test: both are false for a NaN iterate, so
+                    // NaN leaves the latch untripped and keeps iterating, as the reference does.
+                    #[allow(clippy::manual_range_contains)]
+                    if xn > 1.5 || xn < -1.5 {
+                        stable = false;
+                        xn = 1.0;
+                        xnm1 = 0.0;
+                        xnm2 = 0.0;
+                        xnm3 = 0.0;
+                    }
+                    coefs = ipol3_coefs(xnm3, xnm2, xnm1, xn);
+                }
+            }
+            counter += 1.0;
+            *o = ipol3(frac, &coefs) as f32;
+            frac += slope;
+        }
+
+        self.xn = xn;
+        self.history = [xnm1, xnm2, xnm3];
+        self.counter = counter;
+        self.frac = frac;
+        self.coefs = coefs;
+        self.stable = u32::from(stable);
+        DoneAction::Nothing
+    }
+}
+
 /// Build a chaos generator with zeroed state and the given minimum input count. Every unit here
 /// seeds its own state in [`Unit::init`], on the audio thread, where the init inputs are readable,
 /// so the constructor never carries a meaningful value.
@@ -1060,3 +1257,5 @@ chaos_ctor!(StandardLCtor, StandardL, 4);
 chaos_ctor!(FBSineNCtor, FBSineN, 7);
 chaos_ctor!(FBSineLCtor, FBSineL, 7);
 chaos_ctor!(FBSineCCtor, FBSineC, 7);
+chaos_ctor!(HenonNCtor, HenonN, 5);
+chaos_ctor!(HenonCCtor, HenonC, 5);
