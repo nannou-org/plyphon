@@ -440,8 +440,6 @@ impl SynthDef {
                     _ => None,
                 })
                 .collect();
-            // A deterministic build-time seed; the real per-instance seed is applied on the RT thread
-            // via `reseed`, so this is only a placeholder for the baked state image.
             let build_ctx = BuildContext {
                 input_rates: &input_rates,
                 input_units: &input_units,
@@ -451,7 +449,6 @@ impl SynthDef {
                 rate: spec.rate,
                 num_outputs: spec.num_outputs,
                 special_index: spec.special_index,
-                seed: (u as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 local_bufs_so_far: num_local_bufs,
             };
 
@@ -566,7 +563,6 @@ impl SynthDef {
                     rate,
                     process: b.process,
                     init: b.init,
-                    reseed: b.reseed,
                     alloc: b.alloc,
                     pool_slot: b.pool_aux.then(|| {
                         num_pool_slots += 1;
@@ -595,7 +591,6 @@ impl SynthDef {
                 produce: b.produce,
                 reset: b.reset,
                 init: b.init,
-                reseed: b.reseed,
                 inputs,
                 state_offset,
                 state_size: b.size,

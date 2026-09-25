@@ -1,12 +1,12 @@
-//! A per-unit random number generator - plyphon's port of scsynth's `RGen` (Taus88).
+//! A random number generator - plyphon's port of scsynth's `RGen` (Taus88).
 //!
-//! scsynth seeds its generators from a process-global source; plyphon instead seeds each generator
-//! from a value threaded down through the builder (the unit's build context carries the seed),
-//! so there is no global RNG state and two instances of the same synth still decorrelate.
+//! As in scsynth, the World holds a set of these streams and every synth draws from one of them.
+//! scsynth seeds each from the clock; plyphon seeds stream `i` with `Rng::new(i)`, which is
+//! scsynth's `RGen::init(i)`, so a render is the same every run.
 
 /// A Taus88 combined Tausworthe generator (the algorithm scsynth uses).
 ///
-/// `repr(C)` + `Pod` so it embeds directly in a unit's pool-resident state (e.g. `WhiteNoise`).
+/// `repr(C)` + `Pod`, so a unit can copy it into and out of its state as plain bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Rng {
@@ -16,22 +16,15 @@ pub struct Rng {
 }
 
 impl Rng {
-    /// Seed a generator. The seed is scrambled and the Taus88 constraints (`s1 > 1`, `s2 > 7`,
-    /// `s3 > 15`) are enforced so the generator never collapses to a fixed point.
-    pub fn new(seed: u64) -> Self {
-        let mut x = seed.wrapping_mul(0x2545_F491_4F6C_DD1D) ^ 0x9E37_79B9_7F4A_7C15;
-        let mut next = || {
-            // xorshift64* to spread the seed bits before splitting into the three states.
-            x ^= x >> 12;
-            x ^= x << 25;
-            x ^= x >> 27;
-            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    /// A generator seeded as scsynth's `RGen::init(seed)` seeds one (see [`Rng::init`]).
+    pub fn new(seed: u32) -> Self {
+        let mut rng = Rng {
+            s1: 0,
+            s2: 0,
+            s3: 0,
         };
-        Rng {
-            s1: (next() as u32) | 2,
-            s2: (next() as u32) | 8,
-            s3: (next() as u32) | 16,
-        }
+        rng.init(seed);
+        rng
     }
 
     /// Re-seed the generator exactly as scsynth's `RGen::init`: the seed is scrambled with [`hash`],

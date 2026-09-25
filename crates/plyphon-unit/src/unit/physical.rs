@@ -3,15 +3,14 @@
 //!
 //! `Spring` integrates a damped mass-spring driven by an input force. `Ball` models a ball bouncing
 //! on a (moving) floor under gravity; `TBall` is the same physics but outputs the collision velocity
-//! as a trigger. `Ball`/`TBall` add a tiny per-unit RNG dither to reduce sampling jitter, so they
-//! embed a Taus88 [`Rng`] and reseed it like the noise units.
+//! as a trigger. `Ball`/`TBall` add a tiny random dither to reduce sampling jitter, drawn from the
+//! synth's random stream ([`ProcessCtx::rgen`](crate::unit::ProcessCtx::rgen)).
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
-use plyphon_dsp::rng::Rng;
 
 /// `Spring.ar(in, spring, damping)`: a damped mass on a spring driven by the input force; outputs the
 /// spring force.
@@ -62,14 +61,9 @@ pub struct Ball {
     pos: f32,
     vel: f32,
     prev: f32,
-    rng: Rng,
 }
 
 impl Unit for Ball {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let floor = ctx.ins.control(0);
         self.pos = floor;
@@ -105,7 +99,7 @@ impl Unit for Ball {
             } else if dist <= 0.0 {
                 pos = floor - dist;
                 vel = vel_diff * damping;
-                vel += self.rng.next_unipolar() * 0.00005 * g_in; // dither
+                vel += ctx.rgen.next_unipolar() * 0.00005 * g_in; // dither
             }
             prev = floor;
             *o = pos;
@@ -129,7 +123,6 @@ impl UnitDef for BallCtor {
             pos: 0.0,
             vel: 0.0,
             prev: 0.0,
-            rng: Rng::new(ctx.seed),
         }))
     }
 }
@@ -143,14 +136,10 @@ pub struct TBall {
     pos: f64,
     prev: f64,
     vel: f32,
-    rng: Rng,
+    _pad: u32,
 }
 
 impl Unit for TBall {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let floor = ctx.ins.control(0) as f64;
         self.pos = floor;
@@ -190,7 +179,7 @@ impl Unit for TBall {
                 pos = floor - dist;
                 vel = (floorvel - vel) * damping as f64;
                 outval = vel;
-                vel += self.rng.next_unipolar() as f64 * 0.001 * g_in as f64; // dither
+                vel += ctx.rgen.next_unipolar() as f64 * 0.001 * g_in as f64; // dither
             }
             prev = floor;
             *o = outval as f32;
@@ -214,7 +203,7 @@ impl UnitDef for TBallCtor {
             pos: 0.0,
             prev: 0.0,
             vel: 0.0,
-            rng: Rng::new(ctx.seed),
+            _pad: 0,
         }))
     }
 }

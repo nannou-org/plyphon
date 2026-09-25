@@ -2,12 +2,14 @@
 //! `PinkNoise`, `BrownNoise`, `Dust` and `Dust2`, plus the chaotic/deterministic `Crackle`, `Logistic`,
 //! `Hasher` and `MantissaMask` (`NoiseUGens.cpp`).
 //!
-//! The random generators embed a per-unit [`Rng`] (scsynth's Taus88 `RGen`) in their `Pod` state and
-//! reseed it in [`Unit::reseed`]; the coefficient-free ones output at whichever rate the SynthDef
+//! The random generators draw from the synth's random stream ([`ProcessCtx::rgen`]), scsynth's
+//! `mParent->mRGen`, so they share it with every other random unit on the stream and a `RandSeed`
+//! restarts them too. A block loop works on a local copy of the stream and writes it back, as
+//! scsynth's `RGET`/`RPUT` do. The coefficient-free ones output at whichever rate the SynthDef
 //! assigns. The float bit-tricks in scsynth's `SC_RGen.h` (`frand`/`frand2`/`frand8`/`fcoin`, and
 //! PinkNoise's mantissa packing) are reproduced with safe [`f32::from_bits`]. `Crackle`/`Logistic` are
-//! deterministic chaotic maps (seeded from the RGen / an `init` input); `Hasher`/`MantissaMask` are pure
-//! deterministic bit manglers of their input.
+//! deterministic chaotic maps (seeded from the stream / an `init` input); `Hasher`/`MantissaMask` are
+//! pure deterministic bit manglers of their input.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -34,15 +36,18 @@ fn frand8(rng: &mut Rng) -> f32 {
     rng.next_unipolar() * 0.25 - 0.125
 }
 
-/// Fill the output at the unit's rate (a full audio block, or one control value) from `next`.
-fn generate(ctx: &mut ProcessCtx<'_>, audio: bool, mut next: impl FnMut() -> f32) {
+/// Fill the output at the unit's rate (a full audio block, or one control value) from `next`,
+/// drawing from a local copy of the synth's random stream that is written back afterwards.
+fn generate(ctx: &mut ProcessCtx<'_>, audio: bool, mut next: impl FnMut(&mut Rng) -> f32) {
+    let mut rgen = *ctx.rgen;
     if audio {
         for o in ctx.outs.audio(0).iter_mut() {
-            *o = next();
+            *o = next(&mut rgen);
         }
     } else {
-        *ctx.outs.control(0) = next();
+        *ctx.outs.control(0) = next(&mut rgen);
     }
+    *ctx.rgen = rgen;
 }
 
 /// Map input 0 through `f` to the output at the unit's rate (a control input broadcasts).
@@ -63,24 +68,13 @@ fn transform(ctx: &mut ProcessCtx<'_>, audio: bool, f: impl Fn(f32) -> f32) {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct WhiteNoise {
-    rng: Rng,
     /// `0`/`1`: audio-rate (a full block) vs control-rate (one value).
     audio: u32,
 }
 
 impl Unit for WhiteNoise {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        if self.audio != 0 {
-            for o in ctx.outs.audio(0).iter_mut() {
-                *o = self.rng.next_bipolar();
-            }
-        } else {
-            *ctx.outs.control(0) = self.rng.next_bipolar();
-        }
+        generate(ctx, self.audio != 0, Rng::next_bipolar);
         DoneAction::Nothing
     }
 }
@@ -91,7 +85,6 @@ pub struct WhiteNoiseCtor;
 impl UnitDef for WhiteNoiseCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(WhiteNoise {
-            rng: Rng::new(ctx.seed),
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
@@ -101,19 +94,12 @@ impl UnitDef for WhiteNoiseCtor {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct ClipNoise {
-    rng: Rng,
     audio: u32,
 }
 
 impl Unit for ClipNoise {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let audio = self.audio != 0;
-        let rng = &mut self.rng;
-        generate(ctx, audio, || coin(rng));
+        generate(ctx, self.audio != 0, coin);
         DoneAction::Nothing
     }
 }
@@ -124,7 +110,6 @@ pub struct ClipNoiseCtor;
 impl UnitDef for ClipNoiseCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(ClipNoise {
-            rng: Rng::new(ctx.seed),
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
@@ -135,22 +120,16 @@ impl UnitDef for ClipNoiseCtor {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct GrayNoise {
-    rng: Rng,
     counter: u32,
     audio: u32,
 }
 
 impl Unit for GrayNoise {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let counter = &mut self.counter;
-        let rng = &mut self.rng;
-        generate(ctx, audio, || {
-            *counter ^= 1u32 << (rng.next_u32() & 31);
+        generate(ctx, audio, |rgen| {
+            *counter ^= 1u32 << (rgen.next_u32() & 31);
             (*counter as i32 as f32) * GRAY_SCALE
         });
         DoneAction::Nothing
@@ -163,7 +142,6 @@ pub struct GrayNoiseCtor;
 impl UnitDef for GrayNoiseCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(GrayNoise {
-            rng: Rng::new(ctx.seed),
             counter: 0,
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
@@ -174,45 +152,36 @@ impl UnitDef for GrayNoiseCtor {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct PinkNoise {
-    rng: Rng,
     dice: [u32; 16],
     total: u32,
     audio: u32,
 }
 
-/// Seed PinkNoise's 16 dice and their running total (scsynth's `PinkNoise_Ctor`).
-fn pink_init(rng: &mut Rng) -> ([u32; 16], u32) {
-    let mut dice = [0u32; 16];
-    let mut total = 0u32;
-    for d in &mut dice {
-        let newrand = rng.next_u32() >> 13;
-        total = total.wrapping_add(newrand);
-        *d = newrand;
-    }
-    (dice, total)
-}
-
 impl Unit for PinkNoise {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-        let (dice, total) = pink_init(&mut self.rng);
-        self.dice = dice;
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // scsynth's constructor rolls the 16 dice and their running total, then runs the calc.
+        let mut total = 0u32;
+        for d in &mut self.dice {
+            let newrand = ctx.rgen.next_u32() >> 13;
+            total = total.wrapping_add(newrand);
+            *d = newrand;
+        }
         self.total = total;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let dice = &mut self.dice;
         let total = &mut self.total;
-        let rng = &mut self.rng;
-        generate(ctx, audio, || {
-            let counter = rng.next_u32();
+        generate(ctx, audio, |rgen| {
+            let counter = rgen.next_u32();
             let newrand = counter >> 13;
             let k = (counter.trailing_zeros() & 15) as usize;
             let prevrand = dice[k];
             dice[k] = newrand;
             *total = total.wrapping_add(newrand.wrapping_sub(prevrand));
-            let newrand2 = rng.next_u32() >> 13;
+            let newrand2 = rgen.next_u32() >> 13;
             // scsynth packs the accumulator into a float's mantissa (exponent 0x40000000 -> [2, 4))
             // and subtracts 3 to land in [-1, 1).
             f32::from_bits(total.wrapping_add(newrand2) | 0x4000_0000) - 3.0
@@ -226,12 +195,9 @@ pub struct PinkNoiseCtor;
 
 impl UnitDef for PinkNoiseCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        let mut rng = Rng::new(ctx.seed);
-        let (dice, total) = pink_init(&mut rng);
         Ok(unit_spec(PinkNoise {
-            rng,
-            dice,
-            total,
+            dice: [0; 16],
+            total: 0,
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
@@ -241,29 +207,23 @@ impl UnitDef for PinkNoiseCtor {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct BrownNoise {
-    rng: Rng,
     level: f32,
     audio: u32,
 }
 
 impl Unit for BrownNoise {
     fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        // The constructor writes the seeded level, without running the calc.
+        // scsynth's constructor draws the starting level and writes it, without running the calc.
+        self.level = ctx.rgen.next_bipolar();
         *ctx.outs.control(0) = self.level;
         DoneAction::Nothing
-    }
-
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-        self.level = self.rng.next_bipolar();
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let level = &mut self.level;
-        let rng = &mut self.rng;
-        generate(ctx, audio, || {
-            *level += frand8(rng);
+        generate(ctx, audio, |rgen| {
+            *level += frand8(rgen);
             if *level > 1.0 {
                 *level = 2.0 - *level;
             } else if *level < -1.0 {
@@ -280,11 +240,8 @@ pub struct BrownNoiseCtor;
 
 impl UnitDef for BrownNoiseCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        let mut rng = Rng::new(ctx.seed);
-        let level = rng.next_bipolar();
         Ok(unit_spec(BrownNoise {
-            rng,
-            level,
+            level: 0.0,
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
@@ -294,24 +251,18 @@ impl UnitDef for BrownNoiseCtor {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Dust {
-    rng: Rng,
     audio: u32,
 }
 
 impl Unit for Dust {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let density = ctx.ins.control(0);
         let sample_dur = ctx.own.sample_dur as f32;
         let thresh = density * sample_dur;
         let scale = if thresh > 0.0 { 1.0 / thresh } else { 0.0 };
-        let rng = &mut self.rng;
-        generate(ctx, audio, || {
-            let z = rng.next_unipolar();
+        generate(ctx, audio, |rgen| {
+            let z = rgen.next_unipolar();
             if z < thresh { z * scale } else { 0.0 }
         });
         DoneAction::Nothing
@@ -327,7 +278,6 @@ impl UnitDef for DustCtor {
             return Err(BuildError::WrongInputCount);
         }
         Ok(unit_spec(Dust {
-            rng: Rng::new(ctx.seed),
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
@@ -337,24 +287,18 @@ impl UnitDef for DustCtor {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Dust2 {
-    rng: Rng,
     audio: u32,
 }
 
 impl Unit for Dust2 {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let density = ctx.ins.control(0);
         let sample_dur = ctx.own.sample_dur as f32;
         let thresh = density * sample_dur;
         let scale = if thresh > 0.0 { 2.0 / thresh } else { 0.0 };
-        let rng = &mut self.rng;
-        generate(ctx, audio, || {
-            let z = rng.next_unipolar();
+        generate(ctx, audio, |rgen| {
+            let z = rgen.next_unipolar();
             if z < thresh { z * scale - 1.0 } else { 0.0 }
         });
         DoneAction::Nothing
@@ -370,7 +314,6 @@ impl UnitDef for Dust2Ctor {
             return Err(BuildError::WrongInputCount);
         }
         Ok(unit_spec(Dust2 {
-            rng: Rng::new(ctx.seed),
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
@@ -389,9 +332,11 @@ pub struct Crackle {
 }
 
 impl Unit for Crackle {
-    fn reseed(&mut self, seed: u64) {
-        self.y1 = Rng::new(seed).next_unipolar_f64() as f32;
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // scsynth's constructor seeds `y1` from a double-precision draw and runs the calc.
+        self.y1 = ctx.rgen.next_unipolar_f64() as f32;
         self.y2 = 0.0;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -399,7 +344,7 @@ impl Unit for Crackle {
         let audio = self.audio != 0;
         let mut y1 = self.y1;
         let mut y2 = self.y2;
-        generate(ctx, audio, || {
+        generate(ctx, audio, |_| {
             let y0 = (y1 * param - y2 - 0.05).abs();
             y2 = y1;
             y1 = y0;

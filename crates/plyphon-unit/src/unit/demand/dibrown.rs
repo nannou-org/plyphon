@@ -7,7 +7,6 @@ use crate::unit::demand::{BuiltDemandUnit, DemandCtx, DemandUnit, demand_unit_sp
 use crate::unit::registry::{BuildContext, DemandUnitDef};
 use plyphon_dsp::math;
 use plyphon_dsp::ops::ifold;
-use plyphon_dsp::rng::Rng;
 
 /// `Dibrown(length, lo, hi, step)`: like `Dbrown` but on the integers - each demand steps the value by
 /// a random integer in `[-step, step]` and folds it back into `[lo, hi]`, for `length` values, then
@@ -16,7 +15,6 @@ use plyphon_dsp::rng::Rng;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Dibrown {
-    rng: Rng,
     /// Latched length; `-1` until the first demand latches it.
     repeats: f32,
     /// How many values have been emitted this run.
@@ -37,10 +35,6 @@ impl Dibrown {
 }
 
 impl DemandUnit for Dibrown {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn reset(&mut self, _ctx: &mut DemandCtx<'_>) {
         self.repeats = -1.0;
         self.repeat_count = 0;
@@ -66,14 +60,14 @@ impl DemandUnit for Dibrown {
             } else {
                 math::floor(len + 0.5)
             };
-            self.val = self.rng.next_irand(self.hi - self.lo + 1) + self.lo;
+            self.val = ctx.rgen().next_irand(self.hi - self.lo + 1) + self.lo;
         }
         if self.repeat_count as f32 >= self.repeats {
             return f32::NAN;
         }
         self.repeat_count += 1;
         let out = self.val;
-        let stepped = self.val + self.rng.next_irand2(self.step);
+        let stepped = self.val + ctx.rgen().next_irand2(self.step);
         self.val = ifold(stepped, self.lo, self.hi);
         out as f32
     }
@@ -83,9 +77,8 @@ impl DemandUnit for Dibrown {
 pub struct DibrownCtor;
 
 impl DemandUnitDef for DibrownCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError> {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError> {
         Ok(demand_unit_spec(Dibrown {
-            rng: Rng::new(ctx.seed),
             repeats: -1.0,
             repeat_count: 0,
             val: 0,

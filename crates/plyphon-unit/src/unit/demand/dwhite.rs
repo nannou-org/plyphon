@@ -6,16 +6,14 @@ use crate::error::BuildError;
 use crate::unit::demand::{BuiltDemandUnit, DemandCtx, DemandUnit, demand_unit_spec};
 use crate::unit::registry::{BuildContext, DemandUnitDef};
 use plyphon_dsp::math;
-use plyphon_dsp::rng::Rng;
 
 /// `Dwhite(length, lo, hi)`: on each demand, yields a value drawn uniformly from `[lo, hi)`, for
 /// `length` values, then `NaN`. `length` is latched on the first demand; `lo`/`hi` are re-read each
-/// demand. Inputs are in scsynth's server-side order: `[length, lo, hi]`. Like `WhiteNoise` it carries
-/// its own [`Rng`], re-seeded per instance so two synths of the same def decorrelate.
+/// demand. Inputs are in scsynth's server-side order: `[length, lo, hi]`. Like `WhiteNoise` it draws
+/// from the synth's random stream.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Dwhite {
-    rng: Rng,
     /// Latched length; `-1` until the first demand latches it.
     repeats: f32,
     /// How many values have been emitted this run.
@@ -29,10 +27,6 @@ impl Dwhite {
 }
 
 impl DemandUnit for Dwhite {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn reset(&mut self, _ctx: &mut DemandCtx<'_>) {
         self.repeats = -1.0;
         self.repeat_count = 0;
@@ -53,7 +47,7 @@ impl DemandUnit for Dwhite {
         self.repeat_count += 1;
         let lo = ctx.demand(Self::LO);
         let hi = ctx.demand(Self::HI);
-        lo + self.rng.next_unipolar() * (hi - lo)
+        lo + ctx.rgen().next_unipolar() * (hi - lo)
     }
 }
 
@@ -61,9 +55,8 @@ impl DemandUnit for Dwhite {
 pub struct DwhiteCtor;
 
 impl DemandUnitDef for DwhiteCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError> {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError> {
         Ok(demand_unit_spec(Dwhite {
-            rng: Rng::new(ctx.seed),
             repeats: -1.0,
             repeat_count: 0,
         }))

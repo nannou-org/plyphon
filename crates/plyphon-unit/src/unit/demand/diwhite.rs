@@ -6,7 +6,6 @@ use crate::error::BuildError;
 use crate::unit::demand::{BuiltDemandUnit, DemandCtx, DemandUnit, demand_unit_spec};
 use crate::unit::registry::{BuildContext, DemandUnitDef};
 use plyphon_dsp::math;
-use plyphon_dsp::rng::Rng;
 
 /// `Diwhite(length, lo, hi)`: like `Dwhite` but yields integers drawn uniformly from `[lo, hi]`
 /// (inclusive, rounded), for `length` values, then `NaN`. `length` is latched on the first demand;
@@ -14,7 +13,6 @@ use plyphon_dsp::rng::Rng;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Diwhite {
-    rng: Rng,
     /// Latched length; `-1` until the first demand latches it.
     repeats: f32,
     /// How many values have been emitted this run.
@@ -32,10 +30,6 @@ impl Diwhite {
 }
 
 impl DemandUnit for Diwhite {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn reset(&mut self, _ctx: &mut DemandCtx<'_>) {
         self.repeats = -1.0;
         self.repeat_count = 0;
@@ -62,7 +56,7 @@ impl DemandUnit for Diwhite {
             return f32::NAN;
         }
         self.repeat_count += 1;
-        (self.rng.next_irand(self.range) + self.lo) as f32
+        (ctx.rgen().next_irand(self.range) + self.lo) as f32
     }
 }
 
@@ -70,9 +64,8 @@ impl DemandUnit for Diwhite {
 pub struct DiwhiteCtor;
 
 impl DemandUnitDef for DiwhiteCtor {
-    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError> {
+    fn build(&self, _ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError> {
         Ok(demand_unit_spec(Diwhite {
-            rng: Rng::new(ctx.seed),
             repeats: -1.0,
             repeat_count: 0,
             lo: 0,

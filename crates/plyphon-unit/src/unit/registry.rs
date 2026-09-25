@@ -177,8 +177,6 @@ pub struct BuildContext<'a> {
     pub control: &'a RateInfo,
     /// scsynth's `mSpecialIndex` (e.g. which binary/unary operator).
     pub special_index: i16,
-    /// A seed for this unit's random number generator (distinct per unit and per synth instance).
-    pub seed: u64,
     /// How many graph-local buffers earlier units of this def have declared - the next `LocalBuf`'s
     /// declaration index (scsynth's running `parent->localBufNum`). The compile loop advances it per
     /// built unit that declares one; every other unit ignores it.

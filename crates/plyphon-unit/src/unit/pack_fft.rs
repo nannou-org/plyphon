@@ -60,6 +60,7 @@ fn pull(ctx: &mut ProcessCtx<'_>, input: i64) -> Option<f32> {
         node_id: ctx.node_id,
         node_msgs: &mut ctx.node_msgs,
         buf_counter: ctx.buf_counter,
+        rgen: &mut *ctx.rgen,
     };
     Some(demand_next(&ctx.ins, &mut ctx.demand, &mut world, input))
 }

@@ -755,9 +755,9 @@ pub struct ProcessCtx<'a> {
     /// units ignore it.
     pub aux: Aux<'a>,
     /// The random stream the synth draws from (scsynth's `mParent->mRGen`): one of the World's
-    /// streams, shared with every synth drawing from the same one. The `Rand` family draws from it
-    /// and `RandSeed` re-seeds it. Units with fully private randomness (the noise generators) keep
-    /// their own embedded [`Rng`] and ignore this.
+    /// streams, shared with every synth drawing from the same one. Every random unit draws from it
+    /// and `RandSeed` re-seeds it. A unit drawing through a block can copy it into a local and
+    /// write it back, as scsynth's `RGET`/`RPUT` do.
     pub rgen: &'a mut Rng,
     /// Which of the World's random streams the synth draws from, for `RandID` to change.
     pub rgen_id: RgenId<'a>,
@@ -985,12 +985,6 @@ impl<'a> Outputs<'a> {
 /// live as bytes in the rt-pool and be reinterpreted without `unsafe`; behaviour is invoked through
 /// the [`ProcessFn`]/[`InitFn`] vtable a [`UnitDef`] builds via [`unit_spec`].
 pub trait Unit: Pod {
-    /// Re-seed any per-instance randomness from `seed`, called once when the synth is constructed on
-    /// the audio thread (before the first block). The default is a no-op; units with an
-    /// [`Rng`] override it so that two instances of the same def decorrelate -
-    /// plyphon's stand-in for scsynth seeding each `Graph`'s `RGen`. Must not allocate or block.
-    fn reseed(&mut self, _seed: u64) {}
-
     /// Construct the unit - scsynth's `*_Ctor`.
     ///
     /// scsynth's `Graph_FirstCalc` runs every unit's constructor, in SynthDef order, before any
@@ -1043,10 +1037,6 @@ pub type ProcessFn = fn(&mut [u8], &mut ProcessCtx<'_>) -> DoneAction;
 /// A type-erased constructor over a unit's pool-resident state bytes (see [`Unit::init`]).
 pub type InitFn = fn(&mut [u8], &mut ProcessCtx<'_>) -> DoneAction;
 
-/// A type-erased per-instance re-seed function over a unit's pool-resident state bytes (see
-/// [`Unit::reseed`]).
-pub type ReseedFn = fn(&mut [u8], u64);
-
 /// A type-erased one-time allocation function over a unit's pool-resident state bytes (see
 /// [`Unit::alloc`]).
 pub type AllocFn = fn(&mut [u8], &InitCtx<'_>, &mut Aux<'_>);
@@ -1060,11 +1050,6 @@ fn process_thunk<T: Unit>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) -> DoneAct
 /// As [`process_thunk`], for [`Unit::init`].
 fn init_thunk<T: Unit>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) -> DoneAction {
     bytemuck::from_bytes_mut::<T>(bytes).init(ctx)
-}
-
-/// As [`process_thunk`], for [`Unit::reseed`].
-fn reseed_thunk<T: Unit>(bytes: &mut [u8], seed: u64) {
-    bytemuck::from_bytes_mut::<T>(bytes).reseed(seed);
 }
 
 /// As [`process_thunk`], for [`Unit::alloc`].
@@ -1090,8 +1075,6 @@ pub struct BuiltUnit {
     pub process: ProcessFn,
     /// Constructor, run once in SynthDef order on the synth's first block.
     pub init: InitFn,
-    /// Per-instance re-seed function (no-op for units without randomness).
-    pub reseed: ReseedFn,
     /// One-time allocation function for input-sized memory (no-op unless `pool_aux`).
     pub alloc: AllocFn,
     /// Whether this unit allocates its memory from the engine's pool when the synth starts, sized
@@ -1132,7 +1115,6 @@ pub fn unit_spec<T: Unit>(state: T) -> BuiltUnit {
     BuiltUnit {
         process: process_thunk::<T>,
         init: init_thunk::<T>,
-        reseed: reseed_thunk::<T>,
         alloc: alloc_thunk::<T>,
         pool_aux: false,
         cleared_output: 0.0,

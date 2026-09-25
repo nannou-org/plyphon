@@ -1,13 +1,11 @@
 //! The init- and trigger-time random units - plyphon's ports of scsynth's `Rand`, `ExpRand`,
 //! `TRand`, `TExpRand`, `TIRand`, `RandSeed` and `RandID` (`NoiseUGens.cpp`).
 //!
-//! Unlike the noise generators (each with a private [`Rng`] embedded in its own state), this
-//! family draws from the synth's random stream ([`ProcessCtx::rgen`]), scsynth's `mParent->mRGen`:
-//! one of the World's streams, stream 0 unless `RandID` selects another. Synths drawing from the
-//! same stream share it, so their draws interleave in node order, and a `RandSeed` re-seed
-//! restarts the stream for every synth on it. That scope is narrower than scsynth's: there the
-//! noise generators draw from the same stream, so a `RandSeed` restarts `WhiteNoise` and friends
-//! too, an idiom plyphon's private per-unit streams do not support.
+//! Like every random unit, this family draws from the synth's random stream
+//! ([`ProcessCtx::rgen`]), scsynth's `mParent->mRGen`: one of the World's streams, stream 0
+//! unless `RandID` selects another. Synths drawing from the same stream share it, so their draws
+//! interleave in node order, and a `RandSeed` re-seed restarts the stream for every synth on it -
+//! the noise generators included, as in scsynth.
 //!
 //! The one-time draws happen in the first `process` call, which runs as the unit's constructor, in
 //! SynthDef order before any unit's first calc, as scsynth's constructor draws do.
@@ -151,7 +149,18 @@ impl TrigRand {
     /// Run one block: the first call draws immediately and latches the current trigger level (as
     /// scsynth's constructor does, so a trigger already high at spawn does not double-fire); every
     /// call redraws on each `<= 0` to `> 0` trigger crossing.
-    fn run(&mut self, ctx: &mut ProcessCtx<'_>, draw: impl Fn(&mut Rng, f32, f32) -> f32) {
+    ///
+    /// With `block_edge`, an audio-rate block compares every sample against the trigger level
+    /// before the block rather than against the previous sample, so it redraws on every positive
+    /// sample of a block that starts low. That is what scsynth's `TExpRand` and `TIRand` audio-rate
+    /// loops do: they never update `prev` inside the loop (`TExpRand_next_a`, `TIRand_next_a` and
+    /// their `_aa` forms in `NoiseUGens.cpp`), unlike `TRand`'s.
+    fn run(
+        &mut self,
+        ctx: &mut ProcessCtx<'_>,
+        block_edge: bool,
+        draw: impl Fn(&mut Rng, f32, f32) -> f32,
+    ) {
         let ProcessCtx {
             ins, outs, rgen, ..
         } = ctx;
@@ -164,9 +173,15 @@ impl TrigRand {
             self.prev_trig = trig.at(0);
         }
         if self.audio != 0 {
+            let block_start = self.prev_trig;
             for (i, o) in outs.audio(0).iter_mut().enumerate() {
                 let t = trig.at(i);
-                if self.prev_trig <= 0.0 && t > 0.0 {
+                let prev = if block_edge {
+                    block_start
+                } else {
+                    self.prev_trig
+                };
+                if prev <= 0.0 && t > 0.0 {
                     self.value = draw(rgen, lo, hi);
                 }
                 self.prev_trig = t;
@@ -190,7 +205,7 @@ pub struct TRand(TrigRand);
 
 impl Unit for TRand {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.0.run(ctx, uniform);
+        self.0.run(ctx, false, uniform);
         DoneAction::Nothing
     }
 }
@@ -205,14 +220,15 @@ impl UnitDef for TRandCtor {
 }
 
 /// `TExpRand.ar/kr(lo, hi, trig)`: an exponential-distribution draw in `[lo, hi)` on each rising
-/// trigger, held between.
+/// trigger, held between. At audio rate it redraws on every positive sample of a block that starts
+/// low, as scsynth's audio-rate loop does.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct TExpRand(TrigRand);
 
 impl Unit for TExpRand {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.0.run(ctx, exponential);
+        self.0.run(ctx, true, exponential);
         DoneAction::Nothing
     }
 }
@@ -227,14 +243,15 @@ impl UnitDef for TExpRandCtor {
 }
 
 /// `TIRand.ar/kr(lo, hi, trig)`: a uniform integer draw in `[lo, hi]` (as a float) on each rising
-/// trigger, held between.
+/// trigger, held between. At audio rate it redraws on every positive sample of a block that starts
+/// low, as scsynth's audio-rate loop does.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct TIRand(TrigRand);
 
 impl Unit for TIRand {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.0.run(ctx, integer);
+        self.0.run(ctx, true, integer);
         DoneAction::Nothing
     }
 }
