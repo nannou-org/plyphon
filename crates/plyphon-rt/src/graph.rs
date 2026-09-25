@@ -36,8 +36,8 @@ use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::{BlockLayout, ConstructorUnit, GraphDef, LocalBufMeta};
 use plyphon_unit::unit::{
     self, Aux, AuxAlloc, DemandAccess, DemandWorld, DoneAction, DoneState, InitCtx, Inputs,
-    LocalBufs, LocalBus, NodeMsg, NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger,
-    TriggerSink,
+    LocalBufs, LocalBus, NodeMsg, NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, RgenId,
+    Trigger, TriggerSink,
 };
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
@@ -153,6 +153,8 @@ pub(crate) struct Block<'a> {
     pub wire_scratch: &'a mut [f32],
     /// World-shared per-unit output scratch, reused per unit (`max_unit_outputs * block_size` f32).
     pub unit_scratch: &'a mut [f32],
+    /// The World's random streams; each graph draws from the one it points at.
+    pub rgens: &'a mut [Rng],
     /// World-shared sink for triggers fired this block (`SendTrig`), drained after the tree walk.
     pub triggers: &'a mut Vec<Trigger>,
     /// Cap on triggers per block; pushes past it are dropped so the audio thread never reallocates.
@@ -201,10 +203,9 @@ pub struct Graph {
     /// One-shot `/n_trace` request: when set, the next [`process`](Self::process) dumps each unit's
     /// inputs/outputs and clears it (scsynth's one-block `Graph_CalcTrace`).
     trace: bool,
-    /// The synth's shared random stream (scsynth's per-graph `RGen`), seeded per instance at
-    /// creation. The `Rand`-family units draw from it via
-    /// [`ProcessCtx::rgen`](plyphon_unit::unit::ProcessCtx::rgen) and `RandSeed` re-seeds it.
-    rgen: Rng,
+    /// Which of the World's random streams this synth draws from (scsynth's `mRGen`): stream 0
+    /// until a `RandID` selects another.
+    rgen: u32,
 }
 
 impl Graph {
@@ -217,7 +218,6 @@ impl Graph {
         def: Arc<GraphDef>,
         sample_offset: usize,
         subsample_offset: f32,
-        seed: u64,
     ) -> Self {
         Graph {
             block,
@@ -228,7 +228,7 @@ impl Graph {
             sample_offset,
             subsample_offset,
             trace: false,
-            rgen: Rng::new(seed),
+            rgen: 0,
         }
     }
 
@@ -250,6 +250,7 @@ impl Graph {
         // A one-shot `/n_trace`: dump this block's per-unit I/O, then clear (scsynth's `Graph_CalcTrace`).
         let tracing = core::mem::take(&mut self.trace);
         let rgen = &mut self.rgen;
+        let num_rgens = block.rgens.len() as u32;
         let aux_slots = &mut self.aux.0;
         let def = &*self.def;
         let bs = def.block_size();
@@ -586,7 +587,8 @@ impl Graph {
                             def.audio_rate().sample_rate,
                         ),
                         aux,
-                        rgen: &mut *rgen,
+                        rgen: &mut block.rgens[*rgen as usize],
+                        rgen_id: RgenId::new(&mut *rgen, num_rgens),
                     };
                     if construct {
                         (v.init)(state, &mut ctx)

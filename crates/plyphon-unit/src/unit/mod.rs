@@ -754,12 +754,36 @@ pub struct ProcessCtx<'a> {
     /// This unit's private auxiliary memory (a delay line). Empty for units that declared none; most
     /// units ignore it.
     pub aux: Aux<'a>,
-    /// The synth's shared random stream (scsynth's per-graph `RGen`, seeded per instance). The
-    /// `Rand` family draws from it so draws interleave deterministically across the units of one
-    /// synth, and `RandSeed` re-seeds it so those sequences restart together. Units with fully
-    /// private randomness (the noise generators) keep their own embedded
-    /// [`Rng`] and ignore this.
+    /// The random stream the synth draws from (scsynth's `mParent->mRGen`): one of the World's
+    /// streams, shared with every synth drawing from the same one. The `Rand` family draws from it
+    /// and `RandSeed` re-seeds it. Units with fully private randomness (the noise generators) keep
+    /// their own embedded [`Rng`] and ignore this.
     pub rgen: &'a mut Rng,
+    /// Which of the World's random streams the synth draws from, for `RandID` to change.
+    pub rgen_id: RgenId<'a>,
+}
+
+/// Which of the World's random streams a synth draws from - scsynth's `mParent->mRGen`, a pointer
+/// into `world->mRGen`. `RandID` repoints it; the units after it draw from the new stream.
+pub struct RgenId<'a> {
+    index: &'a mut u32,
+    count: u32,
+}
+
+impl<'a> RgenId<'a> {
+    /// A handle over the synth's stream `index`, among the World's `count` streams. Used by the
+    /// synth process loop.
+    pub fn new(index: &'a mut u32, count: u32) -> Self {
+        RgenId { index, count }
+    }
+
+    /// Draw from stream `id` from now on. An `id` the World does not have is ignored, as
+    /// scsynth's `RandID` ignores one at or beyond `mNumRGens`.
+    pub fn select(&mut self, id: u32) {
+        if id < self.count {
+            *self.index = id;
+        }
+    }
 }
 
 /// What a unit may touch while sizing its memory on the first block - see [`Unit::alloc`].
