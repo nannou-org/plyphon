@@ -615,6 +615,19 @@ fn earlier_ports_without_reseed_ignore_seed_changes() {
     assert_change_ignored("LinCongN", LIN_CONG, 4, 0.75);
 }
 
+/// `StandardN(freq, k=100, xi=-1, yi=0)`: the kick drives the momentum to about `-84`, far below
+/// `mod2pi`'s `[-2π, 4π)` fast path, so its truncating branch wraps both variables - negative,
+/// where a Euclidean wrap would not be.
+#[test]
+fn standard_n_wraps_like_mod2pi() {
+    assert_pinned(
+        "StandardN",
+        &[100.0, -1.0, 0.0],
+        (&STANDARD_N_WIDE_SLOW_BLOCK, &STANDARD_N_WIDE_SLOW_LATER),
+        (&STANDARD_N_WIDE_FAST_BLOCK, &STANDARD_N_WIDE_FAST_LATER),
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Reblocking and arity
 // ---------------------------------------------------------------------------------------------
@@ -1922,4 +1935,45 @@ const STANDARD_N_RESEED_Y: [u32; 64] = [
     0xbf65_9507, 0xbf65_9507, 0xbf65_9507, 0xbf35_b811, 0xbf35_b811, 0xbf35_b811, 0xbf35_b811,
     0xbf35_b811, 0xbf35_b811, 0xbf35_b811, 0xbe8a_e2e1, 0xbe8a_e2e1, 0xbe8a_e2e1, 0xbe8a_e2e1,
     0xbe8a_e2e1,
+];
+#[rustfmt::skip]
+const STANDARD_N_WIDE_SLOW_BLOCK: [u32; 64] = [
+    0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbdd3_473e,
+    0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbf40_587b,
+    0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf7c_bf71,
+    0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0x3d3f_b4f4,
+    0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3ed5_b651,
+    0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3cb8_e13c,
+    0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0xbf20_910c,
+    0xbf20_910c, 0xbf20_910c, 0xbf20_910c, 0xbf20_910c, 0xbf20_910c, 0x3d3a_c2f4, 0x3d3a_c2f4,
+    0x3d3a_c2f4, 0x3d3a_c2f4, 0x3d3a_c2f4, 0x3d3a_c2f4, 0x3d3a_c2f4, 0x3e32_8f46, 0x3e32_8f46,
+    0x3e32_8f46,
+];
+
+const STANDARD_N_WIDE_SLOW_LATER: [(usize, u32); 4] = [
+    (511, 0x3dea_bdb2),
+    (1023, 0xbf6c_9415),
+    (2047, 0xbea8_53b7),
+    (4095, 0xbf65_5ff9),
+];
+
+#[rustfmt::skip]
+const STANDARD_N_WIDE_FAST_BLOCK: [u32; 64] = [
+    0xbdd3_473e, 0xbf40_587b, 0xbf7c_bf71, 0x3d3f_b4f4, 0x3ed5_b651, 0x3cb8_e13c, 0xbf20_910c,
+    0x3d3a_c2f4, 0x3e32_8f46, 0xbe8c_df63, 0xbf02_cf72, 0xbf6f_4c03, 0xbf61_25c1, 0x3f71_11ae,
+    0x3f76_882e, 0xbf34_ae4d, 0xbf77_8e72, 0x3d83_53d0, 0x3f39_e086, 0xbf3e_fa6b, 0x3f11_fd19,
+    0x3f53_f88a, 0x3f36_2b09, 0xbeea_9b18, 0xbd91_3733, 0xbf26_c7cb, 0xbf70_2f62, 0x3f69_fdc8,
+    0x3e8b_ec7b, 0xbeeb_bd2e, 0x3ec8_48b5, 0xbf3f_0298, 0x3f65_6e0e, 0x3eaf_6214, 0xbe67_fc54,
+    0xbbb6_5c4e, 0x3f45_9be5, 0x3f24_902e, 0xbe2a_609d, 0x3f6a_59a2, 0xbeb8_9f79, 0xbf4f_57a8,
+    0x3f23_5934, 0xbf4b_f311, 0x3f3f_00ef, 0xbefc_2d52, 0x3dba_7c18, 0xbe9d_5f85, 0xbf07_1b79,
+    0x3f76_3ad3, 0x3f24_e288, 0xbe99_1ed0, 0x3ee8_aae2, 0xbe98_4643, 0x3f0c_ae61, 0xbd4c_2652,
+    0x3ea1_0e76, 0x3dc9_7ef9, 0x3e4c_3d35, 0xbeba_d769, 0x3da0_b323, 0x3f41_21a0, 0xbf43_4c48,
+    0xbf33_8f2d,
+];
+
+const STANDARD_N_WIDE_FAST_LATER: [(usize, u32); 4] = [
+    (511, 0x3f77_8449),
+    (1023, 0xbf2b_8eef),
+    (2047, 0x3d88_b149),
+    (4095, 0xbda4_d8e9),
 ];

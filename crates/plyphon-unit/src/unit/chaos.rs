@@ -10,15 +10,13 @@
 //! iteration behind the `*L` ramp. Maps and their internal state are computed in `f64`; `freq` and
 //! the map coefficients are read once per block.
 //!
-//! The units differ in three ways:
+//! The units differ in two ways:
 //!
 //! - every unit but `GbmanN`, `GbmanL` and the three `LinCong*` units re-seeds its state when an init
 //!   input changes at run time (the Hénon units only once their stability latch has tripped), while
 //!   those five read their init inputs only in the constructor;
 //! - the hold length of the `*L` and `*C` units, `FBSineN` and `HenonN` divides in `f64` and
 //!   narrows to `f32`, while that of the other `*N` units divides in pure `f32`;
-//! - `StandardL` wraps its phase with a C-style truncating remainder, while `StandardN` wraps with a
-//!   Euclidean one, so the two disagree for phases far outside `[0, 2π)`.
 
 use core::f64::consts::PI;
 
@@ -97,8 +95,7 @@ fn ipol3(frac: f64, coefs: &[f64; 4]) -> f64 {
 /// The fallback subtracts whole turns using a truncating 32-bit integer cast, so it is a C-style
 /// remainder rather than a Euclidean one and returns negative results for inputs below `-2π`. The
 /// cast saturates at the `i32` bounds and maps NaN to zero, giving the out-of-range inputs a defined
-/// result. `StandardN` wraps with a Euclidean remainder instead, so the two families disagree
-/// outside the fast path.
+/// result. `StandardN` and `StandardL` wrap both variables through it, and `FBSine*` its phase.
 fn mod2pi(mut x: f64) -> f64 {
     if x >= TWO_PI {
         x -= TWO_PI;
@@ -402,6 +399,8 @@ impl Unit for GbmanN {
 
 /// `StandardN.ar(freq, k, xi, yi)`: the standard (kicked-rotor) map, scaled to `[-1, 1)`.
 ///
+/// Both variables wrap through `mod2pi`, so a phase driven far below `-2π` wraps negative.
+///
 /// A run-time change of `xi` or `yi` re-seeds both variables. The held output is taken from the
 /// phase before the re-seed, exactly as the reference does, so the unit keeps emitting the old
 /// value until the next iteration.
@@ -447,8 +446,8 @@ impl Unit for StandardN {
         for o in ctx.outs.audio(0).iter_mut() {
             if self.counter >= spc {
                 self.counter -= spc;
-                y = math::rem_euclid(y + k * math::sin(x), TWO_PI);
-                x = math::rem_euclid(x + y, TWO_PI);
+                y = mod2pi(y + k * math::sin(x));
+                x = mod2pi(x + y);
                 output = (x - PI) * REC_PI;
             }
             self.counter += 1.0;
@@ -829,9 +828,9 @@ impl Unit for LorenzL {
 /// `StandardL.ar(freq, k, xi, yi)`: the standard (kicked-rotor) map, linearly interpolated and
 /// scaled to `[-1, 1)`.
 ///
-/// The phase wraps through `mod2pi`, so a phase driven far outside `[0, 2π)` can wrap negative -
-/// unlike `StandardN`, which wraps Euclidean. A re-seed assigns `xi` unwrapped, exactly as the
-/// reference does, so the first hold after a re-seed can leave the nominal output range.
+/// The phase wraps through `mod2pi`, so a phase driven far below `-2π` wraps negative. A re-seed
+/// assigns `xi` unwrapped, exactly as the reference does, so the first hold after a re-seed can
+/// leave the nominal output range.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct StandardL {
