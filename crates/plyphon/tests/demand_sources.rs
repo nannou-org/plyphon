@@ -200,3 +200,84 @@ fn dreset_resets_its_input_after_the_pull_on_a_rising_reset() {
     let expected = [1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 4.0, 5.0, 1.0];
     assert_segments(units, &expected);
 }
+
+#[test]
+fn dswitch1_yields_one_value_from_the_indexed_item() {
+    // Dswitch1([Dseq([10, 11, 12], inf), 20, Dseq([30, 31], 1)], Dseq([0, 1, 2, 5, -1, 0, 2, 2, 2],
+    // 1)): indices wrap into the list (5 -> 2, -1 -> 2); an exhausted item and then the exhausted
+    // index yield NaN.
+    let units = vec![
+        dseq(&[10.0, 11.0, 12.0], f32::INFINITY),
+        dseq(&[30.0, 31.0], 1.0),
+        dseq(&[0.0, 1.0, 2.0, 5.0, -1.0, 0.0, 2.0, 2.0, 2.0], 1.0),
+        dem("Dswitch1", vec![u(2), u(0), c(20.0), u(1)]),
+    ];
+    let expected = [10.0, 20.0, 30.0, 31.0, NAN, 11.0, NAN, NAN, NAN, NAN, NAN];
+    assert_segments(units, &expected);
+}
+
+#[test]
+fn dswitch_plays_each_selected_item_to_its_end() {
+    // Dswitch([Dseq([1, 2], 1), Dseq([3, 4, 5], 1), 6], Dseq([1, 0, 2, 4, 1], 1)): the constructor
+    // selects item 1; each exhausted item pulls the next index (4 wraps to 0). A constant item is
+    // never exhausted.
+    let units = vec![
+        dseq(&[1.0, 2.0], 1.0),
+        dseq(&[3.0, 4.0, 5.0], 1.0),
+        dseq(&[1.0, 0.0, 2.0, 4.0, 1.0], 1.0),
+        dem("Dswitch", vec![u(2), u(0), u(1), c(6.0)]),
+    ];
+    let expected = [3.0, 4.0, 5.0, 1.0, 2.0, 6.0, 6.0, 6.0];
+    assert_segments(units, &expected);
+}
+
+#[test]
+fn dswitch_pulls_a_reselected_item_before_resetting_it() {
+    // Dswitch([Dseq([1, 2], 1)], Dseq([0, 0, 0, 0], 1)): when the exhausted item is selected again it
+    // is pulled (yielding NaN) before the previously selected item - itself - is reset, so every
+    // third value is NaN. The constructor took the first index.
+    let units = vec![
+        dseq(&[1.0, 2.0], 1.0),
+        dseq(&[0.0, 0.0, 0.0, 0.0], 1.0),
+        dem("Dswitch", vec![u(1), u(0)]),
+    ];
+    let expected = [1.0, 2.0, NAN, 1.0, 2.0, NAN, 1.0, 2.0, NAN, 1.0, 2.0, NAN];
+    assert_segments(units, &expected);
+}
+
+#[test]
+fn dswitch_first_selection_past_the_last_item_is_exhausted() {
+    // Dswitch([5, 6], 2): the constructor wraps 2 into [0, 2] and selects one past the last item,
+    // where scsynth recurses into itself without end. plyphon treats that selection as exhausted, so
+    // the first demand pulls the index again and wraps it into the list (2 -> item 0).
+    let units = vec![dem("Dswitch", vec![c(2.0), c(5.0), c(6.0)])];
+    assert_segments(units, &[5.0, 5.0, 5.0]);
+}
+
+#[test]
+fn dswitch_reset_resets_every_input_and_reselects() {
+    // Dseq([Dswitch([Dseq([1, 2], 1), Dseq([3, 4], 1)], Dseq([1, 0, 0], 1)), 9], 2): the second pass
+    // resets the Dswitch, which resets its index and items and selects from the index again.
+    let units = vec![
+        dseq(&[1.0, 2.0], 1.0),
+        dseq(&[3.0, 4.0], 1.0),
+        dseq(&[1.0, 0.0, 0.0], 1.0),
+        dem("Dswitch", vec![u(2), u(0), u(1)]),
+        dem("Dseq", vec![c(2.0), u(3), c(9.0)]),
+    ];
+    let expected = [3.0, 4.0, 1.0, 2.0, 9.0, 3.0, 4.0, 1.0, 2.0, 9.0, NAN];
+    assert_segments(units, &expected);
+}
+
+#[test]
+fn dswitch1_reset_resets_every_input() {
+    // Dseq([Dswitch1([Dseq([1, 2, 3], inf)], Dseq([0, 0], 1)), 9], 2): the outer Dseq's second pass
+    // resets the Dswitch1, which restarts both the index and the item.
+    let units = vec![
+        dseq(&[1.0, 2.0, 3.0], f32::INFINITY),
+        dseq(&[0.0, 0.0], 1.0),
+        dem("Dswitch1", vec![u(1), u(0)]),
+        dem("Dseq", vec![c(2.0), u(2), c(9.0)]),
+    ];
+    assert_segments(units, &[1.0, 2.0, 9.0, 1.0, 2.0, 9.0, NAN]);
+}
