@@ -1,11 +1,21 @@
 //! Chaotic map generators - plyphon's ports of scsynth's `CuspN`, `QuadN`, `GbmanN`, `LinCongN`,
-//! `StandardN`, `LatoocarfianN` (`ChaosUGens.cpp`).
+//! `StandardN`, `LatoocarfianN`, `CuspL`, `QuadL`, `HenonL`, `LorenzL` and `StandardL`
+//! (`ChaosUGens.cpp`).
 //!
-//! Each iterates a chaotic map at a `freq` rate and holds the value between iterations (the `*N`,
-//! non-interpolating, sample-and-hold form). Maps and their internal state are computed in `f64`; the
-//! `freq` and map coefficients are read once per block. The initial state is seeded from the init
-//! inputs (re-seeding on a runtime change of the init inputs is not implemented - the common case
-//! uses constants).
+//! Each unit iterates a chaotic map - or, for `LorenzL`, integrates a system of ODEs - at a `freq`
+//! rate. The `*N` (non-interpolating) forms hold the iterate between iterations; the `*L` (linearly
+//! interpolating) forms ramp from the previous iterate to the current one across the hold. Maps and
+//! their internal state are computed in `f64`; `freq` and the map coefficients are read once per
+//! block.
+//!
+//! The two families differ in three ways, each matching its scsynth counterpart:
+//!
+//! - the `*L` units re-seed their state when an init input changes at run time (`HenonL` only once
+//!   its stability latch has tripped), while the `*N` units seed once and ignore later changes;
+//! - the `*L` hold length divides in `f64` and narrows to `f32`, while the `*N` one divides in pure
+//!   `f32`;
+//! - `StandardL` wraps its phase with a C-style truncating remainder, while `StandardN` wraps with a
+//!   Euclidean one, so the two disagree for phases far outside `[0, 2π)`.
 
 use core::f64::consts::PI;
 
@@ -18,10 +28,70 @@ use plyphon_dsp::math;
 
 const TWO_PI: f64 = 2.0 * PI;
 const REC_PI: f64 = 1.0 / PI;
+/// The reciprocal of 2π used by [`mod2pi`], written as scsynth's rounded decimal rather than
+/// `1.0 / TWO_PI`: the two are different doubles, and the truncating branch is sensitive to which.
+const REC_TWO_PI: f64 = 0.1591549430918953;
+/// The Runge-Kutta weight in [`LorenzL`]'s integrator. As with [`REC_TWO_PI`] this is scsynth's
+/// rounded decimal, which is not the nearest double to `1/6`.
+const ONE_SIXTH: f64 = 0.1666666666666667;
+/// [`LorenzL`]'s output scale. scsynth writes it as a `float` literal widened to `double`, which
+/// lands a hair below `0.04`.
+const LORENZ_OUT_SCALE: f64 = 0.04f32 as f64;
 
 /// The hold length in samples for a map running at `freq` Hz (scsynth's `samplesPerCycle`).
 fn samples_per_cycle(freq: f32, sr: f32) -> f32 {
     if freq < sr { sr / freq.max(0.001) } else { 1.0 }
+}
+
+/// The hold length in samples and the per-sample interpolation slope for an interpolating map
+/// running at `freq` Hz (scsynth's `samplesPerCycle`/`slope` pair).
+///
+/// The hold length divides in `f64` and narrows to `f32`, and the slope is then the `f64` widening
+/// of the `f32` reciprocal of that hold length - the mixed-precision arithmetic of the `*L`
+/// prologues, which the interpolated output is sensitive to. The sample-and-hold
+/// [`samples_per_cycle`] divides in pure `f32` instead. The hold length is never below one sample,
+/// so a map can iterate at most once per output sample.
+fn samples_per_cycle_slope(freq: f32, sample_rate: f64) -> (f32, f64) {
+    if f64::from(freq) < sample_rate {
+        let spc = (sample_rate / f64::from(freq.max(0.001))) as f32;
+        (spc, f64::from(1.0 / spc))
+    } else {
+        (1.0, 1.0)
+    }
+}
+
+/// scsynth's quick 2π modulo: a fast path over `[-2π, 4π)` and a truncating fallback outside it.
+///
+/// The fallback subtracts whole turns using a truncating 32-bit integer cast, so it is a C-style
+/// remainder rather than a Euclidean one and returns negative results for inputs below `-2π`. The
+/// cast saturates at the `i32` bounds and maps NaN to zero, giving the out-of-range inputs a defined
+/// result. `StandardN` wraps with a Euclidean remainder instead, so the two families disagree
+/// outside the fast path.
+fn mod2pi(mut x: f64) -> f64 {
+    if x >= TWO_PI {
+        x -= TWO_PI;
+        if x < TWO_PI {
+            return x;
+        }
+    } else if x < 0.0 {
+        x += TWO_PI;
+        if x >= 0.0 {
+            return x;
+        }
+    } else {
+        return x;
+    }
+    x - TWO_PI * f64::from((x * REC_TWO_PI) as i32)
+}
+
+/// The cusp map `x = a - b*sqrt(|x|)`, shared by `CuspN` and `CuspL`.
+fn cusp_map(a: f64, b: f64, x: f64) -> f64 {
+    a - (b * math::sqrt(x.abs()))
+}
+
+/// The quadratic map `x = a*x^2 + b*x + c`, shared by `QuadN` and `QuadL`.
+fn quad_map(a: f64, b: f64, c: f64, x: f64) -> f64 {
+    a * x * x + b * x + c
 }
 
 /// Drive a one-variable map: iterate `map` every `samples_per_cycle` samples, holding between, and
@@ -70,6 +140,52 @@ fn chaos2(
     (x, y)
 }
 
+/// Drive a linearly interpolating map: iterate `map` every `samples_per_cycle` samples and write
+/// `out` of the value ramping from the previous iterate to the current one. Returns the final
+/// `(xn, xnm1)` pair.
+///
+/// Only the interpolated variable is threaded through `map`; a multi-variable map keeps its other
+/// variables in the closure, so one driver serves the one-, two- and three-variable `*L` units. `dx`
+/// is recomputed on entry because a re-seed between blocks can move `xn` and `xnm1` apart.
+fn chaos_interp(
+    ctx: &mut ProcessCtx<'_>,
+    counter: &mut f32,
+    frac: &mut f64,
+    xn: f64,
+    xnm1: f64,
+    mut map: impl FnMut(f64) -> f64,
+    out: impl Fn(f64) -> f64,
+) -> (f64, f64) {
+    let (spc, slope) = samples_per_cycle_slope(ctx.ins.control(0), ctx.own.sample_rate);
+    let (mut x, mut xm1) = (xn, xnm1);
+    let mut dx = x - xm1;
+    for o in ctx.outs.audio(0).iter_mut() {
+        if *counter >= spc {
+            *counter -= spc;
+            *frac = 0.0;
+            xm1 = x;
+            x = map(x);
+            dx = x - xm1;
+        }
+        *counter += 1.0;
+        *o = out(xm1 + dx * *frac) as f32;
+        *frac += slope;
+    }
+    (x, xm1)
+}
+
+/// Seed the counter and interpolation phase of an `*L` unit for its first block.
+///
+/// scsynth's `*L` constructors seed their state and then run one sample of their calc function,
+/// which advances the counter and the phase without iterating the map (the hold length is never
+/// below one sample). Reproducing that here keeps the first emitted sample - and every hold boundary
+/// after it - aligned with the reference.
+fn init_interp_phase(ctx: &InitCtx<'_>, counter: &mut f32, frac: &mut f64) {
+    let (_, slope) = samples_per_cycle_slope(ctx.ins.control(0), ctx.own.sample_rate);
+    *counter = 1.0;
+    *frac = slope;
+}
+
 /// `CuspN.ar(freq, a, b, xi)`: the cusp map `x = a - b*sqrt(|x|)`.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -91,7 +207,7 @@ impl Unit for CuspN {
             ctx,
             &mut self.counter,
             self.xn,
-            |x| a - b * math::sqrt(x.abs()),
+            |x| cusp_map(a, b, x),
             |x| x,
         );
         DoneAction::Nothing
@@ -120,7 +236,7 @@ impl Unit for QuadN {
             ctx,
             &mut self.counter,
             self.xn,
-            |x| a * x * x + b * x + c,
+            |x| quad_map(a, b, c, x),
             |x| x,
         );
         DoneAction::Nothing
@@ -265,9 +381,390 @@ impl Unit for LatoocarfianN {
     }
 }
 
-/// Build a chaos generator with zeroed state and the given minimum input count.
+/// `CuspL.ar(freq, a, b, xi)`: the cusp map `x = a - b*sqrt(|x|)`, linearly interpolated.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct CuspL {
+    /// The iterate the current hold ramps towards.
+    xn: f64,
+    /// The iterate the current hold ramps from.
+    xnm1: f64,
+    /// The `xi` input the state was last seeded from; a change re-seeds the map.
+    x0: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for CuspL {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        self.x0 = f64::from(ctx.ins.control(3));
+        self.xn = self.x0;
+        self.xnm1 = self.x0;
+        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let a = f64::from(ctx.ins.control(1));
+        let b = f64::from(ctx.ins.control(2));
+        let xi = f64::from(ctx.ins.control(3));
+        if self.x0 != xi {
+            self.xnm1 = self.xn;
+            self.x0 = xi;
+            self.xn = xi;
+        }
+        let (xn, xnm1) = chaos_interp(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            self.xn,
+            self.xnm1,
+            |x| cusp_map(a, b, x),
+            |x| x,
+        );
+        self.xn = xn;
+        self.xnm1 = xnm1;
+        DoneAction::Nothing
+    }
+}
+
+/// `QuadL.ar(freq, a, b, c, xi)`: the quadratic map `x = a*x^2 + b*x + c`, linearly interpolated.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct QuadL {
+    /// The iterate the current hold ramps towards.
+    xn: f64,
+    /// The iterate the current hold ramps from.
+    xnm1: f64,
+    /// The `xi` input the state was last seeded from; a change re-seeds the map.
+    x0: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for QuadL {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        self.x0 = f64::from(ctx.ins.control(4));
+        self.xn = self.x0;
+        self.xnm1 = self.x0;
+        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let a = f64::from(ctx.ins.control(1));
+        let b = f64::from(ctx.ins.control(2));
+        let c = f64::from(ctx.ins.control(3));
+        let xi = f64::from(ctx.ins.control(4));
+        if self.x0 != xi {
+            self.xnm1 = self.xn;
+            self.x0 = xi;
+            self.xn = xi;
+        }
+        let (xn, xnm1) = chaos_interp(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            self.xn,
+            self.xnm1,
+            |x| quad_map(a, b, c, x),
+            |x| x,
+        );
+        self.xn = xn;
+        self.xnm1 = xnm1;
+        DoneAction::Nothing
+    }
+}
+
+/// `HenonL.ar(freq, a, b, x0, x1)`: the Hénon map `x = 1 - a*x'^2 + b*x''`, linearly interpolated.
+///
+/// The map diverges for many coefficient pairs, so it carries a stability latch: an iterate leaving
+/// `[-1.5, 1.5]` zeroes the history and silences the unit until an init input changes. Because the
+/// coefficients themselves take part in that comparison, a change while the map is still stable only
+/// refreshes the cached values and lets the running iterates continue - re-seeding on every
+/// coefficient change would restart the map whenever `a` or `b` is modulated.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct HenonL {
+    /// The iterate the current hold ramps towards.
+    xnm1: f64,
+    /// The iterate the current hold ramps from.
+    xnm2: f64,
+    /// The `a` input the state was last compared against.
+    a: f64,
+    /// The `b` input the state was last compared against.
+    b: f64,
+    /// The `x0` input the state was last compared against.
+    x0: f64,
+    /// The `x1` input the state was last compared against.
+    x1: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    /// Nonzero while the map is iterating; zeroed once an iterate has escaped `[-1.5, 1.5]`.
+    stable: u32,
+}
+
+impl Unit for HenonL {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        self.a = f64::from(ctx.ins.control(1));
+        self.b = f64::from(ctx.ins.control(2));
+        self.x0 = f64::from(ctx.ins.control(3));
+        self.x1 = f64::from(ctx.ins.control(4));
+        // The seed is deliberately asymmetric: the first hold ramps from `x1` to `x0`.
+        self.xnm1 = self.x0;
+        self.xnm2 = self.x1;
+        self.stable = 1;
+        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let a = f64::from(ctx.ins.control(1));
+        let b = f64::from(ctx.ins.control(2));
+        let x0 = f64::from(ctx.ins.control(3));
+        let x1 = f64::from(ctx.ins.control(4));
+        let mut stable = self.stable != 0;
+        if self.a != a || self.b != b || self.x0 != x0 || self.x1 != x1 {
+            if !stable {
+                // The reference also parks `x1` in its newest-iterate member here; that slot
+                // is recomputed before every read, so the port keeps it as a loop local.
+                self.xnm2 = x0;
+                self.xnm1 = x0;
+            }
+            stable = true;
+            self.a = a;
+            self.b = b;
+            self.x0 = x0;
+            self.x1 = x1;
+        }
+
+        let (spc, slope) = samples_per_cycle_slope(ctx.ins.control(0), ctx.own.sample_rate);
+        let (mut xnm1, mut xnm2) = (self.xnm1, self.xnm2);
+        let (mut counter, mut frac) = (self.counter, self.frac);
+        let mut diff = xnm1 - xnm2;
+        for o in ctx.outs.audio(0).iter_mut() {
+            if counter >= spc {
+                counter -= spc;
+                if stable {
+                    let xn = 1.0 - (a * xnm1 * xnm1) + (b * xnm2);
+                    // Two comparisons rather than a range test: both are false for a NaN iterate, so
+                    // NaN leaves the latch untripped and keeps iterating, as the reference does.
+                    #[allow(clippy::manual_range_contains)]
+                    if xn > 1.5 || xn < -1.5 {
+                        stable = false;
+                        diff = 0.0;
+                        xnm1 = 0.0;
+                        xnm2 = 0.0;
+                    } else {
+                        xnm2 = xnm1;
+                        xnm1 = xn;
+                        diff = xnm1 - xnm2;
+                    }
+                    // Reached on the escaping iteration too, but on no boundary after it: a latched
+                    // unit skips this branch entirely and leaves the phase free-running.
+                    frac = 0.0;
+                }
+            }
+            counter += 1.0;
+            *o = (xnm2 + (diff * frac)) as f32;
+            frac += slope;
+        }
+
+        self.xnm1 = xnm1;
+        self.xnm2 = xnm2;
+        self.counter = counter;
+        self.frac = frac;
+        self.stable = u32::from(stable);
+        DoneAction::Nothing
+    }
+}
+
+/// `LorenzL.ar(freq, s, r, b, h, xi, yi, zi)`: the Lorenz attractor integrated with 4th-order
+/// Runge-Kutta over a step of `h`, its `x` component linearly interpolated and scaled to audio
+/// range.
+///
+/// The integrator is unconditionally stepped rather than adaptive, so it diverges for large `h*s`
+/// exactly as the reference does; the interesting coefficient range keeps the product small.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct LorenzL {
+    /// The `x` the current hold ramps towards.
+    xn: f64,
+    /// The current `y`.
+    yn: f64,
+    /// The current `z`.
+    zn: f64,
+    /// The `x` the current hold ramps from.
+    xnm1: f64,
+    /// The `xi` input the state was last seeded from; a change re-seeds the system.
+    x0: f64,
+    /// The `yi` input the state was last seeded from; a change re-seeds the system.
+    y0: f64,
+    /// The `zi` input the state was last seeded from; a change re-seeds the system.
+    z0: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last step.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for LorenzL {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        self.x0 = f64::from(ctx.ins.control(5));
+        self.y0 = f64::from(ctx.ins.control(6));
+        self.z0 = f64::from(ctx.ins.control(7));
+        self.xn = self.x0;
+        self.yn = self.y0;
+        self.zn = self.z0;
+        self.xnm1 = self.x0;
+        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let s = f64::from(ctx.ins.control(1));
+        let r = f64::from(ctx.ins.control(2));
+        let b = f64::from(ctx.ins.control(3));
+        let h = f64::from(ctx.ins.control(4));
+        let xi = f64::from(ctx.ins.control(5));
+        let yi = f64::from(ctx.ins.control(6));
+        let zi = f64::from(ctx.ins.control(7));
+        if self.x0 != xi || self.y0 != yi || self.z0 != zi {
+            // The reference also shifts its `ynm1`/`znm1` members here, but they are
+            // overwritten before every read; the port keeps them as per-step locals.
+            self.xnm1 = self.xn;
+            self.x0 = xi;
+            self.xn = xi;
+            self.y0 = yi;
+            self.yn = yi;
+            self.z0 = zi;
+            self.zn = zi;
+        }
+
+        let (mut yn, mut zn) = (self.yn, self.zn);
+        let (xn, xnm1) = chaos_interp(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            self.xn,
+            self.xnm1,
+            |xnm1| {
+                let ynm1 = yn;
+                let znm1 = zn;
+                let h_times_s = h * s;
+
+                let k1x = h_times_s * (ynm1 - xnm1);
+                let k1y = h * (xnm1 * (r - znm1) - ynm1);
+                let k1z = h * (xnm1 * ynm1 - b * znm1);
+                let (mut kx_half, mut ky_half, mut kz_half) = (k1x * 0.5, k1y * 0.5, k1z * 0.5);
+
+                let k2x = h_times_s * (ynm1 + ky_half - xnm1 - kx_half);
+                let k2y = h * ((xnm1 + kx_half) * (r - znm1 - kz_half) - (ynm1 + ky_half));
+                let k2z = h * ((xnm1 + kx_half) * (ynm1 + ky_half) - b * (znm1 + kz_half));
+                kx_half = k2x * 0.5;
+                ky_half = k2y * 0.5;
+                kz_half = k2z * 0.5;
+
+                let k3x = h_times_s * (ynm1 + ky_half - xnm1 - kx_half);
+                let k3y = h * ((xnm1 + kx_half) * (r - znm1 - kz_half) - (ynm1 + ky_half));
+                let k3z = h * ((xnm1 + kx_half) * (ynm1 + ky_half) - b * (znm1 + kz_half));
+
+                let k4x = h_times_s * (ynm1 + k3y - xnm1 - k3x);
+                let k4y = h * ((xnm1 + k3x) * (r - znm1 - k3z) - (ynm1 + k3y));
+                let k4z = h * ((xnm1 + k3x) * (ynm1 + k3y) - b * (znm1 + k3z));
+
+                yn += (k1y + 2.0 * (k2y + k3y) + k4y) * ONE_SIXTH;
+                zn += (k1z + 2.0 * (k2z + k3z) + k4z) * ONE_SIXTH;
+                xnm1 + (k1x + 2.0 * (k2x + k3x) + k4x) * ONE_SIXTH
+            },
+            |x| x * LORENZ_OUT_SCALE,
+        );
+        self.xn = xn;
+        self.xnm1 = xnm1;
+        self.yn = yn;
+        self.zn = zn;
+        DoneAction::Nothing
+    }
+}
+
+/// `StandardL.ar(freq, k, xi, yi)`: the standard (kicked-rotor) map, linearly interpolated and
+/// scaled to `[-1, 1)`.
+///
+/// The phase wraps through `mod2pi`, so a phase driven far outside `[0, 2π)` can wrap negative -
+/// unlike `StandardN`, which wraps Euclidean. A re-seed assigns `xi` unwrapped, exactly as the
+/// reference does, so the first hold after a re-seed can leave the nominal output range.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct StandardL {
+    /// The phase the current hold ramps towards.
+    xn: f64,
+    /// The current angular momentum.
+    yn: f64,
+    /// The phase the current hold ramps from.
+    xnm1: f64,
+    /// The `xi` input the state was last seeded from; a change re-seeds the map.
+    x0: f64,
+    /// The `yi` input the state was last seeded from; a change re-seeds the map.
+    y0: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for StandardL {
+    fn init(&mut self, ctx: &InitCtx<'_>) {
+        self.x0 = f64::from(ctx.ins.control(2));
+        self.y0 = f64::from(ctx.ins.control(3));
+        self.xn = self.x0;
+        self.yn = self.y0;
+        self.xnm1 = self.x0;
+        init_interp_phase(ctx, &mut self.counter, &mut self.frac);
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let k = f64::from(ctx.ins.control(1));
+        let xi = f64::from(ctx.ins.control(2));
+        let yi = f64::from(ctx.ins.control(3));
+        if self.x0 != xi || self.y0 != yi {
+            self.xnm1 = self.xn;
+            self.x0 = xi;
+            self.xn = xi;
+            self.y0 = yi;
+            self.yn = yi;
+        }
+
+        let mut yn = self.yn;
+        let (xn, xnm1) = chaos_interp(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            self.xn,
+            self.xnm1,
+            |x| {
+                yn = mod2pi(yn + k * math::sin(x));
+                mod2pi(x + yn)
+            },
+            |x| (x - PI) * REC_PI,
+        );
+        self.xn = xn;
+        self.xnm1 = xnm1;
+        self.yn = yn;
+        DoneAction::Nothing
+    }
+}
+
+/// Build a chaos generator with zeroed state and the given minimum input count. Every unit here
+/// seeds its own state in [`Unit::init`], on the audio thread, where the init inputs are readable,
+/// so the constructor never carries a meaningful value.
 macro_rules! chaos_ctor {
-    ($ctor:ident, $unit:ident, $min_inputs:expr, { $($field:ident: $init:expr),* $(,)? }) => {
+    ($ctor:ident, $unit:ident, $min_inputs:expr) => {
         #[doc = concat!("Constructor for [`", stringify!($unit), "`].")]
         pub struct $ctor;
 
@@ -276,15 +773,20 @@ macro_rules! chaos_ctor {
                 if ctx.input_rates.len() < $min_inputs {
                     return Err(BuildError::WrongInputCount);
                 }
-                Ok(unit_spec($unit { $($field: $init,)* counter: 0.0, _pad: 0 }))
+                Ok(unit_spec($unit::zeroed()))
             }
         }
     };
 }
 
-chaos_ctor!(CuspNCtor, CuspN, 4, { xn: 0.0 });
-chaos_ctor!(QuadNCtor, QuadN, 5, { xn: 0.0 });
-chaos_ctor!(LinCongNCtor, LinCongN, 5, { xn: 0.0 });
-chaos_ctor!(GbmanNCtor, GbmanN, 3, { xn: 0.0, yn: 0.0 });
-chaos_ctor!(StandardNCtor, StandardN, 4, { xn: 0.0, yn: 0.0 });
-chaos_ctor!(LatoocarfianNCtor, LatoocarfianN, 7, { xn: 0.0, yn: 0.0 });
+chaos_ctor!(CuspNCtor, CuspN, 4);
+chaos_ctor!(QuadNCtor, QuadN, 5);
+chaos_ctor!(LinCongNCtor, LinCongN, 5);
+chaos_ctor!(GbmanNCtor, GbmanN, 3);
+chaos_ctor!(StandardNCtor, StandardN, 4);
+chaos_ctor!(LatoocarfianNCtor, LatoocarfianN, 7);
+chaos_ctor!(CuspLCtor, CuspL, 4);
+chaos_ctor!(QuadLCtor, QuadL, 5);
+chaos_ctor!(HenonLCtor, HenonL, 5);
+chaos_ctor!(LorenzLCtor, LorenzL, 8);
+chaos_ctor!(StandardLCtor, StandardL, 4);
