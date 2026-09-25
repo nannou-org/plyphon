@@ -481,9 +481,9 @@ impl Graph {
                         (v.init)(state, &init_ctx);
                     }
                 }
-                // A unit whose allocation failed outputs zeros and reports done for the rest of its
-                // life, as scsynth's `ClearUnitOnMemFailed` switches its calc func to
-                // `ClearUnitOutputs`.
+                // A unit whose allocation failed outputs its cleared value (zeros, or `-1` for an FFT
+                // chain unit) and reports done for the rest of its life, as scsynth's
+                // `ClearUnitOnMemFailed` switches its calc func to `ClearUnitOutputs`.
                 let silenced = matches!(slot.as_deref(), Some(AuxSlot::Failed));
                 let mut alloc;
                 let aux = match slot.as_deref_mut() {
@@ -546,7 +546,7 @@ impl Graph {
                     (v.process)(state, &mut ctx)
                 });
                 if silenced || matches!(slot.as_deref(), Some(AuxSlot::Failed)) {
-                    scratch[..v.outputs.len() * calc_len].fill(0.0);
+                    scratch[..v.outputs.len() * calc_len].fill(v.cleared_output);
                     done_flag = 1;
                 }
                 // Persist this unit's done flag for next block / for later units to read this block.

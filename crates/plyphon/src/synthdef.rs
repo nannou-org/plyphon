@@ -578,6 +578,7 @@ impl SynthDef {
                         num_pool_slots += 1;
                         num_pool_slots - 1
                     }),
+                    cleared_output: b.cleared_output,
                     local_buf: b.local_buf.map(|shape| {
                         local_buf_index += 1;
                         (local_buf_index - 1, shape)

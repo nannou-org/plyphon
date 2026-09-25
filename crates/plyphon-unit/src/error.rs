@@ -70,14 +70,6 @@ pub enum BuildError {
         /// Channels the `LocalOut` writes (its input count).
         local_out: usize,
     },
-    /// A unit that sizes compile-time memory from a scalar input (a `LocalBuf`'s shape, an FFT window)
-    /// was given a non-constant for that input, so the size cannot be known at compile time. Units
-    /// that allocate when the synth starts (the delay family) accept any input instead.
-    #[error("input {input} must be a compile-time constant to size auxiliary memory")]
-    AuxRequiresConstant {
-        /// The index of the offending input.
-        input: usize,
-    },
     /// An emitting unit (`SendReply`) was given a non-constant label length or character. The OSC path
     /// is encoded as constant float inputs (scsynth's scheme), so it must be known at compile time.
     #[error("an emitting unit's label must be encoded as compile-time constant inputs")]
@@ -97,13 +89,6 @@ pub enum BuildError {
         count: usize,
         /// The `MAX_VALUES` limit.
         limit: usize,
-    },
-    /// An `FFT`/`IFFT` unit was given an unsupported FFT size. The size (its constant `winsize` input)
-    /// must be a power of two the engine has a plan for - `[64, 16384]`.
-    #[error("unsupported FFT size {size}: must be a power of two in [64, 16384]")]
-    UnsupportedFftSize {
-        /// The requested FFT size.
-        size: usize,
     },
     /// A reblocked def (scsynth's `Reblock(n)`) requested a block size that is not a power of two, is
     /// zero, or exceeds the World block - none of which scsynth's reblocking allows.

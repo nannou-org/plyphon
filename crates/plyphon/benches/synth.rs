@@ -2,7 +2,8 @@
 //! engine, for synths with and without per-unit memory (delay lines, reverb lines, local buffers).
 //!
 //! - `steady` - one control block of an already-running population, the audio thread's hot path.
-//!   `plain` has no per-unit memory; `delays` and `local_buf` exercise units that own sized memory.
+//!   `plain` has no per-unit memory; `delays`, `local_buf` and `fft` exercise units that own sized
+//!   memory.
 //! - `spawn` - create a population and run its first block, where every unit is initialised.
 //! - `free` - free a running population and run the block that tears it down.
 //! - `churn` - replace voices one at a time, a block each, as a voice allocator would.
@@ -125,6 +126,28 @@ fn local_buf() -> SynthDef {
     )
 }
 
+/// A one-channel, 1024-frame `LocalBuf` as the chain buffer for `FFT` -> `PV_Diffuser` -> `IFFT` on
+/// a sine: three units whose memory the FFT size decides.
+fn fft() -> SynthDef {
+    const SIZE: f32 = 1024.0;
+    def(
+        "fft",
+        vec![
+            unit("LocalBuf", Rate::Scalar, vec![c(1.0), c(SIZE)], 1),
+            unit("SinOsc", Rate::Audio, vec![c(440.0), c(0.0)], 1),
+            unit(
+                "FFT",
+                Rate::Control,
+                vec![u(0), u(1), c(0.5), c(0.0), c(1.0), c(SIZE)],
+                1,
+            ),
+            unit("PV_Diffuser", Rate::Control, vec![u(2), c(1.0)], 1),
+            unit("IFFT", Rate::Audio, vec![u(3), c(0.0), c(SIZE)], 1),
+            unit("Out", Rate::Audio, vec![c(0.0), u(4)], 0),
+        ],
+    )
+}
+
 /// An engine with every scenario def resident and compiled, so no timed run pays for compilation.
 struct Engine {
     controller: Controller,
@@ -136,7 +159,7 @@ struct Engine {
 impl Engine {
     fn new() -> Self {
         let (mut controller, nrt, world) = engine(opts());
-        for d in [plain(), delays(), local_buf()] {
+        for d in [plain(), delays(), local_buf(), fft()] {
             let name = d.name.clone();
             controller.add_synthdef(d);
             controller
@@ -188,7 +211,7 @@ impl Engine {
     }
 }
 
-const SCENARIOS: [&str; 3] = ["plain", "delays", "local_buf"];
+const SCENARIOS: [&str; 4] = ["plain", "delays", "local_buf", "fft"];
 
 fn steady(c: &mut Criterion) {
     let mut group = c.benchmark_group("steady");

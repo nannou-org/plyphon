@@ -178,11 +178,9 @@ pub struct BuildContext<'a> {
 }
 
 impl BuildContext<'_> {
-    /// The compile-time value of input `i` if it is a baked constant, else `None`. A unit that sizes
-    /// compile-time memory from a scalar input requires a constant here (it must reject a
-    /// non-constant, e.g. with [`BuildError::AuxRequiresConstant`]); a unit that can size its memory
-    /// when the synth starts reads the live input in [`Unit::alloc`](crate::unit::Unit::alloc)
-    /// instead.
+    /// The compile-time value of input `i` if it is a baked constant, else `None`. Memory sized from
+    /// an input is allocated when the synth starts instead, from the live input in
+    /// [`Unit::alloc`](crate::unit::Unit::alloc).
     pub fn const_input(&self, i: usize) -> Option<f32> {
         match self.input_sources.get(i) {
             Some(InputSource::Constant(v)) => Some(*v),

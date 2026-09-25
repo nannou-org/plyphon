@@ -1037,6 +1037,10 @@ pub struct BuiltUnit {
     /// Whether this unit allocates its memory from the engine's pool when the synth starts, sized
     /// from live inputs (see [`unit_spec_pool`]). Such a unit reserves no `aux_bytes`.
     pub pool_aux: bool,
+    /// The value written to every output of a unit silenced because its allocation failed: `0` for
+    /// most units (scsynth's `ClearUnitOutputs`), `-1` for an FFT chain unit, so the units reading
+    /// its chain see no ready frame (scsynth's `FFT_ClearUnitOutputs`).
+    pub cleared_output: f32,
     /// `size_of::<T>()` - the bytes this unit's state occupies in the arena.
     pub size: usize,
     /// `align_of::<T>()` - the alignment its state slot needs.
@@ -1071,6 +1075,7 @@ pub fn unit_spec<T: Unit>(state: T) -> BuiltUnit {
         reseed: reseed_thunk::<T>,
         alloc: alloc_thunk::<T>,
         pool_aux: false,
+        cleared_output: 0.0,
         size: core::mem::size_of::<T>(),
         align: core::mem::align_of::<T>(),
         init_bytes: bytemuck::bytes_of(&state).to_vec().into_boxed_slice(),
