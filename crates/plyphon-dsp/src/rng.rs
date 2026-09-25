@@ -34,6 +34,25 @@ impl Rng {
         }
     }
 
+    /// Re-seed the generator exactly as scsynth's `RGen::init`: the seed is scrambled with [`hash`],
+    /// then XORed into three fixed state constants, and a state word that would break its Taus88
+    /// lower bound (`s1 > 1`, `s2 > 7`, `s3 > 15`) falls back to its constant.
+    pub fn init(&mut self, seed: u32) {
+        let seed = hash(seed as i32) as u32;
+        self.s1 = 1_243_598_713 ^ seed;
+        if self.s1 < 2 {
+            self.s1 = 1_243_598_713;
+        }
+        self.s2 = 3_093_459_404 ^ seed;
+        if self.s2 < 8 {
+            self.s2 = 3_093_459_404;
+        }
+        self.s3 = 1_821_928_721 ^ seed;
+        if self.s3 < 16 {
+            self.s3 = 1_821_928_721;
+        }
+    }
+
     /// The next 32-bit random word.
     #[inline]
     pub fn next_u32(&mut self) -> u32 {
@@ -58,22 +77,49 @@ impl Rng {
         (self.next_u32() >> 9) as f32 * (1.0 / 8_388_608.0)
     }
 
-    /// A uniform integer in `[0, scale)` (scsynth's `RGen::irand`, `floor(scale * frand)`). A `scale`
-    /// of `0` or less yields `0`.
+    /// A double-precision sample uniformly distributed in `[0, 1)` from all 32 bits of the next
+    /// word - bit-exact with scsynth's `RGen::drand` (the word as the low mantissa bits of a double
+    /// in `[2^20, 2^20 + 1)`, minus `2^20`).
+    #[inline]
+    pub fn next_unipolar_f64(&mut self) -> f64 {
+        f64::from_bits(0x4130_0000_0000_0000 | self.next_u32() as u64) - 1_048_576.0
+    }
+
+    /// A uniform integer in `[0, scale)` (scsynth's `RGen::irand`, `floor(scale * drand())` in double
+    /// precision). A `scale` of `0` or less yields values in `[scale, 0]`; every call consumes one
+    /// word.
     #[inline]
     pub fn next_irand(&mut self, scale: i32) -> i32 {
-        if scale <= 0 {
-            return 0;
-        }
-        (scale as f32 * self.next_unipolar()) as i32
+        crate::math::floor(scale as f64 * self.next_unipolar_f64()) as i32
     }
 
     /// A uniform integer in `[-scale, scale]` (scsynth's `RGen::irand2`,
-    /// `floor((2*scale + 1) * frand - scale)`).
+    /// `floor((2 * scale + 1) * drand() - scale)` in double precision).
     #[inline]
     pub fn next_irand2(&mut self, scale: i32) -> i32 {
-        crate::math::floor((2.0 * scale as f32 + 1.0) * self.next_unipolar() - scale as f32) as i32
+        crate::math::floor((2.0 * scale as f64 + 1.0) * self.next_unipolar_f64() - scale as f64)
+            as i32
     }
+
+    /// An exponential-distribution draw between `lo` and `hi` (scsynth's `RGen::exprandrng`,
+    /// `lo * exp(log(hi / lo) * drand())` in double precision).
+    #[inline]
+    pub fn next_exprand(&mut self, lo: f64, hi: f64) -> f64 {
+        lo * crate::math::exp(crate::math::ln(hi / lo) * self.next_unipolar_f64())
+    }
+}
+
+/// Thomas Wang's integer hash (scsynth's `Hash(int32)`): it scrambles an [`Rng::init`] seed, and
+/// the `Hasher` unit derives deterministic noise from a signal's bits with it.
+pub fn hash(key: i32) -> i32 {
+    let mut h = key as u32;
+    h = h.wrapping_add(!(h << 15));
+    h ^= h >> 10;
+    h = h.wrapping_add(h << 3);
+    h ^= h >> 6;
+    h = h.wrapping_add(!(h << 11));
+    h ^= h >> 16;
+    h as i32
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
-use plyphon_dsp::rng::Rng;
+use plyphon_dsp::rng::{Rng, hash};
 
 /// GrayNoise's output scale, `1 / 2^31` (scsynth's `4.65661287308e-10`).
 const GRAY_SCALE: f32 = 1.0 / 2_147_483_648.0;
@@ -368,19 +368,6 @@ impl UnitDef for Dust2Ctor {
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }
-}
-
-/// Thomas Wang's integer hash (scsynth's `Hash(int32)`), used by [`Hasher`] to derive deterministic
-/// pseudo-noise from a signal's bits.
-fn hash(key: i32) -> i32 {
-    let mut h = key as u32;
-    h = h.wrapping_add(!(h << 15));
-    h ^= h >> 10;
-    h = h.wrapping_add(h << 3);
-    h ^= h >> 6;
-    h = h.wrapping_add(!(h << 11));
-    h ^= h >> 16;
-    h as i32
 }
 
 /// `Crackle.ar(chaosParam)`: a chaotic noise from the map `y0 = |y1*param - y2 - 0.05|` (scsynth's
