@@ -17,7 +17,8 @@ use crate::unit::binary_op::BinaryOpCtor;
 use crate::unit::buf_rd::BufRdCtor;
 use crate::unit::buf_wr::BufWrCtor;
 use crate::unit::chaos::{
-    CuspNCtor, GbmanNCtor, LatoocarfianNCtor, LinCongNCtor, QuadNCtor, StandardNCtor,
+    CuspLCtor, CuspNCtor, GbmanNCtor, HenonLCtor, LatoocarfianNCtor, LinCongNCtor, LorenzLCtor,
+    QuadLCtor, QuadNCtor, StandardLCtor, StandardNCtor,
 };
 use crate::unit::decay::{Decay2Ctor, DecayCtor};
 use crate::unit::delay::{
@@ -432,6 +433,11 @@ impl UnitRegistry {
         registry.register("GbmanN", Box::new(GbmanNCtor));
         registry.register("StandardN", Box::new(StandardNCtor));
         registry.register("LatoocarfianN", Box::new(LatoocarfianNCtor));
+        registry.register("CuspL", Box::new(CuspLCtor));
+        registry.register("QuadL", Box::new(QuadLCtor));
+        registry.register("HenonL", Box::new(HenonLCtor));
+        registry.register("LorenzL", Box::new(LorenzLCtor));
+        registry.register("StandardL", Box::new(StandardLCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("BufRd", Box::new(BufRdCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
