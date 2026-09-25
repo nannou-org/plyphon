@@ -19,7 +19,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use plyphon::{
-    AddAction, BuildContext, BuildError, BuiltUnit, DoneAction, InitCtx, InputRef, Options, Param,
+    AddAction, BuildContext, BuildError, BuiltUnit, DoneAction, InputRef, Options, Param,
     ProcessCtx, ROOT_GROUP_ID, Rate, SynthDef, Unit, UnitDef, UnitSpec, World, engine, unit_spec,
 };
 
@@ -53,12 +53,14 @@ impl Saturate {
 }
 
 impl Unit for Saturate {
-    /// Seed state from the unit's first inputs, once, just before the first [`Unit::process`] (on the
-    /// audio thread, where inputs are live). Starting the smoothed `drive` *at* the input value means
-    /// the first block is already at the right amount instead of gliding up from the build default -
-    /// the same trick the built-in `Lag` uses. The default `init` is a no-op, so this is optional.
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    /// Construct the unit, once, before the synth's first block (on the audio thread, where inputs
+    /// are live). Starting the smoothed `drive` *at* the input value means the first block is already
+    /// at the right amount instead of gliding up from the build default - the same trick the built-in
+    /// `Lag` uses. Like scsynth's constructors it then computes one sample, which the default `init`
+    /// does on its own, so overriding it is optional.
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.drive = ctx.ins.control(Self::DRIVE).max(1.0);
+        self.process(ctx)
     }
 
     /// Compute one control block: read `ctx.ins`, write `ctx.outs`. Like every audio-thread method it

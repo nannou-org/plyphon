@@ -13,7 +13,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, Outputs, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, Outputs, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 
 /// Equal-power `(left, right)` gains for `pos` in `[-1, 1]`, scaled by `level`: `pos = -1` is hard
@@ -439,7 +439,7 @@ pub struct DecodeB2 {
 }
 
 impl Unit for DecodeB2 {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let num = self.num_channels.max(1) as f32;
         let angle = 2.0 * PI / num;
         let orientation = ctx.ins.control(3);
@@ -448,6 +448,7 @@ impl Unit for DecodeB2 {
         self.w_amp = FRAC_1_SQRT_2;
         self.x0 = 0.5 * math::cos(orientation * angle);
         self.y0 = 0.5 * math::sin(orientation * angle);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

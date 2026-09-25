@@ -19,6 +19,11 @@ pub struct Out {
 }
 
 impl Unit for Out {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if ctx.ins.is_empty() {
             return DoneAction::Nothing;
@@ -78,6 +83,11 @@ pub struct ReplaceOut {
 }
 
 impl Unit for ReplaceOut {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if ctx.ins.is_empty() {
             return DoneAction::Nothing;
@@ -139,6 +149,11 @@ pub struct XOut {
 }
 
 impl Unit for XOut {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Needs at least `bus` and `xfade`.
         if ctx.ins.len() < 2 {
@@ -220,6 +235,11 @@ pub struct OffsetOut {
 }
 
 impl Unit for OffsetOut {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if ctx.ins.is_empty() {
             return DoneAction::Nothing;

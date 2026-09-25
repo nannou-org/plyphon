@@ -33,10 +33,11 @@ use plyphon_dsp::math;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::Wavetables;
-use plyphon_unit::graphdef::{BlockLayout, GraphDef, LocalBufMeta};
+use plyphon_unit::graphdef::{BlockLayout, ConstructorUnit, GraphDef, LocalBufMeta};
 use plyphon_unit::unit::{
-    self, Aux, AuxAlloc, DemandAccess, DoneAction, DoneState, InitCtx, Inputs, LocalBufs, LocalBus,
-    NodeMsg, NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger, TriggerSink,
+    self, Aux, AuxAlloc, DemandAccess, DemandWorld, DoneAction, DoneState, InitCtx, Inputs,
+    LocalBufs, LocalBus, NodeMsg, NodeMsgSink, NodeOp, NodeOpSink, Outputs, ProcessCtx, Trigger,
+    TriggerSink,
 };
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
@@ -185,8 +186,9 @@ pub struct Graph {
     aux: AuxSlots,
     /// The shared, immutable compiled def.
     def: Arc<GraphDef>,
-    /// Whether the one-time [`Unit::init`](plyphon_unit::unit::Unit::init) seeding pass has run (it runs on
-    /// the first control block - plyphon's analogue of scsynth's `Graph_FirstCalc`).
+    /// Whether the constructor pass has run: every unit's
+    /// [`Unit::init`](plyphon_unit::unit::Unit::init), in SynthDef order on the first control
+    /// block, before any unit's first calc (scsynth's `Graph_FirstCalc`).
     initialized: bool,
     /// The within-block sample offset at which this synth was created (scsynth's node `mSampleOffset`).
     /// Surfaced to its units on the first block only, so `OffsetOut` onsets sample-exactly; 0 for an
@@ -292,14 +294,13 @@ impl Graph {
         let resample =
             math::round(def.audio_rate().sample_rate / block.audio.sample_rate).max(1.0) as usize;
         let num_ticks = (world_bs / bs).max(1) * resample;
-        // The first-block init pass runs on the very first tick only; tracked across ticks.
+        // The constructor pass runs on the very first tick only; tracked across ticks.
         let first_block = !self.initialized;
         self.initialized = true;
         let mut done = DoneAction::Nothing;
 
         for tick in 0..num_ticks {
-            // On the first block's first tick, run each unit's one-time `init` seeding pass (in topo
-            // order, just before its first `process`), so state is seeded from now-live inputs.
+            // The first block's first tick constructs every unit before the block's calc (below).
             let first = first_block && tick == 0;
             // The node's creation offset applies only to that very first tick (`OffsetOut` delays the
             // onset by it); later ticks/blocks start at the boundary.
@@ -370,7 +371,49 @@ impl Graph {
                     Reply::TraceHeader { node: node_id },
                 );
             }
-            for (i, v) in def.units().iter().enumerate() {
+            // scsynth's `Graph_FirstCalc`: on the first tick every unit is constructed, in SynthDef
+            // order with calc and demand units interleaved, before any unit's first calc. A calc
+            // unit's constructor (`Unit::init`) reads one sample of each input - the sample each
+            // earlier constructor wrote - and writes one sample of each output; a demand unit's
+            // constructor resets it (`next(unit, 0)`). Then every calc unit runs the block, except a
+            // scalar-rate one: scsynth calculates it only in its constructor, leaving it out of the
+            // calc list.
+            let construct_order = if first { def.constructor_units() } else { &[] };
+            for step in 0..construct_order.len() + def.units().len() {
+                let construct = step < construct_order.len();
+                let i = match construct_order.get(step) {
+                    None => step - construct_order.len(),
+                    Some(&ConstructorUnit::Calc(index)) => index as usize,
+                    Some(&ConstructorUnit::Demand(index)) => {
+                        let mut local_bufs = LocalBufs::new(
+                            &mut *lbuf_meta,
+                            &mut *lbuf_samples,
+                            def.audio_rate().sample_rate,
+                        );
+                        let mut node_msgs =
+                            NodeMsgSink::new(&mut *block.node_msgs, block.node_msg_cap);
+                        let mut world = DemandWorld {
+                            buffers: &mut *block.buffers,
+                            local_bufs: &mut local_bufs,
+                            node_id,
+                            node_msgs: &mut node_msgs,
+                            buf_counter: block.buf_counter,
+                        };
+                        DemandAccess::new(
+                            def.demand_units(),
+                            &mut *demand_state,
+                            &*audio,
+                            &*ctrl,
+                            bs,
+                        )
+                        .init(&mut world, index as usize);
+                        continue;
+                    }
+                };
+                let v = &def.units()[i];
+                if !construct && v.rate == Rate::Scalar {
+                    continue;
+                }
                 // This unit's own rate constants (scsynth's `unit->mRate`): the graph's audio rate
                 // for an `.ar` unit, its control rate for a `.kr`/`.ir` one. Both are graph-relative,
                 // so reblock/resample stay exact.
@@ -382,13 +425,13 @@ impl Graph {
                 // unit, one sample for a `.kr`/`.ir` one - its `Outputs` are sliced to this, so a
                 // control-rate unit computes (and pays for) exactly one sample per tick.
                 let calc_len = match v.rate {
-                    Rate::Audio => bs,
+                    Rate::Audio if !construct => bs,
                     _ => 1,
                 };
                 // scsynth's `LocalBuf_Ctor`: on the first block a `LocalBuf` reads its shape from
                 // its live inputs and its storage is appended to the block, which moves the block,
                 // so every span is carved again from the grown block before the unit runs.
-                if first && let Some((index, shape)) = v.local_buf {
+                if construct && let Some((index, shape)) = v.local_buf {
                     let (channels, frames) = shape(&Inputs::new(&v.inputs, &*audio, &*ctrl, bs));
                     let grown = grow_local_bufs(
                         block.pool,
@@ -429,9 +472,10 @@ impl Graph {
                 // done-ness persists. A watcher reads earlier units' flags (already written this block).
                 let mut done_flag = done_flags[i];
                 let ins = Inputs::new(&v.inputs, &*audio, &*ctrl, bs);
+                let ins = if construct { ins.with_len(1) } else { ins };
                 // `/n_trace`: dump this unit's index and its inputs' first samples (scsynth's `ZIN0`) before
                 // it runs; its outputs' first samples (`ZOUT0`) follow after `process`, below.
-                if tracing {
+                if tracing && !construct {
                     push_trace(
                         block.trace,
                         block.trace_cap,
@@ -451,7 +495,7 @@ impl Graph {
                         );
                     }
                 }
-                if first {
+                if construct {
                     let init_ctx = InitCtx {
                         audio: def.audio_rate(),
                         control: def.control_rate(),
@@ -469,16 +513,13 @@ impl Graph {
                         buf_counter: block.buf_counter,
                     };
                     // scsynth's constructor `RTAlloc`: the unit sizes its memory from the same live
-                    // inputs its `init` reads, just before `init`.
+                    // inputs its constructor (`init`) reads, just before it.
                     if let Some(slot) = slot.as_deref_mut() {
                         let mut alloc = PoolSlot {
                             pool: &mut *block.unit_pool,
                             slot,
                         };
                         (v.alloc)(state, &init_ctx, &mut Aux::pending(&mut alloc));
-                    }
-                    if !matches!(slot.as_deref(), Some(AuxSlot::Failed)) {
-                        (v.init)(state, &init_ctx);
                     }
                 }
                 // A unit whose allocation failed outputs its cleared value (zeros, or `-1` for an FFT
@@ -498,6 +539,10 @@ impl Graph {
                     }
                     None => Aux::new(&mut aux_arena[v.aux_offset..v.aux_offset + v.aux_size]),
                 };
+                // A constructor that writes nothing leaves its outputs at 0.
+                if construct {
+                    scratch[..v.outputs.len()].fill(0.0);
+                }
                 // Scoped so the context's borrows of the scratch/buses/demand arena end before we publish.
                 done = done.max(if silenced {
                     DoneAction::Nothing
@@ -543,7 +588,11 @@ impl Graph {
                         aux,
                         rgen: &mut *rgen,
                     };
-                    (v.process)(state, &mut ctx)
+                    if construct {
+                        (v.init)(state, &mut ctx)
+                    } else {
+                        (v.process)(state, &mut ctx)
+                    }
                 });
                 if silenced || matches!(slot.as_deref(), Some(AuxSlot::Failed)) {
                     scratch[..v.outputs.len() * calc_len].fill(v.cleared_output);
@@ -553,7 +602,7 @@ impl Graph {
                 done_flags[i] = done_flag;
                 // `/n_trace`: dump this unit's outputs' first samples (scsynth's `ZOUT0`), read from the
                 // scratch the unit just wrote, before it is published into the wires below.
-                if tracing {
+                if tracing && !construct {
                     for k in 0..v.outputs.len() {
                         push_trace(
                             block.trace,
@@ -572,7 +621,8 @@ impl Graph {
                     match ow.rate {
                         Rate::Audio => {
                             let dst = ow.wire as usize * bs;
-                            audio[dst..dst + bs].copy_from_slice(&scratch[src..src + bs]);
+                            audio[dst..dst + calc_len]
+                                .copy_from_slice(&scratch[src..src + calc_len]);
                         }
                         Rate::Control | Rate::Scalar => {
                             ctrl[ow.wire as usize] = scratch[src];

@@ -38,8 +38,11 @@ fn klang_tick(buf: &mut [f32], n: usize) -> f32 {
     acc
 }
 
-/// Seed the `Klang` bank's coefficients/state from the spec inputs (scsynth's `Klang_SetCoefs`).
-fn klang_set_coefs(ins: &Inputs<'_>, buf: &mut [f32], n: usize, rps: f32) {
+/// Seed the `Klang` bank's coefficients/state from the spec inputs (scsynth's `Klang_SetCoefs`),
+/// returning the bank's starting value - the sum of each partial's `level * sin(phase)`, which
+/// scsynth's constructor writes as its first sample.
+fn klang_set_coefs(ins: &Inputs<'_>, buf: &mut [f32], n: usize, rps: f32) -> f32 {
+    let mut first = 0.0;
     let freqscale = ins.control(0) * rps;
     let freqoffset = ins.control(1) * rps;
     for i in 0..n {
@@ -49,6 +52,7 @@ fn klang_set_coefs(ins: &Inputs<'_>, buf: &mut [f32], n: usize, rps: f32) {
         let phase = ins.control(j + 2);
         let base = i * 3;
         if phase != 0.0 {
+            first += level * math::sin(phase);
             buf[base] = level * math::sin(phase - w);
             buf[base + 1] = level * math::sin(phase - w - w);
         } else {
@@ -57,6 +61,7 @@ fn klang_set_coefs(ins: &Inputs<'_>, buf: &mut [f32], n: usize, rps: f32) {
         }
         buf[base + 2] = 2.0 * math::cos(w);
     }
+    first
 }
 
 /// `Klang.ar(freqscale, freqoffset, [freq, amp, phase]...)`: a fixed additive bank of sine partials.
@@ -71,6 +76,20 @@ pub struct Klang {
 }
 
 impl Unit for Klang {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor seeds the coefficients and writes the bank's starting value, without
+        // running the calc.
+        let n = self.num_partials as usize;
+        let rps = ctx.own.radians_per_sample as f32;
+        let ins = ctx.ins;
+        let buf = ctx.aux.f32_mut();
+        if buf.len() >= n * 3 {
+            *ctx.outs.control(0) = klang_set_coefs(&ins, buf, n, rps);
+            self.warmed = 1;
+        }
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let n = self.num_partials as usize;
@@ -89,7 +108,7 @@ impl Unit for Klang {
             return DoneAction::Nothing;
         }
         if warm {
-            klang_set_coefs(&ins, buf, n, rps);
+            let _ = klang_set_coefs(&ins, buf, n, rps);
         }
         if audio {
             for o in ctx.outs.audio(0).iter_mut() {
@@ -190,6 +209,10 @@ impl Klank {
 }
 
 impl Unit for Klank {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let audio = self.audio != 0;
         let n = self.num_partials as usize;

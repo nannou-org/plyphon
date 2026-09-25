@@ -10,7 +10,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rng::Rng;
 
 /// `Spring.ar(in, spring, damping)`: a damped mass on a spring driven by the input force; outputs the
@@ -70,10 +70,11 @@ impl Unit for Ball {
         self.rng = Rng::new(seed);
     }
 
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let floor = ctx.ins.control(0);
         self.pos = floor;
         self.prev = floor;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -150,10 +151,11 @@ impl Unit for TBall {
         self.rng = Rng::new(seed);
     }
 
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let floor = ctx.ins.control(0) as f64;
         self.pos = floor;
         self.prev = floor;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

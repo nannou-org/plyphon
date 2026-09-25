@@ -25,8 +25,7 @@ use plyphon_dsp::math;
 /// approximates both from a lookup table, the same deviation the rest of the chain plumbing carries.
 ///
 /// `bufsize`, `binindex` and `whichmeasure` are read once, as the reference's constructor reads them
-/// (`ZIN0`) to pick one of its five calc functions. A demand unit has no constructor pass here, so
-/// they are read on the first pull; sclang always passes constants, for which the two agree.
+/// (`ZIN0`) to pick one of its five calc functions.
 ///
 /// A pull is idempotent within a World block: the first pull of a block computes and records the
 /// block, and every later pull in that block re-emits the recorded value, so a spectrum fanned out
@@ -46,8 +45,7 @@ pub struct Unpack1Fft {
     /// The packed bin index (`binindex - 1`) for the magnitude and phase kinds. `u32::MAX` when
     /// `binindex` addresses no bin, which reads as a bin the frame does not have.
     bin: u32,
-    /// `1` once [`kind`](Self::kind) and [`bin`](Self::bin) have been read from the inputs.
-    latched: u32,
+    _pad: u32,
 }
 
 impl Unpack1Fft {
@@ -84,15 +82,11 @@ impl Unpack1Fft {
             (false, _) => Self::KIND_PHASE,
         };
         self.bin = u32::try_from(binindex.saturating_sub(1)).unwrap_or(u32::MAX);
-        self.latched = 1;
     }
 
     /// Bring [`outval`](Self::outval) up to date for the current block, reading the chain buffer at
     /// most once per block. Shared by produce and reset, which the reference does not distinguish.
     fn read(&mut self, ctx: &mut DemandCtx<'_>) {
-        if self.latched == 0 {
-            self.latch(ctx);
-        }
         if self.kind == Self::KIND_ZERO {
             return;
         }
@@ -132,6 +126,10 @@ impl Unpack1Fft {
 }
 
 impl DemandUnit for Unpack1Fft {
+    fn init(&mut self, ctx: &mut DemandCtx<'_>) {
+        self.latch(ctx);
+    }
+
     fn reset(&mut self, ctx: &mut DemandCtx<'_>) {
         self.read(ctx);
     }
@@ -142,7 +140,7 @@ impl DemandUnit for Unpack1Fft {
     }
 }
 
-/// Constructor for [`Unpack1Fft`]. The instance selects what it reads on its first pull.
+/// Constructor for [`Unpack1Fft`]. The instance selects what it reads when the synth is constructed.
 pub struct Unpack1FftCtor;
 
 impl DemandUnitDef for Unpack1FftCtor {
@@ -155,7 +153,7 @@ impl DemandUnitDef for Unpack1FftCtor {
             outval: 0.0,
             kind: 0,
             bin: 0,
-            latched: 0,
+            _pad: 0,
         }))
     }
 }

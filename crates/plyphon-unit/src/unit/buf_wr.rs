@@ -30,6 +30,11 @@ impl BufWr {
 }
 
 impl Unit for BufWr {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // One always-silent output (scsynth's `ClearUnitOutputs(unit, 1)`).
         ctx.outs.audio(0).fill(0.0);

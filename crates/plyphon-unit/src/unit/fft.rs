@@ -61,6 +61,13 @@ impl Fft {
 }
 
 impl Unit for Fft {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc and writes no output. A chain reads a negative value as "no
+        // frame yet", so that is the value later constructors see.
+        *ctx.outs.control(0) = -1.0;
+        DoneAction::Nothing
+    }
+
     fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
         // scsynth's `FFT_Ctor`: size the unit from the chain buffer, then allocate the input ring
         // and zero it. Without a usable buffer the unit never allocates and outputs `-1`.
@@ -172,6 +179,11 @@ impl Ifft {
 }
 
 impl Unit for Ifft {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bs = ctx.audio.block_size;
         let fbufnum = ctx.ins.control(Self::BUFFER);

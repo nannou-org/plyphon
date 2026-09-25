@@ -59,6 +59,12 @@ impl Convolution {
 }
 
 impl Unit for Convolution {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
         let framesize = ctx.ins.control(Self::FRAMESIZE) as i32;
         let Ok(framesize) = usize::try_from(framesize) else {

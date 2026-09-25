@@ -35,6 +35,8 @@ impl Dpoll {
 }
 
 impl DemandUnit for Dpoll {
+    fn init(&mut self, _ctx: &mut DemandCtx<'_>) {}
+
     fn reset(&mut self, ctx: &mut DemandCtx<'_>) {
         ctx.reset(Self::IN);
         ctx.reset(Self::RUN);

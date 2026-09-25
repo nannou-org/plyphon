@@ -31,6 +31,12 @@ impl PvMagMul {
 }
 
 impl Unit for PvMagMul {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // `pv_frame` reads `A`'s frame signal (input 0) and passes it downstream (output 0).
         let fbuf_b = ctx.ins.control(Self::BUFFER_B);

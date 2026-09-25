@@ -87,6 +87,8 @@ pub const MAX_DEMAND_DEPTH: usize = 16;
 enum Op {
     Produce,
     Reset,
+    /// Construct the unit (scsynth's `*_Ctor`), once, in the constructor pass.
+    Init,
 }
 
 /// The fixed stack buffer a [`pull`] copies a demand unit's state into. 16-byte aligned so the
@@ -110,6 +112,14 @@ pub trait DemandUnit: Pod {
     /// default is a no-op; sequence sources zero their counters here and reset their demand inputs.
     fn reset(&mut self, _ctx: &mut DemandCtx<'_>) {}
 
+    /// Construct the unit - scsynth's `*_Ctor`, run once in SynthDef order on the synth's first
+    /// block, before any unit's first calc (see [`Unit::init`](super::Unit::init)). Most scsynth
+    /// demand constructors reset the unit (`next(unit, 0)`), and so does the default; one that does
+    /// something else overrides it.
+    fn init(&mut self, ctx: &mut DemandCtx<'_>) {
+        self.reset(ctx);
+    }
+
     /// Produce the next value (scsynth's `inNumSamples > 0` branch), advancing state. Returns
     /// [`f32::NAN`] once the sequence is exhausted.
     fn produce(&mut self, ctx: &mut DemandCtx<'_>) -> f32;
@@ -129,6 +139,10 @@ fn reset_thunk<T: DemandUnit>(bytes: &mut [u8], ctx: &mut DemandCtx<'_>) {
     bytemuck::from_bytes_mut::<T>(bytes).reset(ctx);
 }
 
+fn init_thunk<T: DemandUnit>(bytes: &mut [u8], ctx: &mut DemandCtx<'_>) {
+    bytemuck::from_bytes_mut::<T>(bytes).init(ctx);
+}
+
 fn demand_reseed_thunk<T: DemandUnit>(bytes: &mut [u8], seed: u64) {
     bytemuck::from_bytes_mut::<T>(bytes).reseed(seed);
 }
@@ -140,6 +154,8 @@ pub struct DemandVtbl {
     pub produce: ProduceFn,
     /// Reset to the start of the sequence.
     pub reset: ResetFn,
+    /// Construct the unit, once, in the constructor pass.
+    pub init: ResetFn,
     /// Per-instance re-seed (no-op for non-random sources).
     pub reseed: ReseedFn,
     /// Resolved input sources, in order (constants, wires, or nested demand units).
@@ -158,6 +174,8 @@ pub struct BuiltDemandUnit {
     pub produce: ProduceFn,
     /// Reset function.
     pub reset: ResetFn,
+    /// Constructor.
+    pub init: ResetFn,
     /// Per-instance re-seed function.
     pub reseed: ReseedFn,
     /// `size_of::<T>()`.
@@ -174,6 +192,7 @@ pub fn demand_unit_spec<T: DemandUnit>(state: T) -> BuiltDemandUnit {
     BuiltDemandUnit {
         produce: produce_thunk::<T>,
         reset: reset_thunk::<T>,
+        init: init_thunk::<T>,
         reseed: demand_reseed_thunk::<T>,
         size: core::mem::size_of::<T>(),
         align: core::mem::align_of::<T>(),
@@ -388,6 +407,10 @@ fn pull(
                 (v.reset)(&mut buf.0[..size], &mut ctx);
                 0.0
             }
+            Op::Init => {
+                (v.init)(&mut buf.0[..size], &mut ctx);
+                0.0
+            }
         }
     };
     arena[off..off + size].copy_from_slice(&buf.0[..size]);
@@ -453,6 +476,20 @@ impl<'a> DemandAccess<'a> {
             world,
             unit,
             Op::Reset,
+        );
+    }
+
+    /// Construct demand unit `unit` ([`DemandUnit::init`]) in the constructor pass.
+    pub fn init(&mut self, world: &mut DemandWorld<'_, '_>, unit: usize) {
+        pull(
+            self.plan,
+            &mut *self.state,
+            self.audio_wires,
+            self.control_wires,
+            self.block_size,
+            world,
+            unit,
+            Op::Init,
         );
     }
 }

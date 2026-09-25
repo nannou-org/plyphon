@@ -108,8 +108,7 @@ pub struct Gendy1 {
     index: u32,
     /// Number of breakpoints the memory arrays hold (the first value of `initCPs`).
     memory_size: u32,
-    /// `0` until the first block seeds the breakpoint arrays from the shared stream.
-    seeded: u32,
+    _pad: u32,
 }
 
 impl Gendy1 {
@@ -135,6 +134,14 @@ impl Gendy1 {
 }
 
 impl Unit for Gendy1 {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor fills the breakpoint arrays from the shared stream and writes 0, without
+        // running the calc.
+        let (amp_mem, dur_mem) = ctx.aux.f32_mut().split_at_mut(self.memory_size as usize);
+        Gendy1::seed(ctx.rgen, amp_mem, dur_mem);
+        DoneAction::Nothing
+    }
+
     fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
         // scsynth's `Gendy1_Ctor`: `mMemorySize = (int)ZIN0(8)`, at least 1, then one amplitude and
         // one duration array of that size.
@@ -165,10 +172,6 @@ impl Unit for Gendy1 {
         let freq_mul = ctx.own.sample_dur as f32;
 
         let (amp_mem, dur_mem) = ctx.aux.f32_mut().split_at_mut(memory_size);
-        if self.seeded == 0 {
-            Gendy1::seed(ctx.rgen, amp_mem, dur_mem);
-            self.seeded = 1;
-        }
 
         let mut phase = self.phase;
         let mut amp = self.amp;
@@ -221,7 +224,7 @@ impl UnitDef for Gendy1Ctor {
             speed: 100.0,
             index: 0,
             memory_size: 0,
-            seeded: 0,
+            _pad: 0,
         }))
     }
 }

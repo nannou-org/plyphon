@@ -13,7 +13,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
 
@@ -101,12 +101,13 @@ pub struct AmpCompA {
 }
 
 impl Unit for AmpCompA {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let root_level = amp_comp_a_level(ctx.ins.control(1) as f64);
         let min_amp = ctx.ins.control(2) as f64;
         let root_amp = ctx.ins.control(3) as f64;
         self.scale = (root_amp - min_amp) / (root_level - AMPCOMP_MINLEVEL);
         self.offset = min_amp - self.scale * AMPCOMP_MINLEVEL;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

@@ -35,6 +35,11 @@ impl ScopeOut {
 }
 
 impl Unit for ScopeOut {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ins = ctx.ins; // `Copy`; borrows the wires, not `ctx`, so we can also take `&mut` recording.
         let bufnum = ins.control(Self::BUFNUM).max(0.0) as usize;

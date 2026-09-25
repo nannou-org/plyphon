@@ -88,6 +88,10 @@ impl Osc {
 }
 
 impl Unit for Osc {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
@@ -156,6 +160,10 @@ impl OscN {
 }
 
 impl Unit for OscN {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
@@ -221,6 +229,10 @@ impl COsc {
 }
 
 impl Unit for COsc {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let bufnum = ctx.ins.control(Self::BUFNUM).max(0.0) as usize;
         let freq = ctx.ins.control(Self::FREQ);
@@ -313,6 +325,10 @@ impl VOsc {
 }
 
 impl Unit for VOsc {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let next_bufpos = ctx.ins.control(Self::BUFPOS);
         let phase_offset = ctx.ins.control(Self::PHASE) / TAU;
@@ -407,6 +423,10 @@ impl VOsc3 {
 }
 
 impl Unit for VOsc3 {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let next_bufpos = ctx.ins.control(Self::BUFPOS);
         let sample_dur = ctx.own.sample_dur as f32;

@@ -18,7 +18,9 @@ use hashbrown::HashMap;
 use plyphon_dsp::math;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_unit::error::BuildError;
-use plyphon_unit::graphdef::{AudioParam, GraphDef, LagParam, OutputWire, UnitVtbl, build_layout};
+use plyphon_unit::graphdef::{
+    AudioParam, ConstructorUnit, GraphDef, LagParam, OutputWire, UnitVtbl, build_layout,
+};
 use plyphon_unit::unit::demand::{BuiltDemandUnit, DemandVtbl, MAX_DEMAND_DEPTH, MAX_DEMAND_STATE};
 use plyphon_unit::unit::registry::{BuildContext, UnitRegistry};
 use plyphon_unit::unit::{BuiltUnit, InputSource};
@@ -592,6 +594,7 @@ impl SynthDef {
             .map(|((b, inputs), state_offset)| DemandVtbl {
                 produce: b.produce,
                 reset: b.reset,
+                init: b.init,
                 reseed: b.reseed,
                 inputs,
                 state_offset,
@@ -599,9 +602,21 @@ impl SynthDef {
             })
             .collect();
 
+        // scsynth constructs a synth's units in SynthDef order, calc and demand units interleaved.
+        let constructor_units: Vec<ConstructorUnit> = calc_index
+            .iter()
+            .zip(&demand_index)
+            .filter_map(|(calc, demand)| match (*calc, *demand) {
+                (Some(index), _) => Some(ConstructorUnit::Calc(index)),
+                (None, Some(index)) => Some(ConstructorUnit::Demand(index)),
+                (None, None) => None,
+            })
+            .collect();
+
         Ok(GraphDef::new(
             units.into_boxed_slice(),
             demand_units.into_boxed_slice(),
+            constructor_units.into_boxed_slice(),
             layout,
             state_image.into_boxed_slice(),
             demand_state_image.into_boxed_slice(),

@@ -67,6 +67,12 @@ pub struct PvComplex {
 }
 
 impl Unit for PvComplex {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let kind = self.kind;
         if let Some((a_idx, b_idx)) = frame_pair(ctx)
@@ -142,6 +148,12 @@ pub struct PvPolar {
 }
 
 impl Unit for PvPolar {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let is_min = self.kind == 1;
         if let Some((a_idx, b_idx)) = frame_pair(ctx)
@@ -202,6 +214,12 @@ pub struct PvCopyPhase {
 }
 
 impl Unit for PvCopyPhase {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 0 through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(0);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if let Some((a_idx, b_idx)) = frame_pair(ctx)
             && let Some((mut buf_a, buf_b)) =
@@ -252,6 +270,12 @@ pub struct PvCopy {
 }
 
 impl Unit for PvCopy {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor passes input 1 (the destination chain) through without running the calc.
+        *ctx.outs.control(0) = ctx.ins.control(1);
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let fbuf_a = ctx.ins.control(0);
         let fbuf_b = ctx.ins.control(1);

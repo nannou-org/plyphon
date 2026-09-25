@@ -33,10 +33,7 @@ pub struct Duty {
     /// `0`/`1`: control-rate (one value per block, counts in control frames) vs audio-rate (a full
     /// block, counts in samples).
     audio: u32,
-    /// `0` until the first refill has run. The first refill stands in for scsynth's ctor-time
-    /// `DEMANDINPUT` poll, which cannot fire `doneAction`, so a dur stream that is empty from the
-    /// very start freezes silently.
-    primed: u32,
+    _pad: u32,
 }
 
 impl Duty {
@@ -60,12 +57,9 @@ impl Duty {
         if dur.is_nan() {
             // An exhausted dur stream poisons the count like scsynth's `count = dur*sr + count`:
             // `count <= 0` is never true again, so the unit freezes on its held level and
-            // `doneAction` fires exactly once. Only a rising reset (`count = 0`) revives it. On
-            // the first refill (scsynth's ctor poll) it freezes without firing.
+            // `doneAction` fires exactly once. Only a rising reset (`count = 0`) revives it.
             self.count = f64::NAN;
-            if self.primed != 0 {
-                done = DoneAction::from_code(ins.control(Self::DONE));
-            }
+            done = DoneAction::from_code(ins.control(Self::DONE));
         } else {
             self.count += dur as f64 * frame_rate;
         }
@@ -73,20 +67,39 @@ impl Duty {
         let level = demand_next(ins, demand, world, Self::LEVEL);
         if level.is_nan() {
             // An exhausted level stream holds the previous value and *also* fires `doneAction`
-            // (scsynth's `if (sc_isnan(x)) { x = prevout; DoneAction(...); }`), again excepting
-            // the ctor-poll stand-in.
-            if self.primed != 0 {
-                done = done.max(DoneAction::from_code(ins.control(Self::DONE)));
-            }
+            // (scsynth's `if (sc_isnan(x)) { x = prevout; DoneAction(...); }`).
+            done = done.max(DoneAction::from_code(ins.control(Self::DONE)));
         } else {
             self.level = level;
         }
-        self.primed = 1;
         done
     }
 }
 
 impl Unit for Duty {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor demands the first duration and level and writes the level, without
+        // running the calc. These pulls fire no `doneAction`: an exhausted duration freezes the
+        // unit (a `NaN` count) and an exhausted level is written as it is.
+        let mut world = DemandWorld {
+            buffers: &mut *ctx.buffers,
+            local_bufs: &mut ctx.local_bufs,
+            node_id: ctx.node_id,
+            node_msgs: &mut ctx.node_msgs,
+            buf_counter: ctx.buf_counter,
+        };
+        let frame_rate = if self.audio != 0 {
+            ctx.audio.sample_rate
+        } else {
+            ctx.control.sample_rate
+        };
+        let dur = demand_next(&ctx.ins, &mut ctx.demand, &mut world, Self::DUR);
+        self.count = dur as f64 * frame_rate;
+        self.level = demand_next(&ctx.ins, &mut ctx.demand, &mut world, Self::LEVEL);
+        *ctx.outs.control(0) = self.level;
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let mut done = DoneAction::Nothing;
         // The demand sources' world reach, built once from disjoint `ctx` fields (buffers/node_msgs);
@@ -142,7 +155,7 @@ impl UnitDef for DutyCtor {
             level: 0.0,
             prev_reset: 0.0,
             audio: (ctx.rate == Rate::Audio) as u32,
-            primed: 0,
+            _pad: 0,
         }))
     }
 }
@@ -168,8 +181,7 @@ pub struct TDuty {
     audio: u32,
     /// Non-zero if the first impulse waits one demanded duration (scsynth's `gapFirst`).
     gap_first: u32,
-    /// `0` until the first block establishes the (optional) initial gap.
-    warmed: u32,
+    _pad: u32,
 }
 
 impl TDuty {
@@ -206,6 +218,29 @@ impl TDuty {
 }
 
 impl Unit for TDuty {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor writes 0 without running the calc. A `gapFirst` synth demands one
+        // duration up front, delaying the first impulse by it; a duration already exhausted here
+        // freezes the unit (a `NaN` count) without firing `doneAction`.
+        if self.gap_first != 0 {
+            let mut world = DemandWorld {
+                buffers: &mut *ctx.buffers,
+                local_bufs: &mut ctx.local_bufs,
+                node_id: ctx.node_id,
+                node_msgs: &mut ctx.node_msgs,
+                buf_counter: ctx.buf_counter,
+            };
+            let frame_rate = if self.audio != 0 {
+                ctx.audio.sample_rate
+            } else {
+                ctx.control.sample_rate
+            };
+            let dur = demand_next(&ctx.ins, &mut ctx.demand, &mut world, Self::DUR);
+            self.count = dur as f64 * frame_rate;
+        }
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let mut done = DoneAction::Nothing;
         let mut world = DemandWorld {
@@ -220,21 +255,6 @@ impl Unit for TDuty {
         } else {
             ctx.control.sample_rate
         };
-
-        // A `gapFirst` synth demands one duration up front so the first impulse is delayed by it.
-        // A dur stream already exhausted here freezes the unit silently - scsynth's ctor-time
-        // `m_count = DEMANDINPUT(dur) * sr` going `NaN` before any calc can fire `doneAction`.
-        if self.warmed == 0 {
-            if self.gap_first != 0 {
-                let dur = demand_next(&ctx.ins, &mut ctx.demand, &mut world, Self::DUR);
-                self.count = if dur.is_nan() {
-                    f64::NAN
-                } else {
-                    dur as f64 * frame_rate
-                };
-            }
-            self.warmed = 1;
-        }
 
         let reset = ctx.ins.control(Self::RESET);
         if reset > 0.0 && self.prev_reset <= 0.0 {
@@ -282,7 +302,7 @@ impl UnitDef for TDutyCtor {
             prev_reset: 0.0,
             audio: (ctx.rate == Rate::Audio) as u32,
             gap_first: gap_first as u32,
-            warmed: 0,
+            _pad: 0,
         }))
     }
 }

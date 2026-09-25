@@ -64,11 +64,12 @@ pub struct UnitVtbl {
     pub rate: Rate,
     /// Per-block calc function over the state slot.
     pub process: ProcessFn,
-    /// One-time first-block seeding function over the state slot.
+    /// Constructor over the state slot, run once in SynthDef order on the synth's first block.
     pub init: InitFn,
     /// Per-instance re-seed function over the state slot (no-op for units without randomness).
     pub reseed: ReseedFn,
-    /// One-time allocation function for input-sized memory, run on the first block before `init`.
+    /// One-time allocation function for input-sized memory, run in the constructor pass just
+    /// before `init`.
     pub alloc: AllocFn,
     /// This unit's index into the per-synth table of pool allocations, when it allocates its memory
     /// from the engine's pool at synth start ([`unit_spec_pool`](crate::unit::unit_spec_pool)).
@@ -192,10 +193,24 @@ pub struct BlockLayout {
     pub total: usize,
 }
 
+/// One entry of a def's constructor order: the calc or demand unit to construct next.
+///
+/// scsynth constructs a synth's units in SynthDef order with calc and demand units interleaved,
+/// so the order is kept here rather than derived from the two separate plans.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ConstructorUnit {
+    /// Index into [`GraphDef::units`].
+    Calc(u32),
+    /// Index into [`GraphDef::demand_units`].
+    Demand(u32),
+}
+
 /// The compiled, immutable, shareable synth definition (scsynth's `GraphDef`). Built once by
 /// `SynthDef` compilation off the audio thread and shared via `Arc` so it can ride in a command to
 /// the real-time engine; its parts are read back through the accessors below.
 pub struct GraphDef {
+    /// Every unit in SynthDef order, for the constructor pass on the synth's first block.
+    constructor_units: Box<[ConstructorUnit]>,
     /// Per-unit vtable + wiring, in topological calc order.
     units: Box<[UnitVtbl]>,
     /// The demand plan: per-demand-unit pull/reset/seed vtable + wiring. Not in the per-block calc
@@ -247,6 +262,7 @@ impl GraphDef {
     pub fn new(
         units: Box<[UnitVtbl]>,
         demand_units: Box<[DemandVtbl]>,
+        constructor_units: Box<[ConstructorUnit]>,
         layout: BlockLayout,
         state_image: Box<[u8]>,
         demand_state_image: Box<[u8]>,
@@ -264,6 +280,7 @@ impl GraphDef {
         GraphDef {
             units,
             demand_units,
+            constructor_units,
             layout,
             state_image,
             demand_state_image,
@@ -288,6 +305,12 @@ impl GraphDef {
     /// The demand plan: per-demand-unit vtables and wiring, indexed by demand-plan index.
     pub fn demand_units(&self) -> &[DemandVtbl] {
         &self.demand_units
+    }
+
+    /// Every unit in SynthDef order: the constructor pass on the synth's first block runs them in
+    /// this order.
+    pub fn constructor_units(&self) -> &[ConstructorUnit] {
+        &self.constructor_units
     }
 
     /// How a per-graph pool block is carved.

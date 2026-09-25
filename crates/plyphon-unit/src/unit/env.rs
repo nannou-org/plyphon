@@ -103,6 +103,10 @@ impl EnvGen {
 }
 
 impl Unit for EnvGen {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let gate = ctx.ins.control(Self::GATE);
         let level_scale = ctx.ins.control(Self::LEVEL_SCALE) as f64;

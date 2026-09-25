@@ -71,6 +71,11 @@ impl SendReply {
 }
 
 impl Unit for SendReply {
+    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor runs no calc; the output starts at zero.
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ins = ctx.ins; // `Inputs` is `Copy` and borrows the wires, not `ctx` - so we can also
         let node = ctx.node_id; // push to the disjoint `ctx.node_msgs` field below.

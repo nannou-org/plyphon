@@ -14,7 +14,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 
 /// `LFSaw.ar/kr(freq, iphase)`: a non-band-limited sawtooth. The output *is* the phase, ramping
@@ -32,7 +32,7 @@ impl LFSaw {
 }
 
 impl Unit for LFSaw {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // `iphase` is in cycles over `[0, 2)` (sclang's convention); map into the `[-1, 1)` ramp.
         let iphase = if ctx.ins.len() > Self::IPHASE {
             ctx.ins.control(Self::IPHASE) as f64
@@ -40,6 +40,7 @@ impl Unit for LFSaw {
             0.0
         };
         self.phase = math::rem_euclid(iphase + 1.0, 2.0) - 1.0;
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -84,13 +85,14 @@ impl LFPulse {
 }
 
 impl Unit for LFPulse {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let iphase = if ctx.ins.len() > Self::IPHASE {
             ctx.ins.control(Self::IPHASE) as f64
         } else {
             0.0
         };
         self.phase = math::rem_euclid(iphase, 1.0);
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -138,7 +140,7 @@ impl Impulse {
 }
 
 impl Unit for Impulse {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let iphase = if ctx.ins.len() > Self::PHASE {
             ctx.ins.control(Self::PHASE) as f64
         } else {
@@ -147,6 +149,7 @@ impl Unit for Impulse {
         let p = math::rem_euclid(iphase, 1.0);
         // Start at the cycle boundary when unphased, so the first sample is an impulse.
         self.phase = if p == 0.0 { 1.0 } else { p };
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -184,8 +187,9 @@ pub struct LFTri {
 }
 
 impl Unit for LFTri {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.phase = math::rem_euclid(ctx.ins.control(1) as f64, 4.0);
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -213,8 +217,9 @@ pub struct LFPar {
 }
 
 impl Unit for LFPar {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.phase = ctx.ins.control(1) as f64;
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -245,8 +250,9 @@ pub struct LFCub {
 }
 
 impl Unit for LFCub {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.phase = ctx.ins.control(1) as f64 + 0.5;
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -290,9 +296,10 @@ impl VarSaw {
 }
 
 impl Unit for VarSaw {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.phase = math::rem_euclid(ctx.ins.control(1) as f64, 1.0);
         self.set_duty(ctx.ins.control(2));
+        crate::unit::calc_and_restore(self, ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -431,6 +438,10 @@ impl LFGauss {
 }
 
 impl Unit for LFGauss {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        crate::unit::calc_and_restore(self, ctx)
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let dur = ctx.ins.control(Self::DURATION) as f64;
         // A zero/negative width or duration would poison the block with NaN/inf; floor them.

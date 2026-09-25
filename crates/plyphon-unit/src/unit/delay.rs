@@ -288,13 +288,14 @@ impl Unit for Delay {
         self.mask = self.len.saturating_sub(1);
     }
 
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Seed `dsamp`/`delaytime` from the initial `delaytime` so the first block uses the steady
         // path (no ramp-from-zero), mirroring scsynth's `DelayUnit_Reset`.
         let dt = ctx.ins.control(DELAY);
         let min = Interp::from_tag(self.interp).min_delay(false);
         self.delaytime = dt;
         self.dsamp = clamp_delay(dt * ctx.own.sample_rate as f32, min, self.len as f32);
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -427,7 +428,7 @@ impl Unit for FeedbackDelay {
         self.mask = self.len.saturating_sub(1);
     }
 
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let dt = ctx.ins.control(DELAY);
         let decay = ctx.ins.control(DECAY);
         let min = Interp::from_tag(self.interp).min_delay(true);
@@ -435,6 +436,7 @@ impl Unit for FeedbackDelay {
         self.decaytime = decay;
         self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, self.len as f32);
         self.feedbk = calc_feedback(dt, decay);
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -650,7 +652,7 @@ pub struct BufDelay {
 }
 
 impl Unit for BufDelay {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let dt = ctx.ins.control(BUF_DELAY);
         let min = Interp::from_tag(self.interp).min_delay(false);
         let bufnum = ctx.ins.control(BUF_BUFNUM).max(0.0) as usize;
@@ -658,6 +660,7 @@ impl Unit for BufDelay {
             .map_or(0, |b| buf_line(b.data().len()).1 as usize);
         self.delaytime = dt;
         self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, max as f32);
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -779,7 +782,7 @@ pub struct BufFeedbackDelay {
 }
 
 impl Unit for BufFeedbackDelay {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let dt = ctx.ins.control(BUF_DELAY);
         let decay = ctx.ins.control(BUF_DECAY);
         let min = Interp::from_tag(self.interp).min_delay(true);
@@ -790,6 +793,7 @@ impl Unit for BufFeedbackDelay {
         self.decaytime = decay;
         self.dsamp = clamp_delay(dt * ctx.audio.sample_rate as f32, min, max as f32);
         self.feedbk = calc_feedback(dt, decay);
+        DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {

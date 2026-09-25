@@ -64,7 +64,7 @@ impl Unit for Pluck {
         self.mask = self.len.saturating_sub(1);
     }
 
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let dt = ctx.ins.control(DELAY);
         let decay = ctx.ins.control(DECAY);
         let min = Interp::Cubic.min_delay(true);
@@ -73,6 +73,7 @@ impl Unit for Pluck {
         self.coef = ctx.ins.control(COEF);
         self.dsamp = clamp_delay(dt * ctx.own.sample_rate as f32, min, self.len as f32);
         self.feedbk = calc_feedback(dt, decay);
+        DoneAction::Nothing
     }
 
     #[allow(clippy::needless_range_loop)]

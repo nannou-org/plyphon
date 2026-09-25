@@ -13,7 +13,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::filter::zap;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
 
 /// `LPZ1.ar(in)`: a two-point averaging low-pass, `out = 0.5 * (in(i) + in(i-1))`.
@@ -24,8 +24,9 @@ pub struct LPZ1 {
 }
 
 impl Unit for LPZ1 {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.x1 = ctx.ins.control(0) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -48,8 +49,9 @@ pub struct HPZ1 {
 }
 
 impl Unit for HPZ1 {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.x1 = ctx.ins.control(0) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -72,8 +74,9 @@ pub struct Slope {
 }
 
 impl Unit for Slope {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.x1 = ctx.ins.control(0) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -101,9 +104,10 @@ macro_rules! fir2 {
         }
 
         impl Unit for $name {
-            fn init(&mut self, ctx: &InitCtx<'_>) {
+            fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
                 self.x1 = ctx.ins.control(0) as f64;
                 self.x2 = self.x1;
+                self.process(ctx)
             }
 
             fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -194,6 +198,19 @@ pub struct Delay1 {
 }
 
 impl Unit for Delay1 {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor seeds the delayed sample from the optional `x1` input (0 when absent) and
+        // writes it, without running the calc.
+        let x1 = if ctx.ins.len() > 1 {
+            ctx.ins.control(1)
+        } else {
+            0.0
+        };
+        self.x1 = x1 as f64;
+        *ctx.outs.control(0) = x1;
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let mut x1 = self.x1;
         for (o, &x) in ctx.outs.audio(0).iter_mut().zip(ctx.ins.audio(0)) {
@@ -226,6 +243,23 @@ pub struct Delay2 {
 }
 
 impl Unit for Delay2 {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor seeds both delayed samples from the optional `x1`/`x2` inputs (0 when
+        // absent) and writes the older one, without running the calc.
+        let input = |i: usize| {
+            if ctx.ins.len() > i {
+                ctx.ins.control(i)
+            } else {
+                0.0
+            }
+        };
+        let (x1, x2) = (input(1), input(2));
+        self.x1 = x1 as f64;
+        self.x2 = x2 as f64;
+        *ctx.outs.control(0) = x2;
+        DoneAction::Nothing
+    }
+
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let (mut x1, mut x2) = (self.x1, self.x2);
         for (o, &x) in ctx.outs.audio(0).iter_mut().zip(ctx.ins.audio(0)) {
@@ -266,8 +300,9 @@ impl Slew {
 }
 
 impl Unit for Slew {
-    fn init(&mut self, ctx: &InitCtx<'_>) {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         self.level = ctx.ins.control(Self::IN) as f64;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
