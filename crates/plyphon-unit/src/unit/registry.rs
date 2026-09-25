@@ -33,6 +33,7 @@ use crate::unit::demand::dbufrd::DbufrdCtor;
 use crate::unit::demand::dbufwr::DbufwrCtor;
 use crate::unit::demand::dconst::DconstCtor;
 use crate::unit::demand::ddup::DdupCtor;
+use crate::unit::demand::demand_env_gen::DemandEnvGenCtor;
 use crate::unit::demand::demand_op::{DemandBinaryOpCtor, DemandUnaryOpCtor};
 use crate::unit::demand::demand_ugen::DemandCtor;
 use crate::unit::demand::dgeom::DgeomCtor;
@@ -622,6 +623,7 @@ impl UnitRegistry {
         registry.register("Duty", Box::new(DutyCtor));
         registry.register("TDuty", Box::new(TDutyCtor));
         registry.register("Demand", Box::new(DemandCtor));
+        registry.register("DemandEnvGen", Box::new(DemandEnvGenCtor));
         // Demand-rate sources (the demand plan).
         registry.register_demand("Dseq", Box::new(DseqCtor));
         registry.register_demand("Dser", Box::new(DserCtor));
