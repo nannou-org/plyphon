@@ -149,3 +149,54 @@ fn ddup_pulls_the_value_before_the_count() {
     .map(f32::from_bits);
     assert_segments(units, &expected);
 }
+
+#[test]
+fn dconst_yields_the_remainder_that_reaches_the_sum() {
+    // Dseq([Dconst(1, Dseq([0.3], inf), 0.001), 7], 2): 0.3 three times, then 1 - 0.9 (in float),
+    // then the sequence ends; the outer Dseq's second pass resets it.
+    let units = vec![
+        dseq(&[0.3], f32::INFINITY),
+        dem("Dconst", vec![c(1.0), u(0), c(0.001)]),
+        dem("Dseq", vec![c(2.0), u(1), c(7.0)]),
+    ];
+    let r = f32::from_bits(0x3dcc_ccc8);
+    let expected = [0.3, 0.3, 0.3, r, 7.0, 0.3, 0.3, 0.3, r, 7.0, NAN, NAN];
+    assert_segments(units, &expected);
+}
+
+#[test]
+fn dconst_ends_within_tolerance() {
+    // Dseq([Dconst(1, Dseq([0.48, 0.49, 0.5], 1), 0.05), 7], 1): 0.48 + 0.49 is within 0.05 of 1, so
+    // the second value is the remainder 1 - 0.48.
+    let units = vec![
+        dseq(&[0.48, 0.49, 0.5], 1.0),
+        dem("Dconst", vec![c(1.0), u(0), c(0.05)]),
+        dem("Dseq", vec![c(1.0), u(1), c(7.0)]),
+    ];
+    let expected = [0.48, f32::from_bits(0x3f05_1eb8), 7.0, NAN];
+    assert_segments(units, &expected);
+}
+
+#[test]
+fn dconst_ends_when_its_input_does() {
+    // Dseq([Dconst(2, Dseq([0.5, 0.5], 1), 0.001), 7], 1): the input runs out before the sum.
+    let units = vec![
+        dseq(&[0.5, 0.5], 1.0),
+        dem("Dconst", vec![c(2.0), u(0), c(0.001)]),
+        dem("Dseq", vec![c(1.0), u(1), c(7.0)]),
+    ];
+    assert_segments(units, &[0.5, 0.5, 7.0, NAN]);
+}
+
+#[test]
+fn dreset_resets_its_input_after_the_pull_on_a_rising_reset() {
+    // Dreset(Dseq([1, 2, 3, 4, 5], inf), Dseq([0, 0, 1, 1, 0, 1, 0, 0], inf)): the value pulled
+    // with a rising reset is still yielded; the input restarts on the next demand.
+    let units = vec![
+        dseq(&[1.0, 2.0, 3.0, 4.0, 5.0], f32::INFINITY),
+        dseq(&[0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0], f32::INFINITY),
+        dem("Dreset", vec![u(0), u(1)]),
+    ];
+    let expected = [1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 4.0, 5.0, 1.0];
+    assert_segments(units, &expected);
+}
