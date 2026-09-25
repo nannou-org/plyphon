@@ -53,6 +53,8 @@ pub mod node_ctl;
 pub mod noise;
 pub mod one_pole;
 pub mod out;
+#[cfg(feature = "fft")]
+pub mod pack_fft;
 pub mod pan;
 pub mod physical;
 pub mod pitch_shift;

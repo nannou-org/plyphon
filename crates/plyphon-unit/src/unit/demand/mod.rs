@@ -1,4 +1,5 @@
-//! Demand-rate unit generators - plyphon's port of scsynth's `DemandUGens`.
+//! Demand-rate unit generators - plyphon's port of scsynth's `DemandUGens`, plus `Unpack1FFT`
+//! (`UnpackFFTUGens.cpp`), which scsynth also runs at demand rate.
 //!
 //! Demand rate is the odd one out: every other rate is *pushed* (a unit's [`process`](super::Unit::process)
 //! runs once per control block and writes a wire), but a demand-rate unit is *pulled* - it produces a
@@ -35,6 +36,8 @@ pub mod dseries;
 pub mod duty;
 pub mod dwhite;
 pub mod dxrand;
+#[cfg(feature = "fft")]
+pub mod unpack1fft;
 
 use alloc::boxed::Box;
 
@@ -61,6 +64,8 @@ pub use dseries::Dseries;
 pub use duty::Duty;
 pub use dwhite::Dwhite;
 pub use dxrand::Dxrand;
+#[cfg(feature = "fft")]
+pub use unpack1fft::Unpack1Fft;
 
 /// The largest `Pod` state a demand-rate unit may have, in bytes. A pull copies the source's state
 /// into a stack buffer this size, so the recursion can reborrow the whole demand arena without
@@ -193,6 +198,10 @@ pub struct DemandWorld<'w, 's> {
     pub node_id: i32,
     /// Sink for host messages (`Dpoll` posts here, via [`DemandCtx::post`]).
     pub node_msgs: &'w mut NodeMsgSink<'s>,
+    /// The World's current block counter, reached via [`DemandCtx::buf_counter`]. A source whose
+    /// value belongs to the block rather than to the pull - `Unpack1FFT` reading one FFT frame -
+    /// stamps it so repeated pulls within a block yield the same value.
+    pub buf_counter: u64,
 }
 
 /// What a demand unit touches while producing or resetting - the pull-side analogue of
@@ -210,6 +219,7 @@ pub struct DemandCtx<'a> {
     local_bufs: LocalBufs<'a>,
     node_id: i32,
     node_msgs: NodeMsgSink<'a>,
+    buf_counter: u64,
 }
 
 impl DemandCtx<'_> {
@@ -242,6 +252,7 @@ impl DemandCtx<'_> {
                     local_bufs: &mut self.local_bufs,
                     node_id: self.node_id,
                     node_msgs: &mut self.node_msgs,
+                    buf_counter: self.buf_counter,
                 },
                 d as usize,
                 Op::Produce,
@@ -267,6 +278,7 @@ impl DemandCtx<'_> {
                     local_bufs: &mut self.local_bufs,
                     node_id: self.node_id,
                     node_msgs: &mut self.node_msgs,
+                    buf_counter: self.buf_counter,
                 },
                 d as usize,
                 Op::Reset,
@@ -290,6 +302,17 @@ impl DemandCtx<'_> {
     /// The enclosing synth's node id, for a source that tags an emitted message (`Dpoll`).
     pub fn node_id(&self) -> i32 {
         self.node_id
+    }
+
+    /// The World's current block counter (scsynth's `mBufCounter`).
+    ///
+    /// A pull is not a block boundary: one block may pull the same source many times, and a source
+    /// reached through several consumers is pulled once per consumer. A source whose value is a
+    /// property of the *block* - `Unpack1FFT` reading one bin of the current FFT frame - records
+    /// this alongside its value and recomputes only when it changes, so every pull within a block
+    /// sees the same frame.
+    pub fn buf_counter(&self) -> u64 {
+        self.buf_counter
     }
 
     /// Post one polled `value` to the host (`Dpoll`): a [`NodeMsg`] of kind [`NodeMsgKind::Poll`]
@@ -354,6 +377,7 @@ fn pull(
             local_bufs: world.local_bufs.reborrow(),
             node_id: world.node_id,
             node_msgs: world.node_msgs.reborrow(),
+            buf_counter: world.buf_counter,
         };
         match op {
             Op::Produce => (v.produce)(&mut buf.0[..size], &mut ctx),
