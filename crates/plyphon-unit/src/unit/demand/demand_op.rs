@@ -13,8 +13,8 @@
 //! not list falls through as the reference's does: to `add` for binary, to pass-through for unary.
 //!
 //! The random operators (binary `rrand`/`exprand`, unary `rand`, `rand2`, `linrand`, `bilinrand`,
-//! `sum3rand` and `coin`) draw from the synth's random stream, which a demand unit cannot reach
-//! here, so they are rejected at build rather than silently losing their randomness.
+//! `sum3rand` and `coin`) draw from the synth's random stream ([`DemandCtx::rgen`]), as the
+//! reference's `*_d` random kernels draw from `mParent->mRGen`.
 //!
 //! An audio-rate operand reads the block's *first* sample, where the reference reads the sample its
 //! pull is offset to. A demand pull carries no sample offset in plyphon, so this is the engine-wide
@@ -26,7 +26,7 @@ use crate::error::BuildError;
 use crate::unit::binary_op::binary_op;
 use crate::unit::demand::{BuiltDemandUnit, DemandCtx, DemandUnit, demand_unit_spec};
 use crate::unit::registry::{BuildContext, DemandUnitDef};
-use crate::unit::unary_op::unary_op;
+use crate::unit::unary_op::{is_random, random_unary, unary_op};
 
 /// The first operand input, shared by both operators.
 const A: usize = 0;
@@ -78,7 +78,23 @@ impl DemandUnit for DemandBinaryOp {
         if a.is_nan() || b.is_nan() {
             return f32::NAN;
         }
-        binary_kernel(self.op as i16)(a, b)
+        match self.op {
+            // `rrand_d`: a uniform draw between the operands, ordered low to high.
+            47 => {
+                let u = ctx.rgen().next_unipolar();
+                if b > a {
+                    a + u * (b - a)
+                } else {
+                    b + u * (a - b)
+                }
+            }
+            // `exprand_d`: `RGen::exprandrng` between the operands, ordered low to high.
+            48 => {
+                let (lo, hi) = if b > a { (a, b) } else { (b, a) };
+                ctx.rgen().next_exprand(lo as f64, hi as f64) as f32
+            }
+            op => binary_kernel(op as i16)(a, b),
+        }
     }
 }
 
@@ -89,10 +105,6 @@ impl DemandUnitDef for DemandBinaryOpCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError> {
         if ctx.input_rates.len() != 2 {
             return Err(BuildError::WrongInputCount);
-        }
-        // `rrand` and `exprand` need the synth's random stream.
-        if matches!(ctx.special_index, 47 | 48) {
-            return Err(BuildError::UnsupportedOp(ctx.special_index));
         }
         Ok(demand_unit_spec(DemandBinaryOp {
             op: ctx.special_index as u32,
@@ -129,11 +141,20 @@ impl DemandUnit for DemandUnaryOp {
     }
 
     fn produce(&mut self, ctx: &mut DemandCtx<'_>) -> f32 {
+        let op = self.op as i16;
         let a = ctx.demand(A);
+        // `coin_d` draws before it checks the operand; the other random kernels check first.
+        if op == 44 {
+            let coin = random_unary(op, ctx.rgen(), a);
+            return if a.is_nan() { f32::NAN } else { coin };
+        }
         if a.is_nan() {
             return f32::NAN;
         }
-        unary_kernel(self.op as i16)(a)
+        if is_random(op) {
+            return random_unary(op, ctx.rgen(), a);
+        }
+        unary_kernel(op)(a)
     }
 }
 
@@ -144,11 +165,6 @@ impl DemandUnitDef for DemandUnaryOpCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltDemandUnit, BuildError> {
         if ctx.input_rates.len() != 1 {
             return Err(BuildError::WrongInputCount);
-        }
-        // `rand`, `rand2`, `linrand`, `bilinrand`, `sum3rand` and `coin` need the synth's random
-        // stream.
-        if matches!(ctx.special_index, 37..=41 | 44) {
-            return Err(BuildError::UnsupportedOp(ctx.special_index));
         }
         Ok(demand_unit_spec(DemandUnaryOp {
             op: ctx.special_index as u32,

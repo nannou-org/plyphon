@@ -91,3 +91,23 @@ fn exprand_matches_rgen_exprandrng() {
         ]
     );
 }
+
+#[test]
+fn linrand_bilinrand_sum3rand_match_rgen() {
+    let draws = |f: fn(&mut Rng) -> f32| {
+        let mut rng = seeded(42);
+        core::array::from_fn::<u32, 4, _>(|_| f(&mut rng).to_bits())
+    };
+    assert_eq!(
+        draws(Rng::next_linrand),
+        [0x3ecb_6f74, 0x3e3b_8b78, 0x3f1b_766c, 0x3f2f_bb1c]
+    );
+    assert_eq!(
+        draws(Rng::next_bilinrand),
+        [0xbe4c_c3f0, 0xbf1e_92b6, 0xbde7_94c0, 0xbe8a_0c50]
+    );
+    assert_eq!(
+        draws(Rng::next_sum3rand),
+        [0xbe5b_f730, 0x3ed7_1c05, 0x3e88_755d, 0x3ddc_3620]
+    );
+}

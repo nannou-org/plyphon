@@ -6,6 +6,7 @@ use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::rate::Rate;
+use plyphon_dsp::rng::Rng;
 use plyphon_dsp::{math, ops};
 
 /// `<op>(a)`, where `<op>` is selected by the SynthDef's `special_index` (matching SuperCollider's
@@ -58,6 +59,66 @@ impl Unit for UnaryOp {
     }
 }
 
+/// Whether unary operator `index` is one of the RNG-driven operators: `rand` (37), `rand2` (38),
+/// `linrand` (39), `bilinrand` (40), `sum3rand` (41) and `coin` (44).
+pub(crate) fn is_random(index: i16) -> bool {
+    matches!(index, 37..=41 | 44)
+}
+
+/// One draw of RNG-driven unary operator `op` for input `x`, from `rgen` - scsynth's
+/// `DEFINE_UNARY_OP_RANDOM_FUNCS` and `coin_*` (`UnaryOpUGens.cpp`): the scaled operators give
+/// `draw * x` (`frand`, `frand2`, `flinrand`, `fbilinrand`, `fsum3rand`), and `coin` gives `1` where
+/// `frand() < x`, else `0`.
+pub(crate) fn random_unary(op: i16, rgen: &mut Rng, x: f32) -> f32 {
+    match op {
+        37 => rgen.next_unipolar() * x,
+        38 => rgen.next_bipolar() * x,
+        39 => rgen.next_linrand() * x,
+        40 => rgen.next_bilinrand() * x,
+        41 => rgen.next_sum3rand() * x,
+        _ => {
+            if rgen.next_unipolar() < x {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
+/// The RNG-driven unary operators - `rand` (37), `rand2` (38), `linrand` (39), `bilinrand` (40),
+/// `sum3rand` (41) and `coin` (44): a fresh draw per output frame from the
+/// synth's random stream, scaled by the input - scsynth's `rand_a`/`rand_1` family, which read
+/// `mParent->mRGen`. Like every unary operator it draws once in its constructor too
+/// (`UnaryOpUGen_Ctor` runs the calc for one sample), and at scalar rate only there.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct RandUnaryOp {
+    op: u32,
+    a_audio: u32,
+}
+
+impl Unit for RandUnaryOp {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let op = self.op as i16;
+        let mut rgen = *ctx.rgen;
+        let ins = ctx.ins;
+        let out = ctx.outs.audio(0);
+        if self.a_audio != 0 {
+            for (o, &x) in out.iter_mut().zip(ins.audio(0)) {
+                *o = random_unary(op, &mut rgen, x);
+            }
+        } else {
+            let x = ins.control(0);
+            for o in out.iter_mut() {
+                *o = random_unary(op, &mut rgen, x);
+            }
+        }
+        *ctx.rgen = rgen;
+        DoneAction::Nothing
+    }
+}
+
 /// Constructor for [`UnaryOp`].
 pub struct UnaryOpCtor;
 
@@ -66,11 +127,18 @@ impl UnitDef for UnaryOpCtor {
         if ctx.input_rates.len() != 1 {
             return Err(BuildError::WrongInputCount);
         }
+        let a_audio = (ctx.input_rates[0] == Rate::Audio) as u32;
+        if is_random(ctx.special_index) {
+            return Ok(unit_spec(RandUnaryOp {
+                op: ctx.special_index as u32,
+                a_audio,
+            }));
+        }
         // Validate now so a bad operator fails at build, not silently at runtime.
         unary_op(ctx.special_index).ok_or(BuildError::UnsupportedOp(ctx.special_index))?;
         Ok(unit_spec(UnaryOp {
             op: ctx.special_index as u32,
-            a_audio: (ctx.input_rates[0] == Rate::Audio) as u32,
+            a_audio,
         }))
     }
 }
@@ -78,7 +146,8 @@ impl UnitDef for UnaryOpCtor {
 /// Map a SuperCollider unary operator index to its function (see SC's `opNeg`/`opAbs`/... enum in
 /// `SpecialSelectorsOperatorsAndClasses.h`; kernels match the calc functions in
 /// `UnaryOpUGens.cpp`). The RNG-driven ops (`opRand`/`opRand2`/`opLinRand`/`opBiLinRand`/
-/// `opSum3Rand`/`opCoin`) and the remaining non-signal ops (`opIsNil`/...) are absent;
+/// `opSum3Rand`/`opCoin`) draw from the synth's stream instead ([`random_unary`]), and the
+/// remaining non-signal ops (`opIsNil`/...) are absent;
 /// `opAsFloat`/`opAsInt` pass through, matching scsynth's `thru` default for both.
 ///
 /// Shared with the demand-rate `UnaryOpUGen`
