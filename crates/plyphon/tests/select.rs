@@ -86,6 +86,18 @@ fn select_picks_the_indexed_input() {
     );
 }
 
+#[test]
+fn select_out_of_int_range_picks_the_first_input() {
+    // scsynth's `(int32)in + 1` wraps for selectors outside the `int32` range, so they land on the
+    // first input rather than the last.
+    for which in [3.0e9, -3.0e9, f32::NAN] {
+        assert!(
+            (select(which) - 0.1).abs() < 1e-6,
+            "which {which} -> item 0"
+        );
+    }
+}
+
 /// `<name>.ar(bufnum=0, DC(index)) -> Out` against the given table.
 fn index(name: &str, table: &[f32], index_val: f32) -> f32 {
     let units = vec![
