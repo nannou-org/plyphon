@@ -1,19 +1,21 @@
 //! Chaotic map generators - plyphon's ports of scsynth's `CuspN`, `QuadN`, `GbmanN`, `LinCongN`,
-//! `StandardN`, `LatoocarfianN`, `CuspL`, `QuadL`, `HenonL`, `LorenzL` and `StandardL`
-//! (`ChaosUGens.cpp`).
+//! `StandardN`, `LatoocarfianN`, `FBSineN`, `CuspL`, `QuadL`, `HenonL`, `LorenzL`, `StandardL`,
+//! `FBSineL` and `FBSineC` (`ChaosUGens.cpp`).
 //!
 //! Each unit iterates a chaotic map - or, for `LorenzL`, integrates a system of ODEs - at a `freq`
 //! rate. The `*N` (non-interpolating) forms hold the iterate between iterations; the `*L` (linearly
-//! interpolating) forms ramp from the previous iterate to the current one across the hold. Maps and
-//! their internal state are computed in `f64`; `freq` and the map coefficients are read once per
-//! block.
+//! interpolating) forms ramp from the previous iterate to the current one across the hold; the `*C`
+//! (cubically interpolating) forms play the cubic through the last four iterates, which runs one
+//! iteration behind the `*L` ramp. Maps and their internal state are computed in `f64`; `freq` and
+//! the map coefficients are read once per block.
 //!
-//! The two families differ in three ways, each matching its scsynth counterpart:
+//! The units differ in three ways:
 //!
-//! - the `*L` units re-seed their state when an init input changes at run time (`HenonL` only once
-//!   its stability latch has tripped), while the `*N` units seed once and ignore later changes;
-//! - the `*L` hold length divides in `f64` and narrows to `f32`, while the `*N` one divides in pure
-//!   `f32`;
+//! - the `*L` and `*C` units and `FBSineN` re-seed their state when an init input changes at run
+//!   time (`HenonL` only once its stability latch has tripped), while the other `*N` units seed once
+//!   and ignore later changes;
+//! - the hold length of the `*L` and `*C` units and `FBSineN` divides in `f64` and narrows to `f32`,
+//!   while that of the other `*N` units divides in pure `f32`;
 //! - `StandardL` wraps its phase with a C-style truncating remainder, while `StandardN` wraps with a
 //!   Euclidean one, so the two disagree for phases far outside `[0, 2π)`.
 
@@ -52,12 +54,41 @@ fn samples_per_cycle(freq: f32, sr: f32) -> f32 {
 /// [`samples_per_cycle`] divides in pure `f32` instead. The hold length is never below one sample,
 /// so a map can iterate at most once per output sample.
 fn samples_per_cycle_slope(freq: f32, sample_rate: f64) -> (f32, f64) {
+    let spc = hold_length(freq, sample_rate);
+    (spc, f64::from(1.0 / spc))
+}
+
+/// The hold length in samples for a map running at `freq` Hz, as scsynth's prologues compute it:
+/// the `f64` sample rate divided by the clamped `f32` frequency, narrowed to `f32`, and one sample
+/// once `freq` reaches the sample rate.
+fn hold_length(freq: f32, sample_rate: f64) -> f32 {
     if f64::from(freq) < sample_rate {
-        let spc = (sample_rate / f64::from(freq.max(0.001))) as f32;
-        (spc, f64::from(1.0 / spc))
+        (sample_rate / f64::from(freq.max(0.001))) as f32
     } else {
-        (1.0, 1.0)
+        1.0
     }
+}
+
+/// scsynth's `ipol3Coef`: the coefficients `[c0, c1, c2, c3]` of the cubic through four successive
+/// iterates, which runs from `xnm2` at phase 0 to `xnm1` at phase 1.
+///
+/// The reference writes the weights as `float` literals, all exact in `f64`, so this is plain `f64`
+/// arithmetic in the reference's evaluation order. It is not `plyphon_dsp::interp::cubicinterp`,
+/// which evaluates a different arrangement of the same polynomial in `f32`.
+fn ipol3_coefs(xnm3: f64, xnm2: f64, xnm1: f64, xn: f64) -> [f64; 4] {
+    [
+        xnm2,
+        0.5 * (xnm1 - xnm3),
+        xnm3 - (2.5 * xnm2) + xnm1 + xnm1 - 0.5 * xn,
+        0.5 * (xn - xnm3) + 1.5 * (xnm2 - xnm1),
+    ]
+}
+
+/// scsynth's `ipol3`: the cubic `coefs` evaluated by Horner's rule at the phase `frac`, which the
+/// reference's `float` parameter narrows to `f32` before the `f64` evaluation.
+fn ipol3(frac: f64, coefs: &[f64; 4]) -> f64 {
+    let frac = f64::from(frac as f32);
+    ((coefs[3] * frac + coefs[2]) * frac + coefs[1]) * frac + coefs[0]
 }
 
 /// scsynth's quick 2π modulo: a fast path over `[-2π, 4π)` and a truncating fallback outside it.
@@ -172,6 +203,40 @@ fn chaos_interp(
         *frac += slope;
     }
     (x, xm1)
+}
+
+/// Drive a cubically interpolating map: iterate `map` every `samples_per_cycle` samples, shift the
+/// newest point into `history` (`[xnm1, xnm2, xnm3]`), refit `coefs` through the four points and
+/// write `out` of the cubic at the current phase. Returns the newest point.
+///
+/// As with [`chaos_interp`], only the interpolated variable is threaded through `map`. The cubic
+/// runs from `xnm2` to `xnm1`, one iteration behind the newest point, and `coefs` persist across
+/// blocks rather than being refitted on entry: a re-seed shifts `history` but leaves the current
+/// cubic playing until the next iteration.
+fn chaos_cubic(
+    ctx: &mut ProcessCtx<'_>,
+    counter: &mut f32,
+    frac: &mut f64,
+    history: &mut [f64; 3],
+    coefs: &mut [f64; 4],
+    xn: f64,
+    mut map: impl FnMut(f64) -> f64,
+) -> f64 {
+    let (spc, slope) = samples_per_cycle_slope(ctx.ins.control(0), ctx.own.sample_rate);
+    let mut x = xn;
+    for o in ctx.outs.audio(0).iter_mut() {
+        if *counter >= spc {
+            *counter -= spc;
+            *frac = 0.0;
+            *history = [x, history[0], history[1]];
+            x = map(x);
+            *coefs = ipol3_coefs(history[2], history[1], history[0], x);
+        }
+        *counter += 1.0;
+        *o = ipol3(*frac, coefs) as f32;
+        *frac += slope;
+    }
+    x
 }
 
 /// `CuspN.ar(freq, a, b, xi)`: the cusp map `x = a - b*sqrt(|x|)`.
@@ -754,6 +819,214 @@ impl Unit for StandardL {
     }
 }
 
+/// The feedback sine map `x = sin(im*y + fb*x)`, `y = (a*y + c) mod 2π`, shared by `FBSineN`,
+/// `FBSineL` and `FBSineC`. Returns the new `(x, y)`; `y` wraps through [`mod2pi`].
+fn fb_sine_map(im: f64, fb: f64, a: f64, c: f64, x: f64, y: f64) -> (f64, f64) {
+    (math::sin(im * y + fb * x), mod2pi(a * y + c))
+}
+
+/// `FBSineN.ar(freq, im, fb, a, c, xi, yi)`: the feedback sine map
+/// `x = sin(im*y + fb*x)`, `y = (a*y + c) mod 2π`.
+///
+/// A run-time change of `xi` or `yi` re-seeds both variables.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct FBSineN {
+    /// The current iterate, which the unit holds.
+    xn: f64,
+    /// The current phase.
+    yn: f64,
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// The `yi` input the state was last seeded from.
+    y0: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for FBSineN {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.x0 = f64::from(ctx.ins.control(5));
+        self.y0 = f64::from(ctx.ins.control(6));
+        self.xn = self.x0;
+        self.yn = self.y0;
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let spc = hold_length(ctx.ins.control(0), ctx.own.sample_rate);
+        let im = f64::from(ctx.ins.control(1));
+        let fb = f64::from(ctx.ins.control(2));
+        let a = f64::from(ctx.ins.control(3));
+        let c = f64::from(ctx.ins.control(4));
+        let xi = f64::from(ctx.ins.control(5));
+        let yi = f64::from(ctx.ins.control(6));
+        if self.x0 != xi || self.y0 != yi {
+            self.x0 = xi;
+            self.xn = xi;
+            self.y0 = yi;
+            self.yn = yi;
+        }
+
+        let (mut x, mut y) = (self.xn, self.yn);
+        for o in ctx.outs.audio(0).iter_mut() {
+            if self.counter >= spc {
+                self.counter -= spc;
+                (x, y) = fb_sine_map(im, fb, a, c, x, y);
+            }
+            self.counter += 1.0;
+            *o = x as f32;
+        }
+        self.xn = x;
+        self.yn = y;
+        DoneAction::Nothing
+    }
+}
+
+/// `FBSineL.ar(freq, im, fb, a, c, xi, yi)`: the feedback sine map, linearly interpolated.
+///
+/// A run-time change of `xi` or `yi` re-seeds both variables, shifting the running iterate into the
+/// history so the output ramps to the new seed.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct FBSineL {
+    /// The iterate the current hold ramps towards.
+    xn: f64,
+    /// The current phase.
+    yn: f64,
+    /// The iterate the current hold ramps from.
+    xnm1: f64,
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// The `yi` input the state was last seeded from.
+    y0: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for FBSineL {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.x0 = f64::from(ctx.ins.control(5));
+        self.y0 = f64::from(ctx.ins.control(6));
+        self.xn = self.x0;
+        self.yn = self.y0;
+        self.xnm1 = self.x0;
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let im = f64::from(ctx.ins.control(1));
+        let fb = f64::from(ctx.ins.control(2));
+        let a = f64::from(ctx.ins.control(3));
+        let c = f64::from(ctx.ins.control(4));
+        let xi = f64::from(ctx.ins.control(5));
+        let yi = f64::from(ctx.ins.control(6));
+        if self.x0 != xi || self.y0 != yi {
+            self.xnm1 = self.xn;
+            self.x0 = xi;
+            self.xn = xi;
+            self.y0 = yi;
+            self.yn = yi;
+        }
+
+        let mut yn = self.yn;
+        let (xn, xnm1) = chaos_interp(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            self.xn,
+            self.xnm1,
+            |x| {
+                let (nx, ny) = fb_sine_map(im, fb, a, c, x, yn);
+                yn = ny;
+                nx
+            },
+            |x| x,
+        );
+        self.xn = xn;
+        self.xnm1 = xnm1;
+        self.yn = yn;
+        DoneAction::Nothing
+    }
+}
+
+/// `FBSineC.ar(freq, im, fb, a, c, xi, yi)`: the feedback sine map, cubically interpolated.
+///
+/// A run-time change of `xi` or `yi` assigns `xi` to the newest iterate and shifts it into the
+/// history; the phase `y` is not re-seeded - `yi` is only cached for the comparison, exactly as the
+/// reference does. Until the first iteration the unit plays its zeroed cubic, so it emits silence
+/// for the first hold.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct FBSineC {
+    /// The newest iterate.
+    xn: f64,
+    /// The current phase.
+    yn: f64,
+    /// The previous three iterates, newest first (`xnm1`, `xnm2`, `xnm3`).
+    history: [f64; 3],
+    /// The coefficients of the cubic the current hold plays.
+    coefs: [f64; 4],
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// The `yi` input last seen.
+    y0: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for FBSineC {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.x0 = f64::from(ctx.ins.control(5));
+        self.y0 = f64::from(ctx.ins.control(6));
+        self.xn = self.x0;
+        self.yn = self.y0;
+        self.history = [self.x0; 3];
+        self.coefs = [0.0; 4];
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let im = f64::from(ctx.ins.control(1));
+        let fb = f64::from(ctx.ins.control(2));
+        let a = f64::from(ctx.ins.control(3));
+        let c = f64::from(ctx.ins.control(4));
+        let xi = f64::from(ctx.ins.control(5));
+        let yi = f64::from(ctx.ins.control(6));
+        if self.x0 != xi || self.y0 != yi {
+            // The newest iterate takes the seed before the shift, so the seed also lands in `xnm1`.
+            self.x0 = xi;
+            self.xn = xi;
+            self.y0 = yi;
+            self.history = [xi, self.history[0], self.history[1]];
+        }
+
+        let mut yn = self.yn;
+        self.xn = chaos_cubic(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            &mut self.history,
+            &mut self.coefs,
+            self.xn,
+            |x| {
+                let (nx, ny) = fb_sine_map(im, fb, a, c, x, yn);
+                yn = ny;
+                nx
+            },
+        );
+        self.yn = yn;
+        DoneAction::Nothing
+    }
+}
+
 /// Build a chaos generator with zeroed state and the given minimum input count. Every unit here
 /// seeds its own state in [`Unit::init`], on the audio thread, where the init inputs are readable,
 /// so the constructor never carries a meaningful value.
@@ -784,3 +1057,6 @@ chaos_ctor!(QuadLCtor, QuadL, 5);
 chaos_ctor!(HenonLCtor, HenonL, 5);
 chaos_ctor!(LorenzLCtor, LorenzL, 8);
 chaos_ctor!(StandardLCtor, StandardL, 4);
+chaos_ctor!(FBSineNCtor, FBSineN, 7);
+chaos_ctor!(FBSineLCtor, FBSineL, 7);
+chaos_ctor!(FBSineCCtor, FBSineC, 7);
