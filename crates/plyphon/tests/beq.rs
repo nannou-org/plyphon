@@ -1,5 +1,6 @@
-//! The BEQSuite RBJ biquads `BLowPass`, `BHiPass`, `BBandPass`, `BPeakEQ`, `BLowShelf` and
-//! `BHiShelf`: exact-unity identity settings, passband/stopband shapes, and boost/cut magnitudes.
+//! The BEQSuite RBJ biquads `BLowPass`, `BHiPass`, `BAllPass`, `BBandPass`, `BBandStop`,
+//! `BPeakEQ`, `BLowShelf` and `BHiShelf`: exact-unity identity settings, passband/stopband shapes,
+//! boost/cut magnitudes, and scsynth's own step response for the all-pass and band-stop.
 
 use plyphon::{AddAction, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine};
 
@@ -193,5 +194,69 @@ fn shelves_boost_their_side_by_the_requested_db() {
     assert!(
         (hi_far - 1.0).abs() < 0.06,
         "+12 dB BHiShelf leaves 100 Hz near unity (gain {hi_far})"
+    );
+}
+
+#[test]
+fn all_pass_is_unity_gain_at_every_frequency() {
+    for sig in [100.0, 1000.0, 8000.0] {
+        let g = filter_gain("BAllPass", &[1000.0, 1.0], sig);
+        assert!(
+            (g - 1.0).abs() < 0.03,
+            "BAllPass passes {sig} Hz at unity (gain {g})"
+        );
+    }
+}
+
+#[test]
+fn band_stop_notches_its_centre_and_passes_far_off_centre() {
+    let centre = filter_gain("BBandStop", &[1000.0, 1.0], 1000.0);
+    assert!(
+        centre < 0.02,
+        "BBandStop notches its centre (gain {centre})"
+    );
+    for sig in [100.0, 10_000.0] {
+        let g = filter_gain("BBandStop", &[1000.0, 1.0], sig);
+        assert!(
+            (g - 1.0).abs() < 0.06,
+            "BBandStop passes {sig} Hz near unity (gain {g})"
+        );
+    }
+}
+
+/// `<name>.ar(DC.ar(1), coefs...)`: the bit patterns of the step response's first block.
+fn step_response(name: &str, coefs: &[f32]) -> Vec<u32> {
+    let mut inputs = vec![u(0)];
+    inputs.extend(coefs.iter().map(|&c| InputRef::Constant(c)));
+    let dc = UnitSpec::new("DC", Rate::Audio, vec![InputRef::Constant(1.0)], 1);
+    let out = render(
+        vec![dc, UnitSpec::new(name, Rate::Audio, inputs, 1), out_unit(1)],
+        64,
+    );
+    out.iter().map(|s| s.to_bits()).collect()
+}
+
+#[test]
+fn all_pass_and_band_stop_match_scsynth_bit_for_bit() {
+    // scsynth's `BAllPass_Ctor`/`BBandStop_Ctor` filter the first input sample once (the
+    // constructor calc keeps its state), then `next_kk` filters the block with the same
+    // coefficients. The values are scsynth's, for a step of 1.0 at 48 kHz (freq 1200 and 1000 Hz,
+    // where `twopi * freq * SAMPLEDUR` and `freq * radiansPerSample` agree bit for bit).
+    let pick = |v: Vec<u32>| [v[0], v[1], v[2], v[3], v[63]];
+    assert_eq!(
+        pick(step_response("BAllPass", &[1200.0, 1.0])),
+        [0x3f16cf91, 0x3ebe13c2, 0x3e4c22db, 0x3d90c215, 0x3f7dc467]
+    );
+    assert_eq!(
+        pick(step_response("BAllPass", &[1000.0, 0.5])),
+        [0x3f50c0a1, 0x3f346e43, 0x3f1b26ac, 0x3f0523e0, 0x3f618549]
+    );
+    assert_eq!(
+        pick(step_response("BBandStop", &[1200.0, 1.0])),
+        [0x3f595172, 0x3f43a9c9, 0x3f31b1e3, 0x3f2371ba, 0x3f80256b]
+    );
+    assert_eq!(
+        pick(step_response("BBandStop", &[1000.0, 2.0])),
+        [0x3f3fc430, 0x3f1ed2a5, 0x3f054930, 0x3ee4750b, 0x3f805477]
     );
 }

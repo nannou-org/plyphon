@@ -1,5 +1,6 @@
 //! Resonant EQ / formant filters - plyphon's ports of scsynth's `Formlet` and `MidEQ`, plus the
-//! BEQSuite biquads `BLowPass`/`BHiPass`/`BBandPass`/`BPeakEQ`/`BLowShelf`/`BHiShelf`.
+//! BEQSuite biquads `BLowPass`/`BHiPass`/`BAllPass`/`BBandPass`/`BBandStop`/`BPeakEQ`/`BLowShelf`/
+//! `BHiShelf` (`FilterUGens.cpp`).
 //!
 //! `Formlet` is an FOF-like formant filter: two `Ringz`-style resonators (an attack and a decay) at
 //! the same frequency, subtracted so the impulse response swells in and rings out. `MidEQ` is a
@@ -213,8 +214,12 @@ pub enum BeqKind {
     LowPass,
     /// 12 dB/octave high-pass: `BHiPass.ar(in, freq, rq)`.
     HighPass,
+    /// Second-order all-pass (unity gain, phase turning through `freq`): `BAllPass.ar(in, freq, rq)`.
+    AllPass,
     /// Band-pass: `BBandPass.ar(in, freq, bw)`, with `bw` the bandwidth in octaves.
     BandPass,
+    /// Band-stop (notch): `BBandStop.ar(in, freq, bw)`, with `bw` the bandwidth in octaves.
+    BandStop,
     /// Peaking EQ (boost/cut of `db` around `freq`): `BPeakEQ.ar(in, freq, rq, db)`.
     PeakEQ,
     /// Low shelf (boost/cut of `db` below `freq`): `BLowShelf.ar(in, freq, rs, db)`, with `rs` the
@@ -234,6 +239,8 @@ impl BeqKind {
             BeqKind::PeakEQ => 3,
             BeqKind::LowShelf => 4,
             BeqKind::HighShelf => 5,
+            BeqKind::AllPass => 6,
+            BeqKind::BandStop => 7,
         }
     }
 
@@ -245,6 +252,8 @@ impl BeqKind {
             3 => BeqKind::PeakEQ,
             4 => BeqKind::LowShelf,
             5 => BeqKind::HighShelf,
+            6 => BeqKind::AllPass,
+            7 => BeqKind::BandStop,
             _ => BeqKind::LowPass,
         }
     }
@@ -285,6 +294,20 @@ impl BeqKind {
                 let b0rz = 1.0 / (1.0 + alpha);
                 let a0 = i * 0.5 * b0rz;
                 (a0, -i * b0rz, a0, cosw0 * 2.0 * b0rz, (1.0 - alpha) * -b0rz)
+            }
+            BeqKind::AllPass => {
+                let alpha = sinw0 * 0.5 * width;
+                let b0rz = 1.0 / (1.0 + alpha);
+                let a0 = (1.0 - alpha) * b0rz;
+                let b1 = 2.0 * b0rz * cosw0;
+                (a0, -b1, 1.0, b1, -a0)
+            }
+            BeqKind::BandStop => {
+                // scsynth writes ln(2)/2 as the literal 0.34657359027997, a hair off `0.5 * LN_2`.
+                let alpha = sinw0 * math::sinh((0.34657359027997 * width * w0) / sinw0);
+                let b0rz = 1.0 / (1.0 + alpha);
+                let b1 = 2.0 * b0rz * cosw0;
+                (b0rz, -b1, b0rz, b1, (1.0 - alpha) * -b0rz)
             }
             BeqKind::BandPass => {
                 // ln(2)/2 * bw * w0/sin(w0) maps the octave bandwidth onto the resonance.

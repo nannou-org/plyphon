@@ -301,7 +301,9 @@ impl UnitRegistry {
         // BEQSuite RBJ biquads (one kernel, response selected per name).
         registry.register("BLowPass", Box::new(BeqCtor(BeqKind::LowPass)));
         registry.register("BHiPass", Box::new(BeqCtor(BeqKind::HighPass)));
+        registry.register("BAllPass", Box::new(BeqCtor(BeqKind::AllPass)));
         registry.register("BBandPass", Box::new(BeqCtor(BeqKind::BandPass)));
+        registry.register("BBandStop", Box::new(BeqCtor(BeqKind::BandStop)));
         registry.register("BPeakEQ", Box::new(BeqCtor(BeqKind::PeakEQ)));
         registry.register("BLowShelf", Box::new(BeqCtor(BeqKind::LowShelf)));
         registry.register("BHiShelf", Box::new(BeqCtor(BeqKind::HighShelf)));
