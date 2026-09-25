@@ -1,7 +1,7 @@
 //! Chaotic map generators - plyphon's ports of scsynth's `CuspN`, `QuadN`, `GbmanN`, `LinCongN`,
 //! `StandardN`, `LatoocarfianN`, `FBSineN`, `HenonN`, `CuspL`, `QuadL`, `HenonL`, `LorenzL`,
-//! `StandardL`, `FBSineL`, `LatoocarfianL`, `FBSineC`, `HenonC` and `LatoocarfianC`
-//! (`ChaosUGens.cpp`).
+//! `StandardL`, `FBSineL`, `LatoocarfianL`, `LinCongL`, `FBSineC`, `HenonC`, `LatoocarfianC` and
+//! `LinCongC` (`ChaosUGens.cpp`).
 //!
 //! Each unit iterates a chaotic map - or, for `LorenzL`, integrates a system of ODEs - at a `freq`
 //! rate. The `*N` (non-interpolating) forms hold the iterate between iterations; the `*L` (linearly
@@ -12,9 +12,9 @@
 //!
 //! The units differ in three ways:
 //!
-//! - the `*L` and `*C` units, `FBSineN` and `HenonN` re-seed their state when an init input changes
-//!   at run time (the Hénon units only once their stability latch has tripped), while the other
-//!   `*N` units seed once and ignore later changes;
+//! - `FBSineN`, `HenonN` and the `*L` and `*C` units other than `LinCongL` and `LinCongC` re-seed
+//!   their state when an init input changes at run time (the Hénon units only once their stability
+//!   latch has tripped), while the other units seed once and ignore later changes;
 //! - the hold length of the `*L` and `*C` units, `FBSineN` and `HenonN` divides in `f64` and
 //!   narrows to `f32`, while that of the other `*N` units divides in pure `f32`;
 //! - `StandardL` wraps its phase with a C-style truncating remainder, while `StandardN` wraps with a
@@ -1373,6 +1373,137 @@ impl Unit for LatoocarfianC {
     }
 }
 
+/// scsynth's `sc_mod` for doubles: a floored modulo with a fast path over `[-hi, 2*hi)` and a
+/// `hi == 0 -> 0` guard.
+///
+/// Outside the fast path this subtracts `hi * floor(x / hi)`, which rounds differently from the
+/// exact remainder `rem_euclid` computes.
+fn sc_mod(mut x: f64, hi: f64) -> f64 {
+    if x >= hi {
+        x -= hi;
+        if x < hi {
+            return x;
+        }
+    } else if x < 0.0 {
+        x += hi;
+        if x >= 0.0 {
+            return x;
+        }
+    } else {
+        return x;
+    }
+    if hi == 0.0 {
+        return 0.0;
+    }
+    x - hi * math::floor(x / hi)
+}
+
+/// `LinCongL.ar(freq, a, c, m, xi)`: a linear-congruential generator, scaled to `[-1, 1)` and
+/// linearly interpolated.
+///
+/// The constructor seeds the ramp's start with the unscaled `xi` while every later start is a
+/// scaled iterate, so the first hold ramps from `xi` itself, exactly as the reference does. `xi` is
+/// read only by the constructor: a run-time change does not re-seed.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct LinCongL {
+    /// The current unscaled iterate.
+    xn: f64,
+    /// The scaled iterate the current hold ramps from.
+    xnm1: f64,
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for LinCongL {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        self.xn = f64::from(ctx.ins.control(4));
+        self.xnm1 = self.xn;
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let a = f64::from(ctx.ins.control(1));
+        let c = f64::from(ctx.ins.control(2));
+        let m = f64::from(ctx.ins.control(3).max(0.001));
+        let scale = 2.0 / m;
+        let mut xn = self.xn;
+        let (_, xnm1) = chaos_interp(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            xn * scale - 1.0,
+            self.xnm1,
+            |_| {
+                xn = sc_mod(xn * a + c, m);
+                xn * scale - 1.0
+            },
+            |x| x,
+        );
+        self.xn = xn;
+        self.xnm1 = xnm1;
+        DoneAction::Nothing
+    }
+}
+
+/// `LinCongC.ar(freq, a, c, m, xi)`: a linear-congruential generator, scaled to `[-1, 1)` and
+/// cubically interpolated.
+///
+/// The constructor fills the history and all four cubic coefficients with the unscaled `xi`, exactly
+/// as the reference does, so the first hold plays `xi*(1 + t + t^2 + t^3)` and the next few
+/// cubics are fitted through the unscaled `xi`. `xi` is read only by the constructor: a run-time
+/// change does not re-seed.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct LinCongC {
+    /// The current unscaled iterate.
+    xn: f64,
+    /// The previous three scaled iterates, newest first (`xnm1`, `xnm2`, `xnm3`).
+    history: [f64; 3],
+    /// The coefficients of the cubic the current hold plays.
+    coefs: [f64; 4],
+    /// How far the current hold has advanced, in units of one hold length.
+    frac: f64,
+    /// Samples emitted since the last iteration.
+    counter: f32,
+    _pad: u32,
+}
+
+impl Unit for LinCongC {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let xi = f64::from(ctx.ins.control(4));
+        self.xn = xi;
+        self.history = [xi; 3];
+        self.coefs = [xi; 4];
+        self.process(ctx)
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let a = f64::from(ctx.ins.control(1));
+        let c = f64::from(ctx.ins.control(2));
+        let m = f64::from(ctx.ins.control(3).max(0.001));
+        let scale = 2.0 / m;
+        let mut xn = self.xn;
+        chaos_cubic(
+            ctx,
+            &mut self.counter,
+            &mut self.frac,
+            &mut self.history,
+            &mut self.coefs,
+            xn * scale - 1.0,
+            |_| {
+                xn = sc_mod(xn * a + c, m);
+                xn * scale - 1.0
+            },
+        );
+        self.xn = xn;
+        DoneAction::Nothing
+    }
+}
+
 /// Build a chaos generator with zeroed state and the given minimum input count. Every unit here
 /// seeds its own state in [`Unit::init`], on the audio thread, where the init inputs are readable,
 /// so the constructor never carries a meaningful value.
@@ -1410,3 +1541,5 @@ chaos_ctor!(HenonNCtor, HenonN, 5);
 chaos_ctor!(HenonCCtor, HenonC, 5);
 chaos_ctor!(LatoocarfianLCtor, LatoocarfianL, 7);
 chaos_ctor!(LatoocarfianCCtor, LatoocarfianC, 7);
+chaos_ctor!(LinCongLCtor, LinCongL, 5);
+chaos_ctor!(LinCongCCtor, LinCongC, 5);

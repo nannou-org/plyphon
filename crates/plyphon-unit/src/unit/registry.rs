@@ -18,8 +18,8 @@ use crate::unit::buf_rd::BufRdCtor;
 use crate::unit::buf_wr::BufWrCtor;
 use crate::unit::chaos::{
     CuspLCtor, CuspNCtor, FBSineCCtor, FBSineLCtor, FBSineNCtor, GbmanNCtor, HenonCCtor,
-    HenonLCtor, HenonNCtor, LatoocarfianCCtor, LatoocarfianLCtor, LatoocarfianNCtor, LinCongNCtor,
-    LorenzLCtor, QuadLCtor, QuadNCtor, StandardLCtor, StandardNCtor,
+    HenonLCtor, HenonNCtor, LatoocarfianCCtor, LatoocarfianLCtor, LatoocarfianNCtor, LinCongCCtor,
+    LinCongLCtor, LinCongNCtor, LorenzLCtor, QuadLCtor, QuadNCtor, StandardLCtor, StandardNCtor,
 };
 #[cfg(feature = "fft")]
 use crate::unit::convolution::ConvolutionCtor;
@@ -475,6 +475,8 @@ impl UnitRegistry {
         registry.register("HenonC", Box::new(HenonCCtor));
         registry.register("LatoocarfianL", Box::new(LatoocarfianLCtor));
         registry.register("LatoocarfianC", Box::new(LatoocarfianCCtor));
+        registry.register("LinCongL", Box::new(LinCongLCtor));
+        registry.register("LinCongC", Box::new(LinCongCCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
         registry.register("BufRd", Box::new(BufRdCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
