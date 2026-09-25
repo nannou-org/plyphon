@@ -19,6 +19,8 @@ pub mod binary_op;
 pub mod buf_rd;
 pub mod buf_wr;
 pub mod chaos;
+#[cfg(feature = "fft")]
+pub mod convolution;
 pub mod decay;
 pub mod delay;
 pub mod deltap;
