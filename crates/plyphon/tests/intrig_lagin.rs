@@ -115,6 +115,44 @@ fn in_trig_reads_only_on_the_first_tick_when_reblocked() {
 }
 
 #[test]
+fn in_trig_passes_a_c_set_for_one_block() {
+    // scsynth's `/c_set`, `/c_setn` and `/c_fill` mark the channel written in the coming block.
+    let (mut controller, _nrt, mut world) = world(2);
+    controller.add_synthdef(reader("r", "InTrig", vec![c(2.0)], 2));
+    controller
+        .synth_new("r", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("reader");
+    assert_eq!(frame(&mut world, 2), [0.0, 0.0]);
+    controller.set_control_bus(3, 0.5).expect("c_set");
+    assert_eq!(frame(&mut world, 2), [0.0, 0.5]);
+    assert_eq!(frame(&mut world, 2), [0.0, 0.0]);
+    controller
+        .set_control_bus_n(2, &[0.25, 0.75])
+        .expect("c_setn");
+    assert_eq!(frame(&mut world, 2), [0.25, 0.75]);
+    assert_eq!(frame(&mut world, 2), [0.0, 0.0]);
+}
+
+#[test]
+fn out_kr_sums_onto_a_c_set_in_the_same_block() {
+    // The `/c_set` counts as the block's first write, so `Out.kr` sums onto it; the block after,
+    // `Out.kr` is the first writer again and copies.
+    let (mut controller, _nrt, mut world) = world(1);
+    controller.add_synthdef(writer("w", 3.0, 0.75));
+    controller.add_synthdef(reader("r", "In", vec![c(3.0)], 1));
+    controller
+        .synth_new("w", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("writer");
+    controller
+        .synth_new("r", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("reader");
+    assert_eq!(frame(&mut world, 1), [0.75]);
+    controller.set_control_bus(3, 0.5).expect("c_set");
+    assert_eq!(frame(&mut world, 1), [1.25]);
+    assert_eq!(frame(&mut world, 1), [0.75]);
+}
+
+#[test]
 fn in_trig_ahead_of_its_writer_reads_nothing() {
     // A writer later in the tree touches the channel after the reader has looked at it.
     let (mut controller, _nrt, mut world) = world(1);

@@ -144,8 +144,8 @@ impl ControlBusWindow {
 /// output zero (`InTrig_next_k_reblock`). An audio-rate `InTrig` outputs zero, as scsynth's
 /// `InTrig_Ctor` switches it to `ClearUnitOutputs`.
 ///
-/// scsynth's `/c_set` also marks the channels it sets as written; plyphon's does not, so here
-/// `InTrig` sees writes from units but not from `/c_set`.
+/// `/c_set`, `/c_setn` and `/c_fill` mark the channels they set as written in the coming block, so
+/// `InTrig` passes a set value for that one block.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct InTrig {

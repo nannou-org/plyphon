@@ -192,8 +192,8 @@ impl AudioBus {
 /// A bank of control-rate bus channels: one value per channel per control block.
 ///
 /// Like [`AudioBus`], channels track the block they were last written in, so multiple `Out.kr`
-/// into one channel sum. `/c_set` overwrites a channel without marking it touched, matching
-/// scsynth: a same-block `Out.kr` then overwrites it on its first (untouched) write.
+/// into one channel sum. `/c_set` marks the channels it sets as written in the coming block, as
+/// scsynth's does, so an `Out.kr` in that block sums onto the set value and `InTrig` reads it.
 #[derive(Clone, Debug)]
 pub struct ControlBus {
     data: Vec<f32>,
@@ -265,11 +265,13 @@ impl ControlBus {
         }
     }
 
-    /// Set channel `ch` to `value` (scsynth's `/c_set`): a persistent overwrite that does not mark
-    /// the channel touched, so a same-block `Out.kr` still overwrites rather than sums onto it.
-    pub fn set(&mut self, ch: usize, value: f32) {
-        if let Some(slot) = self.data.get_mut(ch) {
-            *slot = value;
+    /// Set channel `ch` to `value` and mark it written during block `buf_counter` (scsynth's
+    /// `/c_set`, `/c_setn` and `/c_fill`: `data[i] = value; touched[i] = bufCounter`). Out of range
+    /// is a no-op.
+    pub fn set(&mut self, ch: usize, buf_counter: u64, value: f32) {
+        if ch < self.num_channels {
+            self.data[ch] = value;
+            self.touched[ch] = buf_counter;
         }
     }
 }
