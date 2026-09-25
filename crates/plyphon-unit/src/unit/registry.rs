@@ -41,6 +41,8 @@ use crate::unit::demand::dseries::DseriesCtor;
 use crate::unit::demand::duty::{DutyCtor, TDutyCtor};
 use crate::unit::demand::dwhite::DwhiteCtor;
 use crate::unit::demand::dxrand::DxrandCtor;
+#[cfg(feature = "fft")]
+use crate::unit::demand::unpack1fft::Unpack1FftCtor;
 use crate::unit::disk_in::DiskInCtor;
 use crate::unit::disk_out::DiskOutCtor;
 use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor, LookAheadCtor, LookAheadMode};
@@ -90,6 +92,8 @@ use crate::unit::noise::{
 };
 use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
 use crate::unit::out::{OffsetOutCtor, OutCtor, ReplaceOutCtor, XOutCtor};
+#[cfg(feature = "fft")]
+use crate::unit::pack_fft::PackFftCtor;
 use crate::unit::pan::{
     Balance2Ctor, BiPanB2Ctor, DecodeB2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Pan4Ctor,
     PanAzCtor, PanB2Ctor, PanBCtor, Rotate2Ctor, XFade2Ctor,
@@ -652,6 +656,10 @@ impl UnitRegistry {
             registry.register("PV_BinShift", Box::new(PvBinShiftCtor));
             registry.register("PV_MagSmear", Box::new(PvMagSmearCtor));
             registry.register("PV_RectComb", Box::new(PvRectCombCtor));
+            // Spectrum <-> value-list bridge: `Unpack1FFT` reads one bin per pull, `PackFFT` packs a
+            // whole magnitude/phase list back into the chain buffer.
+            registry.register("PackFFT", Box::new(PackFftCtor));
+            registry.register_demand("Unpack1FFT", Box::new(Unpack1FftCtor));
         }
         registry
     }
