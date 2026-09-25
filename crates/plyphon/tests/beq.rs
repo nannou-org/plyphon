@@ -240,8 +240,7 @@ fn step_response(name: &str, coefs: &[f32]) -> Vec<u32> {
 fn all_pass_and_band_stop_match_scsynth_bit_for_bit() {
     // scsynth's `BAllPass_Ctor`/`BBandStop_Ctor` filter the first input sample once (the
     // constructor calc keeps its state), then `next_kk` filters the block with the same
-    // coefficients. The values are scsynth's, for a step of 1.0 at 48 kHz (freq 1200 and 1000 Hz,
-    // where `twopi * freq * SAMPLEDUR` and `freq * radiansPerSample` agree bit for bit).
+    // coefficients. The values are scsynth's, for a step of 1.0 at 48 kHz.
     let pick = |v: Vec<u32>| [v[0], v[1], v[2], v[3], v[63]];
     assert_eq!(
         pick(step_response("BAllPass", &[1200.0, 1.0])),
