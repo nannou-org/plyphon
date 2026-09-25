@@ -31,6 +31,7 @@ use crate::unit::demand::BuiltDemandUnit;
 use crate::unit::demand::dbrown::DbrownCtor;
 use crate::unit::demand::dbufrd::DbufrdCtor;
 use crate::unit::demand::dbufwr::DbufwrCtor;
+use crate::unit::demand::ddup::DdupCtor;
 use crate::unit::demand::demand_op::{DemandBinaryOpCtor, DemandUnaryOpCtor};
 use crate::unit::demand::demand_ugen::DemandCtor;
 use crate::unit::demand::dgeom::DgeomCtor;
@@ -631,6 +632,8 @@ impl UnitRegistry {
         registry.register_demand("Dbufrd", Box::new(DbufrdCtor));
         registry.register_demand("Dbufwr", Box::new(DbufwrCtor));
         registry.register_demand("Dpoll", Box::new(DpollCtor));
+        registry.register_demand("Ddup", Box::new(DdupCtor));
+        registry.register_demand("Dstutter", Box::new(DdupCtor));
         // The math operators also run at demand rate, where they pull their operands and yield the
         // operator applied to them (the calc-rate registrations above are untouched).
         registry.register_demand("BinaryOpUGen", Box::new(DemandBinaryOpCtor));

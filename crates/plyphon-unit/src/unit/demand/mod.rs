@@ -25,6 +25,7 @@
 pub mod dbrown;
 pub mod dbufrd;
 pub mod dbufwr;
+pub mod ddup;
 pub mod demand_op;
 pub mod demand_ugen;
 pub mod dgeom;
@@ -55,6 +56,7 @@ use crate::unit::{
 pub use dbrown::Dbrown;
 pub use dbufrd::Dbufrd;
 pub use dbufwr::Dbufwr;
+pub use ddup::Ddup;
 pub use demand_op::{DemandBinaryOp, DemandUnaryOp};
 pub use demand_ugen::Demand;
 pub use dgeom::Dgeom;
