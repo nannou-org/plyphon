@@ -12,9 +12,9 @@
 //!
 //! The units differ in two ways:
 //!
-//! - every unit but `GbmanN`, `GbmanL` and the three `LinCong*` units re-seeds its state when an init
-//!   input changes at run time (the Hénon units only once their stability latch has tripped), while
-//!   those five read their init inputs only in the constructor;
+//! - every unit but `GbmanN`, `GbmanL` and the three `LinCong*` units re-seeds its state when an
+//!   init input changes at run time (the Hénon units only once their stability latch has tripped),
+//!   while those five read their init inputs only in the constructor;
 //! - the hold length of the `*L` and `*C` units, `FBSineN` and `HenonN` divides in `f64` and
 //!   narrows to `f32`, while that of the other `*N` units divides in pure `f32`;
 
@@ -111,6 +111,31 @@ fn mod2pi(mut x: f64) -> f64 {
         return x;
     }
     x - TWO_PI * f64::from((x * REC_TWO_PI) as i32)
+}
+
+/// scsynth's `sc_mod` for doubles: a floored modulo with a fast path over `[-hi, 2*hi)` and a
+/// `hi == 0 -> 0` guard.
+///
+/// Outside the fast path this subtracts `hi * floor(x / hi)`, which rounds differently from the
+/// exact remainder `rem_euclid` computes.
+fn sc_mod(mut x: f64, hi: f64) -> f64 {
+    if x >= hi {
+        x -= hi;
+        if x < hi {
+            return x;
+        }
+    } else if x < 0.0 {
+        x += hi;
+        if x >= 0.0 {
+            return x;
+        }
+    } else {
+        return x;
+    }
+    if hi == 0.0 {
+        return 0.0;
+    }
+    x - hi * math::floor(x / hi)
 }
 
 /// The cusp map `x = a - b*sqrt(|x|)`, shared by `CuspN` and `CuspL`.
@@ -336,6 +361,9 @@ impl Unit for QuadN {
 }
 
 /// `LinCongN.ar(freq, a, c, m, xi)`: a linear-congruential generator, scaled to `[-1, 1)`.
+///
+/// The modulo is scsynth's floored `sc_mod`. `xi` is read only by the constructor: a run-time
+/// change does not re-seed.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LinCongN {
@@ -358,7 +386,7 @@ impl Unit for LinCongN {
             ctx,
             &mut self.counter,
             self.xn,
-            |x| math::rem_euclid(x * a + c, m),
+            |x| sc_mod(x * a + c, m),
             |x| x * (2.0 / m) - 1.0,
         );
         DoneAction::Nothing
@@ -1439,31 +1467,6 @@ impl Unit for LatoocarfianC {
         self.yn = yn;
         DoneAction::Nothing
     }
-}
-
-/// scsynth's `sc_mod` for doubles: a floored modulo with a fast path over `[-hi, 2*hi)` and a
-/// `hi == 0 -> 0` guard.
-///
-/// Outside the fast path this subtracts `hi * floor(x / hi)`, which rounds differently from the
-/// exact remainder `rem_euclid` computes.
-fn sc_mod(mut x: f64, hi: f64) -> f64 {
-    if x >= hi {
-        x -= hi;
-        if x < hi {
-            return x;
-        }
-    } else if x < 0.0 {
-        x += hi;
-        if x >= 0.0 {
-            return x;
-        }
-    } else {
-        return x;
-    }
-    if hi == 0.0 {
-        return 0.0;
-    }
-    x - hi * math::floor(x / hi)
 }
 
 /// `LinCongL.ar(freq, a, c, m, xi)`: a linear-congruential generator, scaled to `[-1, 1)` and

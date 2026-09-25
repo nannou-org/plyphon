@@ -628,6 +628,17 @@ fn standard_n_wraps_like_mod2pi() {
     );
 }
 
+/// `LinCongN` takes its modulo through scsynth's `sc_mod`, which parts from the exact remainder once
+/// the quotient passes `2^29`.
+#[test]
+fn lin_cong_n_wraps_like_sc_mod() {
+    assert_bits(
+        &render("LinCongN", LIN_CONG_WIDE, BLOCK),
+        &LIN_CONG_N_WIDE,
+        "LinCongN (wide)",
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Reblocking and arity
 // ---------------------------------------------------------------------------------------------
@@ -1976,4 +1987,17 @@ const STANDARD_N_WIDE_FAST_LATER: [(usize, u32); 4] = [
     (1023, 0xbf2b_8eef),
     (2047, 0x3d88_b149),
     (4095, 0xbda4_d8e9),
+];
+#[rustfmt::skip]
+const LIN_CONG_N_WIDE: [u32; 64] = [
+    0xbe92_4924, 0xbe92_4924, 0xbe92_4924, 0xbe92_4924, 0xbe92_4924, 0xbe92_4924, 0x3ef2_6ab8,
+    0x3ef2_6ab8, 0x3ef2_6ab8, 0x3ef2_6ab8, 0x3ef2_6ab8, 0x3ef2_6ab8, 0x3ef2_6ab8, 0x3f5c_0bae,
+    0x3f5c_0bae, 0x3f5c_0bae, 0x3f5c_0bae, 0x3f5c_0bae, 0x3f5c_0bae, 0x3f5c_0bae, 0x3e77_685d,
+    0x3e77_685d, 0x3e77_685d, 0x3e77_685d, 0x3e77_685d, 0x3e77_685d, 0x3e77_685d, 0xbec5_3497,
+    0xbec5_3497, 0xbec5_3497, 0xbec5_3497, 0xbec5_3497, 0xbec5_3497, 0xbec5_3497, 0x3f20_b74f,
+    0x3f20_b74f, 0x3f20_b74f, 0x3f20_b74f, 0x3f20_b74f, 0x3f20_b74f, 0x3f20_b74f, 0xbe0d_967f,
+    0xbe0d_967f, 0xbe0d_967f, 0xbe0d_967f, 0xbe0d_967f, 0xbe0d_967f, 0xbe0d_967f, 0x3ecd_3e61,
+    0x3ecd_3e61, 0x3ecd_3e61, 0x3ecd_3e61, 0x3ecd_3e61, 0x3ecd_3e61, 0xbe29_27d1, 0xbe29_27d1,
+    0xbe29_27d1, 0xbe29_27d1, 0xbe29_27d1, 0xbe29_27d1, 0xbe29_27d1, 0x3e15_89b8, 0x3e15_89b8,
+    0x3e15_89b8,
 ];
