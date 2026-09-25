@@ -134,7 +134,10 @@ pub struct Controller {
     def_ids: HashMap<String, u32>,
     /// Retired compiled defs (superseded by a redefinition, or freed) awaiting their last
     /// audio-thread reference to drop; drained by [`reap_retired_defs`](Self::reap_retired_defs).
-    retiring: Vec<Arc<GraphDef>>,
+    /// A freed def carries its `def_id`, which returns to `free_def_ids` once the def is reaped.
+    retiring: Vec<(Arc<GraphDef>, Option<u32>)>,
+    /// `def_id`s of freed defs, reused before minting a new one.
+    free_def_ids: Vec<u32>,
     next_def_id: u32,
     audio: RateInfo,
     control: RateInfo,
@@ -162,6 +165,7 @@ impl Controller {
             compiled: HashMap::new(),
             def_ids: HashMap::new(),
             retiring: Vec::new(),
+            free_def_ids: Vec::new(),
             next_def_id: 0,
             audio,
             control,
@@ -267,8 +271,9 @@ impl Controller {
 
     /// Shared body of the `add_synthdef*` methods: retire any compiled form and store.
     fn insert_def(&mut self, def: SynthDef) {
+        // A redefinition keeps the name's `def_id`, so there is no id to reclaim.
         if let Some(old) = self.compiled.remove(&def.name) {
-            self.retiring.push(old);
+            self.retiring.push((old, None));
         }
         self.defs.insert(def);
         self.reap_retired_defs();
@@ -284,8 +289,9 @@ impl Controller {
     /// with this name fails until the def is added again. Returns whether a def by that name existed.
     ///
     /// The compiled `Arc` is retired (see [`reap_retired_defs`](Self::reap_retired_defs)), so the
-    /// def-table slot's drop on the audio thread is never the final reference; the `def_id` stays
-    /// reserved, so re-adding the same name reuses its slot.
+    /// def-table slot's drop on the audio thread is never the final reference. The `def_id` is
+    /// reused by another def once the retired def is reaped, so the id space is bounded by live
+    /// defs, as scsynth's def table is.
     pub fn free_def(&mut self, name: &str) -> Result<bool, QueueFull> {
         let known = self.defs.get(name).is_some() || self.compiled.contains_key(name);
         if !known {
@@ -296,8 +302,11 @@ impl Controller {
         if let Some(&def_id) = self.def_ids.get(name) {
             self.send_now(Command::FreeGraphDef { def_id })?;
         }
+        let freed_id = self.def_ids.remove(name);
         if let Some(old) = self.compiled.remove(name) {
-            self.retiring.push(old);
+            self.retiring.push((old, freed_id));
+        } else if let Some(def_id) = freed_id {
+            self.free_def_ids.push(def_id);
         }
         self.defs.remove(name);
         self.graph_rate.remove(name);
@@ -315,10 +324,10 @@ impl Controller {
         Ok(())
     }
 
-    /// Drop every retired `GraphDef` the audio thread has finished with, reclaiming its memory on
-    /// the control thread. Cheap and allocation-free; [`add_synthdef`](Self::add_synthdef) and
-    /// [`free_def`](Self::free_def) call it opportunistically, but a long-running host should also
-    /// call it periodically (e.g. once per control tick) so a def pinned only by a since-freed synth
+    /// Drop every retired `GraphDef` the audio thread has finished with, reclaiming its memory
+    /// (and any freed `def_id`) on the control thread. Cheap; [`add_synthdef`](Self::add_synthdef)
+    /// and [`free_def`](Self::free_def) call it opportunistically, but a long-running host should
+    /// also call it periodically (e.g. once per control tick) so a def pinned only by a since-freed synth
     /// is reclaimed promptly rather than waiting for the next def change.
     ///
     /// A retired def's `Arc::strong_count` reaching 1 means this `Vec` holds the only remaining
@@ -329,7 +338,14 @@ impl Controller {
     /// `strong_count == 1` is therefore a stable terminal state (no later clone can occur), and the
     /// relaxed snapshot can only ever read stale-high (reaping one cycle late), never stale-low.
     pub fn reap_retired_defs(&mut self) {
-        self.retiring.retain(|def| Arc::strong_count(def) > 1);
+        let free_def_ids = &mut self.free_def_ids;
+        self.retiring.retain(|(def, def_id)| {
+            let live = Arc::strong_count(def) > 1;
+            if !live {
+                free_def_ids.extend(*def_id);
+            }
+            live
+        });
     }
 
     /// The number of retired `GraphDef`s still awaiting reclamation (not yet dropped by
@@ -416,15 +432,21 @@ impl Controller {
                 resample,
             )?
         };
-        // Assign a stable def_id (reused if this name was compiled before).
+        // Assign a stable def_id (reused if this name was compiled before, else a freed id).
         let def_id = match self.def_ids.get(def_name).copied() {
             Some(id) => id,
             None => {
-                let id = self.next_def_id;
-                if id as usize >= self.max_synthdefs {
-                    return Err(SynthNewError::TooManyDefs);
-                }
-                self.next_def_id += 1;
+                let id = match self.free_def_ids.pop() {
+                    Some(id) => id,
+                    None => {
+                        let id = self.next_def_id;
+                        if id as usize >= self.max_synthdefs {
+                            return Err(SynthNewError::TooManyDefs);
+                        }
+                        self.next_def_id += 1;
+                        id
+                    }
+                };
                 self.def_ids.insert(def_name.to_string(), id);
                 id
             }
