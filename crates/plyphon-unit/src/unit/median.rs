@@ -1,8 +1,8 @@
 //! `Median` - plyphon's port of scsynth's running-median filter.
 //!
 //! Keeps the last `length` input samples in a parallel value/age array pair, always sorted by value,
-//! and outputs the middle element. `length` is a compile-time constant (odd, at most 32), so the state
-//! is a fixed in-struct array - no allocation. Good for removing impulsive spikes while preserving
+//! and outputs the middle element. `length` is read once when the synth starts (at most 32), so the
+//! state is a fixed in-struct array - no allocation. Good for removing impulsive spikes while preserving
 //! edges better than an averaging low-pass.
 
 use bytemuck::{Pod, Zeroable};
@@ -14,8 +14,8 @@ use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec};
 /// scsynth's `kMAXMEDIANSIZE`.
 const MAX_MEDIAN: usize = 32;
 
-/// `Median.ar/kr(length, in)`: the running median of the last `length` samples (`length` a constant
-/// odd number, capped at 32). Input `0` is `length`; input `1` is the signal.
+/// `Median.ar/kr(length, in)`: the running median of the last `length` samples (`length` read once at
+/// synth start, clamped to `1..=32`). Input `0` is `length`; input `1` is the signal.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Median {
@@ -67,6 +67,8 @@ impl Median {
 
 impl Unit for Median {
     fn init(&mut self, ctx: &InitCtx<'_>) {
+        // scsynth's `Median_Ctor`: `sc_clip((int)ZIN0(0), 1, kMAXMEDIANSIZE)`.
+        self.size = (ctx.ins.control(Self::LENGTH) as i32).clamp(1, MAX_MEDIAN as i32) as u32;
         // Seed the window with the first input, ages ascending (scsynth's `Median_InitMedian`).
         let v = ctx.ins.control(Self::IN);
         for i in 0..self.size as usize {
@@ -83,8 +85,8 @@ impl Unit for Median {
     }
 }
 
-/// Constructor for [`Median`]. The window `length` must be a compile-time constant (as in scsynth,
-/// where it is read once at ctor).
+/// Constructor for [`Median`]. The window `length` is read once when the synth starts, as scsynth's
+/// constructor reads it.
 pub struct MedianCtor;
 
 impl UnitDef for MedianCtor {
@@ -92,16 +94,10 @@ impl UnitDef for MedianCtor {
         if ctx.input_rates.len() < 2 {
             return Err(BuildError::WrongInputCount);
         }
-        let length = ctx
-            .const_input(Median::LENGTH)
-            .ok_or(BuildError::AuxRequiresConstant {
-                input: Median::LENGTH,
-            })?;
-        let size = (length as i32).clamp(1, MAX_MEDIAN as i32) as u32;
         Ok(unit_spec(Median {
             values: [0.0; MAX_MEDIAN],
             ages: [0; MAX_MEDIAN],
-            size,
+            size: 1,
         }))
     }
 }

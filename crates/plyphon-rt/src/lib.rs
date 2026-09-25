@@ -32,7 +32,7 @@ pub mod tree;
 pub mod world;
 
 pub use command::{Command, CommandTime, Event, NodeNotify, Reply, TimedCommand, Trash};
-pub use graph::Graph;
+pub use graph::{AuxSlots, Graph};
 pub use nrt::Nrt;
 pub use options::{Options, ROOT_GROUP_ID};
 pub use plyphon_unit::unit::{NodeMsg, NodeMsgKind, Trigger};

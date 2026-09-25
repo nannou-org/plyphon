@@ -6,17 +6,17 @@
 //! diffused into a decorrelated stereo pair. `roomsize` sets the delay lengths (and, with `spread`, the
 //! diffuser lengths), `revtime` the decay, `damping` the high-frequency loss.
 //!
-//! All delay/diffuser buffers live in [aux memory](crate::unit::Aux), sized at build time. scsynth
-//! sizes the diffusers from the *initial* `roomsize`/`spread` and only rescales the FDN lengths when
-//! `roomsize` is modulated; plyphon instead requires `roomsize`, `spread` and `maxroomsize` to be
-//! compile-time constants (so the whole aux layout is fixed), leaving `revtime`/`damping`/the levels
-//! freely modulatable. The lines are zeroed on the first block.
+//! All delay/diffuser buffers live in [aux memory](crate::unit::Aux), allocated when the synth starts
+//! and laid out from the first values of `roomsize`, `spread` and `maxroomsize`, as scsynth's
+//! `GVerb_Ctor` does. scsynth later rescales the FDN lengths when `roomsize` is modulated; plyphon
+//! keeps the layout from the start, leaving `revtime`/`damping`/the levels freely modulatable. The
+//! lines are zeroed on the first block.
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_aux};
+use crate::unit::{Aux, BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_pool};
 use plyphon_dsp::math;
 
 const FDN: usize = 4;
@@ -167,12 +167,15 @@ pub struct GVerb {
 
 impl GVerb {
     const IN: usize = 0;
+    const ROOMSIZE: usize = 1;
     const REVTIME: usize = 2;
     const DAMPING: usize = 3;
     const INPUTBW: usize = 4;
     const DRYLEVEL: usize = 6;
     const EARLYLEVEL: usize = 7;
     const TAILLEVEL: usize = 8;
+    const SPREAD: usize = 5;
+    const MAXROOMSIZE: usize = 9;
 
     /// Recompute the decay base and the FDN/tap gains from `revtime`.
     fn set_revtime(&mut self, sr: f64, revtime: f32, n: usize) {
@@ -193,7 +196,120 @@ impl GVerb {
     }
 }
 
+/// scsynth's `gverb_set_roomsize`: a `roomsize` at or below 1 becomes 1, and one at or above
+/// `maxroomsize` becomes `maxroomsize - 1`, so the FDN lines never outgrow their `maxroomsize`-sized
+/// buffers. Applied at construction too, which scsynth's constructor comment specifies.
+fn clamp_roomsize(roomsize: f32, maxroomsize: f32) -> f32 {
+    if roomsize <= 1.0 {
+        1.0
+    } else if roomsize >= maxroomsize {
+        maxroomsize - 1.0
+    } else {
+        roomsize
+    }
+}
+
 impl Unit for GVerb {
+    // `0.707100` is scsynth's literal FDN scale (not exactly 1/sqrt(2)); keep it verbatim. The layout
+    // loops index parallel `[_; NBUF]`/`[_; FDN]` arrays, which reads clearest as indexed loops.
+    #[allow(clippy::approx_constant, clippy::needless_range_loop)]
+    fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
+        let sr = ctx.audio.sample_rate;
+        let maxroomsize = ctx.ins.control(Self::MAXROOMSIZE).max(1.0001);
+        let roomsize = clamp_roomsize(ctx.ins.control(Self::ROOMSIZE), maxroomsize);
+        let spread = ctx.ins.control(Self::SPREAD);
+
+        // Saturating float-to-int casts and sums throughout, so an out-of-range input asks for more
+        // than any pool holds instead of wrapping into a small layout.
+        let maxdelay = (sr * maxroomsize as f64 / 340.0) as u64;
+        let largestdelay = sr * roomsize as f64 / 340.0;
+
+        // FDN line lengths (scsynth's `gbmul`); line 0 is snapped to a prime once the memory exists.
+        let gbmul = [1.0, 0.816_49, 0.707_1, 0.632_45];
+        let mut fdnlens = [0u64; FDN];
+        for j in 1..FDN {
+            fdnlens[j] = fround((gbmul[j] * largestdelay) as f32).max(1) as u64;
+        }
+
+        // Diffuser lengths from the FDN and `spread` (scsynth's diffuser section).
+        let diffscale = fdnlens[3] as f32 / (210.0 + 159.0 + 562.0 + 410.0);
+        let dif_sizes = |sp1: f32, r1: f32, r2: f32| -> [u64; 4] {
+            let b = 210i64;
+            let a1 = (sp1 * r1) as i32 as i64;
+            let c = 210 + 159 + a1;
+            let cc = c - b;
+            let a2 = (3.0 * sp1 * r2) as i32 as i64;
+            let d = 210 + 159 + 562 + a2;
+            let dd = d - c;
+            let e = 1341 - d;
+            [b, cc, dd, e].map(|x| fround(diffscale * x as f32).max(1) as u64)
+        };
+        let ldif = dif_sizes(spread, 0.125_541, 0.854_046);
+        let rdif = dif_sizes(spread, -0.568_366, -0.126_815);
+
+        // Lay out the 13 buffers: tap delay, four FDN lines (capacity maxdelay+1000), eight diffusers.
+        let fdn_cap = maxdelay.saturating_add(1000);
+        let caps: [u64; NBUF] = [
+            TAP_LEN as u64,
+            fdn_cap,
+            fdn_cap,
+            fdn_cap,
+            fdn_cap,
+            ldif[0],
+            ldif[1],
+            ldif[2],
+            ldif[3],
+            rdif[0],
+            rdif[1],
+            rdif[2],
+            rdif[3],
+        ];
+        let mut off = [0u64; NBUF];
+        let mut total = 0u64;
+        for k in 0..NBUF {
+            off[k] = total;
+            total = total.saturating_add(caps[k]);
+        }
+        let bytes = total
+            .checked_mul(core::mem::size_of::<f32>() as u64)
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .unwrap_or(usize::MAX);
+        if !aux.alloc(bytes) {
+            return;
+        }
+
+        // Every length and offset now lies within the allocation, so it fits in `u32`, and the prime
+        // search is bounded by memory that exists.
+        let gb0 = (gbmul[0] * largestdelay) as f32;
+        fdnlens[0] = nearest_prime(gb0 as i64, 0.5).max(1) as u64;
+        let sizes: [u64; NBUF] = [
+            TAP_LEN as u64,
+            fdnlens[0],
+            fdnlens[1],
+            fdnlens[2],
+            fdnlens[3],
+            ldif[0],
+            ldif[1],
+            ldif[2],
+            ldif[3],
+            rdif[0],
+            rdif[1],
+            rdif[2],
+            rdif[3],
+        ];
+        for k in 0..NBUF {
+            self.off[k] = off[k] as u32;
+            self.size[k] = sizes[k] as u32;
+        }
+        // Early-reflection taps.
+        self.taps = [
+            5 + (0.410 * largestdelay) as u32,
+            5 + (0.300 * largestdelay) as u32,
+            5 + (0.155 * largestdelay) as u32,
+            5,
+        ];
+    }
+
     fn init(&mut self, ctx: &InitCtx<'_>) {
         let sr = ctx.own.sample_rate;
         let revtime = ctx.ins.control(Self::REVTIME);
@@ -385,135 +501,42 @@ impl Unit for GVerb {
     }
 }
 
-/// Constructor for [`GVerb`]. Lays out the 13 delay/diffuser buffers in aux from the constant
-/// `roomsize`, `spread` and `maxroomsize`.
+/// Constructor for [`GVerb`]. The 13 delay/diffuser buffers are allocated when the synth starts, laid
+/// out from the first values of `roomsize`, `spread` and `maxroomsize`.
 pub struct GVerbCtor;
 
 impl UnitDef for GVerbCtor {
-    // `0.707100` is scsynth's literal FDN scale (not exactly 1/sqrt(2)); keep it verbatim. The build
-    // loops index parallel `[_; NBUF]`/`[_; FDN]` arrays, which reads clearest as indexed loops.
-    #[allow(clippy::approx_constant, clippy::needless_range_loop)]
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         if ctx.input_rates.len() < 10 {
             return Err(BuildError::WrongInputCount);
         }
-        let sr = ctx.audio.sample_rate;
-        let need_const = |i: usize| {
-            ctx.const_input(i)
-                .ok_or(BuildError::AuxRequiresConstant { input: i })
-        };
-        let roomsize = need_const(1)?;
-        let spread = need_const(5)?;
-        let maxroomsize = need_const(9)?.max(1.0001);
-
-        let maxdelay = (sr * maxroomsize as f64 / 340.0) as usize;
-        let largestdelay = sr * roomsize.max(1.0) as f64 / 340.0;
-
-        // FDN line lengths (scsynth's `gbmul`); line 0 snapped to a prime.
-        let gbmul = [1.0, 0.816_49, 0.707_1, 0.632_45];
-        let mut fdnlens = [0usize; FDN];
-        for j in 0..FDN {
-            let gb = (gbmul[j] * largestdelay) as f32;
-            fdnlens[j] = if j == 0 {
-                nearest_prime(gb as i64, 0.5).max(1) as usize
-            } else {
-                fround(gb).max(1) as usize
-            };
-        }
-
-        // Diffuser lengths from the FDN and `spread` (scsynth's diffuser section).
-        let diffscale = fdnlens[3] as f32 / (210.0 + 159.0 + 562.0 + 410.0);
-        let dif_sizes = |sp1: f32, r1: f32, r2: f32| -> [usize; 4] {
-            let b = 210i32;
-            let a1 = (sp1 * r1) as i32;
-            let c = 210 + 159 + a1;
-            let cc = c - b;
-            let a2 = (3.0 * sp1 * r2) as i32;
-            let d = 210 + 159 + 562 + a2;
-            let dd = d - c;
-            let e = 1341 - d;
-            [
-                fround(diffscale * b as f32).max(1) as usize,
-                fround(diffscale * cc as f32).max(1) as usize,
-                fround(diffscale * dd as f32).max(1) as usize,
-                fround(diffscale * e as f32).max(1) as usize,
-            ]
-        };
-        let ldif = dif_sizes(spread, 0.125_541, 0.854_046);
-        let rdif = dif_sizes(spread, -0.568_366, -0.126_815);
-
-        // Early-reflection taps.
-        let taps = [
-            5 + (0.410 * largestdelay) as u32,
-            5 + (0.300 * largestdelay) as u32,
-            5 + (0.155 * largestdelay) as u32,
-            5,
-        ];
-
-        // Lay out the 13 buffers: tap delay, four FDN lines (capacity maxdelay+1000), eight diffusers.
-        let caps: [usize; NBUF] = [
-            TAP_LEN,
-            maxdelay + 1000,
-            maxdelay + 1000,
-            maxdelay + 1000,
-            maxdelay + 1000,
-            ldif[0],
-            ldif[1],
-            ldif[2],
-            ldif[3],
-            rdif[0],
-            rdif[1],
-            rdif[2],
-            rdif[3],
-        ];
-        let sizes: [usize; NBUF] = [
-            TAP_LEN, fdnlens[0], fdnlens[1], fdnlens[2], fdnlens[3], ldif[0], ldif[1], ldif[2],
-            ldif[3], rdif[0], rdif[1], rdif[2], rdif[3],
-        ];
-        let mut off = [0u32; NBUF];
-        let mut cursor = 0usize;
-        for k in 0..NBUF {
-            off[k] = cursor as u32;
-            cursor += caps[k];
-        }
-        let total = cursor;
-
-        let mut size = [0u32; NBUF];
-        for k in 0..NBUF {
-            size[k] = sizes[k] as u32;
-        }
-
-        Ok(unit_spec_aux(
-            GVerb {
-                alpha: 0.0,
-                off,
-                size,
-                idx: [0; NBUF],
-                taps,
-                coef: [0.75, 0.75, 0.625, 0.625, 0.75, 0.75, 0.625, 0.625],
-                fdngains: [0.0; FDN],
-                fdngainslopes: [0.0; FDN],
-                tapgains: [0.0; FDN],
-                tapgainslopes: [0.0; FDN],
-                input_damping: 0.0,
-                input_delay: 0.0,
-                fdn_damping: 0.0,
-                fdn_delay: [0.0; FDN],
-                drylevel: 0.0,
-                earlylevel: 0.0,
-                taillevel: 0.0,
-                drylevelslope: 0.0,
-                earlylevelslope: 0.0,
-                taillevelslope: 0.0,
-                revtime: 0.0,
-                damping: 0.0,
-                inputbw: 0.0,
-                inited: 0,
-                first: 1,
-                _pad: 0,
-            },
-            total * core::mem::size_of::<f32>(),
-            core::mem::align_of::<f32>(),
-        ))
+        Ok(unit_spec_pool(GVerb {
+            alpha: 0.0,
+            off: [0; NBUF],
+            size: [0; NBUF],
+            idx: [0; NBUF],
+            taps: [0; FDN],
+            coef: [0.75, 0.75, 0.625, 0.625, 0.75, 0.75, 0.625, 0.625],
+            fdngains: [0.0; FDN],
+            fdngainslopes: [0.0; FDN],
+            tapgains: [0.0; FDN],
+            tapgainslopes: [0.0; FDN],
+            input_damping: 0.0,
+            input_delay: 0.0,
+            fdn_damping: 0.0,
+            fdn_delay: [0.0; FDN],
+            drylevel: 0.0,
+            earlylevel: 0.0,
+            taillevel: 0.0,
+            drylevelslope: 0.0,
+            earlylevelslope: 0.0,
+            taillevelslope: 0.0,
+            revtime: 0.0,
+            damping: 0.0,
+            inputbw: 0.0,
+            inited: 0,
+            first: 1,
+            _pad: 0,
+        }))
     }
 }

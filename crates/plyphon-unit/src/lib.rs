@@ -26,7 +26,7 @@ pub mod unit;
 pub use error::BuildError;
 pub use graphdef::GraphDef;
 pub use unit::{
-    Aux, BuildContext, BuiltUnit, DoneAction, InitCtx, Inputs, NodeMsg, NodeMsgKind, NodeMsgSink,
-    Outputs, ProcessCtx, Trigger, TriggerSink, Unit, UnitDef, UnitRegistry, unit_spec,
-    unit_spec_aux,
+    Aux, AuxAlloc, BuildContext, BuiltUnit, DoneAction, InitCtx, Inputs, NodeMsg, NodeMsgKind,
+    NodeMsgSink, Outputs, ProcessCtx, Trigger, TriggerSink, Unit, UnitDef, UnitRegistry, unit_spec,
+    unit_spec_aux, unit_spec_pool,
 };

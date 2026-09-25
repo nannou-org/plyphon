@@ -56,8 +56,8 @@ impl UnitDef for LocalBufCtor {
         if ctx.input_rates.len() < 2 {
             return Err(BuildError::WrongInputCount);
         }
-        // scsynth reads both at ctor (`IN0(0)` channels, `IN0(1)` frames); here they size pool
-        // storage, so like a delay's `maxdelaytime` they must be baked constants.
+        // scsynth reads both at ctor (`IN0(0)` channels, `IN0(1)` frames); here they size the
+        // per-graph block at compile time, so they must be baked constants.
         let channels = ctx
             .const_input(0)
             .ok_or(BuildError::AuxRequiresConstant { input: 0 })?;

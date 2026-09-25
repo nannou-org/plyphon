@@ -565,6 +565,9 @@ impl SynthDef {
             demand_state_image[off..off + b.size].copy_from_slice(&b.init_bytes);
         }
 
+        // Units that allocate from the engine's pool at synth start each get the next slot in the
+        // per-instance allocation table, in calc order.
+        let mut num_pool_slots = 0u32;
         let units: Vec<UnitVtbl> = calc_built
             .into_iter()
             .zip(calc_inputs)
@@ -578,6 +581,11 @@ impl SynthDef {
                     process: b.process,
                     init: b.init,
                     reseed: b.reseed,
+                    alloc: b.alloc,
+                    pool_slot: b.pool_aux.then(|| {
+                        num_pool_slots += 1;
+                        num_pool_slots - 1
+                    }),
                     inputs,
                     outputs,
                     state_offset,
@@ -614,6 +622,7 @@ impl SynthDef {
             trig_params.into_boxed_slice(),
             lag_params.into_boxed_slice(),
             local_buf_specs.into_boxed_slice(),
+            num_pool_slots as usize,
             num_params,
             graph_audio,
             graph_control,

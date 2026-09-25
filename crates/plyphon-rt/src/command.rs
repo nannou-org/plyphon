@@ -11,6 +11,7 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 
+use crate::graph::AuxSlots;
 use crate::tree::AddAction;
 use plyphon_dsp::buffer::Buffer;
 use plyphon_dsp::stream::{StreamPlayback, StreamRecording};
@@ -44,6 +45,10 @@ pub enum Command {
         target: i32,
         /// Placement within the target group.
         action: AddAction,
+        /// The new synth's unit-pool allocation table, sized to the def's
+        /// [`num_pool_slots`](plyphon_unit::graphdef::GraphDef::num_pool_slots) control-side so the
+        /// audio thread never allocates it.
+        aux: AuxSlots,
     },
     /// Create an empty group under group `target`.
     AddGroup {
@@ -362,6 +367,8 @@ pub enum Trash {
     Stream(Box<StreamPlayback>),
     /// A freed or replaced streaming-recording endpoint (its rings drop off the audio thread).
     Recording(Box<StreamRecording>),
+    /// An ended synth's unit-pool allocation table, its regions already returned to the pool.
+    AuxSlots(AuxSlots),
 }
 
 /// A node's tree position, carried by every node-lifecycle notification so a client can mirror the

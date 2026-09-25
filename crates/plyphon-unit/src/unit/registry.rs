@@ -156,8 +156,8 @@ pub struct BuildContext<'a> {
     /// whose done flag it observes.
     pub input_units: &'a [Option<u32>],
     /// Each input's resolved source, in order (the same data `input_rates`/`input_units` are derived
-    /// from). A unit that must size auxiliary memory at compile time reads a scalar input's value
-    /// here via [`BuildContext::const_input`] - e.g. `DelayN`'s `maxdelaytime`.
+    /// from). A unit that must size memory at compile time reads a scalar input's value here via
+    /// [`BuildContext::const_input`] - e.g. `LocalBuf`'s shape.
     pub input_sources: &'a [InputSource],
     /// The unit's own calculation rate (so it can specialize its output: a block vs one value).
     pub rate: Rate,
@@ -179,9 +179,10 @@ pub struct BuildContext<'a> {
 
 impl BuildContext<'_> {
     /// The compile-time value of input `i` if it is a baked constant, else `None`. A unit that sizes
-    /// auxiliary memory from a scalar input requires a constant here (it must reject a non-constant,
-    /// e.g. with [`BuildError::AuxRequiresConstant`]), mirroring scsynth, where a delay's
-    /// `maxdelaytime` is read once at ctor and can never change.
+    /// compile-time memory from a scalar input requires a constant here (it must reject a
+    /// non-constant, e.g. with [`BuildError::AuxRequiresConstant`]); a unit that can size its memory
+    /// when the synth starts reads the live input in [`Unit::alloc`](crate::unit::Unit::alloc)
+    /// instead.
     pub fn const_input(&self, i: usize) -> Option<f32> {
         match self.input_sources.get(i) {
             Some(InputSource::Constant(v)) => Some(*v),

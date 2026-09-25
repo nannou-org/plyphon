@@ -1,16 +1,20 @@
 //! The real-time side of the engine - plyphon's port of scsynth's `World`/`World_Run`.
 //!
-//! `World` owns the rt-pool, the resident def table, the buses, the node tree, and the World-shared
+//! `World` owns the rt-pools, the resident def table, the buses, the node tree, and the World-shared
 //! wire/output scratch. The host's audio callback drives it via [`World::fill`], which reblocks the
 //! engine's fixed control-block size to the host's arbitrary buffer size. Every per-block step is
 //! O(1) link manipulation or a bounded loop over pre-allocated buffers; the only audio-thread
-//! allocator is the rt-pool, used to build and free a synth's per-instance state block.
+//! allocators are the rt-pools: the graph pool for each synth's per-instance state block, and the
+//! unit pool for the memory units size from their inputs when the synth starts.
 //!
 //! Synths are constructed *here*, on the audio thread, from a resident [`GraphDef`] (scsynth's
-//! `Graph_New`): one pool allocation, a few `memcpy`s, then linked into the tree. Freeing a synth
-//! returns its block to the pool (a cheap free-list op) - no trash. Buffers and streams still flow to
-//! the trash ring (drained by the [`Nrt`](crate::nrt::Nrt)) to drop off the audio thread, and node
-//! notifications go to the events ring. Done actions are applied here after the tree runs.
+//! `Graph_New`): one graph-pool allocation, a few `memcpy`s, then linked into the tree; on its first
+//! block, each unit that sizes its memory from inputs allocates it from the unit pool (scsynth's
+//! constructor `RTAlloc`). Freeing a synth returns its block and its units' memory to the pools
+//! (cheap free-list ops), and its allocation table, if any, to the trash ring. Buffers and streams
+//! also flow to the trash ring (drained by the [`Nrt`](crate::nrt::Nrt)) to drop off the audio
+//! thread, and node notifications go to the events ring. Done actions are applied here after the
+//! tree runs.
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -21,7 +25,7 @@ use bytemuck::cast_slice_mut;
 use rtrb::{Consumer, Producer, PushError};
 
 use crate::command::{Command, CommandTime, Event, NodeNotify, Reply, TimedCommand, Trash};
-use crate::graph::{Block, Graph, Pool};
+use crate::graph::{AuxSlots, Block, Graph, Pool};
 use crate::options::Options;
 use crate::sched::{Clock, Scheduler};
 use crate::tree::{AddAction, FreedNode, NodeTree};
@@ -69,6 +73,8 @@ pub struct World {
     tree: NodeTree,
     /// The rt-pool backing every synth's per-instance state block (scsynth's `mAllocPool`).
     pool: Pool,
+    /// The rt-pool units allocate from when a synth starts (see [`Options::unit_pool_bytes`]).
+    unit_pool: Pool,
     /// Resident compiled defs, indexed by `def_id` (scsynth's `gGraphDefLib`).
     def_table: Vec<Option<Arc<GraphDef>>>,
     /// World-shared audio wire scratch, reused per graph (`max_wire_bufs * block_size` f32).
@@ -90,8 +96,8 @@ pub struct World {
     /// Freed items awaiting space in the trash ring. Pre-allocated to the provable worst case
     /// while command intake is gated on an empty backlog (see `drain_commands`): one command's
     /// largest burst (a `/clearSched` trashing every scheduled command) plus every box the
-    /// scheduler, the buffer-table slots, and the in-flight `/b_write` copies can hold - so it
-    /// never reallocates at runtime. Trash is never dropped here (that would free the `Box` on
+    /// scheduler, the buffer-table slots, the in-flight `/b_write` copies, and the live synths'
+    /// unit-allocation tables can hold - so it never reallocates at runtime. Trash is never dropped here (that would free the `Box` on
     /// the audio thread), so this backlog is retained, not capped.
     pending_trash: Vec<Trash>,
     /// Events awaiting space in the events ring (pre-allocated). Node notifications are
@@ -188,6 +194,7 @@ impl World {
             buffers: BufferTable::new(options.max_buffers),
             tree: NodeTree::new(options.max_nodes, crate::options::ROOT_GROUP_ID),
             pool: Pool::with_capacity_bytes(options.pool_bytes),
+            unit_pool: Pool::with_capacity_bytes(options.unit_pool_bytes),
             def_table: vec![None; options.max_synthdefs],
             wire_scratch: vec![0.0f32; options.max_wire_bufs * bs].into_boxed_slice(),
             unit_scratch: vec![0.0f32; options.max_unit_outputs * bs].into_boxed_slice(),
@@ -203,7 +210,9 @@ impl World {
             // `/clearSched` burst (every scheduled command's box) + the scheduler refilling and
             // draining once more + every buffer-table slot displaced + every in-flight `/b_write`
             // recording completing.
-            pending_trash: Vec::with_capacity(2 * options.max_scheduled + 2 * options.max_buffers),
+            pending_trash: Vec::with_capacity(
+                2 * options.max_scheduled + 2 * options.max_buffers + options.max_nodes,
+            ),
             pending_events: Vec::with_capacity(capacity),
             // The largest single-block reply burst: a full `/g_queryTree` dump plus a full
             // `/n_trace` dump can both land in the block that closes the intake gate.
@@ -265,11 +274,12 @@ impl World {
         self.fill_duplex(output, out_channels, input, in_channels);
     }
 
-    /// Bytes of the real-time pool currently allocated to live synths' state (scsynth's `/status`
-    /// RT-memory figure). With no live synths this is `0`. Walks the pool, so it is `O(chunks)` -
+    /// Bytes of real-time memory currently allocated to live synths - their state blocks plus the
+    /// memory their units allocated at start (scsynth's `/status` RT-memory figure, which covers
+    /// both from one pool). With no live synths this is `0`. Walks both pools, so it is `O(chunks)` -
     /// diagnostics, not the hot path.
     pub fn rt_memory_used(&self) -> usize {
-        self.pool.used_bytes()
+        self.pool.used_bytes() + self.unit_pool.used_bytes()
     }
 
     /// Like [`World::fill`], but also feeds interleaved host `input` (`in_channels` wide) into the
@@ -357,6 +367,7 @@ impl World {
             buffers: &mut self.buffers,
             buf_counter: self.buf_counter,
             pool: &mut self.pool,
+            unit_pool: &mut self.unit_pool,
             wire_scratch: &mut self.wire_scratch[..],
             unit_scratch: &mut self.unit_scratch[..],
             triggers: &mut self.trigger_buf,
@@ -605,7 +616,8 @@ impl World {
                 def_id,
                 target,
                 action,
-            } => self.add_synth(id, def_id, target, action),
+                aux,
+            } => self.add_synth(id, def_id, target, action, aux),
             Command::AddGroup { id, target, action } => {
                 if action == AddAction::Replace {
                     let mut sink = core::mem::take(&mut self.freed_nodes);
@@ -799,8 +811,13 @@ impl World {
                 });
             }
             Command::QueryRtMemory => {
-                let total_free = self.pool.free_bytes() as i32;
-                let largest_free = self.pool.largest_free_block() as i32;
+                // scsynth has one real-time pool; plyphon's is split into the graph and unit pools,
+                // so report their combined free bytes and the larger of their largest free blocks.
+                let total_free = (self.pool.free_bytes() + self.unit_pool.free_bytes()) as i32;
+                let largest_free =
+                    self.pool
+                        .largest_free_block()
+                        .max(self.unit_pool.largest_free_block()) as i32;
                 self.reply(Reply::RtMemoryStatus {
                     total_free,
                     largest_free,
@@ -954,14 +971,27 @@ impl World {
     /// full tree) emits [`Event::SynthFailed`] and creates no node (scsynth's `/fail` reply
     /// paths), so each accepted create reaches exactly one terminal: `NodeStarted` or
     /// `SynthFailed`.
-    fn add_synth(&mut self, id: i32, def_id: u32, target: i32, action: AddAction) {
+    ///
+    /// `aux` must match the def's [`num_pool_slots`](GraphDef::num_pool_slots); a table built for a
+    /// different def (the slot was redefined after the command was sent) fails the create.
+    fn add_synth(&mut self, id: i32, def_id: u32, target: i32, action: AddAction, aux: AuxSlots) {
         let Some(def) = self.def_table.get(def_id as usize).cloned().flatten() else {
+            self.retire_aux(aux);
             self.emit(Event::SynthFailed { id });
             return;
         };
-        let Some(graph) = self.build_graph(&def) else {
+        if aux.len() != def.num_pool_slots() {
+            self.retire_aux(aux);
             self.emit(Event::SynthFailed { id });
             return;
+        }
+        let graph = match self.build_graph(&def, aux) {
+            Ok(graph) => graph,
+            Err(aux) => {
+                self.retire_aux(aux);
+                self.emit(Event::SynthFailed { id });
+                return;
+            }
         };
         if action == AddAction::Replace {
             let mut sink = core::mem::take(&mut self.freed_nodes);
@@ -973,7 +1003,7 @@ impl World {
                     self.emit_started(id);
                 }
                 Err(returned) => {
-                    self.pool.dealloc(returned.into_block());
+                    self.release_graph(returned);
                     self.emit(Event::SynthFailed { id });
                 }
             }
@@ -983,7 +1013,7 @@ impl World {
         match self.tree.add_synth(id, graph, target, action) {
             Ok(()) => self.emit_started(id),
             Err(returned) => {
-                self.pool.dealloc(returned.into_block());
+                self.release_graph(returned);
                 self.emit(Event::SynthFailed { id });
             }
         }
@@ -1010,10 +1040,14 @@ impl World {
 
     /// Allocate and initialise a synth's per-instance block from `def`: one pool allocation, then copy
     /// the state-arena image, seed the control wires from the defaults, set the param maps unmapped,
-    /// and re-seed each unit's randomness for this instance. Returns `None` if the pool is exhausted.
-    fn build_graph(&mut self, def: &Arc<GraphDef>) -> Option<Graph> {
+    /// and re-seed each unit's randomness for this instance. Units that size their memory from
+    /// inputs allocate it later, on the first block, into `aux`. Returns `aux` back if the pool is
+    /// exhausted.
+    fn build_graph(&mut self, def: &Arc<GraphDef>, aux: AuxSlots) -> Result<Graph, AuxSlots> {
         let layout = def.layout();
-        let region = self.pool.alloc(layout.total)?;
+        let Some(region) = self.pool.alloc(layout.total) else {
+            return Err(aux);
+        };
         let seed = self.next_seed;
         self.next_seed = self.next_seed.wrapping_add(SEED_STEP);
 
@@ -1055,7 +1089,7 @@ impl World {
             // `Graph::process` degrades on the same by-construction invariant.
             Err(_) => {
                 self.pool.dealloc(region);
-                return None;
+                return Err(aux);
             }
         };
         state_arena.copy_from_slice(def.state_image());
@@ -1102,8 +1136,9 @@ impl World {
         // unrelated odd constant. A plain `seed - SEED_STEP` would equal the *previous* spawn's
         // unit-0 reseed value (`next_seed` advances one step per spawn), replaying that unit's
         // stream in this graph's Rand draws; the XOR lands far from every nearby ladder value.
-        Some(Graph::new(
+        Ok(Graph::new(
             region,
+            aux,
             Arc::clone(def),
             self.current_sample_offset,
             self.current_subsample_offset,
@@ -1126,8 +1161,9 @@ impl World {
     /// Only the buffer-installing commands - [`SetBuffer`](Command::SetBuffer),
     /// [`CueStream`](Command::CueStream), [`CueRecording`](Command::CueRecording),
     /// [`WriteBuffer`](Command::WriteBuffer), and [`WriteBufferRegion`](Command::WriteBufferRegion) -
-    /// own such a `Box`; every other command is flat or holds a non-final `Arc` (the Controller retains
-    /// its own), so letting it drop here is RT-safe.
+    /// and a synth creation's allocation table ([`AddSynth`](Command::AddSynth)) own such a `Box`;
+    /// every other command is flat or holds a non-final `Arc` (the Controller retains its own), so
+    /// letting it drop here is RT-safe.
     fn trash_command(&mut self, command: Command) {
         match command {
             Command::SetBuffer { buffer, .. } => self.trash(Trash::Buffer(buffer)),
@@ -1135,7 +1171,25 @@ impl World {
             Command::CueRecording { recording, .. } => self.trash(Trash::Recording(recording)),
             Command::WriteBuffer { recording, .. } => self.trash(Trash::Recording(recording)),
             Command::WriteBufferRegion { src, .. } => self.trash(Trash::Buffer(src)),
+            Command::AddSynth { aux, .. } => self.retire_aux(aux),
             _ => {}
+        }
+    }
+
+    /// Release an ended (or never-linked) graph on the audio thread: its block back to the graph
+    /// pool, its unit allocations back to the unit pool, and its allocation table to the NRT side.
+    fn release_graph(&mut self, graph: Graph) {
+        let (block, aux) = graph.into_parts();
+        self.pool.dealloc(block);
+        self.retire_aux(aux);
+    }
+
+    /// Return a synth's unit allocations to the unit pool and route its allocation table to the NRT
+    /// side (an empty table owns no heap, so it simply drops).
+    fn retire_aux(&mut self, mut aux: AuxSlots) {
+        aux.release(&mut self.unit_pool);
+        if !aux.is_empty() {
+            self.trash(Trash::AuxSlots(aux));
         }
     }
 
@@ -1149,12 +1203,12 @@ impl World {
         }
     }
 
-    /// Reclaim each freed graph's pool block (on the audio thread) and notify each freed node
+    /// Reclaim each freed graph's memory (on the audio thread) and notify each freed node
     /// (`NodeEnded`).
     fn drain_freed(&mut self, sink: &mut Vec<FreedNode>) {
         for (info, graph) in sink.drain(..) {
             if let Some(graph) = graph {
-                self.pool.dealloc(graph.into_block());
+                self.release_graph(graph);
             }
             self.emit(Event::NodeEnded(info));
         }

@@ -576,43 +576,96 @@ impl<'a> LocalBufs<'a> {
     }
 }
 
-/// A unit's private auxiliary memory for the block - a delay line / circular buffer sized at build
-/// time (see [`unit_spec_aux`]). It is the safe stand-in for scsynth's `RTAlloc`'d `float* m_dlybuf`:
-/// the bytes live in the per-instance pool block (so there is still one allocation per synth) and
-/// **persist across blocks**, so a delay reads back what earlier blocks wrote.
+/// A unit's private auxiliary memory for the block (a delay line, a circular buffer) - the safe
+/// stand-in for scsynth's `RTAlloc`'d `float* m_dlybuf`. It comes from one of two places:
 ///
-/// Empty for units that declared no aux memory. The bytes are **not** zeroed at instantiation (a
-/// recycled block carries a previous tenant's data), so a unit must guard its first reads with a
-/// cold-start counter in its own state - exactly as scsynth's `_z` calc variants do.
+/// - a fixed-size region reserved at build time in the per-instance pool block (see
+///   [`unit_spec_aux`]), for memory whose size does not depend on any input;
+/// - a region the unit allocates itself, sized from live inputs, through [`Aux::alloc`] (see
+///   [`unit_spec_pool`] and [`Unit::alloc`]), exactly as a scsynth constructor calls `RTAlloc`.
+///
+/// Either way the bytes **persist across blocks**, so a delay reads back what earlier blocks wrote,
+/// and are **not** zeroed (they may hold a previous tenant's data), so a unit guards its first reads
+/// with a cold-start counter in its own state - exactly as scsynth's `_z` calc variants do. Empty for
+/// units with no memory, and for a pool-sized unit that has not allocated yet.
 pub struct Aux<'a> {
-    bytes: &'a mut [u8],
+    inner: AuxInner<'a>,
+}
+
+enum AuxInner<'a> {
+    /// The unit's memory, already resolved to its bytes.
+    Bytes(&'a mut [u8]),
+    /// A pool-sized unit that has not allocated yet, reaching the engine's allocator.
+    Pending(&'a mut dyn AuxAlloc),
+}
+
+/// The engine's side of a pool-sized unit's not-yet-allocated [`Aux`]: a one-time allocation from
+/// the engine's real-time pool (scsynth's `RTAlloc`). Implemented by the engine; units only reach it
+/// through [`Aux::alloc`].
+pub trait AuxAlloc {
+    /// Allocate `bytes` for this unit unless it already has memory. Returns whether the unit now has
+    /// memory; `false` means the pool could not satisfy the request, and the engine silences the unit
+    /// (scsynth's `ClearUnitOnMemFailed`).
+    fn alloc(&mut self, bytes: usize) -> bool;
+
+    /// This unit's memory: empty until [`alloc`](Self::alloc) succeeds.
+    fn bytes(&mut self) -> &mut [u8];
 }
 
 impl<'a> Aux<'a> {
-    /// Wrap this unit's aux byte region. Used by the synth process loop.
+    /// Wrap this unit's resolved memory. Used by the synth process loop.
     pub fn new(bytes: &'a mut [u8]) -> Self {
-        Aux { bytes }
+        Aux {
+            inner: AuxInner::Bytes(bytes),
+        }
     }
 
-    /// Whether this unit declared no aux memory.
-    pub fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
+    /// Wrap a pool-sized unit's allocator before it has allocated. Used by the synth process loop.
+    pub fn pending(alloc: &'a mut dyn AuxAlloc) -> Self {
+        Aux {
+            inner: AuxInner::Pending(alloc),
+        }
     }
 
-    /// The aux region as an `f32` slice (the usual delay-line element type). Its length is
-    /// `aux_bytes / 4`; an empty region yields an empty slice. Never panics - a malformed region
-    /// (the architecture rules this out for a well-built unit) yields an empty slice rather than
-    /// aborting the audio thread.
+    /// Allocate `bytes` of memory for this unit, once - scsynth's `RTAlloc`, for memory sized from
+    /// live inputs. Only a unit built with [`unit_spec_pool`] can allocate; for it, a later call once
+    /// memory exists is a no-op returning `true`. Returns `false` when the pool cannot satisfy the
+    /// request (or the unit cannot allocate): the unit then outputs silence for the rest of its life,
+    /// as scsynth's `ClearUnitIfMemFailed` does.
+    pub fn alloc(&mut self, bytes: usize) -> bool {
+        match &mut self.inner {
+            AuxInner::Bytes(b) => !b.is_empty(),
+            AuxInner::Pending(a) => a.alloc(bytes),
+        }
+    }
+
+    fn bytes(&mut self) -> &mut [u8] {
+        match &mut self.inner {
+            AuxInner::Bytes(b) => b,
+            AuxInner::Pending(a) => a.bytes(),
+        }
+    }
+
+    /// Whether this unit has no memory (none declared, or not allocated yet).
+    pub fn is_empty(&mut self) -> bool {
+        self.bytes().is_empty()
+    }
+
+    /// The memory as an `f32` slice (the usual delay-line element type). Its length is the region's
+    /// bytes over 4; an empty region yields an empty slice. Never panics - a malformed region (the
+    /// architecture rules this out for a well-built unit) yields an empty slice rather than aborting
+    /// the audio thread.
     pub fn f32_mut(&mut self) -> &mut [f32] {
         self.cast_mut()
     }
 
-    /// The aux region as a slice of `Pod` elements `T` (e.g. a bank of grains). Its length is
-    /// `aux_bytes / size_of::<T>()`; a region whose size or alignment does not fit `T` yields an
-    /// empty slice rather than aborting the audio thread. A well-built unit sizes and aligns its aux
-    /// for `T` (`aux_bytes`/`aux_align` in [`unit_spec_aux`]), so the cast always succeeds.
+    /// The memory as a slice of `Pod` elements `T` (e.g. a bank of grains). Its length is the
+    /// region's bytes over `size_of::<T>()`; a region whose size or alignment does not fit `T` yields
+    /// an empty slice rather than aborting the audio thread. A reserved region is sized and aligned
+    /// for `T` by its unit (`aux_bytes`/`aux_align` in [`unit_spec_aux`]); an allocated one is
+    /// 64-byte aligned, so only its size matters.
     pub fn cast_mut<T: bytemuck::Pod>(&mut self) -> &mut [T] {
-        bytemuck::try_cast_slice_mut(self.bytes).unwrap_or(&mut [])
+        bytemuck::try_cast_slice_mut(self.bytes()).unwrap_or(&mut [])
     }
 }
 
@@ -910,10 +963,19 @@ pub trait Unit: Pod {
     /// here so their first block is already correct - e.g. a smoother starts *at* its input rather
     /// than ramping up from zero - which is what avoids onset clicks.
     ///
-    /// This mirrors the seeding an scsynth `*_Ctor` does at its first calc; *allocation*, by
-    /// contrast, happens earlier and off the audio thread when the unit is built. Like
-    /// [`Unit::process`] it must not allocate, block, or take locks. The default is a no-op.
+    /// This mirrors the seeding an scsynth `*_Ctor` does at its first calc. Memory sized from inputs
+    /// is allocated just before, in [`Unit::alloc`]; `init` itself, like [`Unit::process`], must not
+    /// allocate, block, or take locks. The default is a no-op.
     fn init(&mut self, _ctx: &InitCtx<'_>) {}
+
+    /// Allocate the unit's input-sized memory - scsynth's constructor-time `RTAlloc`.
+    ///
+    /// Called once, on the first control block, immediately before [`Unit::init`], for units built
+    /// with [`unit_spec_pool`]. Like `init` it sees live inputs, so a size read from `ctx.ins` is the
+    /// first-sample value a scsynth constructor reads with `ZIN0`. The unit computes its size, calls
+    /// [`Aux::alloc`], and may prepare the fresh memory (or derived state such as a wrap mask). If the
+    /// allocation fails the engine silences the unit for the rest of its life. The default is a no-op.
+    fn alloc(&mut self, _ctx: &InitCtx<'_>, _aux: &mut Aux<'_>) {}
 
     /// Compute one control block.
     ///
@@ -937,6 +999,10 @@ pub type InitFn = fn(&mut [u8], &InitCtx<'_>);
 /// [`Unit::reseed`]).
 pub type ReseedFn = fn(&mut [u8], u64);
 
+/// A type-erased one-time allocation function over a unit's pool-resident state bytes (see
+/// [`Unit::alloc`]).
+pub type AllocFn = fn(&mut [u8], &InitCtx<'_>, &mut Aux<'_>);
+
 /// Reinterpret `bytes` as `T` and run its [`Unit::process`]. Monomorphised per `T` and coerced to a
 /// [`ProcessFn`]; the cast cannot fail because the slot is sized and aligned for `T` by construction.
 fn process_thunk<T: Unit>(bytes: &mut [u8], ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -953,6 +1019,11 @@ fn reseed_thunk<T: Unit>(bytes: &mut [u8], seed: u64) {
     bytemuck::from_bytes_mut::<T>(bytes).reseed(seed);
 }
 
+/// As [`process_thunk`], for [`Unit::alloc`].
+fn alloc_thunk<T: Unit>(bytes: &mut [u8], ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
+    bytemuck::from_bytes_mut::<T>(bytes).alloc(ctx, aux);
+}
+
 /// A built unit: its calc/seed vtable plus the initial state image to copy into the pool. Produced
 /// off the audio thread by a [`UnitDef`] (via [`unit_spec`]) and baked into a
 /// [`GraphDef`](crate::graphdef::GraphDef).
@@ -963,16 +1034,21 @@ pub struct BuiltUnit {
     pub init: InitFn,
     /// Per-instance re-seed function (no-op for units without randomness).
     pub reseed: ReseedFn,
+    /// One-time allocation function for input-sized memory (no-op unless `pool_aux`).
+    pub alloc: AllocFn,
+    /// Whether this unit allocates its memory from the engine's pool when the synth starts, sized
+    /// from live inputs (see [`unit_spec_pool`]). Such a unit reserves no `aux_bytes`.
+    pub pool_aux: bool,
     /// `size_of::<T>()` - the bytes this unit's state occupies in the arena.
     pub size: usize,
     /// `align_of::<T>()` - the alignment its state slot needs.
     pub align: usize,
     /// The initial state, as bytes to `copy_from_slice` into the slot when a synth is built on-RT.
     pub init_bytes: Box<[u8]>,
-    /// Bytes of per-instance auxiliary memory (a delay line / circular buffer) this unit needs,
-    /// summed into the block's `aux` arena at compile time. `0` for units with no aux memory. Unlike
-    /// `init_bytes` (a fixed image), aux memory is sized per build (e.g. from a delay's
-    /// `maxdelaytime`) and handed to the unit each block as [`ProcessCtx::aux`].
+    /// Bytes of per-instance auxiliary memory whose size is fixed at build time (a reverb's fixed
+    /// lines), summed into the block's `aux` arena at compile time. `0` for units with no such
+    /// memory, including units that allocate at synth start (`pool_aux`). Handed to the unit each
+    /// block as [`ProcessCtx::aux`].
     pub aux_bytes: usize,
     /// Alignment the aux region needs (e.g. `align_of::<f32>()` for an `f32` delay line). Ignored
     /// when `aux_bytes == 0`.
@@ -991,6 +1067,8 @@ pub fn unit_spec<T: Unit>(state: T) -> BuiltUnit {
         process: process_thunk::<T>,
         init: init_thunk::<T>,
         reseed: reseed_thunk::<T>,
+        alloc: alloc_thunk::<T>,
+        pool_aux: false,
         size: core::mem::size_of::<T>(),
         align: core::mem::align_of::<T>(),
         init_bytes: bytemuck::bytes_of(&state).to_vec().into_boxed_slice(),
@@ -1001,9 +1079,10 @@ pub fn unit_spec<T: Unit>(state: T) -> BuiltUnit {
 }
 
 /// Build a [`BuiltUnit`] that also reserves `aux_bytes` of per-instance auxiliary memory aligned to
-/// `aux_align` - a delay line / circular buffer whose size a `UnitDef` computes at build time (e.g.
-/// from a delay's scalar `maxdelaytime`). The unit receives the region as [`ProcessCtx::aux`] each
-/// block; it lives in the per-instance pool block and persists across blocks.
+/// `aux_align` - memory whose size is fixed at build time, independent of any input (a reverb's
+/// fixed lines). Memory sized from inputs uses [`unit_spec_pool`] instead. The unit receives the
+/// region as [`ProcessCtx::aux`] each block; it lives in the per-instance pool block and persists
+/// across blocks.
 ///
 /// The region is **not** zeroed at instantiation (a large delay line would make that an unbounded
 /// audio-thread memset at `/s_new`); like scsynth's `RTAlloc`'d delay buffers, a unit must treat its
@@ -1012,6 +1091,18 @@ pub fn unit_spec_aux<T: Unit>(state: T, aux_bytes: usize, aux_align: usize) -> B
     BuiltUnit {
         aux_bytes,
         aux_align: aux_align.max(1),
+        ..unit_spec(state)
+    }
+}
+
+/// Build a [`BuiltUnit`] whose memory is sized from live inputs when the synth starts - scsynth's
+/// constructor `RTAlloc`, for a delay's `maxdelaytime` or a pitch shifter's window. The unit
+/// allocates in [`Unit::alloc`] through [`Aux::alloc`], from the engine's pool, and receives the
+/// region as [`ProcessCtx::aux`] every block after. Unlike [`unit_spec_aux`], the size need not be
+/// known at build time: any input, wired or constant, can drive it.
+pub fn unit_spec_pool<T: Unit>(state: T) -> BuiltUnit {
+    BuiltUnit {
+        pool_aux: true,
         ..unit_spec(state)
     }
 }

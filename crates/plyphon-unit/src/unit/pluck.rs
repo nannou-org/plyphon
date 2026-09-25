@@ -10,10 +10,10 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
-use crate::unit::delay::{Interp, calc_feedback, clamp_delay, line_len, read_delayed};
+use crate::unit::delay::{Interp, alloc_line, calc_feedback, clamp_delay, read_delayed};
 use crate::unit::filter::zap;
 use crate::unit::registry::{BuildContext, UnitDef};
-use crate::unit::{BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_aux};
+use crate::unit::{Aux, BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_spec_pool};
 use plyphon_dsp::rate::Rate;
 
 const IN: usize = 0;
@@ -58,6 +58,12 @@ pub struct Pluck {
 }
 
 impl Unit for Pluck {
+    fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
+        let max_delay = ctx.ins.control(MAXDELAY);
+        self.len = alloc_line(aux, max_delay, ctx.audio.sample_rate, ctx.audio.block_size);
+        self.mask = self.len.saturating_sub(1);
+    }
+
     fn init(&mut self, ctx: &InitCtx<'_>) {
         let dt = ctx.ins.control(DELAY);
         let decay = ctx.ins.control(DECAY);
@@ -179,7 +185,8 @@ impl Unit for Pluck {
     }
 }
 
-/// Constructor for [`Pluck`]. Sizes the aux delay line from the constant `maxdelaytime`.
+/// Constructor for [`Pluck`]. Its delay line is allocated when the synth starts, sized from the first
+/// value of `maxdelaytime` (scsynth's `Pluck_Ctor` reads `IN0(2)`).
 pub struct PluckCtor;
 
 impl UnitDef for PluckCtor {
@@ -187,30 +194,21 @@ impl UnitDef for PluckCtor {
         if ctx.input_rates.len() < 6 {
             return Err(BuildError::WrongInputCount);
         }
-        let max_delay = ctx
-            .const_input(MAXDELAY)
-            .ok_or(BuildError::AuxRequiresConstant { input: MAXDELAY })?;
-        let len = line_len(max_delay, ctx.audio.sample_rate, ctx.audio.block_size);
-        let aux_bytes = len as usize * core::mem::size_of::<f32>();
-        Ok(unit_spec_aux(
-            Pluck {
-                dsamp: 0.0,
-                delaytime: 0.0,
-                decaytime: 0.0,
-                coef: 0.0,
-                feedbk: 0.0,
-                lastsamp: 0.0,
-                prevtrig: 0.0,
-                inputsamps: 0,
-                len,
-                mask: len - 1,
-                iwrphase: 0,
-                numoutput: 0,
-                trig_audio: matches!(ctx.input_rates[TRIG], Rate::Audio) as u32,
-                coef_audio: matches!(ctx.input_rates[COEF], Rate::Audio) as u32,
-            },
-            aux_bytes,
-            core::mem::align_of::<f32>(),
-        ))
+        Ok(unit_spec_pool(Pluck {
+            dsamp: 0.0,
+            delaytime: 0.0,
+            decaytime: 0.0,
+            coef: 0.0,
+            feedbk: 0.0,
+            lastsamp: 0.0,
+            prevtrig: 0.0,
+            inputsamps: 0,
+            len: 0,
+            mask: 0,
+            iwrphase: 0,
+            numoutput: 0,
+            trig_audio: matches!(ctx.input_rates[TRIG], Rate::Audio) as u32,
+            coef_audio: matches!(ctx.input_rates[COEF], Rate::Audio) as u32,
+        }))
     }
 }
