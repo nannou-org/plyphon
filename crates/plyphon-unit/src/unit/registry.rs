@@ -137,7 +137,8 @@ use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, Ri
 use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::section::{FOSCtor, SOSCtor};
 use crate::unit::select::{
-    DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor, TWindexCtor,
+    DegreeToKeyCtor, DetectIndexCtor, IndexCtor, IndexInBetweenCtor, IndexMode, SelectCtor,
+    ShaperCtor, TWindexCtor,
 };
 use crate::unit::send_peak_rms::SendPeakRMSCtor;
 use crate::unit::send_reply::SendReplyCtor;
@@ -477,6 +478,8 @@ impl UnitRegistry {
         registry.register("IndexL", Box::new(IndexCtor(IndexMode::Lin)));
         registry.register("WrapIndex", Box::new(IndexCtor(IndexMode::Wrap)));
         registry.register("FoldIndex", Box::new(IndexCtor(IndexMode::Fold)));
+        registry.register("IndexInBetween", Box::new(IndexInBetweenCtor));
+        registry.register("DetectIndex", Box::new(DetectIndexCtor));
         registry.register("Shaper", Box::new(ShaperCtor));
         registry.register("DegreeToKey", Box::new(DegreeToKeyCtor));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
