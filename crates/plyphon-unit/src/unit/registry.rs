@@ -31,6 +31,9 @@ use crate::unit::demand::BuiltDemandUnit;
 use crate::unit::demand::dbrown::DbrownCtor;
 use crate::unit::demand::dbufrd::DbufrdCtor;
 use crate::unit::demand::dbufwr::DbufwrCtor;
+use crate::unit::demand::dconst::DconstCtor;
+use crate::unit::demand::ddup::DdupCtor;
+use crate::unit::demand::demand_env_gen::DemandEnvGenCtor;
 use crate::unit::demand::demand_op::{DemandBinaryOpCtor, DemandUnaryOpCtor};
 use crate::unit::demand::demand_ugen::DemandCtor;
 use crate::unit::demand::dgeom::DgeomCtor;
@@ -38,11 +41,14 @@ use crate::unit::demand::dibrown::DibrownCtor;
 use crate::unit::demand::diwhite::DiwhiteCtor;
 use crate::unit::demand::dpoll::DpollCtor;
 use crate::unit::demand::drand::DrandCtor;
+use crate::unit::demand::dreset::DresetCtor;
 use crate::unit::demand::dseq::DseqCtor;
 use crate::unit::demand::dser::DserCtor;
 use crate::unit::demand::dseries::DseriesCtor;
+use crate::unit::demand::dswitch::{Dswitch1Ctor, DswitchCtor};
 use crate::unit::demand::duty::{DutyCtor, TDutyCtor};
 use crate::unit::demand::dwhite::DwhiteCtor;
+use crate::unit::demand::dwrand::DwrandCtor;
 use crate::unit::demand::dxrand::DxrandCtor;
 #[cfg(feature = "fft")]
 use crate::unit::demand::unpack1fft::Unpack1FftCtor;
@@ -625,6 +631,7 @@ impl UnitRegistry {
         registry.register("Duty", Box::new(DutyCtor));
         registry.register("TDuty", Box::new(TDutyCtor));
         registry.register("Demand", Box::new(DemandCtor));
+        registry.register("DemandEnvGen", Box::new(DemandEnvGenCtor));
         // Demand-rate sources (the demand plan).
         registry.register_demand("Dseq", Box::new(DseqCtor));
         registry.register_demand("Dser", Box::new(DserCtor));
@@ -639,6 +646,13 @@ impl UnitRegistry {
         registry.register_demand("Dbufrd", Box::new(DbufrdCtor));
         registry.register_demand("Dbufwr", Box::new(DbufwrCtor));
         registry.register_demand("Dpoll", Box::new(DpollCtor));
+        registry.register_demand("Ddup", Box::new(DdupCtor));
+        registry.register_demand("Dstutter", Box::new(DdupCtor));
+        registry.register_demand("Dconst", Box::new(DconstCtor));
+        registry.register_demand("Dreset", Box::new(DresetCtor));
+        registry.register_demand("Dswitch1", Box::new(Dswitch1Ctor));
+        registry.register_demand("Dswitch", Box::new(DswitchCtor));
+        registry.register_demand("Dwrand", Box::new(DwrandCtor));
         // The math operators also run at demand rate, where they pull their operands and yield the
         // operator applied to them (the calc-rate registrations above are untouched).
         registry.register_demand("BinaryOpUGen", Box::new(DemandBinaryOpCtor));
