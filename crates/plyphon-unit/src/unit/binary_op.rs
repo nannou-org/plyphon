@@ -145,7 +145,7 @@ impl Unit for RandBinaryOp {
             let xb = b_sig.map_or(b_ctrl, |s| s[i]);
             let (lo, hi) = if xb > xa { (xa, xb) } else { (xb, xa) };
             *o = if exponential {
-                math::exp(math::ln(hi / lo) * rgen.next_unipolar()) * lo
+                rgen.next_exprand(lo as f64, hi as f64) as f32
             } else if bipolar {
                 lo + rgen.next_bipolar() * (hi - lo)
             } else {

@@ -371,7 +371,8 @@ impl UnitDef for Dust2Ctor {
 }
 
 /// `Crackle.ar(chaosParam)`: a chaotic noise from the map `y0 = |y1*param - y2 - 0.05|` (scsynth's
-/// `Crackle`). Deterministic once seeded; `y1` starts from the per-unit RNG so instances decorrelate.
+/// `Crackle`). Deterministic once seeded; `y1` starts from a double-precision draw (scsynth's `drand`)
+/// so instances decorrelate.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Crackle {
@@ -383,7 +384,7 @@ pub struct Crackle {
 
 impl Unit for Crackle {
     fn reseed(&mut self, seed: u64) {
-        self.y1 = Rng::new(seed).next_unipolar();
+        self.y1 = Rng::new(seed).next_unipolar_f64() as f32;
         self.y2 = 0.0;
     }
 

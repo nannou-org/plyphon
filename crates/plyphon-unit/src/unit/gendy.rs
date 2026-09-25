@@ -124,12 +124,11 @@ impl Gendy1 {
     const INIT_CPS: usize = 8;
     const KNUM: usize = 9;
 
-    /// Seed the breakpoint arrays: amplitudes uniform in `[-1, 1)`, durations in `[0, 1)`.
+    /// Seed the breakpoint arrays: amplitudes uniform in `[-1, 1)`, durations in `[0, 1)`, drawn
+    /// one breakpoint at a time (amplitude, then duration) as scsynth's constructor draws them.
     fn seed(rng: &mut Rng, amp_mem: &mut [f32], dur_mem: &mut [f32]) {
-        for a in amp_mem.iter_mut() {
+        for (a, d) in amp_mem.iter_mut().zip(dur_mem.iter_mut()) {
             *a = 2.0 * rng.next_unipolar() - 1.0;
-        }
-        for d in dur_mem.iter_mut() {
             *d = rng.next_unipolar();
         }
     }
