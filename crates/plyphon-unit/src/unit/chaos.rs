@@ -10,13 +10,9 @@
 //! iteration behind the `*L` ramp. Maps and their internal state are computed in `f64`; `freq` and
 //! the map coefficients are read once per block.
 //!
-//! The units differ in two ways:
-//!
-//! - every unit but `GbmanN`, `GbmanL` and the three `LinCong*` units re-seeds its state when an
-//!   init input changes at run time (the Hénon units only once their stability latch has tripped),
-//!   while those five read their init inputs only in the constructor;
-//! - the hold length of the `*L` and `*C` units, `FBSineN` and `HenonN` divides in `f64` and
-//!   narrows to `f32`, while that of the other `*N` units divides in pure `f32`;
+//! Every unit but `GbmanN`, `GbmanL` and the three `LinCong*` units re-seeds its state when an init
+//! input changes at run time (the Hénon units only once their stability latch has tripped), while
+//! those five read their init inputs only in the constructor.
 
 use core::f64::consts::PI;
 
@@ -39,27 +35,21 @@ const ONE_SIXTH: f64 = 0.1666666666666667;
 /// lands a hair below `0.04`.
 const LORENZ_OUT_SCALE: f64 = 0.04f32 as f64;
 
-/// The hold length in samples for a map running at `freq` Hz (scsynth's `samplesPerCycle`).
-fn samples_per_cycle(freq: f32, sr: f32) -> f32 {
-    if freq < sr { sr / freq.max(0.001) } else { 1.0 }
-}
-
 /// The hold length in samples and the per-sample interpolation slope for an interpolating map
 /// running at `freq` Hz (scsynth's `samplesPerCycle`/`slope` pair).
 ///
-/// The hold length divides in `f64` and narrows to `f32`, and the slope is then the `f64` widening
-/// of the `f32` reciprocal of that hold length - the mixed-precision arithmetic of the `*L`
-/// prologues, which the interpolated output is sensitive to. The sample-and-hold
-/// [`samples_per_cycle`] divides in pure `f32` instead. The hold length is never below one sample,
-/// so a map can iterate at most once per output sample.
+/// The slope is the `f64` widening of the `f32` reciprocal of the [`hold_length`] - the
+/// mixed-precision arithmetic of the interpolating prologues, which the interpolated output is
+/// sensitive to.
 fn samples_per_cycle_slope(freq: f32, sample_rate: f64) -> (f32, f64) {
     let spc = hold_length(freq, sample_rate);
     (spc, f64::from(1.0 / spc))
 }
 
-/// The hold length in samples for a map running at `freq` Hz, as scsynth's prologues compute it:
-/// the `f64` sample rate divided by the clamped `f32` frequency, narrowed to `f32`, and one sample
-/// once `freq` reaches the sample rate.
+/// The hold length in samples for a map running at `freq` Hz (scsynth's `samplesPerCycle`): the
+/// `f64` sample rate divided by the clamped `f32` frequency, narrowed to `f32`, and one sample once
+/// `freq` reaches the sample rate. It is never below one sample, so a map iterates at most once per
+/// output sample.
 fn hold_length(freq: f32, sample_rate: f64) -> f32 {
     if f64::from(freq) < sample_rate {
         (sample_rate / f64::from(freq.max(0.001))) as f32
@@ -163,7 +153,7 @@ fn latoocarfian_map(a: f64, b: f64, c: f64, d: f64, x: f64, y: f64) -> (f64, f64
     )
 }
 
-/// Drive a one-variable map: iterate `map` every `samples_per_cycle` samples, holding between, and
+/// Drive a one-variable map: iterate `map` every [`hold_length`] samples, holding between, and
 /// write `out(value)` each sample. Returns the final map value.
 fn chaos1(
     ctx: &mut ProcessCtx<'_>,
@@ -172,7 +162,7 @@ fn chaos1(
     mut map: impl FnMut(f64) -> f64,
     out: impl Fn(f64) -> f64,
 ) -> f64 {
-    let spc = samples_per_cycle(ctx.ins.control(0), ctx.own.sample_rate as f32);
+    let spc = hold_length(ctx.ins.control(0), ctx.own.sample_rate);
     let mut x = xn;
     for o in ctx.outs.audio(0).iter_mut() {
         if *counter >= spc {
@@ -194,7 +184,7 @@ fn chaos2(
     mut map: impl FnMut(f64, f64) -> (f64, f64),
     out: impl Fn(f64) -> f64,
 ) -> (f64, f64) {
-    let spc = samples_per_cycle(ctx.ins.control(0), ctx.own.sample_rate as f32);
+    let spc = hold_length(ctx.ins.control(0), ctx.own.sample_rate);
     let (mut x, mut y) = (xn, yn);
     for o in ctx.outs.audio(0).iter_mut() {
         if *counter >= spc {
@@ -209,7 +199,7 @@ fn chaos2(
     (x, y)
 }
 
-/// Drive a linearly interpolating map: iterate `map` every `samples_per_cycle` samples and write
+/// Drive a linearly interpolating map: iterate `map` every [`hold_length`] samples and write
 /// `out` of the value ramping from the previous iterate to the current one. Returns the final
 /// `(xn, xnm1)` pair.
 ///
@@ -243,7 +233,7 @@ fn chaos_interp(
     (x, xm1)
 }
 
-/// Drive a cubically interpolating map: iterate `map` every `samples_per_cycle` samples, shift the
+/// Drive a cubically interpolating map: iterate `map` every [`hold_length`] samples, shift the
 /// newest point into `history` (`[xnm1, xnm2, xnm3]`), refit `coefs` through the four points and
 /// write `out` of the cubic at the current phase. Returns the newest point.
 ///
@@ -458,7 +448,7 @@ impl Unit for StandardN {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let spc = samples_per_cycle(ctx.ins.control(0), ctx.own.sample_rate as f32);
+        let spc = hold_length(ctx.ins.control(0), ctx.own.sample_rate);
         let k = f64::from(ctx.ins.control(1));
         let xi = f64::from(ctx.ins.control(2));
         let yi = f64::from(ctx.ins.control(3));

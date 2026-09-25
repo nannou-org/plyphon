@@ -1,10 +1,11 @@
-//! Pin the chaos generators ported from scsynth's `ChaosUGens.cpp` against scsynth's own output.
+//! Pin every chaos generator in scsynth's `ChaosUGens.cpp` against scsynth's own output.
 //!
 //! Every expected value below is a float bit pattern produced by scsynth's `*_Ctor` and `*_next`
 //! functions, compiled unmodified from `ChaosUGens.cpp` against the plugin headers and driven the
-//! way the server drives them: the constructor at 48 kHz (which runs the calc for one sample), then
-//! 64-sample blocks, with any input change applied at the start of a block. The source was compiled
-//! with floating-point contraction disabled, so each expression is evaluated as written.
+//! way the server drives them: the constructor (which runs the calc for one sample) at 48 kHz unless
+//! a test says otherwise, then 64-sample blocks, with any input change applied at the start of a
+//! block. The source was compiled with floating-point contraction disabled, so each expression is
+//! evaluated as written.
 //!
 //! Each unit is pinned at two rates: [`SLOW`], whose hold of `48000/7000` samples is fractional so
 //! the map iterates less than once per sample on an uneven cadence, and [`FAST`], where the hold
@@ -32,8 +33,12 @@ const FRAMES: usize = 4_096;
 // ---------------------------------------------------------------------------------------------
 
 fn options() -> Options {
+    options_at(SR)
+}
+
+fn options_at(sample_rate: f64) -> Options {
     Options {
-        sample_rate: SR,
+        sample_rate,
         block_size: BLOCK,
         output_channels: 1,
         ..Options::default()
@@ -75,7 +80,12 @@ fn drain(world: &mut World, blocks: usize) -> Vec<f32> {
 
 /// Render `frames` samples of `name(consts)`.
 fn render(name: &str, consts: &[f32], frames: usize) -> Vec<f32> {
-    let (mut controller, _nrt, mut world) = engine(options());
+    render_at(SR, name, consts, frames)
+}
+
+/// Render `frames` samples of `name(consts)` at `sample_rate`.
+fn render_at(sample_rate: f64, name: &str, consts: &[f32], frames: usize) -> Vec<f32> {
+    let (mut controller, _nrt, mut world) = engine(options_at(sample_rate));
     controller.add_synthdef(chaos_def(name, constant_inputs(consts), vec![]));
     controller
         .synth_new("c", ROOT_GROUP_ID, AddAction::Tail)
@@ -637,6 +647,33 @@ fn lin_cong_n_wraps_like_sc_mod() {
         &LIN_CONG_N_WIDE,
         "LinCongN (wide)",
     );
+}
+
+/// A sample rate `f32` cannot represent exactly. At 44100.3 Hz and `freq = 14700.1`, scsynth's hold
+/// (the `f64` rate over the `f32` frequency, narrowed to `f32`) is exactly 3 samples, while an
+/// all-`f32` division gives one ULP more, which would put every iteration a sample late.
+#[test]
+fn sample_and_hold_hold_length_divides_like_scsynth() {
+    const ODD_RATE: f64 = 44_100.3;
+    for (name, consts, block, later) in [
+        (
+            "CuspN",
+            &[14_700.1, 1.0, 1.9, 0.25],
+            &CUSP_N_ODD_RATE_BLOCK,
+            &CUSP_N_ODD_RATE_LATER,
+        ),
+        (
+            "StandardN",
+            &[14_700.1, 1.0, 0.5, 0.0],
+            &STANDARD_N_ODD_RATE_BLOCK,
+            &STANDARD_N_ODD_RATE_LATER,
+        ),
+    ] {
+        let out = render_at(ODD_RATE, name, consts, FRAMES);
+        let what = format!("{name} at {ODD_RATE} Hz");
+        assert_bits(&out[..BLOCK], block, &what);
+        assert_points(&out, later, &what);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2000,4 +2037,45 @@ const LIN_CONG_N_WIDE: [u32; 64] = [
     0x3ecd_3e61, 0x3ecd_3e61, 0x3ecd_3e61, 0x3ecd_3e61, 0x3ecd_3e61, 0xbe29_27d1, 0xbe29_27d1,
     0xbe29_27d1, 0xbe29_27d1, 0xbe29_27d1, 0xbe29_27d1, 0xbe29_27d1, 0x3e15_89b8, 0x3e15_89b8,
     0x3e15_89b8,
+];
+#[rustfmt::skip]
+const CUSP_N_ODD_RATE_BLOCK: [u32; 64] = [
+    0x3e80_0000, 0x3e80_0000, 0x3d4c_ccd0, 0x3d4c_ccd0, 0x3d4c_ccd0, 0x3f13_3cd6, 0x3f13_3cd6,
+    0x3f13_3cd6, 0xbee1_c1a5, 0xbee1_c1a5, 0xbee1_c1a5, 0xbe85_f6e8, 0xbe85_f6e8, 0xbe85_f6e8,
+    0x3ce6_582d, 0x3ce6_582d, 0x3ce6_582d, 0x3f2e_7026, 0x3f2e_7026, 0x3f2e_7026, 0xbf11_820e,
+    0xbf11_820e, 0xbf11_820e, 0xbedd_690d, 0xbedd_690d, 0xbedd_690d, 0xbe7f_6ed7, 0xbe7f_6ed7,
+    0xbe7f_6ed7, 0x3d51_1ca3, 0x3d51_1ca3, 0x3d51_1ca3, 0x3f12_1943, 0x3f12_1943, 0x3f12_1943,
+    0xbede_e5bd, 0xbede_e5bd, 0xbede_e5bd, 0xbe81_dc74, 0xbe81_dc74, 0xbe81_dc74, 0x3d30_9cdb,
+    0x3d30_9cdb, 0x3d30_9cdb, 0x3f1a_ffcf, 0x3f1a_ffcf, 0x3f1a_ffcf, 0xbef4_f3bb, 0xbef4_f3bb,
+    0xbef4_f3bb, 0xbea0_ddea, 0xbea0_ddea, 0xbea0_ddea, 0xbd85_21a9, 0xbd85_21a9, 0xbd85_21a9,
+    0x3f03_fc8b, 0x3f03_fc8b, 0x3f03_fc8b, 0xbeba_80ca, 0xbeba_80ca, 0xbeba_80ca, 0xbe16_40b3,
+    0xbe16_40b3,
+];
+
+const CUSP_N_ODD_RATE_LATER: [(usize, u32); 4] = [
+    (511, 0xbeae_ec8a),
+    (1023, 0xbf46_6709),
+    (2047, 0x3d87_df37),
+    (4095, 0xbdcc_463c),
+];
+
+#[rustfmt::skip]
+const STANDARD_N_ODD_RATE_BLOCK: [u32; 64] = [
+    0xbf57_419f, 0xbf57_419f, 0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbe8a_f246, 0xbe8a_f246,
+    0xbe8a_f246, 0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0,
+    0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f44_5fc2,
+    0x3f44_5fc2, 0x3f44_5fc2, 0x3ee2_7b6a, 0x3ee2_7b6a, 0x3ee2_7b6a, 0xbe48_2f7f, 0xbe48_2f7f,
+    0xbe48_2f7f, 0xbf26_5ff4, 0xbf26_5ff4, 0xbf26_5ff4, 0xbf52_160a, 0xbf52_160a, 0xbf52_160a,
+    0xbf52_464b, 0xbf52_464b, 0xbf52_464b, 0xbf27_198b, 0xbf27_198b, 0xbf27_198b, 0xbe4e_8ef0,
+    0xbe4e_8ef0, 0xbe4e_8ef0, 0x3ee0_252a, 0x3ee0_252a, 0x3ee0_252a, 0x3f43_d95c, 0x3f43_d95c,
+    0x3f43_d95c, 0x3f60_ca4c, 0x3f60_ca4c, 0x3f60_ca4c, 0x3f5f_4772, 0x3f5f_4772, 0x3f5f_4772,
+    0x3f3d_eb55, 0x3f3d_eb55, 0x3f3d_eb55, 0x3ec2_f944, 0x3ec2_f944, 0x3ec2_f944, 0xbe8d_92ad,
+    0xbe8d_92ad,
+];
+
+const STANDARD_N_ODD_RATE_LATER: [(usize, u32); 4] = [
+    (511, 0x3f29_e647),
+    (1023, 0xbedf_0b8c),
+    (2047, 0x3f4c_fb85),
+    (4095, 0x3e89_f200),
 ];
