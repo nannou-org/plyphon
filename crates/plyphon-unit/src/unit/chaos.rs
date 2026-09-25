@@ -12,9 +12,9 @@
 //!
 //! The units differ in three ways:
 //!
-//! - `FBSineN`, `HenonN` and the `*L` and `*C` units other than `GbmanL`, `LinCongL` and `LinCongC`
-//!   re-seed their state when an init input changes at run time (the Hénon units only once their
-//!   stability latch has tripped), while the other units seed once and ignore later changes;
+//! - every unit but `GbmanN`, `GbmanL` and the three `LinCong*` units re-seeds its state when an init
+//!   input changes at run time (the Hénon units only once their stability latch has tripped), while
+//!   those five read their init inputs only in the constructor;
 //! - the hold length of the `*L` and `*C` units, `FBSineN` and `HenonN` divides in `f64` and
 //!   narrows to `f32`, while that of the other `*N` units divides in pure `f32`;
 //! - `StandardL` wraps its phase with a C-style truncating remainder, while `StandardN` wraps with a
@@ -256,23 +256,35 @@ fn chaos_cubic(
 }
 
 /// `CuspN.ar(freq, a, b, xi)`: the cusp map `x = a - b*sqrt(|x|)`.
+///
+/// A run-time change of `xi` re-seeds the map.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct CuspN {
+    /// The current iterate, which the unit holds.
     xn: f64,
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// Samples emitted since the last iteration.
     counter: f32,
     _pad: u32,
 }
 
 impl Unit for CuspN {
     fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.xn = ctx.ins.control(3) as f64;
+        self.x0 = f64::from(ctx.ins.control(3));
+        self.xn = self.x0;
         self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let a = ctx.ins.control(1) as f64;
         let b = ctx.ins.control(2) as f64;
+        let xi = f64::from(ctx.ins.control(3));
+        if self.x0 != xi {
+            self.x0 = xi;
+            self.xn = xi;
+        }
         self.xn = chaos1(
             ctx,
             &mut self.counter,
@@ -285,17 +297,24 @@ impl Unit for CuspN {
 }
 
 /// `QuadN.ar(freq, a, b, c, xi)`: the quadratic map `x = a*x^2 + b*x + c`.
+///
+/// A run-time change of `xi` re-seeds the map.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct QuadN {
+    /// The current iterate, which the unit holds.
     xn: f64,
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// Samples emitted since the last iteration.
     counter: f32,
     _pad: u32,
 }
 
 impl Unit for QuadN {
     fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.xn = ctx.ins.control(4) as f64;
+        self.x0 = f64::from(ctx.ins.control(4));
+        self.xn = self.x0;
         self.process(ctx)
     }
 
@@ -303,6 +322,11 @@ impl Unit for QuadN {
         let a = ctx.ins.control(1) as f64;
         let b = ctx.ins.control(2) as f64;
         let c = ctx.ins.control(3) as f64;
+        let xi = f64::from(ctx.ins.control(4));
+        if self.x0 != xi {
+            self.x0 = xi;
+            self.xn = xi;
+        }
         self.xn = chaos1(
             ctx,
             &mut self.counter,
@@ -377,36 +401,59 @@ impl Unit for GbmanN {
 }
 
 /// `StandardN.ar(freq, k, xi, yi)`: the standard (kicked-rotor) map, scaled to `[-1, 1)`.
+///
+/// A run-time change of `xi` or `yi` re-seeds both variables. The held output is taken from the
+/// phase before the re-seed, exactly as the reference does, so the unit keeps emitting the old
+/// value until the next iteration.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct StandardN {
+    /// The current phase.
     xn: f64,
+    /// The current angular momentum.
     yn: f64,
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// The `yi` input the state was last seeded from.
+    y0: f64,
+    /// Samples emitted since the last iteration.
     counter: f32,
     _pad: u32,
 }
 
 impl Unit for StandardN {
     fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.xn = ctx.ins.control(2) as f64;
-        self.yn = ctx.ins.control(3) as f64;
+        self.x0 = f64::from(ctx.ins.control(2));
+        self.y0 = f64::from(ctx.ins.control(3));
+        self.xn = self.x0;
+        self.yn = self.y0;
         self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let k = ctx.ins.control(1) as f64;
-        let (x, y) = chaos2(
-            ctx,
-            &mut self.counter,
-            self.xn,
-            self.yn,
-            |x, y| {
-                let ny = math::rem_euclid(y + k * math::sin(x), TWO_PI);
-                let nx = math::rem_euclid(x + ny, TWO_PI);
-                (nx, ny)
-            },
-            |x| (x - PI) * REC_PI,
-        );
+        let spc = samples_per_cycle(ctx.ins.control(0), ctx.own.sample_rate as f32);
+        let k = f64::from(ctx.ins.control(1));
+        let xi = f64::from(ctx.ins.control(2));
+        let yi = f64::from(ctx.ins.control(3));
+        let mut output = (self.xn - PI) * REC_PI;
+        if self.x0 != xi || self.y0 != yi {
+            self.x0 = xi;
+            self.xn = xi;
+            self.y0 = yi;
+            self.yn = yi;
+        }
+
+        let (mut x, mut y) = (self.xn, self.yn);
+        for o in ctx.outs.audio(0).iter_mut() {
+            if self.counter >= spc {
+                self.counter -= spc;
+                y = math::rem_euclid(y + k * math::sin(x), TWO_PI);
+                x = math::rem_euclid(x + y, TWO_PI);
+                output = (x - PI) * REC_PI;
+            }
+            self.counter += 1.0;
+            *o = output as f32;
+        }
         self.xn = x;
         self.yn = y;
         DoneAction::Nothing
@@ -414,19 +461,30 @@ impl Unit for StandardN {
 }
 
 /// `LatoocarfianN.ar(freq, a, b, c, d, xi, yi)`: the Latoocarfian map.
+///
+/// A run-time change of `xi` or `yi` re-seeds both variables.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LatoocarfianN {
+    /// The current iterate, which the unit holds.
     xn: f64,
+    /// The current second variable.
     yn: f64,
+    /// The `xi` input the state was last seeded from.
+    x0: f64,
+    /// The `yi` input the state was last seeded from.
+    y0: f64,
+    /// Samples emitted since the last iteration.
     counter: f32,
     _pad: u32,
 }
 
 impl Unit for LatoocarfianN {
     fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        self.xn = ctx.ins.control(5) as f64;
-        self.yn = ctx.ins.control(6) as f64;
+        self.x0 = f64::from(ctx.ins.control(5));
+        self.y0 = f64::from(ctx.ins.control(6));
+        self.xn = self.x0;
+        self.yn = self.y0;
         self.process(ctx)
     }
 
@@ -435,6 +493,14 @@ impl Unit for LatoocarfianN {
         let b = ctx.ins.control(2) as f64;
         let c = ctx.ins.control(3) as f64;
         let d = ctx.ins.control(4) as f64;
+        let xi = f64::from(ctx.ins.control(5));
+        let yi = f64::from(ctx.ins.control(6));
+        if self.x0 != xi || self.y0 != yi {
+            self.x0 = xi;
+            self.xn = xi;
+            self.y0 = yi;
+            self.yn = yi;
+        }
         let (x, y) = chaos2(
             ctx,
             &mut self.counter,
