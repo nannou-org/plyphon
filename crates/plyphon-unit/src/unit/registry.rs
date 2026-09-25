@@ -160,6 +160,7 @@ use crate::unit::util::{
     SumCtor,
 };
 use crate::unit::vdisk_in::VDiskInCtor;
+use crate::unit::vibrato::VibratoCtor;
 use crate::unit::wavetable_osc::{COscCtor, OscCtor, OscNCtor, VOsc3Ctor, VOscCtor};
 use crate::unit::{BuiltUnit, InputSource};
 use plyphon_dsp::rate::{Rate, RateInfo};
@@ -491,6 +492,7 @@ impl UnitRegistry {
         registry.register("LFCub", Box::new(LFCubCtor));
         registry.register("VarSaw", Box::new(VarSawCtor));
         registry.register("SyncSaw", Box::new(SyncSawCtor));
+        registry.register("Vibrato", Box::new(VibratoCtor));
         registry.register("FSinOsc", Box::new(FSinOscCtor));
         registry.register("SinOscFB", Box::new(SinOscFBCtor));
         registry.register("LFGauss", Box::new(LFGaussCtor));
