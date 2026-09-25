@@ -260,9 +260,9 @@ impl SynthDef {
         }
 
         // Pre-scan the feedback bus (`LocalIn`/`LocalOut`): at most one of each in v1. The bus width
-        // is the `LocalIn`'s output count; a `LocalOut`, if present, must write that many channels.
+        // is the `LocalIn`'s output count; a `LocalOut` of another width writes nothing at run time.
         let mut local_in_channels: Option<usize> = None;
-        let mut local_out_channels: Option<usize> = None;
+        let mut has_local_out = false;
         for spec in &self.units {
             match spec.name.as_str() {
                 "LocalIn" => {
@@ -272,23 +272,15 @@ impl SynthDef {
                     local_in_channels = Some(spec.num_outputs);
                 }
                 "LocalOut" => {
-                    if local_out_channels.is_some() {
+                    if has_local_out {
                         return Err(BuildError::MultipleLocalBuses);
                     }
-                    local_out_channels = Some(spec.inputs.len());
+                    has_local_out = true;
                 }
                 _ => {}
             }
         }
         let num_local_channels = local_in_channels.unwrap_or(0);
-        if let Some(local_out) = local_out_channels
-            && local_out != num_local_channels
-        {
-            return Err(BuildError::LocalBusMismatch {
-                local_in: num_local_channels,
-                local_out,
-            });
-        }
 
         // Resolve each parameter. Every param's value lives in its control wire (`p`, the
         // `/n_set`/`/n_map`/`control_value` target). A *control* param's output is that wire directly;

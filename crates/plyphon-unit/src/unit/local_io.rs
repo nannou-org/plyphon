@@ -5,8 +5,9 @@
 //! lives in the per-instance pool block and persists across blocks, so a `LocalIn` reads what
 //! `LocalOut` wrote on the *previous* block - a one-block feedback delay. The one-block delay falls
 //! out of calc order: `LocalIn` (a source, ordered before `LocalOut`) reads the bus before
-//! `LocalOut` overwrites it. The channel count is fixed by the single `LocalIn` (its output count),
-//! enforced against the `LocalOut` at compile time.
+//! `LocalOut` overwrites it. The channel count is fixed by the single `LocalIn` (its output count);
+//! a `LocalOut` of any other width, or with no `LocalIn`, writes nothing, as scsynth's
+//! `LocalOut_next_a` returns when `numChannels != localIn->mNumOutputs`.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -49,7 +50,8 @@ impl UnitDef for LocalInCtor {
 }
 
 /// `LocalOut.ar(signals)`: writes its inputs to the synth's private feedback bus, overwriting last
-/// block's contents. Makes no sound itself; a `LocalIn` reads the written values next block.
+/// block's contents. Makes no sound itself; a `LocalIn` reads the written values next block. Writes
+/// nothing unless its input count equals the bus width the `LocalIn` declares.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LocalOut {
@@ -58,6 +60,9 @@ pub struct LocalOut {
 
 impl Unit for LocalOut {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        if self.num_channels as usize != ctx.local.num_channels() {
+            return DoneAction::Nothing;
+        }
         for ch in 0..self.num_channels as usize {
             let src = ctx.ins.audio(ch);
             unit::local_out(&mut ctx.local, ch, src);
