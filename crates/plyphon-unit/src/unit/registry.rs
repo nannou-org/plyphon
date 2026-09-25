@@ -604,6 +604,8 @@ impl UnitRegistry {
             Box::new(InfoCtor(InfoKind::NumRunningSynths)),
         );
         registry.register("NumBuffers", Box::new(InfoCtor(InfoKind::NumBuffers)));
+        registry.register("BlockSize", Box::new(InfoCtor(InfoKind::BlockSize)));
+        registry.register("NodeID", Box::new(InfoCtor(InfoKind::NodeID)));
         registry.register("SubsampleOffset", Box::new(SubsampleOffsetCtor));
         registry.register("BufFrames", Box::new(BufInfoCtor(BufInfoKind::Frames)));
         registry.register("BufChannels", Box::new(BufInfoCtor(BufInfoKind::Channels)));

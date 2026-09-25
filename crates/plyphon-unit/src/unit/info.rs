@@ -1,8 +1,9 @@
 //! Info units - plyphon's ports of scsynth's info UGens.
 //!
 //! These surface engine-level constants to the graph: the audio sample rate and its reciprocal,
-//! `RadiansPerSample`, the control rate/duration, and the bus counts ([`Info`]); plus per-buffer
-//! info - frame/channel/sample counts, sample rate, rate scale, and duration ([`BufInfo`]). The
+//! `RadiansPerSample`, the control rate/duration, the block size, the bus counts and the synth's
+//! node id ([`Info`], from scsynth's `DelayUGens.cpp`); plus per-buffer info - frame/channel/sample
+//! counts, sample rate, rate scale, and duration ([`BufInfo`]). The
 //! [`Info`]/[`BufInfo`] units hold no per-instance state and re-read the context every block, each
 //! writing a single value broadcast across the block (so a `BufInfo` tracks a buffer reallocated
 //! under it, as scsynth re-reads the buffer each calc too).
@@ -43,6 +44,10 @@ pub enum InfoKind {
     NumRunningSynths,
     /// Number of buffer table slots (`NumBuffers`).
     NumBuffers,
+    /// Samples per audio-rate block of the synth's graph (`BlockSize`, scsynth's `FULLBUFLENGTH`).
+    BlockSize,
+    /// The enclosing synth's node id (`NodeID`).
+    NodeID,
 }
 
 impl InfoKind {
@@ -60,6 +65,8 @@ impl InfoKind {
             InfoKind::NumControlBuses => 8,
             InfoKind::NumRunningSynths => 9,
             InfoKind::NumBuffers => 10,
+            InfoKind::BlockSize => 11,
+            InfoKind::NodeID => 12,
         }
     }
 
@@ -76,6 +83,8 @@ impl InfoKind {
             8 => InfoKind::NumControlBuses,
             9 => InfoKind::NumRunningSynths,
             10 => InfoKind::NumBuffers,
+            11 => InfoKind::BlockSize,
+            12 => InfoKind::NodeID,
             _ => InfoKind::SampleRate,
         }
     }
@@ -95,6 +104,8 @@ impl InfoKind {
             InfoKind::NumControlBuses => unit::num_control_buses(ctx.buses) as f32,
             InfoKind::NumRunningSynths => ctx.running_synths as f32,
             InfoKind::NumBuffers => unit::num_buffers(ctx.buffers) as f32,
+            InfoKind::BlockSize => ctx.audio.block_size as f32,
+            InfoKind::NodeID => ctx.node_id as f32,
         }
     }
 }
