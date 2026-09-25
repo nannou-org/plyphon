@@ -74,26 +74,23 @@ pub fn audio_replace_decimated(
         .write_replace_decimated(ch, buf_counter, offset, src, factor);
 }
 
-/// Crossfade `src` (decimated by `factor`) into audio bus channel `ch` at sample `offset`:
-/// `dst = dst*(1-xfade) + src*xfade` (`XOut.ar`). The first writer of the block clears the whole
-/// channel first (as `Out` does), so the mix is against this block's audio or silence.
-/// `offset == 0`, `factor == 1` crossfades the whole channel. Out of range is a no-op.
-pub fn audio_crossfade(
-    buses: &mut Buses,
-    buf_counter: u64,
-    ch: usize,
-    offset: usize,
-    src: &[f32],
-    factor: usize,
-    xfade: f32,
-) {
-    buses
-        .audio_mut()
-        .write_crossfade_decimated(ch, buf_counter, offset, src, factor, xfade);
+/// Audio bus channel `ch` for this block, mutably, or `None` if `ch` is out of range - for a writer
+/// whose arithmetic on the channel depends on its own state (`XOut`). It does not mark the channel
+/// touched; the writer does that with [`audio_touch`] where scsynth's does.
+pub fn audio_channel_mut(buses: &mut Buses, ch: usize) -> Option<&mut [f32]> {
+    let audio = buses.audio_mut();
+    (ch < audio.num_channels()).then(|| audio.channel_mut(ch))
 }
 
-/// Crossfade `value` into control bus channel `ch`: `ch = ch*(1-xfade) + value*xfade` (`XOut.kr`).
-/// The first writer of the block treats the existing value as zero. Out of range is a no-op.
+/// Mark audio bus channel `ch` as written during block `buf_counter` (scsynth's
+/// `touched[i] = bufCounter`). Out of range is a no-op.
+pub fn audio_touch(buses: &mut Buses, ch: usize, buf_counter: u64) {
+    buses.audio_mut().touch_range(ch..ch + 1, buf_counter);
+}
+
+/// Crossfade `value` into control bus channel `ch` (`XOut.kr`, scsynth's `XOut_next_k`): a channel
+/// already written this block becomes `bus + xfade * (value - bus)`, an untouched one `xfade * value`,
+/// and either way it is marked touched. Out of range is a no-op.
 pub fn control_crossfade(buses: &mut Buses, buf_counter: u64, ch: usize, value: f32, xfade: f32) {
     buses
         .control_mut()

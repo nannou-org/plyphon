@@ -140,56 +140,236 @@ impl UnitDef for ReplaceOutCtor {
     }
 }
 
-/// `XOut.ar(bus, xfade, signals)` / `XOut.kr(...)`: crossfade each signal into a consecutive bus
-/// channel starting at `bus`, mixing with whatever earlier units wrote there this block -
-/// `bus = bus*(1-xfade) + signal*xfade`. Unlike [`ReplaceOut`] (which overwrites), `XOut` reads the
-/// current bus content, so `xfade = 0` leaves the bus unchanged and `xfade = 1` replaces it. The
-/// first writer of a channel this block clears it whole (as [`Out`] does) before crossfading, so
-/// the mix is always against this block's audio or silence - never stale prior-block audio,
-/// including each tick-slice under reblock/resample. `xfade` is read once per block
-/// (block-constant, matching plyphon's `Out`/pan convention).
+/// `XOut.ar(bus, xfade, signals)` / `XOut.kr(...)`: crossfades each signal into a consecutive bus
+/// channel starting at `bus`, against whatever earlier units wrote there this block. `xfade = 0`
+/// leaves the bus unchanged and `xfade = 1` replaces it.
+///
+/// A direct port of scsynth's `XOut`. At audio rate the unit keeps the previous block's `xfade`
+/// (scsynth's `m_xfade`, set from the first `xfade` in the constructor) and picks a branch from it:
+///
+/// - `xfade` changed: ramp from the old value to the new one across the block (`CALCSLOPE`).
+/// - old `xfade` is 1: copy the signal over the channel.
+/// - old `xfade` is 0: leave the channel alone, without marking it written.
+/// - otherwise: crossfade at the old `xfade`.
+///
+/// A channel already written this block is crossfaded; an untouched one takes `signal * xfade`.
+/// With a block size that is a multiple of 16, scsynth uses nova-simd's kernels (`XOut_next_a_nova`),
+/// which crossfade as `bus * (1 - xfade) + signal * xfade` and build a ramp four lanes at a time
+/// (as nova-simd's NEON `set_slope` does); other block sizes use `XOut_next_a`'s
+/// `bus + xfade * (signal - bus)` with a per-sample ramp. A reblocked or resampled graph follows
+/// `XOut_next_a_reblock`. At control rate the crossfade is `XOut_next_k`'s, with no branches, and a
+/// reblocked graph writes on its first tick only.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct XOut {
     /// `0`/`1`: whether this crossfades the audio or control bus bank.
     audio: u32,
+    /// `0`/`1`: whether the graph's block size is a multiple of 16 (scsynth's nova-simd variant).
+    nova: u32,
+    /// The previous block's `xfade` (scsynth's `m_xfade`).
+    xfade: f32,
+}
+
+impl XOut {
+    const BUS: usize = 0;
+    const XFADE: usize = 1;
+    const SIGNAL_START: usize = 2;
+
+    /// `XOut_next_a` and `XOut_next_a_nova`: one whole block of an ordinary graph.
+    fn next_a(&mut self, ctx: &mut ProcessCtx<'_>, base: usize) {
+        let next_xfade = ctx.ins.control(Self::XFADE);
+        let xfade0 = self.xfade;
+        let nova = self.nova != 0;
+        let ins = ctx.ins;
+        for k in Self::SIGNAL_START..ins.len() {
+            let ch = base + (k - Self::SIGNAL_START);
+            let signal = ins.audio(k);
+            let touched = unit::audio_in_touched(ctx.buses, ch, ctx.buf_counter);
+            let Some(out) = unit::audio_channel_mut(ctx.buses, ch) else {
+                continue;
+            };
+            let n = out.len().min(signal.len());
+            let (out, signal) = (&mut out[..n], &signal[..n]);
+            if xfade0 != next_xfade {
+                let slope = (next_xfade - xfade0) * ctx.own.slope_factor as f32;
+                if nova {
+                    let mut to = NeonRamp::new(xfade0, slope);
+                    if touched {
+                        let mut from = NeonRamp::new(1.0 - xfade0, -slope);
+                        for (j, (o, &x)) in out.iter_mut().zip(signal).enumerate() {
+                            *o = *o * from.at(j) + x * to.at(j);
+                        }
+                    } else {
+                        for (j, (o, &x)) in out.iter_mut().zip(signal).enumerate() {
+                            *o = x * to.at(j);
+                        }
+                    }
+                } else {
+                    let mut xfade = xfade0;
+                    for (o, &x) in out.iter_mut().zip(signal) {
+                        *o = if touched {
+                            *o + xfade * (x - *o)
+                        } else {
+                            x * xfade
+                        };
+                        xfade += slope;
+                    }
+                }
+            } else if xfade0 == 1.0 {
+                out.copy_from_slice(signal);
+            } else if xfade0 == 0.0 {
+                continue;
+            } else if touched {
+                for (o, &x) in out.iter_mut().zip(signal) {
+                    *o = if nova {
+                        *o * (1.0 - xfade0) + x * xfade0
+                    } else {
+                        *o + xfade0 * (x - *o)
+                    };
+                }
+            } else {
+                for (o, &x) in out.iter_mut().zip(signal) {
+                    *o = x * xfade0;
+                }
+            }
+            unit::audio_touch(ctx.buses, ch, ctx.buf_counter);
+        }
+        self.xfade = next_xfade;
+    }
+
+    /// `XOut_next_a_reblock`: one tick of a reblocked or resampled graph, writing its slice of the
+    /// World-block channel, one sample in every `factor`.
+    fn next_a_reblock(&mut self, ctx: &mut ProcessCtx<'_>, base: usize) {
+        let factor = ctx.resample_factor.max(1);
+        let ins = ctx.ins;
+        // scsynth's `inNumSamples`: the graph's block.
+        let num_samples = ctx.audio.block_size;
+        let input_offset = ctx.tick * num_samples;
+        // All of this tick's samples fall between the World-rate samples.
+        if input_offset & (factor - 1) != 0 {
+            return;
+        }
+        let next_xfade = ins.control(Self::XFADE);
+        let xfade0 = self.xfade;
+        let shift = factor.trailing_zeros();
+        let out_samples = (num_samples >> shift).max(1);
+        let out_offset = input_offset >> shift;
+        let first_tick = ctx.tick == 0;
+        for k in Self::SIGNAL_START..ins.len() {
+            let ch = base + (k - Self::SIGNAL_START);
+            let signal = ins.audio(k);
+            let untouched = !unit::audio_in_touched(ctx.buses, ch, ctx.buf_counter);
+            let Some(channel) = unit::audio_channel_mut(ctx.buses, ch) else {
+                continue;
+            };
+            let end = (out_offset + out_samples).min(channel.len());
+            let at = |j: usize| signal.get(j << shift).copied().unwrap_or(0.0);
+            if xfade0 != next_xfade {
+                let slope = (next_xfade - xfade0) * ctx.own.slope_factor as f32 * factor as f32;
+                let touch = first_tick && untouched;
+                if touch {
+                    // The first tick clears an untouched channel whole, so every tick sums into it.
+                    channel.fill(0.0);
+                }
+                let mut xfade = xfade0;
+                for (j, o) in channel[out_offset.min(end)..end].iter_mut().enumerate() {
+                    *o += xfade * (at(j) - *o);
+                    xfade += slope;
+                }
+                if touch {
+                    unit::audio_touch(ctx.buses, ch, ctx.buf_counter);
+                }
+            } else if xfade0 == 1.0 {
+                // scsynth sums here, onto whatever the channel holds.
+                for (j, o) in channel[out_offset.min(end)..end].iter_mut().enumerate() {
+                    *o += at(j);
+                }
+                unit::audio_touch(ctx.buses, ch, ctx.buf_counter);
+            } else if xfade0 == 0.0 {
+                continue;
+            } else {
+                let touch = first_tick && untouched;
+                if touch {
+                    // The first tick clears an untouched channel whole, so every tick sums into it.
+                    channel.fill(0.0);
+                }
+                for (j, o) in channel[out_offset.min(end)..end].iter_mut().enumerate() {
+                    *o += xfade0 * (at(j) - *o);
+                }
+                if touch {
+                    unit::audio_touch(ctx.buses, ch, ctx.buf_counter);
+                }
+            }
+        }
+        self.xfade = next_xfade;
+    }
+}
+
+/// One of nova-simd's `slope_argument` ramps as its NEON vectors hold it: four lanes starting at
+/// `start`, `start + slope`, `start + slope + slope` and `start + slope + slope + slope`, each
+/// stepped by `slope + slope + slope + slope` for every four samples.
+struct NeonRamp {
+    lanes: [f32; 4],
+    step: f32,
+    /// The index of the first sample `lanes` holds.
+    first: usize,
+}
+
+impl NeonRamp {
+    fn new(start: f32, slope: f32) -> Self {
+        let s1 = start + slope;
+        let s2 = s1 + slope;
+        NeonRamp {
+            lanes: [start, s1, s2, s2 + slope],
+            step: slope + slope + slope + slope,
+            first: 0,
+        }
+    }
+
+    /// The ramp's value at sample `j`; samples are read in order.
+    fn at(&mut self, j: usize) -> f32 {
+        while j >= self.first + 4 {
+            for lane in &mut self.lanes {
+                *lane += self.step;
+            }
+            self.first += 4;
+        }
+        self.lanes[j - self.first]
+    }
 }
 
 impl Unit for XOut {
-    fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        // The constructor runs no calc; the output starts at zero.
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor keeps the first `xfade` and runs no calc.
+        if ctx.ins.len() > Self::XFADE {
+            self.xfade = ctx.ins.control(Self::XFADE);
+        }
         DoneAction::Nothing
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // Needs at least `bus` and `xfade`.
-        if ctx.ins.len() < 2 {
+        if ctx.ins.len() < Self::SIGNAL_START {
             return DoneAction::Nothing;
         }
-        let base = ctx.ins.control(0) as usize;
-        let xfade = ctx.ins.control(1);
+        let base = ctx.ins.control(Self::BUS) as usize;
         if self.audio != 0 {
-            let factor = ctx.resample_factor;
-            for k in 2..ctx.ins.len() {
-                let signal = ctx.ins.audio(k);
-                let out_samples = signal.len() / factor;
-                let offset = ctx.tick * out_samples;
-                unit::audio_crossfade(
-                    ctx.buses,
-                    ctx.buf_counter,
-                    base + (k - 2),
-                    offset,
-                    signal,
-                    factor,
-                    xfade,
-                );
+            let reblocked =
+                ctx.resample_factor != 1 || ctx.audio.block_size != ctx.buses.audio().block_size();
+            if reblocked {
+                self.next_a_reblock(ctx, base);
+            } else {
+                self.next_a(ctx, base);
             }
-        } else {
-            for k in 2..ctx.ins.len() {
+        } else if ctx.tick == 0 {
+            // `XOut_next_k`; a reblocked graph writes on its first tick only
+            // (`XOut_next_k_reblock`).
+            let xfade = ctx.ins.control(Self::XFADE);
+            for k in Self::SIGNAL_START..ctx.ins.len() {
                 unit::control_crossfade(
                     ctx.buses,
                     ctx.buf_counter,
-                    base + (k - 2),
+                    base + (k - Self::SIGNAL_START),
                     ctx.ins.control(k),
                     xfade,
                 );
@@ -206,6 +386,9 @@ impl UnitDef for XOutCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
         Ok(unit_spec(XOut {
             audio: (ctx.rate == Rate::Audio) as u32,
+            // `boost::alignment::is_aligned(BUFLENGTH, 16)`.
+            nova: ctx.audio.block_size.is_multiple_of(16) as u32,
+            xfade: 0.0,
         }))
     }
 }
