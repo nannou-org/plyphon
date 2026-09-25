@@ -327,24 +327,55 @@ fn a_failed_fft_allocation_outputs_no_frames_and_marks_the_unit_done() {
     );
 }
 
-#[test]
-fn fft_ifft_size_themselves_from_a_16384_frame_chain_buffer() {
-    // The largest supported size, with `winsize = 0`: each unit allocates exactly what the buffer
-    // needs, so no size ceiling applies below the engine's largest FFT plan.
-    const BIG: usize = 16_384;
-    let freq = 20.0 * SR as f32 / FFT_SIZE as f32; // bin-aligned for both 1024 and 16384
+/// `chain_def_winsize` with window type `wintype` on both the `FFT` and the `IFFT`.
+fn chain_def_wintype(freq: f32, winsize: f32, wintype: f32) -> SynthDef {
+    let mut def = chain_def_winsize(freq, 0.5, winsize);
+    def.units[2].inputs[3] = InputRef::Constant(wintype);
+    def.units[3].inputs[1] = InputRef::Constant(wintype);
+    def
+}
+
+/// Run `def` over a `frames`-frame chain buffer for four frames and return the second half.
+fn chain_tail(def: SynthDef, frames: usize) -> Vec<f32> {
     let (mut controller, _nrt, mut world) = engine(opts());
     controller
-        .buffer_set(0, Box::new(Buffer::from_interleaved(vec![0.0; BIG], 1, SR)))
+        .buffer_set(
+            0,
+            Box::new(Buffer::from_interleaved(vec![0.0; frames], 1, SR)),
+        )
         .unwrap();
-    controller.add_synthdef(chain_def_winsize(freq, 0.5, 0.0));
+    controller.add_synthdef(def);
     controller
         .synth_new("fft-chain", ROOT_GROUP_ID, AddAction::Tail)
         .unwrap();
-    let out = render(&mut world, 4 * BIG);
-    let tail = &out[2 * BIG..];
-    let at = goertzel(tail, freq);
-    let off = goertzel(tail, freq * 2.0);
+    let out = render(&mut world, 4 * frames);
+    out[2 * frames..].to_vec()
+}
+
+#[test]
+fn fft_ifft_size_themselves_from_large_chain_buffers() {
+    // With `winsize = 0` each unit allocates exactly what the buffer needs, up to scsynth's largest
+    // FFT (`SC_FFT_ABSOLUTE_MAXSIZE`, 262144), which the engine plans for up front.
+    let freq = 20.0 * SR as f32 / FFT_SIZE as f32; // bin-aligned for every size here
+    for frames in [16_384, 262_144] {
+        let tail = chain_tail(chain_def_wintype(freq, 0.0, 0.0), frames);
+        let at = goertzel(&tail, freq);
+        let off = goertzel(&tail, freq * 2.0);
+        assert!(
+            at > 8.0 * off && at > 0.05,
+            "{frames} frames: expected {freq} Hz to dominate (at={at:.4}, off={off:.4})"
+        );
+    }
+}
+
+#[test]
+fn a_rectangular_window_resynthesizes_the_tone() {
+    // `wintype = -1` applies no window at either end; the engine keeps no table for it, and both
+    // units treat the missing window as all ones.
+    let freq = 20.0 * SR as f32 / FFT_SIZE as f32;
+    let tail = chain_tail(chain_def_wintype(freq, FFT_SIZE as f32, -1.0), FFT_SIZE);
+    let at = goertzel(&tail, freq);
+    let off = goertzel(&tail, freq * 2.0);
     assert!(
         at > 8.0 * off && at > 0.05,
         "expected {freq} Hz to dominate (at={at:.4}, off={off:.4})"

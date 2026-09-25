@@ -8,7 +8,10 @@
 //! is compiled either.
 //!
 //! Under `fft` it precomputes, off the audio thread, one real FFT/IFFT plan per supported power-of-two
-//! size (64..=16384) plus the window tables. The transforms run **allocation-free** on the RT thread
+//! size plus the sine and Hann window tables. The sizes are scsynth's whole range, `SC_FFT_MINSIZE`
+//! (8) to `SC_FFT_ABSOLUTE_MAXSIZE` (262144): scsynth precomputes up to 32768 and builds the larger
+//! plans on first use, which would allocate on the audio thread here, so every size is built up
+//! front. The transforms run **allocation-free** on the RT thread
 //! via `realfft`'s `process_with_scratch`: the complex spectrum and the plan scratch live here behind
 //! a `RefCell`, borrowed for the duration of one transform. The RT thread is
 //! single-threaded and walks units sequentially, so the borrow never overlaps - `borrow_mut` is a
@@ -29,13 +32,13 @@ use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 #[cfg(feature = "fft")]
 use crate::math;
 
-/// Smallest supported FFT size, `2^6` = 64.
+/// Smallest supported FFT size, `2^3` = 8 (scsynth's `SC_FFT_MINSIZE`).
 #[cfg(feature = "fft")]
-const MIN_LOG2: u32 = 6;
-/// Largest supported FFT size, `2^14` = 16384 (a wasm-memory- and RT-friendly cap).
+const MIN_LOG2: u32 = 3;
+/// Largest supported FFT size, `2^18` = 262144 (scsynth's `SC_FFT_ABSOLUTE_MAXSIZE`).
 #[cfg(feature = "fft")]
-const MAX_LOG2: u32 = 14;
-/// Number of supported sizes (64, 128, ..., 16384).
+const MAX_LOG2: u32 = 18;
+/// Number of supported sizes (8, 16, ..., 262144).
 #[cfg(feature = "fft")]
 const NUM_SIZES: usize = (MAX_LOG2 - MIN_LOG2 + 1) as usize;
 
@@ -62,19 +65,21 @@ impl WindowType {
         }
     }
 
-    /// Index into a per-size window table.
+    /// Index into a per-size window table; `None` for the rectangular window, which is not stored
+    /// (it is all ones, and scsynth keeps no table for it either).
     #[cfg(feature = "fft")]
-    fn index(self) -> usize {
+    fn index(self) -> Option<usize> {
         match self {
-            WindowType::Rectangular => 0,
-            WindowType::Sine => 1,
-            WindowType::Hann => 2,
+            WindowType::Rectangular => None,
+            WindowType::Sine => Some(0),
+            WindowType::Hann => Some(1),
         }
     }
 }
 
-/// Whether `n` is a supported FFT size: a power of two in `[64, 16384]`. A spectral unit validates its
-/// `fftsize` against this at build time so the audio thread always finds a plan.
+/// Whether `n` is a supported FFT size: a power of two in `[8, 262144]`, scsynth's range. A spectral
+/// unit checks its FFT size against this before transforming, so the audio thread always finds a
+/// plan.
 #[cfg(feature = "fft")]
 pub fn is_supported_size(n: usize) -> bool {
     n.is_power_of_two() && (MIN_LOG2..=MAX_LOG2).contains(&n.trailing_zeros())
@@ -105,8 +110,8 @@ struct Scratch {
 struct FftInner {
     forward: [Arc<dyn RealToComplex<f32>>; NUM_SIZES],
     inverse: [Arc<dyn ComplexToReal<f32>>; NUM_SIZES],
-    /// `windows[size_index][WindowType::index]`.
-    windows: [[Vec<f32>; 3]; NUM_SIZES],
+    /// `windows[size_index][WindowType::index]`: the sine and Hann windows.
+    windows: [[Vec<f32>; 2]; NUM_SIZES],
     scratch: RefCell<Scratch>,
 }
 
@@ -121,7 +126,6 @@ impl FftInner {
         let windows = core::array::from_fn(|i| {
             let n = 1usize << (i as u32 + MIN_LOG2);
             [
-                make_window(WindowType::Rectangular, n),
                 make_window(WindowType::Sine, n),
                 make_window(WindowType::Hann, n),
             ]
@@ -213,11 +217,12 @@ impl FftTables {
         true
     }
 
-    /// The precomputed `wintype` window for `size` (an empty slice if `size` is unsupported).
+    /// The precomputed `wintype` window for `size`. An empty slice stands for all ones: the
+    /// rectangular window, or an unsupported `size`.
     pub fn window(&self, size: usize, wintype: WindowType) -> &[f32] {
-        match size_index(size) {
-            Some(idx) => &self.inner.windows[idx][wintype.index()],
-            None => &[],
+        match (size_index(size), wintype.index()) {
+            (Some(idx), Some(kind)) => &self.inner.windows[idx][kind],
+            _ => &[],
         }
     }
 }
@@ -341,8 +346,8 @@ mod tests {
         let mut t = vec![0.0f32; 100];
         let mut p = vec![0.0f32; 100];
         assert!(!tables.forward(100, &mut t, &mut p)); // not a power of two
-        assert!(!is_supported_size(32)); // below the minimum
-        assert!(!is_supported_size(32768)); // above the maximum
+        assert!(!is_supported_size(4)); // below the minimum
+        assert!(!is_supported_size(524_288)); // above the maximum
         assert!(is_supported_size(1024));
     }
 }
