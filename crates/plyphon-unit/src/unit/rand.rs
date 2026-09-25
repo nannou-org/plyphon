@@ -33,10 +33,11 @@ fn uniform(rgen: &mut Rng, lo: f32, hi: f32) -> f32 {
     rgen.next_unipolar() * (hi - lo) + lo
 }
 
-/// An exponential-distribution draw in `[lo, hi)` (scsynth's `pow(hi / lo, frand()) * lo`): equal
-/// probability per octave, so `lo` must be non-zero and share `hi`'s sign for a sensible result.
+/// An exponential-distribution draw in `[lo, hi)` (scsynth's single-precision
+/// `pow(hi / lo, frand()) * lo`): equal probability per octave, so `lo` must be non-zero and share
+/// `hi`'s sign for a sensible result.
 fn exponential(rgen: &mut Rng, lo: f32, hi: f32) -> f32 {
-    math::exp(math::ln(hi / lo) * rgen.next_unipolar()) * lo
+    math::powf(hi / lo, rgen.next_unipolar()) * lo
 }
 
 /// A uniform integer draw in `[lo, hi]` as a float (scsynth's `rgen.irand(hi - lo + 1) + lo`).
@@ -278,9 +279,9 @@ impl Unit for RandSeed {
         for i in 0..frames {
             let t = trig.at(i);
             if self.prev_trig <= 0.0 && t > 0.0 {
-                // The seed input truncates to an `i32` and re-keys the stream by its 32-bit
-                // pattern, so equal seed values always produce equal sequences.
-                **rgen = Rng::new(ins.control(1) as i32 as u32 as u64);
+                // The seed input truncates to an `i32` and re-seeds the stream as scsynth's
+                // `RGen::init` does, so a given seed restarts the sequence the server gives it.
+                rgen.init(ins.control(1) as i32 as u32);
             }
             self.prev_trig = t;
         }

@@ -12,7 +12,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::{self, BuiltUnit, DoneAction, ProcessCtx, Unit, pv, unit_spec, unit_spec_pool};
-use core::f32::consts::TAU;
+use core::f64::consts::TAU;
 use plyphon_dsp::math;
 
 /// Which magnitude-threshold operation a [`PvMagThresh`] applies.
@@ -387,7 +387,7 @@ impl Unit for PvDiffuser {
         let shifts = &mut ctx.aux.f32_mut()[..numbins];
         if choose {
             for shift in shifts.iter_mut() {
-                *shift = ctx.rgen.next_unipolar() * TAU;
+                *shift = (ctx.rgen.next_unipolar() as f64 * TAU) as f32;
             }
         }
         // The trigger level also scales how many bins are offset - scsynth's

@@ -436,3 +436,59 @@ fn a_spawn_does_not_replay_the_previous_spawns_first_unit_stream() {
         "graph stream replays the previous spawn's unit-0 stream (bipolar map)"
     );
 }
+
+/// `RandSeed.ir(1, 42)`, then `draw` (unit 1) held into `Out.ar` by `K2A`: the first sample is the
+/// draw scsynth makes right after `RGen::init(42)`.
+fn seeded_draw(draw: UnitSpec) -> f32 {
+    let buf = render(
+        vec![
+            UnitSpec::new(
+                "RandSeed",
+                Rate::Scalar,
+                vec![InputRef::Constant(1.0), InputRef::Constant(42.0)],
+                1,
+            ),
+            draw,
+            UnitSpec::new(
+                "K2A",
+                Rate::Audio,
+                vec![InputRef::Unit { unit: 1, output: 0 }],
+                1,
+            ),
+            out(2),
+        ],
+        1,
+    );
+    buf[0]
+}
+
+#[test]
+fn seeded_draws_match_scsynth() {
+    // Each expected value is what scsynth's own `RGen` gives after `init(42)`.
+    let rand = seeded_draw(UnitSpec::new(
+        "Rand",
+        Rate::Scalar,
+        vec![InputRef::Constant(0.0), InputRef::Constant(1.0)],
+        1,
+    ));
+    assert_eq!(rand.to_bits(), 0x3ecb_6f74, "Rand: frand");
+
+    // Single-precision `pow(hi / lo, frand()) * lo`.
+    let exp_rand = seeded_draw(UnitSpec::new(
+        "ExpRand",
+        Rate::Scalar,
+        vec![InputRef::Constant(100.0), InputRef::Constant(200.0)],
+        1,
+    ));
+    assert_eq!(exp_rand.to_bits(), 0x4303_b50e, "ExpRand: powf");
+
+    // `exprand` is `RGen::exprandrng`, in double precision from `drand`.
+    let exprand = seeded_draw(UnitSpec {
+        name: "BinaryOpUGen".to_string(),
+        rate: Rate::Control,
+        inputs: vec![InputRef::Constant(0.5), InputRef::Constant(8.0)],
+        num_outputs: 1,
+        special_index: 48,
+    });
+    assert_eq!(exprand.to_bits(), 0x3fc0_9557, "exprand: exprandrng");
+}
