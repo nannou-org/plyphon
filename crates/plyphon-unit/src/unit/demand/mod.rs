@@ -45,10 +45,11 @@ use alloc::boxed::Box;
 
 use bytemuck::Pod;
 use plyphon_dsp::buffer::{BufView, BufViewMut, BufferTable};
+use plyphon_dsp::rng::Rng;
 
 use crate::unit::{
     InputSource, Inputs, LocalBufs, MAX_LABEL, MAX_VALUES, NodeMsg, NodeMsgKind, NodeMsgSink,
-    ReseedFn, buffer_at, buffer_at_mut,
+    buffer_at, buffer_at_mut,
 };
 
 pub use dbrown::Dbrown;
@@ -104,10 +105,6 @@ struct StateBuf([u8; MAX_DEMAND_STATE]);
 /// signal that its sequence is exhausted (scsynth's `DNAN`). [`reset`](DemandUnit::reset) restarts it
 /// (and must propagate the reset to any demand-rate inputs via [`DemandCtx::reset`]).
 pub trait DemandUnit: Pod {
-    /// Re-seed any per-instance randomness, exactly as [`Unit::reseed`](super::Unit::reseed). The
-    /// default is a no-op; `Dwhite`-style sources override it so two instances decorrelate.
-    fn reseed(&mut self, _seed: u64) {}
-
     /// Reset internal state to the start of the sequence (scsynth's `inNumSamples == 0` branch). The
     /// default is a no-op; sequence sources zero their counters here and reset their demand inputs.
     fn reset(&mut self, _ctx: &mut DemandCtx<'_>) {}
@@ -143,10 +140,6 @@ fn init_thunk<T: DemandUnit>(bytes: &mut [u8], ctx: &mut DemandCtx<'_>) {
     bytemuck::from_bytes_mut::<T>(bytes).init(ctx);
 }
 
-fn demand_reseed_thunk<T: DemandUnit>(bytes: &mut [u8], seed: u64) {
-    bytemuck::from_bytes_mut::<T>(bytes).reseed(seed);
-}
-
 /// One demand unit's compiled record: its pull/reset/seed vtable, resolved input wiring, and state
 /// slot in the demand arena - the demand-plan analogue of [`UnitVtbl`](crate::graphdef::UnitVtbl).
 pub struct DemandVtbl {
@@ -156,8 +149,6 @@ pub struct DemandVtbl {
     pub reset: ResetFn,
     /// Construct the unit, once, in the constructor pass.
     pub init: ResetFn,
-    /// Per-instance re-seed (no-op for non-random sources).
-    pub reseed: ReseedFn,
     /// Resolved input sources, in order (constants, wires, or nested demand units).
     pub inputs: Box<[InputSource]>,
     /// Byte offset of this unit's state within the demand-state span.
@@ -176,8 +167,6 @@ pub struct BuiltDemandUnit {
     pub reset: ResetFn,
     /// Constructor.
     pub init: ResetFn,
-    /// Per-instance re-seed function.
-    pub reseed: ReseedFn,
     /// `size_of::<T>()`.
     pub size: usize,
     /// `align_of::<T>()`.
@@ -193,7 +182,6 @@ pub fn demand_unit_spec<T: DemandUnit>(state: T) -> BuiltDemandUnit {
         produce: produce_thunk::<T>,
         reset: reset_thunk::<T>,
         init: init_thunk::<T>,
-        reseed: demand_reseed_thunk::<T>,
         size: core::mem::size_of::<T>(),
         align: core::mem::align_of::<T>(),
         init_bytes: bytemuck::bytes_of(&state).to_vec().into_boxed_slice(),
@@ -224,6 +212,9 @@ pub struct DemandWorld<'w, 's> {
     /// value belongs to the block rather than to the pull - `Unpack1FFT` reading one FFT frame -
     /// stamps it so repeated pulls within a block yield the same value.
     pub buf_counter: u64,
+    /// The random stream the synth draws from (scsynth's `mParent->mRGen`), reached via
+    /// [`DemandCtx::rgen`]: the demand randoms (`Dwhite`, `Drand`, ...) draw from it.
+    pub rgen: &'w mut Rng,
 }
 
 /// What a demand unit touches while producing or resetting - the pull-side analogue of
@@ -242,6 +233,7 @@ pub struct DemandCtx<'a> {
     node_id: i32,
     node_msgs: NodeMsgSink<'a>,
     buf_counter: u64,
+    rgen: &'a mut Rng,
 }
 
 impl DemandCtx<'_> {
@@ -275,6 +267,7 @@ impl DemandCtx<'_> {
                     node_id: self.node_id,
                     node_msgs: &mut self.node_msgs,
                     buf_counter: self.buf_counter,
+                    rgen: &mut *self.rgen,
                 },
                 d as usize,
                 Op::Produce,
@@ -301,6 +294,7 @@ impl DemandCtx<'_> {
                     node_id: self.node_id,
                     node_msgs: &mut self.node_msgs,
                     buf_counter: self.buf_counter,
+                    rgen: &mut *self.rgen,
                 },
                 d as usize,
                 Op::Reset,
@@ -335,6 +329,11 @@ impl DemandCtx<'_> {
     /// sees the same frame.
     pub fn buf_counter(&self) -> u64 {
         self.buf_counter
+    }
+
+    /// The random stream the synth draws from (scsynth's `mParent->mRGen`).
+    pub fn rgen(&mut self) -> &mut Rng {
+        self.rgen
     }
 
     /// Post one polled `value` to the host (`Dpoll`): a [`NodeMsg`] of kind [`NodeMsgKind::Poll`]
@@ -400,6 +399,7 @@ fn pull(
             node_id: world.node_id,
             node_msgs: world.node_msgs.reborrow(),
             buf_counter: world.buf_counter,
+            rgen: &mut *world.rgen,
         };
         match op {
             Op::Produce => (v.produce)(&mut buf.0[..size], &mut ctx),

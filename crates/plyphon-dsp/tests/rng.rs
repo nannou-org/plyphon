@@ -3,11 +3,9 @@
 
 use plyphon_dsp::rng::{Rng, hash};
 
-/// A generator re-seeded with `seed` the way scsynth's `RGen::init` does.
+/// A generator seeded with `seed` the way scsynth's `RGen::init` does.
 fn seeded(seed: u32) -> Rng {
-    let mut rng = Rng::new(0);
-    rng.init(seed);
-    rng
+    Rng::new(seed)
 }
 
 #[test]

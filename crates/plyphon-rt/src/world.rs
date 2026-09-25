@@ -21,7 +21,7 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use bytemuck::{Zeroable, cast_slice_mut};
+use bytemuck::cast_slice_mut;
 use rtrb::{Consumer, Producer, PushError};
 
 use crate::command::{Command, CommandTime, Event, NodeNotify, Reply, TimedCommand, Trash};
@@ -38,13 +38,6 @@ use plyphon_dsp::stream::StreamRecording;
 use plyphon_dsp::wavetable::Wavetables;
 use plyphon_unit::graphdef::GraphDef;
 use plyphon_unit::unit::{DoneAction, NodeMsg, NodeOp, NodeOpKind, Trigger};
-
-/// The seed the per-instance RNG counter starts from (any fixed non-zero value; keeps runs
-/// deterministic while decorrelating distinct synth instances).
-const SEED_INIT: u64 = 0x853c_49e6_748f_ea9b;
-
-/// The golden-ratio odd constant used to spread per-instance and per-unit seeds.
-const SEED_STEP: u64 = 0x9e37_79b9_7f4a_7c15;
 
 /// The most values a single range getter (`/c_getn`/`/s_getn`/`/b_getn`) answers, so one oversized
 /// request cannot overflow the reply ring. scsynth similarly bounds its reply sizes.
@@ -85,8 +78,6 @@ pub struct World {
     /// The World's random streams (scsynth's `mRGen`, `mNumRGens` of them). Every synth draws
     /// from one of them - stream 0 unless `RandID` selects another - so synths share them.
     rgens: Box<[Rng]>,
-    /// Per-instance RNG seed counter, advanced for each synth built.
-    next_seed: u64,
     rx: Consumer<TimedCommand>,
     trash_tx: Producer<Trash>,
     events_tx: Producer<Event>,
@@ -204,14 +195,7 @@ impl World {
             unit_scratch: vec![0.0f32; options.max_unit_outputs * bs].into_boxed_slice(),
             // scsynth seeds each stream from the clock (`server_timeseed`); stream `i` is seeded with
             // `RGen::init(i)` here, so a render is the same every run.
-            rgens: (0..options.num_rgens.max(1) as u32)
-                .map(|i| {
-                    let mut rgen = Rng::zeroed();
-                    rgen.init(i);
-                    rgen
-                })
-                .collect(),
-            next_seed: SEED_INIT,
+            rgens: (0..options.num_rgens.max(1) as u32).map(Rng::new).collect(),
             rx,
             trash_tx,
             events_tx,
@@ -1062,8 +1046,6 @@ impl World {
         let Some(region) = self.pool.alloc(layout.total) else {
             return Err(aux);
         };
-        let seed = self.next_seed;
-        self.next_seed = self.next_seed.wrapping_add(SEED_STEP);
 
         let buf = self.pool.slice_mut(&region);
         // Carve the block into its disjoint spans. The layout guarantees they are in-bounds and
@@ -1125,20 +1107,6 @@ impl World {
         // Lag one-pole state (`_lag_bytes`) is deliberately not seeded here: the graph's first tick
         // seeds it from the live value slot (scsynth's `LagControl_Ctor` runs at first calc), so a
         // control set between creation and the first block starts already-lagged to its target.
-        // Re-seed each unit's randomness for this instance (calc units, then demand units, on one
-        // continuing index so two instances of a def decorrelate reproducibly).
-        for (u, v) in def.units().iter().enumerate() {
-            let slot = &mut state_arena[v.state_offset..v.state_offset + v.state_size];
-            (v.reseed)(slot, seed.wrapping_add((u as u64).wrapping_mul(SEED_STEP)));
-        }
-        let calc_count = def.units().len() as u64;
-        for (d, v) in def.demand_units().iter().enumerate() {
-            let slot = &mut demand_state[v.state_offset..v.state_offset + v.state_size];
-            (v.reseed)(
-                slot,
-                seed.wrapping_add((calc_count + d as u64).wrapping_mul(SEED_STEP)),
-            );
-        }
 
         Ok(Graph::new(
             region,

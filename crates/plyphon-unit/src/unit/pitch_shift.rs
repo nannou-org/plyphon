@@ -6,8 +6,8 @@
 //! triangular-windowed grains, each 90 degrees out of phase. Each grain's read head drifts against the
 //! write head at a rate set by `pitchRatio` (so the grain replays the recent past faster or slower =
 //! transposed), and every quarter-window a fresh grain is spawned round-robin, crossfading over the one
-//! it replaces. `pitchDispersion`/`timeDispersion` jitter each grain's pitch and start position from a
-//! per-unit [`Rng`]. The four windowed reads are summed and halved.
+//! it replaces. `pitchDispersion`/`timeDispersion` jitter each grain's pitch and start position from the
+//! synth's random stream ([`ProcessCtx::rgen`](crate::unit::ProcessCtx::rgen)). The four windowed reads are summed and halved.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -17,7 +17,6 @@ use crate::unit::{Aux, BuiltUnit, DoneAction, InitCtx, ProcessCtx, Unit, unit_sp
 use plyphon_dsp::interp::lininterp;
 use plyphon_dsp::math;
 use plyphon_dsp::rate::Rate;
-use plyphon_dsp::rng::Rng;
 
 const IN: usize = 0;
 const WINSIZE: usize = 1;
@@ -31,8 +30,6 @@ const TIMEDISP: usize = 4;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct PitchShift {
-    /// Per-unit RNG for the pitch/time dispersion (scsynth's graph `RGen`).
-    rng: Rng,
     /// Each grain's fractional read distance behind the write head (`dsamp1..4`).
     dsamp: [f32; 4],
     /// Each grain's per-sample change in read distance (`dsamp*_slope`) = `1 - pitchRatio`.
@@ -61,10 +58,6 @@ impl Unit for PitchShift {
     fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // The constructor runs no calc; the output starts at zero.
         DoneAction::Nothing
-    }
-
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
     }
 
     fn alloc(&mut self, ctx: &InitCtx<'_>, aux: &mut Aux<'_>) {
@@ -136,7 +129,7 @@ impl Unit for PitchShift {
                 stage = (stage + 1) & 3;
                 let mut disppchratio = pchratio;
                 if pchdisp != 0.0 {
-                    disppchratio += pchdisp * self.rng.next_bipolar();
+                    disppchratio += pchdisp * ctx.rgen.next_bipolar();
                 }
                 disppchratio = disppchratio.clamp(0.0, 4.0);
                 let pchratio1 = disppchratio - 1.0;
@@ -146,7 +139,7 @@ impl Unit for PitchShift {
                 } else {
                     framesize as f32 * pchratio1 + 2.0
                 };
-                startpos += timedisp * self.rng.next_unipolar();
+                startpos += timedisp * ctx.rgen.next_unipolar();
                 let s = stage as usize;
                 dsamp_slope[s] = samp_slope;
                 dsamp[s] = startpos;
@@ -195,7 +188,6 @@ impl UnitDef for PitchShiftCtor {
             return Err(BuildError::WrongInputCount);
         }
         Ok(unit_spec_pool(PitchShift {
-            rng: Rng::new(0),
             dsamp: [2.0; 4],
             dsamp_slope: [0.0; 4],
             ramp: [0.5, 1.0, 0.5, 0.0],

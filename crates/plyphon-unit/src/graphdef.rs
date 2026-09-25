@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 use bytemuck::{Pod, Zeroable};
 
 use crate::unit::demand::DemandVtbl;
-use crate::unit::{AllocFn, InitFn, InputSource, LocalBufShapeFn, ProcessFn, ReseedFn};
+use crate::unit::{AllocFn, InitFn, InputSource, LocalBufShapeFn, ProcessFn};
 use plyphon_dsp::rate::{Rate, RateInfo};
 
 /// Where a unit output is published: an audio wire (a full block in the World's shared wire scratch)
@@ -66,8 +66,6 @@ pub struct UnitVtbl {
     pub process: ProcessFn,
     /// Constructor over the state slot, run once in SynthDef order on the synth's first block.
     pub init: InitFn,
-    /// Per-instance re-seed function over the state slot (no-op for units without randomness).
-    pub reseed: ReseedFn,
     /// One-time allocation function for input-sized memory, run in the constructor pass just
     /// before `init`.
     pub alloc: AllocFn,

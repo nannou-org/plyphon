@@ -5,8 +5,8 @@
 //! `plyphon`, plus `bytemuck` to derive the `Pod` state):
 //!
 //! 1. a `#[repr(C)]` [`Pod`] state struct,
-//! 2. an `impl Unit` providing the per-block [`Unit::process`] (and optionally [`Unit::init`] /
-//!    [`Unit::reseed`]),
+//! 2. an `impl Unit` providing the per-block [`Unit::process`] (and optionally the constructor,
+//!    [`Unit::init`]),
 //! 3. an `impl UnitDef` whose [`UnitDef::build`] turns a [`BuildContext`] into a [`BuiltUnit`] via
 //!    [`unit_spec`].
 //!

@@ -11,7 +11,8 @@
 //! `Warp1` is the exception: a self-triggering granular time-stretcher with no trigger input. Each
 //! output channel runs its own independent grain cloud (a decorrelated read of the same buffer), so its
 //! per-channel grain banks live in [auxiliary memory](crate::unit::Aux) sized from the channel count,
-//! and its window sizes are randomised by a per-unit [`Rng`].
+//! and its window sizes are randomised from the synth's random stream
+//! ([`ProcessCtx::rgen`](crate::unit::ProcessCtx::rgen)).
 
 use bytemuck::{Pod, Zeroable};
 
@@ -27,7 +28,6 @@ use plyphon_dsp::interp::{cubicinterp, lininterp};
 use plyphon_dsp::math;
 use plyphon_dsp::ops;
 use plyphon_dsp::rate::Rate;
-use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::lookup_cycle;
 
 /// scsynth's fixed cap on `Warp1`'s output channels (`WarpWinGrain mGrains[16][kMaxGrains]`); the
@@ -1260,7 +1260,6 @@ impl WarpG {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Warp1 {
-    rng: Rng,
     num_channels: u32,
     /// Active grain count per channel (indices `0..num_channels`).
     num_active: [u32; MAX_WARP_CHANNELS],
@@ -1283,10 +1282,6 @@ impl Unit for Warp1 {
     fn init(&mut self, _ctx: &mut ProcessCtx<'_>) -> DoneAction {
         // The constructor runs no calc; the output starts at zero.
         DoneAction::Nothing
-    }
-
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
@@ -1340,7 +1335,7 @@ impl Unit for Warp1 {
                 }
                 let overlaps = sample_channel(&ins, Self::OVERLAPS, smp);
                 let win_rand = sample_channel(&ins, Self::WINDOW_RAND, smp);
-                let win_randamt = self.rng.next_bipolar() as f64 * win_rand as f64;
+                let win_randamt = ctx.rgen.next_bipolar() as f64 * win_rand as f64;
                 let raw = sample_channel(&ins, Self::WINDOW_SIZE, smp) as f64 * sample_rate;
                 let counter = math::floor(raw + raw * win_randamt).max(4.0) as i32;
                 next_grain = (counter as f32 / overlaps) as i32;
@@ -1396,7 +1391,6 @@ impl UnitDef for Warp1Ctor {
         let aux_bytes = num_channels * MAX_GRAINS * core::mem::size_of::<WarpG>();
         Ok(unit_spec_aux(
             Warp1 {
-                rng: Rng::new(0),
                 num_channels: num_channels as u32,
                 num_active: [0; MAX_WARP_CHANNELS],
                 next_grain: [1; MAX_WARP_CHANNELS],

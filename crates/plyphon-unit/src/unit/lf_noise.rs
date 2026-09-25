@@ -6,7 +6,8 @@
 //! smoothly (quadratic/cubic). The `LF*` units count whole samples between values (so transitions are
 //! quantised to the sample rate, and `freq` is read once per block); the dynamic `LFD*` units run a
 //! floating phase decremented by `freq * sampleDur` (so `freq` may be modulated at audio rate and
-//! transitions land off-grid). Each embeds a per-unit [`Rng`] and reseeds it in [`Unit::reseed`].
+//! transitions land off-grid). Each draws from the synth's random stream ([`ProcessCtx::rgen`]),
+//! working on a local copy through a block as scsynth's `RGET`/`RPUT` do.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -26,22 +27,49 @@ fn period(rate_sr: f32, freq: f32, floor: i32) -> i32 {
     ((rate_sr / freq.max(0.001)) as i32).max(floor)
 }
 
+/// Run one block of a counter-based `LF*` unit: `freq` read once, `step` per output frame with a
+/// local copy of the synth's random stream, written back afterwards.
+fn run_counter(
+    ctx: &mut ProcessCtx<'_>,
+    audio: bool,
+    mut step: impl FnMut(&mut Rng, f32, f32) -> f32,
+) {
+    let freq = ctx.ins.control(0);
+    let sr = ctx.own.sample_rate as f32;
+    let mut rgen = *ctx.rgen;
+    drive(ctx, audio, |_| step(&mut rgen, freq, sr));
+    *ctx.rgen = rgen;
+}
+
+/// Run one block of a dynamic `LFD*` unit: `freq` read per frame, `step` per output frame with a
+/// local copy of the synth's random stream, written back afterwards.
+fn run_phase(
+    ctx: &mut ProcessCtx<'_>,
+    audio: bool,
+    mut step: impl FnMut(&mut Rng, f32, f32) -> f32,
+) {
+    let freq = sig(&ctx.ins, 0);
+    let smpdur = ctx.own.sample_dur as f32;
+    let mut rgen = *ctx.rgen;
+    drive(ctx, audio, |i| step(&mut rgen, freq.at(i), smpdur));
+    *ctx.rgen = rgen;
+}
+
 /// `LFNoise0.ar/kr(freq)`: a step of random values in `[-1, 1)`, a new value every `sr / freq`
 /// samples.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFNoise0 {
-    rng: Rng,
     level: f32,
     counter: i32,
     audio: u32,
 }
 
 impl LFNoise0 {
-    fn step(&mut self, freq: f32, rate_sr: f32) -> f32 {
+    fn step(&mut self, rgen: &mut Rng, freq: f32, rate_sr: f32) -> f32 {
         if self.counter <= 0 {
             self.counter = period(rate_sr, freq, 1);
-            self.level = self.rng.next_bipolar();
+            self.level = rgen.next_bipolar();
         }
         self.counter -= 1;
         self.level
@@ -49,15 +77,10 @@ impl LFNoise0 {
 }
 
 impl Unit for LFNoise0 {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let audio = self.audio != 0;
-        let freq = ctx.ins.control(0);
-        let sr = ctx.own.sample_rate as f32;
-        drive(ctx, audio, |_| self.step(freq, sr));
+        run_counter(ctx, self.audio != 0, |rgen, freq, sr| {
+            self.step(rgen, freq, sr)
+        });
         DoneAction::Nothing
     }
 }
@@ -67,17 +90,16 @@ impl Unit for LFNoise0 {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFClipNoise {
-    rng: Rng,
     level: f32,
     counter: i32,
     audio: u32,
 }
 
 impl LFClipNoise {
-    fn step(&mut self, freq: f32, rate_sr: f32) -> f32 {
+    fn step(&mut self, rgen: &mut Rng, freq: f32, rate_sr: f32) -> f32 {
         if self.counter <= 0 {
             self.counter = period(rate_sr, freq, 1);
-            self.level = coin(&mut self.rng);
+            self.level = coin(rgen);
         }
         self.counter -= 1;
         self.level
@@ -85,15 +107,10 @@ impl LFClipNoise {
 }
 
 impl Unit for LFClipNoise {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let audio = self.audio != 0;
-        let freq = ctx.ins.control(0);
-        let sr = ctx.own.sample_rate as f32;
-        drive(ctx, audio, |_| self.step(freq, sr));
+        run_counter(ctx, self.audio != 0, |rgen, freq, sr| {
+            self.step(rgen, freq, sr)
+        });
         DoneAction::Nothing
     }
 }
@@ -103,7 +120,6 @@ impl Unit for LFClipNoise {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFNoise1 {
-    rng: Rng,
     level: f32,
     slope: f32,
     counter: i32,
@@ -111,10 +127,10 @@ pub struct LFNoise1 {
 }
 
 impl LFNoise1 {
-    fn step(&mut self, freq: f32, rate_sr: f32) -> f32 {
+    fn step(&mut self, rgen: &mut Rng, freq: f32, rate_sr: f32) -> f32 {
         if self.counter <= 0 {
             self.counter = period(rate_sr, freq, 1);
-            let next = self.rng.next_bipolar();
+            let next = rgen.next_bipolar();
             self.slope = (next - self.level) / self.counter as f32;
         }
         let out = self.level;
@@ -125,17 +141,16 @@ impl LFNoise1 {
 }
 
 impl Unit for LFNoise1 {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-        self.level = self.rng.next_bipolar();
-        self.slope = 0.0;
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // scsynth's constructor draws the starting level, then runs the calc.
+        self.level = ctx.rgen.next_bipolar();
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let audio = self.audio != 0;
-        let freq = ctx.ins.control(0);
-        let sr = ctx.own.sample_rate as f32;
-        drive(ctx, audio, |_| self.step(freq, sr));
+        run_counter(ctx, self.audio != 0, |rgen, freq, sr| {
+            self.step(rgen, freq, sr)
+        });
         DoneAction::Nothing
     }
 }
@@ -145,7 +160,6 @@ impl Unit for LFNoise1 {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFNoise2 {
-    rng: Rng,
     level: f32,
     slope: f32,
     curve: f32,
@@ -156,10 +170,10 @@ pub struct LFNoise2 {
 }
 
 impl LFNoise2 {
-    fn step(&mut self, freq: f32, rate_sr: f32) -> f32 {
+    fn step(&mut self, rgen: &mut Rng, freq: f32, rate_sr: f32) -> f32 {
         if self.counter <= 0 {
             let value = self.next_value;
-            self.next_value = self.rng.next_bipolar();
+            self.next_value = rgen.next_bipolar();
             self.level = self.next_midpt;
             self.next_midpt = (self.next_value + value) * 0.5;
             self.counter = period(rate_sr, freq, 2);
@@ -176,20 +190,17 @@ impl LFNoise2 {
 }
 
 impl Unit for LFNoise2 {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-        self.next_value = self.rng.next_bipolar();
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // scsynth's constructor draws the first target and its midpoint, then runs the calc.
+        self.next_value = ctx.rgen.next_bipolar();
         self.next_midpt = self.next_value * 0.5;
-        self.level = 0.0;
-        self.slope = 0.0;
-        self.curve = 0.0;
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let audio = self.audio != 0;
-        let freq = ctx.ins.control(0);
-        let sr = ctx.own.sample_rate as f32;
-        drive(ctx, audio, |_| self.step(freq, sr));
+        run_counter(ctx, self.audio != 0, |rgen, freq, sr| {
+            self.step(rgen, freq, sr)
+        });
         DoneAction::Nothing
     }
 }
@@ -200,33 +211,27 @@ impl Unit for LFNoise2 {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFDNoise0 {
-    rng: Rng,
     phase: f32,
     level: f32,
     audio: u32,
 }
 
 impl LFDNoise0 {
-    fn step(&mut self, freq: f32, smpdur: f32) -> f32 {
+    fn step(&mut self, rgen: &mut Rng, freq: f32, smpdur: f32) -> f32 {
         self.phase -= freq * smpdur;
         if self.phase < 0.0 {
             self.phase = wrap(self.phase, 0.0, 1.0);
-            self.level = self.rng.next_bipolar();
+            self.level = rgen.next_bipolar();
         }
         self.level
     }
 }
 
 impl Unit for LFDNoise0 {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let audio = self.audio != 0;
-        let freq = sig(&ctx.ins, 0);
-        let smpdur = ctx.own.sample_dur as f32;
-        drive(ctx, audio, |i| self.step(freq.at(i), smpdur));
+        run_phase(ctx, self.audio != 0, |rgen, freq, smpdur| {
+            self.step(rgen, freq, smpdur)
+        });
         DoneAction::Nothing
     }
 }
@@ -236,33 +241,27 @@ impl Unit for LFDNoise0 {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFDClipNoise {
-    rng: Rng,
     phase: f32,
     level: f32,
     audio: u32,
 }
 
 impl LFDClipNoise {
-    fn step(&mut self, freq: f32, smpdur: f32) -> f32 {
+    fn step(&mut self, rgen: &mut Rng, freq: f32, smpdur: f32) -> f32 {
         self.phase -= freq * smpdur;
         if self.phase < 0.0 {
             self.phase = wrap(self.phase, 0.0, 1.0);
-            self.level = coin(&mut self.rng);
+            self.level = coin(rgen);
         }
         self.level
     }
 }
 
 impl Unit for LFDClipNoise {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-    }
-
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let audio = self.audio != 0;
-        let freq = sig(&ctx.ins, 0);
-        let smpdur = ctx.own.sample_dur as f32;
-        drive(ctx, audio, |i| self.step(freq.at(i), smpdur));
+        run_phase(ctx, self.audio != 0, |rgen, freq, smpdur| {
+            self.step(rgen, freq, smpdur)
+        });
         DoneAction::Nothing
     }
 }
@@ -272,7 +271,6 @@ impl Unit for LFDClipNoise {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFDNoise1 {
-    rng: Rng,
     phase: f32,
     prev_level: f32,
     next_level: f32,
@@ -280,29 +278,28 @@ pub struct LFDNoise1 {
 }
 
 impl LFDNoise1 {
-    fn step(&mut self, freq: f32, smpdur: f32) -> f32 {
+    fn step(&mut self, rgen: &mut Rng, freq: f32, smpdur: f32) -> f32 {
         self.phase -= freq * smpdur;
         if self.phase < 0.0 {
             self.phase = wrap(self.phase, 0.0, 1.0);
             self.prev_level = self.next_level;
-            self.next_level = self.rng.next_bipolar();
+            self.next_level = rgen.next_bipolar();
         }
         self.next_level + self.phase * (self.prev_level - self.next_level)
     }
 }
 
 impl Unit for LFDNoise1 {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-        self.prev_level = 0.0;
-        self.next_level = self.rng.next_bipolar();
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // scsynth's constructor draws the first target level, then runs the calc.
+        self.next_level = ctx.rgen.next_bipolar();
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let audio = self.audio != 0;
-        let freq = sig(&ctx.ins, 0);
-        let smpdur = ctx.own.sample_dur as f32;
-        drive(ctx, audio, |i| self.step(freq.at(i), smpdur));
+        run_phase(ctx, self.audio != 0, |rgen, freq, smpdur| {
+            self.step(rgen, freq, smpdur)
+        });
         DoneAction::Nothing
     }
 }
@@ -313,7 +310,6 @@ impl Unit for LFDNoise1 {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LFDNoise3 {
-    rng: Rng,
     phase: f32,
     a: f32,
     b: f32,
@@ -322,46 +318,45 @@ pub struct LFDNoise3 {
     audio: u32,
 }
 
-impl LFDNoise3 {
-    /// A fresh random value scaled by `0.8` (scsynth caps the cubic overshoot at 1 this way).
-    fn draw(&mut self) -> f32 {
-        self.rng.next_bipolar() * 0.8
-    }
+/// A fresh random value scaled by `0.8` (scsynth caps the cubic overshoot at 1 this way).
+fn draw3(rgen: &mut Rng) -> f32 {
+    rgen.next_bipolar() * 0.8
+}
 
-    fn step(&mut self, freq: f32, smpdur: f32) -> f32 {
+impl LFDNoise3 {
+    fn step(&mut self, rgen: &mut Rng, freq: f32, smpdur: f32) -> f32 {
         self.phase -= freq * smpdur;
         if self.phase < 0.0 {
             self.phase = wrap(self.phase, 0.0, 1.0);
             self.a = self.b;
             self.b = self.c;
             self.c = self.d;
-            self.d = self.draw();
+            self.d = draw3(rgen);
         }
         cubicinterp(1.0 - self.phase, self.a, self.b, self.c, self.d)
     }
 }
 
 impl Unit for LFDNoise3 {
-    fn reseed(&mut self, seed: u64) {
-        self.rng = Rng::new(seed);
-        self.a = self.draw();
-        self.b = self.draw();
-        self.c = self.draw();
-        self.d = self.draw();
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // scsynth's constructor draws the four starting levels, then runs the calc.
+        self.a = draw3(ctx.rgen);
+        self.b = draw3(ctx.rgen);
+        self.c = draw3(ctx.rgen);
+        self.d = draw3(ctx.rgen);
+        self.process(ctx)
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let audio = self.audio != 0;
-        let freq = sig(&ctx.ins, 0);
-        let smpdur = ctx.own.sample_dur as f32;
-        drive(ctx, audio, |i| self.step(freq.at(i), smpdur));
+        run_phase(ctx, self.audio != 0, |rgen, freq, smpdur| {
+            self.step(rgen, freq, smpdur)
+        });
         DoneAction::Nothing
     }
 }
 
-/// Build a low-frequency/dynamic noise unit: seed its [`Rng`] from `ctx.seed`, set the output-rate
-/// flag, and run the type's own `reseed` to prime any derived starting state (matching scsynth's
-/// `Ctor`). Requires the `freq` input.
+/// Build a low-frequency/dynamic noise unit at its zeroed starting state with its output-rate flag
+/// (its constructor, [`Unit::init`], draws any starting values). Requires the `freq` input.
 macro_rules! lf_noise_ctor {
     ($ctor:ident, $unit:ident) => {
         #[doc = concat!("Constructor for [`", stringify!($unit), "`].")]
@@ -374,7 +369,6 @@ macro_rules! lf_noise_ctor {
                 }
                 let mut unit: $unit = Zeroable::zeroed();
                 unit.audio = (ctx.rate == Rate::Audio) as u32;
-                unit.reseed(ctx.seed);
                 Ok(unit_spec(unit))
             }
         }
