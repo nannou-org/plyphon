@@ -7,7 +7,6 @@
 //! which the audio thread constructs live [`Graph`](plyphon_rt::graph::Graph)s with a single pool
 //! allocation.
 
-pub mod init;
 pub mod read;
 
 use alloc::boxed::Box;

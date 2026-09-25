@@ -25,8 +25,7 @@ use plyphon_dsp::wavetable::shape_wavetable;
 /// The input index a `Select` reads for selector `which`: truncate toward zero, then clamp into
 /// `1..=num_inputs - 1`. The increment wraps like scsynth's `(int32)in + 1`, so an out-of-range
 /// selector picks the first input.
-/// Shared with SynthDef initialization specialization so both always pick the same input.
-pub fn select_index(which: f32, num_inputs: usize) -> usize {
+fn select_index(which: f32, num_inputs: usize) -> usize {
     let maxindex = (num_inputs as i32 - 1).max(1);
     (which as i32).wrapping_add(1).clamp(1, maxindex) as usize
 }
