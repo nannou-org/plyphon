@@ -1,10 +1,11 @@
 //! Fixed-coefficient and delay filters - plyphon's ports of scsynth's `LPZ1`, `HPZ1`, `LPZ2`,
-//! `HPZ2`, `BPZ2`, `BRZ2`, `Delay1`, `Delay2`, `Slope`, `Slew` and `APF`.
+//! `HPZ2`, `BPZ2`, `BRZ2`, `Delay1`, `Delay2`, `Slope`, `Slew`, `APF` and `Flip`
+//! (`FilterUGens.cpp`).
 //!
 //! These carry only a sample or two of history and either fixed coefficients (the `*Z*` FIR
-//! filters), none at all (the unit delays and `Slope`), or a two-pole allpass (`APF`). The FIR
-//! filters and `Slope`/`Slew` seed their history from the current input in [`Unit::init`], matching
-//! scsynth's constructors. Feedback state (`APF`) is `f64`, flushed with `zap`.
+//! filters), none at all (the unit delays, `Slope` and `Flip`), or a two-pole allpass (`APF`). The
+//! FIR filters and `Slope`/`Slew` seed their history from the current input in [`Unit::init`],
+//! matching scsynth's constructors. Feedback state (`APF`) is `f64`, flushed with `zap`.
 
 use core::f64::consts::TAU;
 
@@ -13,8 +14,10 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::BuildError;
 use crate::unit::filter::zap;
 use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::trigger::sig;
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
+use plyphon_dsp::rate::Rate;
 
 /// `LPZ1.ar(in)`: a two-point averaging low-pass, `out = 0.5 * (in(i) + in(i-1))`.
 #[repr(C)]
@@ -395,6 +398,79 @@ impl UnitDef for APFCtor {
             x2: 0.0,
             freq: f32::NAN, // force coefficient computation on the first block
             reson: f32::NAN,
+        }))
+    }
+}
+
+/// `Flip.ar(in)` / `Flip.kr(in)`: negates every other sample - a ring modulation at half the sample
+/// rate that mirrors the spectrum about Nyquist.
+///
+/// Like scsynth's `Flip_Ctor`, the unit picks its calc from its buffer length (the block at audio
+/// rate, one sample otherwise). With an even length (`Flip_next_even`) every block negates its
+/// even-indexed samples. With an odd length (`Flip_next_odd`, so every control-rate `Flip`) the
+/// pattern follows the parity of the World's block counter instead: an even block negates its
+/// even-indexed samples, an odd block its odd-indexed ones.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct Flip {
+    /// `1` when the unit's buffer length is odd (scsynth's `mBufLength & 1`).
+    odd: u32,
+}
+
+impl Flip {
+    const IN: usize = 0;
+
+    /// The parity of the indices this block negates: `0` (even-indexed samples) for an even
+    /// buffer length or an even block counter, `1` for an odd block counter. scsynth counts blocks
+    /// from 0 where plyphon counts from 1, so scsynth's `mBufCounter` is `buf_counter - 1`.
+    fn negated_parity(&self, buf_counter: u64) -> usize {
+        if self.odd != 0 && buf_counter.wrapping_sub(1) & 1 == 1 {
+            1
+        } else {
+            0
+        }
+    }
+}
+
+impl Unit for Flip {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        if self.odd != 0 {
+            // `Flip_next_odd(unit, 1)`.
+            self.process(ctx)
+        } else {
+            // `ZOUT0(0) = ZIN0(0)`: an even-length `Flip` writes its first input sample unflipped.
+            *ctx.outs.control(0) = ctx.ins.control(Self::IN);
+            DoneAction::Nothing
+        }
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let input = sig(&ctx.ins, Self::IN);
+        let negated = self.negated_parity(ctx.buf_counter);
+        for (i, o) in ctx.outs.audio(0).iter_mut().enumerate() {
+            let x = input.at(i);
+            *o = if i & 1 == negated { -x } else { x };
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`Flip`].
+pub struct FlipCtor;
+
+impl UnitDef for FlipCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.is_empty() {
+            return Err(BuildError::WrongInputCount);
+        }
+        // scsynth's `mBufLength`: the block for an audio-rate unit, one sample otherwise.
+        let buf_length = if ctx.rate == Rate::Audio {
+            ctx.audio.block_size
+        } else {
+            1
+        };
+        Ok(unit_spec(Flip {
+            odd: (buf_length & 1) as u32,
         }))
     }
 }

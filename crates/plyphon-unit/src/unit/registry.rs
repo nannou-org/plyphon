@@ -61,8 +61,8 @@ use crate::unit::eq::{BeqCtor, BeqKind, FormletCtor, MidEQCtor};
 use crate::unit::fft::{FftCtor, IfftCtor};
 use crate::unit::filter::{ButterCtor, Kind};
 use crate::unit::filter_simple::{
-    APFCtor, BPZ2Ctor, BRZ2Ctor, Delay1Ctor, Delay2Ctor, HPZ1Ctor, HPZ2Ctor, LPZ1Ctor, LPZ2Ctor,
-    SlewCtor, SlopeCtor,
+    APFCtor, BPZ2Ctor, BRZ2Ctor, Delay1Ctor, Delay2Ctor, FlipCtor, HPZ1Ctor, HPZ2Ctor, LPZ1Ctor,
+    LPZ2Ctor, SlewCtor, SlopeCtor,
 };
 use crate::unit::formant::FormantCtor;
 use crate::unit::freeverb::{FreeVerb2Ctor, FreeVerbCtor};
@@ -295,6 +295,7 @@ impl UnitRegistry {
         registry.register("Slope", Box::new(SlopeCtor));
         registry.register("Slew", Box::new(SlewCtor));
         registry.register("APF", Box::new(APFCtor));
+        registry.register("Flip", Box::new(FlipCtor));
         // Explicit-coefficient sections (the `B*` EQ macros feed these).
         registry.register("FOS", Box::new(FOSCtor));
         registry.register("SOS", Box::new(SOSCtor));
