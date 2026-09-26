@@ -13,6 +13,9 @@ use crate::error::BuildError;
 use crate::unit::amp_comp::{AmpCompACtor, AmpCompCtor};
 use crate::unit::band_limited::{BlipCtor, PulseCtor, SawCtor};
 use crate::unit::bank::{KlangCtor, KlankCtor};
+#[cfg(feature = "fft")]
+use crate::unit::beat_track::BeatTrackCtor;
+use crate::unit::beat_track2::BeatTrack2Ctor;
 use crate::unit::binary_op::BinaryOpCtor;
 use crate::unit::buf_rd::BufRdCtor;
 use crate::unit::buf_wr::BufWrCtor;
@@ -77,6 +80,8 @@ use crate::unit::gverb::GVerbCtor;
 use crate::unit::hilbert::{FreqShiftCtor, HilbertCtor};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
 use crate::unit::input::{InCtor, InTrigCtor, LagInCtor};
+#[cfg(feature = "fft")]
+use crate::unit::key_track::KeyTrackCtor;
 use crate::unit::lf::{
     ImpulseCtor, LFCubCtor, LFGaussCtor, LFParCtor, LFPulseCtor, LFSawCtor, LFTriCtor, SyncSawCtor,
     VarSawCtor,
@@ -659,6 +664,8 @@ impl UnitRegistry {
         // Diagnostic guards (NaN/inf/subnormal detection).
         registry.register("CheckBadValues", Box::new(CheckBadValuesCtor));
         registry.register("Sanitize", Box::new(SanitizeCtor));
+        // Machine listening over control-bus features.
+        registry.register("BeatTrack2", Box::new(BeatTrack2Ctor));
         // Demand-rate consumers (normal calc-rate units that pull from the demand plan).
         registry.register("Duty", Box::new(DutyCtor));
         registry.register("TDuty", Box::new(TDutyCtor));
@@ -717,6 +724,9 @@ impl UnitRegistry {
             registry.register("PV_BinShift", Box::new(PvBinShiftCtor));
             registry.register("PV_MagSmear", Box::new(PvMagSmearCtor));
             registry.register("PV_RectComb", Box::new(PvRectCombCtor));
+            // Machine listening over an FFT chain.
+            registry.register("BeatTrack", Box::new(BeatTrackCtor));
+            registry.register("KeyTrack", Box::new(KeyTrackCtor));
             // Spectrum <-> value-list bridge: `Unpack1FFT` reads one bin per pull, `PackFFT` packs a
             // whole magnitude/phase list back into the chain buffer.
             registry.register("PackFFT", Box::new(PackFftCtor));

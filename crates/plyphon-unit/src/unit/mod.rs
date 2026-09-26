@@ -15,6 +15,9 @@
 pub mod amp_comp;
 pub mod band_limited;
 pub mod bank;
+#[cfg(feature = "fft")]
+pub mod beat_track;
+pub mod beat_track2;
 pub mod binary_op;
 pub mod buf_rd;
 pub mod buf_wr;
@@ -43,6 +46,8 @@ pub mod hilbert;
 pub mod info;
 pub mod input;
 pub mod io;
+#[cfg(feature = "fft")]
+pub mod key_track;
 pub mod lf;
 pub mod lf_noise;
 pub mod line;
