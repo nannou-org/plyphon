@@ -102,6 +102,8 @@ pub mod send_trig;
 pub mod shape;
 pub mod sin_osc;
 #[cfg(feature = "fft")]
+pub mod spec_stats;
+#[cfg(feature = "fft")]
 pub mod stereo_convolution2l;
 pub mod test;
 pub mod timing;

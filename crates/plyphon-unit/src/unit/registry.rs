@@ -164,6 +164,8 @@ use crate::unit::shape::{
 };
 use crate::unit::sin_osc::{FSinOscCtor, SinOscCtor, SinOscFBCtor};
 #[cfg(feature = "fft")]
+use crate::unit::spec_stats::{SpecCentroidCtor, SpecFlatnessCtor, SpecPcileCtor};
+#[cfg(feature = "fft")]
 use crate::unit::stereo_convolution2l::StereoConvolution2LCtor;
 use crate::unit::test::{CheckBadValuesCtor, SanitizeCtor};
 use crate::unit::timing::{
@@ -751,6 +753,10 @@ impl UnitRegistry {
             // whole magnitude/phase list back into the chain buffer.
             registry.register("PackFFT", Box::new(PackFftCtor));
             registry.register_demand("Unpack1FFT", Box::new(Unpack1FftCtor));
+            // Machine listening: analysis units reading the chain.
+            registry.register("SpecCentroid", Box::new(SpecCentroidCtor));
+            registry.register("SpecFlatness", Box::new(SpecFlatnessCtor));
+            registry.register("SpecPcile", Box::new(SpecPcileCtor));
         }
         registry
     }
