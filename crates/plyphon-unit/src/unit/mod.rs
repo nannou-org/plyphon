@@ -38,6 +38,8 @@ pub mod env;
 pub mod eq;
 #[cfg(feature = "fft")]
 pub mod fft;
+#[cfg(feature = "fft")]
+pub mod fft_trigger;
 pub mod filter;
 pub mod filter_simple;
 pub mod formant;
@@ -87,6 +89,8 @@ pub mod psin_grain;
 pub mod pv;
 #[cfg(feature = "fft")]
 pub mod pv_combine;
+#[cfg(feature = "fft")]
+pub mod pv_extra;
 #[cfg(feature = "fft")]
 pub mod pv_mag_mul;
 #[cfg(feature = "fft")]

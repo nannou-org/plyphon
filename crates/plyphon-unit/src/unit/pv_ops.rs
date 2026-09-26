@@ -462,7 +462,7 @@ impl UnitDef for PvDiffuserCtor {
 /// frame with a different bin count passes through untouched. Returns the bin count to process, or
 /// `None` to skip the frame - no such buffer, a changed size, or a failed allocation (after which the
 /// engine silences the unit; scsynth leaves the scratch null and writes through it).
-fn make_temp_buf(
+pub(crate) fn make_temp_buf(
     ctx: &mut ProcessCtx<'_>,
     bufnum: usize,
     numbins: &mut u32,
@@ -712,7 +712,7 @@ impl Unit for PvRectComb {
 }
 
 /// Bring a comb phase back toward `[0, 1)` with one addition or subtraction, as the reference does.
-fn wrap_phase(phase: f32) -> f32 {
+pub(crate) fn wrap_phase(phase: f32) -> f32 {
     if phase >= 1.0 {
         phase - 1.0
     } else if phase < 0.0 {
