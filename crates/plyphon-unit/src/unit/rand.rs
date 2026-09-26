@@ -16,6 +16,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::BuildError;
+use crate::unit::demand::{DemandWorld, demand_next};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::trigger::sig;
 use crate::unit::{BuiltUnit, DoneAction, Outputs, ProcessCtx, Unit, unit_spec};
@@ -465,6 +466,9 @@ impl UnitDef for CoinGateCtor {
 /// draws from with `seed` (truncated to an integer, as scsynth casts it), restarting it for every
 /// synth drawing from it. A trigger already high on the first block seeds
 /// immediately (scsynth's constructor behaviour). Outputs a constant `0.0`.
+///
+/// `seed` is read as scsynth's `DEMANDINPUT_A` reads it (`RandSeed_next`, NoiseUGens.cpp): a demand
+/// source is pulled once per edge, and any other input is read as its value.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct RandSeed {
@@ -475,7 +479,17 @@ pub struct RandSeed {
 impl Unit for RandSeed {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let ProcessCtx {
-            ins, outs, rgen, ..
+            ins,
+            outs,
+            rgen,
+            demand,
+            buffers,
+            local_bufs,
+            node_id,
+            node_msgs,
+            buf_counter,
+            fft,
+            ..
         } = ctx;
         let trig = sig(ins, 0);
         // The calc length: a block at audio rate, one sample at control rate or in the constructor.
@@ -489,7 +503,17 @@ impl Unit for RandSeed {
             if self.prev_trig <= 0.0 && t > 0.0 {
                 // The seed input truncates to an `i32` and re-seeds the stream as scsynth's
                 // `RGen::init` does, so a given seed restarts the sequence the server gives it.
-                rgen.init(ins.control(1) as i32 as u32);
+                let mut world = DemandWorld {
+                    buffers,
+                    local_bufs,
+                    node_id: *node_id,
+                    node_msgs,
+                    buf_counter: *buf_counter,
+                    rgen,
+                    fft,
+                };
+                let seed = demand_next(ins, demand, &mut world, 1);
+                rgen.init(seed as i32 as u32);
             }
             self.prev_trig = t;
         }
