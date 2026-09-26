@@ -62,6 +62,8 @@ pub mod local_io;
 pub mod loudness;
 pub mod measure;
 pub mod median;
+#[cfg(feature = "fft")]
+pub mod mfcc;
 pub mod moog;
 pub mod node_ctl;
 pub mod noise;

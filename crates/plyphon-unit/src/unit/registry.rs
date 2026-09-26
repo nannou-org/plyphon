@@ -105,6 +105,8 @@ use crate::unit::measure::{
     RunningMinCtor,
 };
 use crate::unit::median::MedianCtor;
+#[cfg(feature = "fft")]
+use crate::unit::mfcc::MfccCtor;
 use crate::unit::moog::MoogFFCtor;
 use crate::unit::node_ctl::{
     DoneCtor, FreeCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseCtor, PauseSelfCtor,
@@ -760,6 +762,7 @@ impl UnitRegistry {
             registry.register("SpecFlatness", Box::new(SpecFlatnessCtor));
             registry.register("SpecPcile", Box::new(SpecPcileCtor));
             registry.register("Loudness", Box::new(LoudnessCtor));
+            registry.register("MFCC", Box::new(MfccCtor));
         }
         registry
     }
