@@ -41,4 +41,6 @@ mod layout;
 mod pool;
 
 pub use layout::Align64;
+#[cfg(feature = "alloc")]
+pub use pool::HeapBlocks;
 pub use pool::{Region, RtPool};

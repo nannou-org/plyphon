@@ -7,9 +7,9 @@
 
 use proptest::collection::vec;
 use proptest::prelude::*;
-use rt_alloc::{Align64, Region, RtPool};
+use rt_alloc::{HeapBlocks, Region, RtPool};
 
-type Pool = RtPool<Box<[Align64]>>;
+type Pool = RtPool<HeapBlocks>;
 
 const POOL_BYTES: usize = 64 * 1024;
 // Spans small and large bins (chunk sizes up to ~4 KiB), exercising both fast paths.
