@@ -494,8 +494,8 @@ fn duty_empty_dur_stream_freezes_without_done_action() {
 
 #[test]
 fn duty_reset_revives_a_frozen_sequence() {
-    // reset = Impulse.ar(SR / 512): edges at samples 0 and 512 (block boundaries, since a
-    // control-read reset is block-granular). The dur stream exhausts at sample ~192; the impulse at
+    // reset = Impulse.ar(SR / 512): edges at samples 0 and 512. The dur stream exhausts at sample
+    // ~192; the impulse at
     // 512 sets the count back to 0 and resets both streams, restarting the sequence - scsynth's
     // revival of a NaN count via `count = 0`.
     let reset = UnitSpec::new(
