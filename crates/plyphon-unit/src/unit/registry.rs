@@ -98,11 +98,15 @@ use crate::unit::line::{LineCtor, XLineCtor};
 use crate::unit::linen::LinenCtor;
 use crate::unit::local_buf::{ClearBufCtor, LocalBufCtor, MaxLocalBufsCtor, SetBufCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
+#[cfg(feature = "fft")]
+use crate::unit::loudness::LoudnessCtor;
 use crate::unit::measure::{
     LastValueCtor, LeastChangeCtor, MostChangeCtor, PeakCtor, PeakFollowerCtor, RunningMaxCtor,
     RunningMinCtor,
 };
 use crate::unit::median::MedianCtor;
+#[cfg(feature = "fft")]
+use crate::unit::mfcc::MfccCtor;
 use crate::unit::moog::MoogFFCtor;
 use crate::unit::node_ctl::{
     DoneCtor, FreeCtor, FreeSelfCtor, FreeSelfWhenDoneCtor, PauseCtor, PauseSelfCtor,
@@ -113,6 +117,8 @@ use crate::unit::noise::{
     LogisticCtor, MantissaMaskCtor, PinkNoiseCtor, WhiteNoiseCtor,
 };
 use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
+#[cfg(feature = "fft")]
+use crate::unit::onsets::OnsetsCtor;
 use crate::unit::out::{OffsetOutCtor, OutCtor, ReplaceOutCtor, XOutCtor};
 #[cfg(feature = "fft")]
 use crate::unit::pack_fft::PackFftCtor;
@@ -163,6 +169,8 @@ use crate::unit::shape::{
     InRangeCtor, InRectCtor, LinExpCtor, RangeKind, RangeShaperCtor, UnwrapCtor,
 };
 use crate::unit::sin_osc::{FSinOscCtor, SinOscCtor, SinOscFBCtor};
+#[cfg(feature = "fft")]
+use crate::unit::spec_stats::{SpecCentroidCtor, SpecFlatnessCtor, SpecPcileCtor};
 #[cfg(feature = "fft")]
 use crate::unit::stereo_convolution2l::StereoConvolution2LCtor;
 use crate::unit::test::{CheckBadValuesCtor, SanitizeCtor};
@@ -751,6 +759,13 @@ impl UnitRegistry {
             // whole magnitude/phase list back into the chain buffer.
             registry.register("PackFFT", Box::new(PackFftCtor));
             registry.register_demand("Unpack1FFT", Box::new(Unpack1FftCtor));
+            // Machine listening: analysis units reading the chain.
+            registry.register("SpecCentroid", Box::new(SpecCentroidCtor));
+            registry.register("SpecFlatness", Box::new(SpecFlatnessCtor));
+            registry.register("SpecPcile", Box::new(SpecPcileCtor));
+            registry.register("Loudness", Box::new(LoudnessCtor));
+            registry.register("MFCC", Box::new(MfccCtor));
+            registry.register("Onsets", Box::new(OnsetsCtor));
         }
         registry
     }

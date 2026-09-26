@@ -58,12 +58,18 @@ pub mod line;
 pub mod linen;
 pub mod local_buf;
 pub mod local_io;
+#[cfg(feature = "fft")]
+pub mod loudness;
 pub mod measure;
 pub mod median;
+#[cfg(feature = "fft")]
+pub mod mfcc;
 pub mod moog;
 pub mod node_ctl;
 pub mod noise;
 pub mod one_pole;
+#[cfg(feature = "fft")]
+pub mod onsets;
 pub mod out;
 #[cfg(feature = "fft")]
 pub mod pack_fft;
@@ -101,6 +107,8 @@ pub mod send_reply;
 pub mod send_trig;
 pub mod shape;
 pub mod sin_osc;
+#[cfg(feature = "fft")]
+pub mod spec_stats;
 #[cfg(feature = "fft")]
 pub mod stereo_convolution2l;
 pub mod test;
