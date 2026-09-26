@@ -356,6 +356,196 @@ fn convolution3_kr_over_an_audio_input_is_rejected() {
     );
 }
 
+/// Tolerance for the FFT-based units, relative to the larger of `1` and the reference value: the
+/// engine's single-precision transforms against the reference's double-precision ones.
+const FFT_TOL: f32 = 2e-5;
+
+/// Assert every `stride`-th sample of `out` from `first` matches `expected` to `tol`, relative to the
+/// larger of `1` and the expected magnitude. `expected` holds the reference values' bit patterns.
+fn assert_points(
+    label: &str,
+    out: &[f32],
+    first: usize,
+    stride: usize,
+    expected: &[u32],
+    tol: f32,
+) {
+    let points: Vec<(usize, f32)> = (first..out.len())
+        .step_by(stride)
+        .map(|i| (i, out[i]))
+        .collect();
+    assert_eq!(points.len(), expected.len(), "{label}: point count");
+    for ((i, got), &want) in points.into_iter().zip(expected) {
+        let want = f32::from_bits(want);
+        let scale = want.abs().max(1.0);
+        assert!(
+            (got - want).abs() <= tol * scale,
+            "{label}: sample {i} is {got}, the reference gives {want}"
+        );
+    }
+}
+
+/// Kernel switch for the triggered cases: buffer `2` for blocks `from..to`, else buffer `1`.
+fn kernel_1_2(from: usize, to: usize, b: usize) -> f32 {
+    if (from..to).contains(&b) { 2.0 } else { 1.0 }
+}
+
+#[test]
+fn convolution2_matches_scsynth_across_kernel_swaps() {
+    // A 100-frame kernel zero-padded into a 128-sample frame, swapped on a trigger for a 200-frame
+    // kernel truncated to the frame, then back. Each trigger re-reads the buffer the kernel input
+    // names in that block, and the frame completed in that block already uses it.
+    let r = render(&Case {
+        unit: "Convolution2",
+        rate: Rate::Audio,
+        inputs: vec![
+            Src::Signal,
+            Src::Sched(|b| kernel_1_2(9, 20, b)),
+            Src::Sched(|b| if b == 9 || b == 20 { 1.0 } else { 0.0 }),
+            Src::Const(128.0),
+        ],
+        outputs: 1,
+        buffers: vec![
+            (1, kernel(100, 0xabcd_ef01, 0.97)),
+            (2, kernel(200, 0x5eed_1234, 0.985)),
+        ],
+        blocks: 32,
+    });
+    assert!(!r.ended, "Convolution2 runs");
+    assert_points("Convolution2", &r.channels[0], 3, 17, &CONV2, FFT_TOL);
+
+    // A `framesize` of `0` takes the kernel buffer's frame count.
+    let r = render(&Case {
+        unit: "Convolution2",
+        rate: Rate::Audio,
+        inputs: vec![
+            Src::Signal,
+            Src::Const(3.0),
+            Src::Const(0.0),
+            Src::Const(0.0),
+        ],
+        outputs: 1,
+        buffers: vec![(3, kernel(256, 0x0bad_f00d, 0.99))],
+        blocks: 24,
+    });
+    assert!(!r.ended, "Convolution2 with the buffer's frame count runs");
+    assert_points(
+        "Convolution2 (framesize from the buffer)",
+        &r.channels[0],
+        5,
+        19,
+        &CONV2_BUFFER_FRAMESIZE,
+        FFT_TOL,
+    );
+}
+
+#[test]
+fn convolution2l_matches_scsynth_through_crossfades() {
+    // A trigger at block 5 loads kernel 2 into the idle spectrum and crossfades to it over three
+    // frames; a trigger at block 18 loads kernel 1 back with a one-frame crossfade (whose second
+    // half is taken whole from the new kernel's result).
+    let r = render(&Case {
+        unit: "Convolution2L",
+        rate: Rate::Audio,
+        inputs: vec![
+            Src::Signal,
+            Src::Sched(|b| kernel_1_2(5, 18, b)),
+            Src::Sched(|b| if b == 5 || b == 18 { 1.0 } else { 0.0 }),
+            Src::Const(128.0),
+            Src::Sched(|b| if b < 18 { 3.0 } else { 1.0 }),
+        ],
+        outputs: 1,
+        buffers: vec![
+            (1, kernel(128, 0xabcd_ef01, 0.97)),
+            (2, kernel(128, 0x5eed_1234, 0.985)),
+        ],
+        blocks: 32,
+    });
+    assert!(!r.ended, "Convolution2L runs");
+    assert_points("Convolution2L", &r.channels[0], 2, 13, &CONV2L, FFT_TOL);
+}
+
+#[test]
+fn convolution2_without_a_kernel_or_a_usable_frame_is_silenced() {
+    let conv2 = |kernel_buf: f32, framesize: f32| Case {
+        unit: "Convolution2",
+        rate: Rate::Audio,
+        inputs: vec![
+            Src::Signal,
+            Src::Const(kernel_buf),
+            Src::Const(0.0),
+            Src::Const(framesize),
+        ],
+        outputs: 1,
+        buffers: vec![(1, kernel(128, 1, 0.9))],
+        blocks: 8,
+    };
+    // No kernel buffer when the synth starts (`ConvGetBuffer` fails).
+    assert_silenced("Convolution2, no buffer", &render(&conv2(9.0, 128.0)), 0);
+    // A frame smaller than the block.
+    assert_silenced("Convolution2, small frame", &render(&conv2(1.0, 32.0)), 0);
+    // A frame the transform sizes cannot hold.
+    assert_silenced("Convolution2, odd frame", &render(&conv2(1.0, 192.0)), 0);
+
+    // A trigger naming a missing buffer silences the unit from that block on.
+    let r = render(&Case {
+        unit: "Convolution2",
+        rate: Rate::Audio,
+        inputs: vec![
+            Src::Signal,
+            Src::Sched(|b| if b >= 4 { 9.0 } else { 1.0 }),
+            Src::Sched(|b| if b == 4 { 1.0 } else { 0.0 }),
+            Src::Const(64.0),
+        ],
+        outputs: 1,
+        buffers: vec![(1, kernel(64, 1, 0.9))],
+        blocks: 8,
+    });
+    assert!(
+        r.channels[0][..4 * BLOCK].iter().any(|&s| s != 0.0),
+        "Convolution2 plays before the failed trigger"
+    );
+    assert_silenced("Convolution2, failed re-read", &r, 4 * BLOCK);
+
+    assert_silenced(
+        "Convolution2L, no buffer",
+        &render(&Case {
+            unit: "Convolution2L",
+            rate: Rate::Audio,
+            inputs: vec![
+                Src::Signal,
+                Src::Const(9.0),
+                Src::Const(0.0),
+                Src::Const(128.0),
+                Src::Const(1.0),
+            ],
+            outputs: 1,
+            buffers: vec![],
+            blocks: 4,
+        }),
+        0,
+    );
+}
+
+#[test]
+fn convolution2_rates_and_arities() {
+    // `Convolution2`'s calc always runs a whole audio block; `Convolution2L`'s runs the unit's own
+    // calc length.
+    assert_eq!(
+        compile_unit("Convolution2", Rate::Control, 4, 1),
+        Err(BuildError::UnsupportedRate(Rate::Control))
+    );
+    assert_eq!(compile_unit("Convolution2L", Rate::Control, 5, 1), Ok(()));
+    assert_eq!(
+        compile_unit("Convolution2", Rate::Audio, 5, 1),
+        Err(BuildError::WrongInputCount)
+    );
+    assert_eq!(
+        compile_unit("Convolution2L", Rate::Audio, 4, 1),
+        Err(BuildError::WrongInputCount)
+    );
+}
+
 // Reference values: scsynth's own code over the same inputs (see the module docs).
 
 #[rustfmt::skip]
@@ -452,4 +642,69 @@ const CONV3_AR_KR_IN: [u32; 24] = [
     0x3cdf_fcec, 0xbddf_1f64, 0x3c6b_8bc8, 0x0000_0000, 0xbda5_f943, 0x3dfe_2fd7, 0xbe27_e92a,
     0x3e9e_7d82, 0xbe0c_795b, 0x3e8b_685d, 0xbde1_5c5a, 0xbcc3_726e, 0xbe0c_77bb, 0xbd43_09a7,
     0x0000_0000, 0xbd85_43ea, 0x3e00_02b8,
+];
+
+#[rustfmt::skip]
+const CONV2: [u32; 121] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0xbe30_bd05, 0xbdda_3107, 0x3dc1_7698,
+    0x3d98_726e, 0x3f51_0ed1, 0x3e0a_cf3b, 0x3e84_d563, 0xbec8_acbd, 0x3e95_3a95, 0xbdea_7486,
+    0xbe94_a2f5, 0xbe92_e2f4, 0x3deb_57c5, 0xbda7_f1a1, 0xbd59_10f2, 0xbe76_9123, 0xbe96_e6e6,
+    0xbca4_a495, 0x3e15_beda, 0x3d90_4c0a, 0xbeb3_23bb, 0xbeff_fe69, 0x3e83_2c15, 0xbd4a_6000,
+    0xbe90_ba89, 0x3f1c_426b, 0x3e29_e50d, 0xbd9c_1138, 0x3f03_26bf, 0x3b0c_de74, 0xbe7e_881c,
+    0xbdd9_3bf8, 0xbf06_fd43, 0x3eb1_2c81, 0x3f17_3f03, 0xbcc0_cbdd, 0xbeeb_ea30, 0xbe76_f6c1,
+    0x3dfd_8c42, 0x3f59_3f96, 0xbeef_2607, 0xbe8a_137e, 0x3f2a_0cee, 0xbf2a_c152, 0xbba0_9df0,
+    0xbea9_c853, 0x3e0d_66b2, 0xbdbb_fb10, 0xbeb3_7e20, 0x3faf_fd46, 0x3f87_7325, 0x3efe_00a2,
+    0x3dff_a60f, 0x3f30_2331, 0x3ee5_d28d, 0x3f06_e0b5, 0xbe24_fc39, 0x3da4_4417, 0x3f20_0b33,
+    0xbf86_4621, 0xbe20_4d31, 0xbdd1_2cfc, 0x3f49_bf63, 0x3e9f_a8aa, 0x3e6d_48d8, 0x3ede_57c2,
+    0xbee1_e09c, 0xbcaa_e404, 0x3d57_a80f, 0xbdb1_ca98, 0xbee2_c8e6, 0xbf50_f72a, 0xbc74_7290,
+    0xbf3a_0177, 0xbf20_d1be, 0x3e11_315e, 0xbe89_2791, 0xbefd_d87e, 0xbebd_69cf, 0x3ea8_28d6,
+    0xbee9_2498, 0xbead_f308, 0xbd87_06c1, 0xbee4_a188, 0x3cfe_51d6, 0x3d05_31a8, 0x3daa_c660,
+    0xbe1d_a812, 0x3edf_b592, 0xbdb1_1f5a, 0x3cfd_5dd8, 0xb783_4000, 0x3ed4_c7e7, 0xbe93_5242,
+    0xbea3_b4eb, 0x3e39_98eb, 0xbe63_9b9a, 0xbef5_a86a, 0xbdc8_845a, 0xbe3b_c000, 0x3c83_c708,
+    0xbf27_7301, 0x3d80_8036, 0xbe6b_d3ba, 0xbee6_a5bb, 0x3c82_03b2, 0x3f0b_3042, 0x3ecb_bd39,
+    0x3eed_c12d, 0x3e19_c7a2, 0xbdef_9249, 0xbd54_c422, 0xbea8_2cfd, 0xbcce_60d0, 0xbecd_6f11,
+    0x3ea8_9842, 0x3cbb_3068,
+];
+
+#[rustfmt::skip]
+const CONV2_BUFFER_FRAMESIZE: [u32; 81] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000,
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x3e3d_da01, 0xbf2b_3ccd, 0xbf18_ea74, 0x3bad_c5b5,
+    0xbf46_de48, 0x3f5c_6e48, 0xbede_9efa, 0xbeac_8f42, 0xbe46_215d, 0xbf47_bdab, 0xbf70_1e56,
+    0xbeb8_b023, 0x3c6f_f98d, 0xbe86_b66c, 0xbf22_769b, 0xbeb3_dc37, 0xbf44_79b1, 0xbebd_5220,
+    0xbe76_068c, 0x3f7e_151e, 0xbd88_b89e, 0xbece_7d0d, 0x3ea2_8a8a, 0xbf20_ff90, 0x3f1c_cf10,
+    0xbe83_bafa, 0xbec6_99ef, 0xbf58_65f2, 0x3f73_c9ae, 0x3f92_1a75, 0xbe1a_47b3, 0xbe2e_5fc5,
+    0x3eb5_1366, 0x3f27_b19f, 0xbf29_fe10, 0xbe99_4cf4, 0x3daa_f126, 0x3f3e_91c6, 0x3ef5_78c7,
+    0xbf0c_8e43, 0xbdeb_72f2, 0xbf6b_a69e, 0xbd1c_ea38, 0x3cd1_9608, 0xbef9_f6f0, 0xbbdc_39a0,
+    0xbf7d_e879, 0x3f05_f924, 0xbd66_01ca, 0x3e80_2c00, 0x3e06_31f6, 0xbe9b_1e5f, 0x3e94_8318,
+    0x3f2a_e102, 0x3f0c_d243, 0x3e9e_b2d8, 0x3e7e_09d8, 0x3e8e_6504, 0xbf07_cd74, 0xbe86_c18c,
+    0x3e51_1b8d, 0x3f16_a8f2, 0x3e81_f52e, 0xbf4b_f0aa, 0xbc89_1b7c, 0x3f78_5b52, 0x3ead_5204,
+    0xbeec_6746, 0x3ed3_079e, 0xbebf_1883, 0xbfa6_64e1,
+];
+
+#[rustfmt::skip]
+const CONV2L: [u32; 158] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x3e60_a2df, 0xbd81_c140,
+    0x3f0a_b9a1, 0xbe0b_0052, 0x3e36_b737, 0xbf2f_8a6f, 0x3ee9_c961, 0xbe8e_e012, 0xbe19_7d5f,
+    0xbeb6_6e4d, 0xbd96_55a7, 0x3dbb_1df0, 0xbeb4_fe0a, 0x3ead_b8c3, 0xbded_3f27, 0xbde9_b6f3,
+    0x3de5_f151, 0xbe75_b891, 0x3e4d_9ef0, 0xbe98_7b77, 0x3d13_3704, 0x3d98_4fd3, 0x3e58_ea64,
+    0x3e86_cdce, 0x3ea6_e777, 0x3eed_a9e6, 0x3f03_173a, 0x3ef5_af5e, 0xbe53_9c9f, 0x3e98_81ca,
+    0xbd0a_a04c, 0x3e3b_9383, 0xbe4e_cf02, 0xbdbc_585c, 0xbc91_f6d8, 0xbe1c_978e, 0xbdf4_bf6c,
+    0x3dc3_fc2c, 0xbeaf_b96d, 0x3e92_b9b7, 0xbf03_1d5d, 0x3eeb_1bb8, 0xbe31_61c0, 0xbedd_2264,
+    0x3e39_4c26, 0x3ceb_a630, 0xbe44_da88, 0x3ee7_aa30, 0xbf3d_033e, 0x3b80_3ad0, 0x3e08_715c,
+    0x3f24_6289, 0xbe42_fac6, 0x3f28_f78d, 0x3ef1_4f5e, 0x3ebd_652c, 0xbe8a_b36d, 0x3e7a_ca7e,
+    0xbf8b_5190, 0x3f25_cda8, 0xbee6_81e8, 0x3eb0_f70f, 0xbeb8_c0d4, 0x3e60_492f, 0xbf3d_d338,
+    0x3ea1_7ac1, 0x3eb2_45b5, 0x3efe_00a2, 0x3e9f_bd26, 0xbeaa_9af0, 0xbf93_99c4, 0xbe97_89b3,
+    0x3d1d_21b8, 0xbdbb_5718, 0x3e66_a514, 0xbe22_f4eb, 0xbf14_2d82, 0x3eeb_a226, 0xbf64_abb1,
+    0x3ef3_f0ec, 0x3e5a_45a1, 0x3f2e_7a5b, 0x3e87_2741, 0x3dd7_5ba7, 0x3e6d_48d8, 0xbea5_fb3e,
+    0xbdb8_f018, 0x3e25_5419, 0xbf14_1346, 0xbf27_fef6, 0xbe2c_9924, 0x3e89_ad38, 0x3e91_f799,
+    0xbde5_df7e, 0xbe9d_a60a, 0xbe85_0d7a, 0x3e2f_2991, 0xbe74_f355, 0xbe2e_e18d, 0x3d44_cd61,
+    0xbed0_e6d1, 0xbf06_dc95, 0x3e71_a5ae, 0xbe7a_98bc, 0xbeef_8a4f, 0x3ccf_3ce3, 0x3bcd_9109,
+    0xbaeb_2bbc, 0x3f04_8519, 0x3dd3_a1c4, 0xbe64_d518, 0xbee3_ed17, 0x3dcc_c7b1, 0xbe13_0ea2,
+    0xbd53_0cda, 0xbe30_0ce8, 0xbe54_5059, 0xbe84_6e49, 0x3bac_1020, 0x3e94_94d8, 0xbd3f_32ec,
+    0xbe98_bf83, 0x3dc7_70c3, 0x3e90_e399, 0x3e14_623f, 0xbe1a_ac5d, 0x3dd6_7d0a, 0xbeb6_5c9b,
+    0x3e97_52cf, 0x3f30_e94c, 0xbe08_bf6d, 0x3eb5_0c54, 0xbdb4_a1ec, 0x3ed5_08b1, 0xbe97_aa55,
+    0xbe4e_a1cb, 0xbe18_5366, 0x3efd_3819, 0x3eca_ad42, 0x3e73_70b5, 0x3e82_f350, 0xbe54_507f,
+    0xbeca_7010, 0xbe3e_1205, 0xbeaa_608c, 0xbdac_1f07, 0x3e4e_4493, 0x3e48_4bc7, 0x3dfd_3d58,
+    0x3e22_d81c, 0x3def_9893, 0xbdf7_44b2, 0xbc3d_a3b0,
 ];

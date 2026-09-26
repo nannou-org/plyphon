@@ -24,6 +24,8 @@ use crate::unit::chaos::{
 };
 #[cfg(feature = "fft")]
 use crate::unit::convolution::ConvolutionCtor;
+#[cfg(feature = "fft")]
+use crate::unit::convolution2::{Convolution2Ctor, Convolution2LCtor};
 use crate::unit::convolution3::Convolution3Ctor;
 use crate::unit::decay::{Decay2Ctor, DecayCtor};
 use crate::unit::delay::{
@@ -698,6 +700,8 @@ impl UnitRegistry {
             registry.register("FFT", Box::new(FftCtor));
             registry.register("IFFT", Box::new(IfftCtor));
             registry.register("Convolution", Box::new(ConvolutionCtor));
+            registry.register("Convolution2", Box::new(Convolution2Ctor));
+            registry.register("Convolution2L", Box::new(Convolution2LCtor));
             registry.register("PV_MagMul", Box::new(PvMagMulCtor));
             registry.register("PV_MagSquared", Box::new(PvMagSquaredCtor));
             registry.register("PV_MagAbove", Box::new(PvMagThreshCtor(MagKind::Above)));

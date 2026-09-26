@@ -21,6 +21,8 @@ pub mod buf_wr;
 pub mod chaos;
 #[cfg(feature = "fft")]
 pub mod convolution;
+#[cfg(feature = "fft")]
+pub mod convolution2;
 pub mod convolution3;
 pub mod decay;
 pub mod delay;
