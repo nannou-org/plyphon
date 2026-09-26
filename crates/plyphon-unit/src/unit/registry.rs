@@ -75,10 +75,11 @@ use crate::unit::filter_simple::{
 };
 use crate::unit::formant::FormantCtor;
 use crate::unit::freeverb::{FreeVerb2Ctor, FreeVerbCtor};
-use crate::unit::gendy::Gendy1Ctor;
+use crate::unit::gendy::{Gendy1Ctor, Gendy2Ctor, Gendy3Ctor};
 use crate::unit::grain::{
     GrainBufCtor, GrainFMCtor, GrainInCtor, GrainSinCtor, TGrainsCtor, Warp1Ctor,
 };
+use crate::unit::grain_tap::GrainTapCtor;
 use crate::unit::gverb::GVerbCtor;
 use crate::unit::hilbert::{FreqShiftCtor, HilbertCtor};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
@@ -122,6 +123,7 @@ use crate::unit::pan::{
 #[cfg(feature = "fft")]
 use crate::unit::part_conv::PartConvCtor;
 use crate::unit::physical::{BallCtor, SpringCtor, TBallCtor};
+use crate::unit::pitch::PitchCtor;
 use crate::unit::pitch_shift::PitchShiftCtor;
 use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::pluck::PluckCtor;
@@ -430,6 +432,10 @@ impl UnitRegistry {
         registry.register("Pluck", Box::new(PluckCtor));
         // Granular pitch shifter: four overlapping windowed grains over a delay line.
         registry.register("PitchShift", Box::new(PitchShiftCtor));
+        // Autocorrelation pitch tracker.
+        registry.register("Pitch", Box::new(PitchCtor));
+        // Granulating tap on a buffer written as a delay line.
+        registry.register("GrainTap", Box::new(GrainTapCtor));
         // Freeverb: eight parallel damped combs into four series allpasses (mono and true-stereo).
         registry.register("FreeVerb", Box::new(FreeVerbCtor));
         registry.register("FreeVerb2", Box::new(FreeVerb2Ctor));
@@ -437,6 +443,8 @@ impl UnitRegistry {
         registry.register("GVerb", Box::new(GVerbCtor));
         // Gendy1: Xenakis dynamic stochastic synthesis.
         registry.register("Gendy1", Box::new(Gendy1Ctor));
+        registry.register("Gendy2", Box::new(Gendy2Ctor));
+        registry.register("Gendy3", Box::new(Gendy3Ctor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         // The init/trigger-time randoms share the synth's RGen stream (see the `rand` module);
         // the free-running noise generators above each embed their own.

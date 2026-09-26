@@ -44,6 +44,7 @@ pub mod formant;
 pub mod freeverb;
 pub mod gendy;
 pub mod grain;
+pub mod grain_tap;
 pub mod gverb;
 pub mod hilbert;
 pub mod info;
@@ -70,6 +71,7 @@ pub mod pan;
 #[cfg(feature = "fft")]
 pub mod part_conv;
 pub mod physical;
+pub mod pitch;
 pub mod pitch_shift;
 pub mod play_buf;
 pub mod pluck;
