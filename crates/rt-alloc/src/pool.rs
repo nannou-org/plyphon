@@ -358,9 +358,9 @@ impl RtPool<HeapBlocks> {
 ///
 /// scsynth `malloc`s its real-time arena and never writes it before use, so the operating system
 /// commits each page only when the pool first touches it. Filling a `[Align64]` buffer in place
-/// would write every byte at construction and commit the whole arena. Allocating `u128`s instead
-/// takes the global allocator's zeroed path, which on the common targets (`calloc`) returns
-/// untouched, lazily zeroed pages. A `u128` allocation is only guaranteed 16-byte alignment, so the
+/// would write every byte at construction and commit the whole arena. Allocating `u128`s through
+/// the global allocator's zeroed path instead returns untouched, lazily zeroed pages wherever that
+/// path is `calloc` at 16-byte alignment (macOS, Linux); elsewhere it zeroes eagerly, as before. A `u128` allocation is only guaranteed 16-byte alignment, so the
 /// buffer carries up to three spare `u128`s and the blocks start at its first 64-byte boundary.
 #[cfg(feature = "alloc")]
 pub struct HeapBlocks {
@@ -377,7 +377,7 @@ impl HeapBlocks {
     /// Allocate `blocks` zeroed, 64-byte-aligned blocks without writing them.
     pub fn zeroed(blocks: usize) -> Self {
         let words = blocks * Self::PER_BLOCK;
-        let buf = alloc::vec![0u128; words + Self::PER_BLOCK - 1].into_boxed_slice();
+        let buf = bytemuck::allocation::zeroed_slice_box::<u128>(words + Self::PER_BLOCK - 1);
         // A boxed slice never moves its allocation, so this offset stays valid for its life.
         let misalign = buf.as_ptr() as usize % crate::layout::ALIGN;
         let start =
