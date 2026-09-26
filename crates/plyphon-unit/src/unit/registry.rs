@@ -114,6 +114,8 @@ use crate::unit::pan::{
     Balance2Ctor, BiPanB2Ctor, DecodeB2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Pan4Ctor,
     PanAzCtor, PanB2Ctor, PanBCtor, Rotate2Ctor, XFade2Ctor,
 };
+#[cfg(feature = "fft")]
+use crate::unit::part_conv::PartConvCtor;
 use crate::unit::physical::{BallCtor, SpringCtor, TBallCtor};
 use crate::unit::pitch_shift::PitchShiftCtor;
 use crate::unit::play_buf::PlayBufCtor;
@@ -705,6 +707,7 @@ impl UnitRegistry {
             registry.register("Convolution2", Box::new(Convolution2Ctor));
             registry.register("Convolution2L", Box::new(Convolution2LCtor));
             registry.register("StereoConvolution2L", Box::new(StereoConvolution2LCtor));
+            registry.register("PartConv", Box::new(PartConvCtor));
             registry.register("PV_MagMul", Box::new(PvMagMulCtor));
             registry.register("PV_MagSquared", Box::new(PvMagSquaredCtor));
             registry.register("PV_MagAbove", Box::new(PvMagThreshCtor(MagKind::Above)));

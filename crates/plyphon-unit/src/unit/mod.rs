@@ -62,6 +62,8 @@ pub mod out;
 #[cfg(feature = "fft")]
 pub mod pack_fft;
 pub mod pan;
+#[cfg(feature = "fft")]
+pub mod part_conv;
 pub mod physical;
 pub mod pitch_shift;
 pub mod play_buf;

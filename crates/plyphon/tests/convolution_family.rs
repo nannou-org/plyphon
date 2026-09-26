@@ -13,6 +13,7 @@ use plyphon::{
     AddAction, Buffer, BuildError, Event, InputRef, Options, Param, ROOT_GROUP_ID, Rate, RateInfo,
     SynthDef, UnitRegistry, UnitSpec, engine,
 };
+use plyphon_dsp::fft::FftTables;
 
 const SR: f64 = 48_000.0;
 const BLOCK: usize = 64;
@@ -644,6 +645,108 @@ fn stereo_convolution2l_rates_and_arities() {
     );
 }
 
+/// scsynth's `PreparePartConv` buffer generator: the spectra of `src`'s consecutive
+/// `fftsize / 2`-sample partitions, each zero-padded to `fftsize`.
+fn prepare_part_conv(src: &[f32], fftsize: usize) -> Vec<f32> {
+    let fft = FftTables::new();
+    let nover2 = fftsize / 2;
+    let parts = src.len().div_ceil(nover2);
+    let mut spectra = vec![0.0f32; parts * fftsize];
+    for (i, spectrum) in spectra.chunks_exact_mut(fftsize).enumerate() {
+        let mut frame = vec![0.0f32; fftsize];
+        let chunk = &src[i * nover2..src.len().min((i + 1) * nover2)];
+        frame[..chunk.len()].copy_from_slice(chunk);
+        assert!(fft.forward(fftsize, &mut frame, spectrum));
+    }
+    spectra
+}
+
+#[test]
+fn part_conv_matches_scsynth() {
+    // A 2000-frame response in eight partitions at fftsize 512: four blocks per half-frame, so the
+    // seven later partitions are amortised 2, 2, 3 over the three spare blocks.
+    let ir = kernel(2000, 0x2468_ace0, 0.998);
+    let spectra = prepare_part_conv(&ir, 512);
+    assert_points(
+        "PreparePartConv",
+        &spectra,
+        0,
+        97,
+        &PARTCONV_SPECTRA,
+        FFT_TOL,
+    );
+    let r = render(&Case {
+        unit: "PartConv",
+        rate: Rate::Audio,
+        inputs: vec![Src::Signal, Src::Const(512.0), Src::Const(5.0)],
+        outputs: 1,
+        buffers: vec![(5, spectra)],
+        blocks: 48,
+    });
+    assert!(!r.ended, "PartConv runs");
+    assert_points("PartConv", &r.channels[0], 4, 23, &PARTCONV, FFT_TOL);
+
+    // Three partitions at fftsize 256: one spare block takes both later partitions.
+    let ir = kernel(300, 0x1234_abcd, 0.99);
+    let r = render(&Case {
+        unit: "PartConv",
+        rate: Rate::Audio,
+        inputs: vec![Src::Signal, Src::Const(256.0), Src::Const(7.0)],
+        outputs: 1,
+        buffers: vec![(7, prepare_part_conv(&ir, 256))],
+        blocks: 24,
+    });
+    assert!(!r.ended, "PartConv with one spare block runs");
+    assert_points(
+        "PartConv (one spare block)",
+        &r.channels[0],
+        6,
+        13,
+        &PARTCONV_ONE_SPARE,
+        FFT_TOL,
+    );
+}
+
+#[test]
+fn part_conv_without_usable_spectra_is_silenced() {
+    // A half-frame of a single block leaves nothing to amortise over; a spectra buffer whose size
+    // `fftsize` does not divide; no spectra buffer; a transform size with no plan.
+    let ir = kernel(300, 2, 0.99);
+    for (label, fftsize, spectra) in [
+        ("no spare block", 128.0, prepare_part_conv(&ir, 128)),
+        ("ragged buffer", 256.0, vec![0.5; 700]),
+        ("no buffer", 256.0, vec![]),
+        ("odd size", 384.0, vec![0.5; 768]),
+    ] {
+        let mut buffers = vec![];
+        if !spectra.is_empty() {
+            buffers.push((5, spectra));
+        }
+        let r = render(&Case {
+            unit: "PartConv",
+            rate: Rate::Audio,
+            inputs: vec![Src::Signal, Src::Const(fftsize), Src::Const(5.0)],
+            outputs: 1,
+            buffers,
+            blocks: 8,
+        });
+        assert_silenced(&format!("PartConv, {label}"), &r, 0);
+    }
+}
+
+#[test]
+fn part_conv_rates_and_arities() {
+    // The amortisation schedule counts audio blocks.
+    assert_eq!(
+        compile_unit("PartConv", Rate::Control, 3, 1),
+        Err(BuildError::UnsupportedRate(Rate::Control))
+    );
+    assert_eq!(
+        compile_unit("PartConv", Rate::Audio, 4, 1),
+        Err(BuildError::WrongInputCount)
+    );
+}
+
 // Reference values: scsynth's own code over the same inputs (see the module docs).
 
 #[rustfmt::skip]
@@ -867,4 +970,60 @@ const STEREO_R: [u32; 187] = [
     0xbdc9_d808, 0x3d42_29cb, 0x3bc2_d094, 0x3c8a_33af, 0x3d6f_63b9, 0x3cd6_f632, 0x3caa_2122,
     0xbd3b_c22c, 0x3d91_eb88, 0xbd2c_934c, 0x3ce8_ad0c, 0xbd36_753e, 0xbd3d_3ed2, 0xbd25_f0f4,
     0xbce8_fed6, 0x3d88_849a, 0xbdc1_1368, 0x3c85_0119, 0xbcda_2870,
+];
+
+#[rustfmt::skip]
+const PARTCONV_SPECTRA: [u32; 43] = [
+    0x403e_470c, 0x3f1b_7706, 0x4012_c186, 0xc01f_6fc9, 0x3fe5_8848, 0xc011_ef5a, 0xbe65_d6c8,
+    0x3ead_509b, 0x3fda_af48, 0xc030_4b75, 0x3fb7_8eb5, 0x3e73_06c2, 0xbf76_0f3b, 0x3edb_db09,
+    0xbf6c_942b, 0x3f99_799f, 0x3f0f_c13a, 0xbe95_7a19, 0xbf28_ea92, 0x3e80_b9b8, 0xbdba_9df3,
+    0xbd86_38d6, 0x3e08_2ea3, 0x3e62_5a0f, 0xbe61_ee15, 0xbd15_9368, 0x3ecc_51b6, 0xbd0c_c067,
+    0x3ee2_55d3, 0xbe3e_14d5, 0xbe27_5a51, 0xbea6_0e0a, 0xbe43_a3f4, 0xbd9e_57a4, 0xbe80_c960,
+    0x3c8c_78a6, 0x3d27_21fe, 0x3d9d_3ce0, 0x3d37_1ec3, 0x3bca_1d48, 0xbc94_c75d, 0x3dc2_2e7d,
+    0xbd52_4a5d,
+];
+
+#[rustfmt::skip]
+const PARTCONV: [u32; 134] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000,
+    0x0000_0000, 0x0000_0000, 0xbe95_8a9b, 0x3c4a_650e, 0x3e84_ace3, 0x3e25_49b3, 0xbe01_6f02,
+    0xbeb6_4088, 0xbf15_180c, 0x3eb4_4ae4, 0xbd20_04bd, 0xbfd2_75f3, 0x3f09_e773, 0x3f87_6948,
+    0x3f3e_351a, 0xbfa7_0cc0, 0x3eb2_db0b, 0x3e84_61a5, 0x3f48_a774, 0xbdcb_bf00, 0xbf55_9b70,
+    0xbfe4_bfac, 0x4009_9cbe, 0xbf4b_365b, 0xbf29_9f9b, 0xbf82_aac9, 0xbf95_eaf8, 0x3fab_e6bb,
+    0x3ff8_ffa2, 0x3f9e_4ee6, 0xbeaa_7fc8, 0x3fc4_7291, 0xbf52_8119, 0x3d9a_4204, 0xbd7b_5960,
+    0x3f0d_806c, 0xbe4c_557a, 0xc02d_99ff, 0xbf8b_d14e, 0xbfe1_9886, 0x3fd6_e962, 0xbfc5_7aba,
+    0x3f15_251f, 0x3f68_a077, 0x3f2a_58de, 0x3f2a_2900, 0x3f22_b22a, 0x3f2d_ca2f, 0x3fc1_44a1,
+    0xbf9b_e786, 0xbeaf_dba0, 0xc025_6819, 0x405b_4f67, 0xbf81_2539, 0xbf89_bbc1, 0x3f89_81ea,
+    0xbf1b_2dff, 0xbf56_9ff3, 0x3f61_f50e, 0xbfad_3912, 0xbdcf_5da0, 0x3ee0_599e, 0x3ee7_7c60,
+    0xbeb3_c83a, 0xbf64_c373, 0xc001_8cb0, 0x3ea9_b50c, 0xbedf_73a3, 0x3d68_03c0, 0x3fbf_c4df,
+    0xbe93_2f6f, 0x3dc6_cdc8, 0xbfda_125a, 0xbfed_7624, 0xbf3b_87a3, 0xc013_579a, 0xbf86_d0a0,
+    0x402c_946c, 0xbf85_b6cd, 0x3e5b_4f06, 0xbf96_2e78, 0x3fd8_613c, 0xbfd2_958d, 0xbdd7_c35c,
+    0x3f2e_992a, 0xc04a_82ec, 0xbf16_6e72, 0xbfed_83bb, 0x3fdc_a312, 0x3e60_50b3, 0xbfba_2c65,
+    0xbf59_6c24, 0x3fde_0622, 0x3f91_bfba, 0xbf4a_e937, 0x3f3a_da89, 0x3eaa_c9b4, 0xbfbb_3f4b,
+    0x3fa7_5631, 0x3c9b_34d5, 0xbf37_e733, 0xbf94_dd8c, 0xbf45_65cc, 0x3fad_12ee, 0x3f02_3c3a,
+    0x3f32_8003, 0x4012_61a1, 0x3f9e_79ff, 0x3eb2_7ab0, 0xbe5f_e048, 0x3fcd_25a3, 0x3f4a_94ea,
+    0xbfa5_20fc, 0xc01b_ba98, 0xbdf3_3070, 0x3f10_0104, 0x3f17_f505, 0xc036_3bf9, 0x3f25_fe9b,
+    0xbd42_3b50, 0x3f09_4a77, 0xbe86_9774, 0x3fad_22ba, 0xbf74_8bc6, 0xbff8_5211, 0xc02b_3e82,
+    0x3dca_42be,
+];
+
+#[rustfmt::skip]
+const PARTCONV_ONE_SPARE: [u32; 118] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x3e58_0725, 0x3e32_783f,
+    0x3e3e_5737, 0xbdaf_d0ab, 0x3e87_288d, 0x3e5b_59ba, 0x3f2d_445f, 0x3dad_d5a6, 0xbe77_683a,
+    0x3e58_686b, 0x3e55_8db0, 0xbf22_d3d4, 0xbf00_9266, 0xbecd_1917, 0xbf52_ac49, 0x3eec_0f29,
+    0x3ed0_cb81, 0xbe93_8c1e, 0xbe66_fb1c, 0xbf01_73e4, 0xbec3_f2e0, 0x3f2a_3c7a, 0xbe8d_8f6a,
+    0xbe11_7f5b, 0xbf0f_fb06, 0x3ebe_d322, 0x3f46_1f2d, 0x3ec7_776f, 0xbdc6_4a5a, 0x3ed2_ce56,
+    0x3e12_70d2, 0x3ec6_2ad0, 0xbf40_4cbc, 0xbd6a_c484, 0xbf19_765e, 0xbe2b_3532, 0xbf0d_32bf,
+    0xbf43_723d, 0xbb51_f4c0, 0xbf5f_de04, 0x3f0e_47a3, 0x3df8_4d36, 0xbea5_6f35, 0xbf10_2f36,
+    0xbea3_ed3a, 0xbf0c_64f2, 0x3f22_aa6c, 0xbda9_b6da, 0xbe8a_1d97, 0x3dad_b996, 0x3e3c_e304,
+    0x3f26_ee52, 0xbda8_d5f0, 0xbe37_c53a, 0xbec7_45dc, 0x3f16_1bda, 0xbdfd_5b80, 0xbbab_2a00,
+    0xbf18_c46a, 0x3ec8_d621, 0xbe7a_963c, 0x3ef0_b5f0, 0x3f16_f310, 0xbeec_5666, 0x3f90_436f,
+    0x3f20_b426, 0x3eb9_db4c, 0xbedf_7b3c, 0x3f59_f9ef, 0x3efa_1745, 0x3ecc_b886, 0xbe4f_0826,
+    0xbf5f_9ac2, 0xbfce_fc12, 0xbf19_73f4, 0xbf44_f474, 0x3e91_6596, 0xbf28_3f12, 0x3e09_4de9,
+    0xbf19_4cf0, 0xbf2f_4d51, 0x3dc8_ce50, 0x3f93_2a68, 0x3db1_df16, 0x3f61_2bb5, 0x3e0f_b0ed,
+    0x3ec5_a1ce, 0xbf23_baab, 0xbf0a_c91d, 0xbf1a_7d11, 0x3ebd_08ee, 0x3dca_6d76, 0x3ee1_2802,
+    0xbf60_b955, 0xbed3_af09, 0xbea9_65ba, 0xbf0e_0776, 0x3f11_d530, 0x3f73_d6e5, 0xbda3_7fee,
+    0xbd97_67fd, 0xbe07_687b, 0x3e2f_81e8, 0x3e26_e74a, 0x3eae_9a67, 0x3ed6_118d, 0xbea5_4589,
+    0xbf0d_2d5f, 0xbd88_fe11, 0x3f30_af1e, 0x3ddd_3c96, 0x3f2a_0dc4, 0xbcdd_2370,
 ];
