@@ -112,6 +112,7 @@ use crate::unit::pan::{
     PanAzCtor, PanB2Ctor, PanBCtor, Rotate2Ctor, XFade2Ctor,
 };
 use crate::unit::physical::{BallCtor, SpringCtor, TBallCtor};
+use crate::unit::pitch::PitchCtor;
 use crate::unit::pitch_shift::PitchShiftCtor;
 use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::pluck::PluckCtor;
@@ -418,6 +419,8 @@ impl UnitRegistry {
         registry.register("Pluck", Box::new(PluckCtor));
         // Granular pitch shifter: four overlapping windowed grains over a delay line.
         registry.register("PitchShift", Box::new(PitchShiftCtor));
+        // Autocorrelation pitch tracker.
+        registry.register("Pitch", Box::new(PitchCtor));
         // Freeverb: eight parallel damped combs into four series allpasses (mono and true-stereo).
         registry.register("FreeVerb", Box::new(FreeVerbCtor));
         registry.register("FreeVerb2", Box::new(FreeVerb2Ctor));

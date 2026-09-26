@@ -60,6 +60,7 @@ pub mod out;
 pub mod pack_fft;
 pub mod pan;
 pub mod physical;
+pub mod pitch;
 pub mod pitch_shift;
 pub mod play_buf;
 pub mod pluck;
