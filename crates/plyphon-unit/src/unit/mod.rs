@@ -24,6 +24,9 @@ pub mod buf_wr;
 pub mod chaos;
 #[cfg(feature = "fft")]
 pub mod convolution;
+#[cfg(feature = "fft")]
+pub mod convolution2;
+pub mod convolution3;
 pub mod decay;
 pub mod delay;
 pub mod deltap;
@@ -64,6 +67,8 @@ pub mod out;
 #[cfg(feature = "fft")]
 pub mod pack_fft;
 pub mod pan;
+#[cfg(feature = "fft")]
+pub mod part_conv;
 pub mod physical;
 pub mod pitch_shift;
 pub mod play_buf;
@@ -94,6 +99,8 @@ pub mod send_reply;
 pub mod send_trig;
 pub mod shape;
 pub mod sin_osc;
+#[cfg(feature = "fft")]
+pub mod stereo_convolution2l;
 pub mod test;
 pub mod timing;
 pub mod trigger;

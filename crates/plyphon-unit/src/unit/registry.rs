@@ -27,6 +27,9 @@ use crate::unit::chaos::{
 };
 #[cfg(feature = "fft")]
 use crate::unit::convolution::ConvolutionCtor;
+#[cfg(feature = "fft")]
+use crate::unit::convolution2::{Convolution2Ctor, Convolution2LCtor};
+use crate::unit::convolution3::Convolution3Ctor;
 use crate::unit::decay::{Decay2Ctor, DecayCtor};
 use crate::unit::delay::{
     BufDelayCtor, BufFeedbackDelayCtor, DelayCtor, FeedbackDelayCtor, Interp,
@@ -116,6 +119,8 @@ use crate::unit::pan::{
     Balance2Ctor, BiPanB2Ctor, DecodeB2Ctor, LinPan2Ctor, LinXFade2Ctor, Pan2Ctor, Pan4Ctor,
     PanAzCtor, PanB2Ctor, PanBCtor, Rotate2Ctor, XFade2Ctor,
 };
+#[cfg(feature = "fft")]
+use crate::unit::part_conv::PartConvCtor;
 use crate::unit::physical::{BallCtor, SpringCtor, TBallCtor};
 use crate::unit::pitch_shift::PitchShiftCtor;
 use crate::unit::play_buf::PlayBufCtor;
@@ -156,6 +161,8 @@ use crate::unit::shape::{
     InRangeCtor, InRectCtor, LinExpCtor, RangeKind, RangeShaperCtor, UnwrapCtor,
 };
 use crate::unit::sin_osc::{FSinOscCtor, SinOscCtor, SinOscFBCtor};
+#[cfg(feature = "fft")]
+use crate::unit::stereo_convolution2l::StereoConvolution2LCtor;
 use crate::unit::test::{CheckBadValuesCtor, SanitizeCtor};
 use crate::unit::timing::{
     PhasorCtor, PulseCountCtor, PulseDividerCtor, StepperCtor, SweepCtor, TimerCtor,
@@ -486,6 +493,7 @@ impl UnitRegistry {
         registry.register("GbmanL", Box::new(GbmanLCtor));
         registry.register("QuadC", Box::new(QuadCCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
+        registry.register("Convolution3", Box::new(Convolution3Ctor));
         registry.register("BufRd", Box::new(BufRdCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
         registry.register("VDiskIn", Box::new(VDiskInCtor));
@@ -703,6 +711,10 @@ impl UnitRegistry {
             registry.register("FFT", Box::new(FftCtor));
             registry.register("IFFT", Box::new(IfftCtor));
             registry.register("Convolution", Box::new(ConvolutionCtor));
+            registry.register("Convolution2", Box::new(Convolution2Ctor));
+            registry.register("Convolution2L", Box::new(Convolution2LCtor));
+            registry.register("StereoConvolution2L", Box::new(StereoConvolution2LCtor));
+            registry.register("PartConv", Box::new(PartConvCtor));
             registry.register("PV_MagMul", Box::new(PvMagMulCtor));
             registry.register("PV_MagSquared", Box::new(PvMagSquaredCtor));
             registry.register("PV_MagAbove", Box::new(PvMagThreshCtor(MagKind::Above)));
