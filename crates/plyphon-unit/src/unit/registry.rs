@@ -13,6 +13,7 @@ use crate::error::BuildError;
 use crate::unit::amp_comp::{AmpCompACtor, AmpCompCtor};
 use crate::unit::band_limited::{BlipCtor, PulseCtor, SawCtor};
 use crate::unit::bank::{KlangCtor, KlankCtor};
+use crate::unit::beat_track2::BeatTrack2Ctor;
 use crate::unit::binary_op::BinaryOpCtor;
 use crate::unit::buf_rd::BufRdCtor;
 use crate::unit::buf_wr::BufWrCtor;
@@ -661,6 +662,8 @@ impl UnitRegistry {
         // Diagnostic guards (NaN/inf/subnormal detection).
         registry.register("CheckBadValues", Box::new(CheckBadValuesCtor));
         registry.register("Sanitize", Box::new(SanitizeCtor));
+        // Machine listening over control-bus features.
+        registry.register("BeatTrack2", Box::new(BeatTrack2Ctor));
         // Demand-rate consumers (normal calc-rate units that pull from the demand plan).
         registry.register("Duty", Box::new(DutyCtor));
         registry.register("TDuty", Box::new(TDutyCtor));
