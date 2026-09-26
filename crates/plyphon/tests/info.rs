@@ -195,3 +195,47 @@ fn num_running_synths_and_buffers() {
     controller.deep_free(g).expect("deep_free");
     approx(read(&mut world)[0], 1.0, "NumRunningSynths after deep_free");
 }
+
+/// `BlockSize.ir` on output 0 and `NodeID.ir` on output 1, each held into `Out.ar` by `DC.ar`.
+fn block_size_node_id_def(name: &str) -> SynthDef {
+    let c = InputRef::Constant;
+    let u = |i| InputRef::Unit { unit: i, output: 0 };
+    SynthDef {
+        name: name.to_string(),
+        params: vec![],
+        units: vec![
+            UnitSpec::new("BlockSize", Rate::Scalar, vec![], 1),
+            UnitSpec::new("NodeID", Rate::Scalar, vec![], 1),
+            UnitSpec::new("DC", Rate::Audio, vec![u(0)], 1),
+            UnitSpec::new("DC", Rate::Audio, vec![u(1)], 1),
+            UnitSpec::new("Out", Rate::Audio, vec![c(0.0), u(2)], 0),
+            UnitSpec::new("Out", Rate::Audio, vec![c(1.0), u(3)], 0),
+        ],
+    }
+}
+
+#[test]
+fn block_size_and_node_id() {
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR,
+        output_channels: 2,
+        block_size: 32,
+        ..Options::default()
+    });
+    controller.add_synthdef(block_size_node_id_def("ids"));
+    // A reblocked graph reports its own block size (scsynth's `FULLBUFLENGTH` is the graph's).
+    controller.add_synthdef_reblocked(block_size_node_id_def("ids8"), 8);
+    let a = controller
+        .synth_new("ids", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("synth_new");
+    let mut buf = vec![0.0f32; 32 * 2];
+    world.fill(&mut buf, 2);
+    assert_eq!([buf[0], buf[1]], [32.0, a as f32]);
+    controller.free(a).expect("free");
+    let b = controller
+        .synth_new("ids8", ROOT_GROUP_ID, AddAction::Tail)
+        .expect("synth_new");
+    assert_ne!(a, b);
+    world.fill(&mut buf, 2);
+    assert_eq!([buf[0], buf[1]], [8.0, b as f32]);
+}

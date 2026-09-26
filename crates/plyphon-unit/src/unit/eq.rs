@@ -1,21 +1,21 @@
 //! Resonant EQ / formant filters - plyphon's ports of scsynth's `Formlet` and `MidEQ`, plus the
-//! BEQSuite biquads `BLowPass`/`BHiPass`/`BBandPass`/`BPeakEQ`/`BLowShelf`/`BHiShelf`.
+//! BEQSuite biquads `BLowPass`/`BHiPass`/`BAllPass`/`BBandPass`/`BBandStop`/`BPeakEQ`/`BLowShelf`/
+//! `BHiShelf` (`FilterUGens.cpp`).
 //!
 //! `Formlet` is an FOF-like formant filter: two `Ringz`-style resonators (an attack and a decay) at
 //! the same frequency, subtracted so the impulse response swells in and rings out. `MidEQ` is a
 //! parametric peaking/notching EQ (a boost or cut of `db` around `freq`). The BEQSuite units share
-//! one biquad kernel ([`Beq`]) and differ only in how [`BeqKind`] derives the coefficients - the
-//! RBJ audio-EQ-cookbook formulas, matching scsynth's per-class math exactly.
+//! one biquad ([`Beq`]) and differ in how [`BeqKind`] derives the coefficients - the RBJ
+//! audio-EQ-cookbook formulas - and in a few details of their audio-rate calcs.
 //!
-//! All units derive their `f64` coefficients from their parameters once per block, recomputing
-//! only on a change, and flush their feedback state with the shared `zap`. This is plyphon's
-//! block-rate convention, and it diverges from scsynth in two ways: for control-rate parameters
-//! scsynth `CALCSLOPE`-interpolates the recomputed coefficients across the transition block (so
-//! only that one block differs - the steady-state responses are identical), and for *audio-rate*
-//! parameters scsynth's `_aa` variants recompute the coefficients per sample, where plyphon reads
-//! the modulator at the block's first sample and holds it, like every other filter in the crate.
+//! `Formlet` and `MidEQ` derive their `f64` coefficients from their parameters once per block,
+//! recomputing only on a change - plyphon's block-rate convention, which differs from scsynth in
+//! the block after a change of a control-rate parameter (scsynth ramps the coefficients across it)
+//! and for audio-rate parameters (read at the block's first sample). The BEQSuite follows scsynth's
+//! calcs exactly, ramps and audio-rate variants included. All flush their feedback state with the
+//! shared `zap`.
 
-use core::f64::consts::{LN_2, LN_10};
+use core::f64::consts::{LN_10, TAU};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -23,8 +23,10 @@ use crate::error::BuildError;
 use crate::unit::decay::decay_coef;
 use crate::unit::filter::zap;
 use crate::unit::registry::{BuildContext, UnitDef};
+use crate::unit::trigger::{Sig, sig};
 use crate::unit::{BuiltUnit, DoneAction, ProcessCtx, Unit, unit_spec};
 use plyphon_dsp::math;
+use plyphon_dsp::rate::Rate;
 
 /// The two-pole resonator coefficients `(b1, b2)` for pole radius `r` at normalised angular frequency
 /// `ffreq` (radians/sample) - the `Ringz`/`Formlet` recurrence `y0 = x + b1*y1 + b2*y2`.
@@ -213,8 +215,12 @@ pub enum BeqKind {
     LowPass,
     /// 12 dB/octave high-pass: `BHiPass.ar(in, freq, rq)`.
     HighPass,
+    /// Second-order all-pass (unity gain, phase turning through `freq`): `BAllPass.ar(in, freq, rq)`.
+    AllPass,
     /// Band-pass: `BBandPass.ar(in, freq, bw)`, with `bw` the bandwidth in octaves.
     BandPass,
+    /// Band-stop (notch): `BBandStop.ar(in, freq, bw)`, with `bw` the bandwidth in octaves.
+    BandStop,
     /// Peaking EQ (boost/cut of `db` around `freq`): `BPeakEQ.ar(in, freq, rq, db)`.
     PeakEQ,
     /// Low shelf (boost/cut of `db` below `freq`): `BLowShelf.ar(in, freq, rs, db)`, with `rs` the
@@ -222,6 +228,19 @@ pub enum BeqKind {
     LowShelf,
     /// High shelf (boost/cut of `db` above `freq`): `BHiShelf.ar(in, freq, rs, db)`.
     HighShelf,
+}
+
+/// How an `_aa`/`_aaa` calc records the parameters it compared against, which differs from unit to
+/// unit in scsynth.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AaUpdate {
+    /// Record the values just read (`unit->m_freq = nextfreq`).
+    Read,
+    /// Record the *next* samples, advancing the parameter read position again
+    /// (`unit->m_freq = ZXP(freq)`).
+    Advance,
+    /// Record nothing.
+    None,
 }
 
 impl BeqKind {
@@ -234,6 +253,8 @@ impl BeqKind {
             BeqKind::PeakEQ => 3,
             BeqKind::LowShelf => 4,
             BeqKind::HighShelf => 5,
+            BeqKind::AllPass => 6,
+            BeqKind::BandStop => 7,
         }
     }
 
@@ -245,6 +266,8 @@ impl BeqKind {
             3 => BeqKind::PeakEQ,
             4 => BeqKind::LowShelf,
             5 => BeqKind::HighShelf,
+            6 => BeqKind::AllPass,
+            7 => BeqKind::BandStop,
             _ => BeqKind::LowPass,
         }
     }
@@ -263,101 +286,177 @@ impl BeqKind {
         if self.has_db() { 4 } else { 3 }
     }
 
-    /// The RBJ biquad coefficients `(a0, a1, a2, b1, b2)` for this response at normalised angular
-    /// frequency `w0` (radians/sample). `width` is the kind's second parameter (`rq`, `bw` in
-    /// octaves, or `rs`); `db` is the peak/shelf gain and is ignored by the pass filters. Feedback
-    /// terms use scsynth's added-`b*` sign convention, so the recurrence is
-    /// `y0 = x + b1*y1 + b2*y2; out = a0*y0 + a1*y1 + a2*y2`.
-    fn coefs(self, w0: f64, width: f64, db: f64) -> (f64, f64, f64, f64, f64) {
-        let cosw0 = math::cos(w0);
-        let sinw0 = math::sin(w0);
+    /// Whether scsynth has an `_ii` calc for this response (`BLowPass`/`BHiPass`, when `freq` and
+    /// `rq` are both scalar).
+    fn has_ii(self) -> bool {
+        matches!(self, BeqKind::LowPass | BeqKind::HighPass)
+    }
+
+    /// How the `_aa` calc records the parameters after recomputing the coefficients, and after each
+    /// of the block's last `mFilterRemain` samples.
+    fn aa_updates(self) -> (AaUpdate, AaUpdate) {
         match self {
-            BeqKind::LowPass => {
-                let i = 1.0 - cosw0;
-                let alpha = sinw0 * 0.5 * width;
-                let b0rz = 1.0 / (1.0 + alpha);
-                let a0 = i * 0.5 * b0rz;
-                (a0, i * b0rz, a0, cosw0 * 2.0 * b0rz, (1.0 - alpha) * -b0rz)
+            BeqKind::LowPass | BeqKind::AllPass | BeqKind::PeakEQ | BeqKind::LowShelf => {
+                (AaUpdate::Read, AaUpdate::Advance)
             }
-            BeqKind::HighPass => {
-                let i = 1.0 + cosw0;
-                let alpha = sinw0 * 0.5 * width;
+            BeqKind::HighPass => (AaUpdate::Read, AaUpdate::None),
+            BeqKind::BandPass | BeqKind::BandStop => (AaUpdate::Advance, AaUpdate::Read),
+            BeqKind::HighShelf => (AaUpdate::Advance, AaUpdate::Advance),
+        }
+    }
+
+    /// The biquad coefficients `[a0, a1, a2, b1, b2]` for `freq` Hz, the width input `width` (`rq`,
+    /// `bw` in octaves, or `rs`) and `db` (ignored by the pass filters), at `sample_dur` seconds per
+    /// sample - scsynth's per-class formulas, operation for operation. Feedback terms use scsynth's
+    /// added-`b*` sign convention: `y0 = x + b1*y1 + b2*y2; out = a0*y0 + a1*y1 + a2*y2`.
+    fn coefs(self, freq: f32, width: f32, db: f32, sample_dur: f64) -> [f64; 5] {
+        let w0 = TAU * freq as f64 * sample_dur;
+        let width = width as f64;
+        match self {
+            BeqKind::LowPass | BeqKind::HighPass => {
+                let cosw0 = math::cos(w0);
+                let alpha = math::sin(w0) * 0.5 * width;
                 let b0rz = 1.0 / (1.0 + alpha);
+                let (i, a1) = if self == BeqKind::LowPass {
+                    let i = 1.0 - cosw0;
+                    (i, i * b0rz)
+                } else {
+                    let i = 1.0 + cosw0;
+                    (i, -i * b0rz)
+                };
                 let a0 = i * 0.5 * b0rz;
-                (a0, -i * b0rz, a0, cosw0 * 2.0 * b0rz, (1.0 - alpha) * -b0rz)
+                [a0, a1, a0, cosw0 * 2.0 * b0rz, (1.0 - alpha) * -b0rz]
             }
-            BeqKind::BandPass => {
-                // ln(2)/2 * bw * w0/sin(w0) maps the octave bandwidth onto the resonance.
-                let alpha = sinw0 * math::sinh((0.5 * LN_2) * width * w0 / sinw0);
+            BeqKind::AllPass => {
+                let alpha = math::sin(w0) * 0.5 * width;
                 let b0rz = 1.0 / (1.0 + alpha);
-                let a0 = alpha * b0rz;
-                (a0, 0.0, -a0, cosw0 * 2.0 * b0rz, (1.0 - alpha) * -b0rz)
+                let a0 = (1.0 - alpha) * b0rz;
+                let b1 = 2.0 * b0rz * math::cos(w0);
+                [a0, -b1, 1.0, b1, -a0]
+            }
+            BeqKind::BandPass | BeqKind::BandStop => {
+                // scsynth writes ln(2)/2 as this literal, a hair off `0.5 * LN_2`.
+                let sinw0 = math::sin(w0);
+                let alpha = sinw0 * math::sinh((0.34657359027997 * width * w0) / sinw0);
+                let b0rz = 1.0 / (1.0 + alpha);
+                let b2 = (1.0 - alpha) * -b0rz;
+                if self == BeqKind::BandPass {
+                    let a0 = alpha * b0rz;
+                    [a0, 0.0, -a0, math::cos(w0) * 2.0 * b0rz, b2]
+                } else {
+                    let b1 = 2.0 * b0rz * math::cos(w0);
+                    [b0rz, -b1, b0rz, b1, b2]
+                }
             }
             BeqKind::PeakEQ => {
-                let amp = math::exp(db * (LN_10 * 0.025)); // 10^(db/40)
-                let alpha = sinw0 * 0.5 * width;
-                let b0rz = 1.0 / (1.0 + alpha / amp);
-                let b1 = 2.0 * b0rz * cosw0;
-                (
-                    (1.0 + alpha * amp) * b0rz,
+                let a = math::powf(10.0, db as f64 * 0.025);
+                let alpha = math::sin(w0) * 0.5 * width;
+                let b0rz = 1.0 / (1.0 + (alpha / a));
+                let b1 = 2.0 * b0rz * math::cos(w0);
+                [
+                    (1.0 + (alpha * a)) * b0rz,
                     -b1,
-                    (1.0 - alpha * amp) * b0rz,
+                    (1.0 - (alpha * a)) * b0rz,
                     b1,
-                    (1.0 - alpha / amp) * -b0rz,
-                )
+                    (1.0 - (alpha / a)) * -b0rz,
+                ]
             }
-            BeqKind::LowShelf => {
-                let amp = math::exp(db * (LN_10 * 0.025)); // 10^(db/40)
-                let alpha = sinw0 * 0.5 * math::sqrt((amp + 1.0 / amp) * (width - 1.0) + 2.0);
-                let i = (amp + 1.0) * cosw0;
-                let j = (amp - 1.0) * cosw0;
-                let k = 2.0 * math::sqrt(amp) * alpha;
-                let b0rz = 1.0 / ((amp + 1.0) + j + k);
-                (
-                    amp * ((amp + 1.0) - j + k) * b0rz,
-                    2.0 * amp * ((amp - 1.0) - i) * b0rz,
-                    amp * ((amp + 1.0) - j - k) * b0rz,
-                    2.0 * ((amp - 1.0) + i) * b0rz,
-                    ((amp + 1.0) + j - k) * -b0rz,
-                )
-            }
-            BeqKind::HighShelf => {
-                let amp = math::exp(db * (LN_10 * 0.025)); // 10^(db/40)
-                let alpha = sinw0 * 0.5 * math::sqrt((amp + 1.0 / amp) * (width - 1.0) + 2.0);
-                let i = (amp + 1.0) * cosw0;
-                let j = (amp - 1.0) * cosw0;
-                let k = 2.0 * math::sqrt(amp) * alpha;
-                let b0rz = 1.0 / ((amp + 1.0) - j + k);
-                (
-                    amp * ((amp + 1.0) + j + k) * b0rz,
-                    -2.0 * amp * ((amp - 1.0) + i) * b0rz,
-                    amp * ((amp + 1.0) + j - k) * b0rz,
-                    -2.0 * ((amp - 1.0) - i) * b0rz,
-                    ((amp + 1.0) - j - k) * -b0rz,
-                )
+            BeqKind::LowShelf | BeqKind::HighShelf => {
+                let a = math::powf(10.0, db as f64 * 0.025);
+                let cosw0 = math::cos(w0);
+                let sinw0 = math::sin(w0);
+                let alpha = sinw0 * 0.5 * math::sqrt((a + (1.0 / a)) * (width - 1.0) + 2.0);
+                let i = (a + 1.0) * cosw0;
+                let j = (a - 1.0) * cosw0;
+                let k = 2.0 * math::sqrt(a) * alpha;
+                if self == BeqKind::LowShelf {
+                    let b0rz = 1.0 / ((a + 1.0) + j + k);
+                    [
+                        a * ((a + 1.0) - j + k) * b0rz,
+                        2.0 * a * ((a - 1.0) - i) * b0rz,
+                        a * ((a + 1.0) - j - k) * b0rz,
+                        2.0 * ((a - 1.0) + i) * b0rz,
+                        ((a + 1.0) + j - k) * -b0rz,
+                    ]
+                } else {
+                    let b0rz = 1.0 / ((a + 1.0) - j + k);
+                    [
+                        a * ((a + 1.0) + j + k) * b0rz,
+                        -2.0 * a * ((a - 1.0) + i) * b0rz,
+                        a * ((a + 1.0) + j - k) * b0rz,
+                        -2.0 * ((a - 1.0) - i) * b0rz,
+                        ((a + 1.0) - j - k) * -b0rz,
+                    ]
+                }
             }
         }
     }
 }
 
+/// Which calc a [`Beq`] runs, as its scsynth constructor selects it from the parameter rates.
+mod beq_calc {
+    /// Every parameter audio-rate: `_aa`/`_aaa`, coefficients recomputed within the block.
+    pub const AA: u32 = 0;
+    /// Otherwise: `_kk`/`_kkk`, coefficients ramped across a block after a change.
+    pub const KK: u32 = 1;
+    /// `BLowPass`/`BHiPass` with both parameters scalar: `_ii`, fixed coefficients.
+    pub const II: u32 = 2;
+}
+
+/// One sample of the biquad: `y0 = x + b1*y1 + b2*y2; out = a0*y0 + a1*y1 + a2*y2`.
+fn beq_tick(c: &[f64; 5], y1: &mut f64, y2: &mut f64, x: f32) -> f32 {
+    let y0 = x as f64 + c[3] * *y1 + c[4] * *y2;
+    let out = (c[0] * y0 + c[1] * *y1 + c[2] * *y2) as f32;
+    *y2 = *y1;
+    *y1 = y0;
+    out
+}
+
+/// [`beq_tick`] over `out`, whose first sample is block sample `start`.
+fn beq_run(
+    c: &[f64; 5],
+    y1: &mut f64,
+    y2: &mut f64,
+    out: &mut [f32],
+    input: &Sig<'_>,
+    start: usize,
+) {
+    for (j, o) in out.iter_mut().enumerate() {
+        *o = beq_tick(c, y1, y2, input.at(start + j));
+    }
+}
+
 /// A BEQSuite biquad: `BLowPass.ar(in, freq, rq)` and friends (see [`BeqKind`]).
 ///
-/// `Pod` state for the rt-pool: `f64` history/coefficients first, then the cached parameters and
-/// the [`BeqKind`] tag (`repr(C)` lays this out with no implicit padding).
+/// A direct port of scsynth's BEQSuite. Each constructor computes the coefficients from the first
+/// parameter values and filters the first input sample with them, keeping the state, so the first
+/// block filters that sample again. It then selects a calc from the parameter rates:
+///
+/// - `_kk`/`_kkk` (the usual case): on a parameter change the new coefficients are reached by a
+///   linear ramp, stepped after every three samples (`BPerformFilterLoop` with `mFilterSlope`), and
+///   the block's last `bs % 3` samples use the ramp's end point.
+/// - `_aa`/`_aaa` (every parameter audio-rate): every three samples the next parameter sample is
+///   compared and, on a change, the coefficients are recomputed. scsynth reads the parameters one
+///   sample per group of three rather than at each group's start, and records what it compared
+///   against differently per unit (see `BeqKind::aa_updates`); plyphon does the same.
+/// - `_ii` (`BLowPass`/`BHiPass` with scalar parameters): fixed coefficients.
+///
+/// The coefficients are `f64`, derived with scsynth's `twopi * freq * SAMPLEDUR`, and the feedback
+/// state is flushed with `zap` after every block.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Beq {
     y1: f64,
     y2: f64,
-    a0: f64,
-    a1: f64,
-    a2: f64,
-    b1: f64,
-    b2: f64,
+    /// `[a0, a1, a2, b1, b2]`.
+    coefs: [f64; 5],
     freq: f32,
     width: f32,
     db: f32,
     kind: u32,
+    /// One of the [`beq_calc`] values.
+    calc: u32,
+    _pad: u32,
 }
 
 impl Beq {
@@ -365,40 +464,183 @@ impl Beq {
     const FREQ: usize = 1;
     const WIDTH: usize = 2;
     const DB: usize = 3;
-}
 
-impl Unit for Beq {
-    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        let kind = BeqKind::from_tag(self.kind);
-        let freq = ctx.ins.control(Self::FREQ);
-        let width = ctx.ins.control(Self::WIDTH);
+    /// The parameters as control values: `freq`, the width, and `db` (0 for the pass filters).
+    fn params(ctx: &ProcessCtx<'_>, kind: BeqKind) -> [f32; 3] {
         let db = if kind.has_db() {
             ctx.ins.control(Self::DB)
         } else {
             0.0
         };
-        if freq != self.freq || width != self.width || db != self.db {
-            let w0 = freq as f64 * ctx.own.radians_per_sample;
-            let (a0, a1, a2, b1, b2) = kind.coefs(w0, width as f64, db as f64);
-            self.a0 = a0;
-            self.a1 = a1;
-            self.a2 = a2;
-            self.b1 = b1;
-            self.b2 = b2;
-            self.freq = freq;
-            self.width = width;
-            self.db = db;
+        [
+            ctx.ins.control(Self::FREQ),
+            ctx.ins.control(Self::WIDTH),
+            db,
+        ]
+    }
+
+    /// Whether `params` differ from the recorded ones (scsynth's `m_freq != nextfreq || ...`).
+    fn changed(&self, params: [f32; 3]) -> bool {
+        self.freq != params[0] || self.width != params[1] || self.db != params[2]
+    }
+
+    fn record(&mut self, params: [f32; 3]) {
+        [self.freq, self.width, self.db] = params;
+    }
+
+    /// `_kk`/`_kkk` (`check`) and `_ii`: `BPerformFilterLoop` over the block. With `check`, a
+    /// parameter change recomputes the coefficients and ramps to them. The block length sets
+    /// `mFilterLoops` (groups of three) and `mFilterRemain`.
+    fn next_kk(&mut self, ctx: &mut ProcessCtx<'_>, check: bool) {
+        let kind = BeqKind::from_tag(self.kind);
+        let input = sig(&ctx.ins, Self::IN);
+        let params = Self::params(ctx, kind);
+        let out = ctx.outs.audio(0);
+        // `mFilterLoops` groups of three, then the `mFilterRemain` rest.
+        let loops = out.len() / 3;
+        let mut c = self.coefs;
+        let mut slopes = [0.0f64; 5];
+        let mut next = c;
+        let ramp = check && self.changed(params);
+        if ramp {
+            next = kind.coefs(params[0], params[1], params[2], ctx.own.sample_dur);
+            // `mFilterSlope`: `1 / mFilterLoops`, or 0 when a block has fewer than three samples.
+            let filter_slope = if loops == 0 { 0.0 } else { 1.0 / loops as f64 };
+            for (s, (&to, &from)) in slopes.iter_mut().zip(next.iter().zip(&c)) {
+                *s = (to - from) * filter_slope;
+            }
+            self.record(params);
         }
-        let (a0, a1, a2, b1, b2) = (self.a0, self.a1, self.a2, self.b1, self.b2);
         let (mut y1, mut y2) = (self.y1, self.y2);
-        for (o, &x) in ctx.outs.audio(0).iter_mut().zip(ctx.ins.audio(Self::IN)) {
-            let y0 = x as f64 + b1 * y1 + b2 * y2;
-            *o = (a0 * y0 + a1 * y1 + a2 * y2) as f32;
-            y2 = y1;
-            y1 = y0;
+        for g in 0..loops {
+            beq_run(
+                &c,
+                &mut y1,
+                &mut y2,
+                &mut out[3 * g..3 * g + 3],
+                &input,
+                3 * g,
+            );
+            if ramp {
+                for (ci, s) in c.iter_mut().zip(&slopes) {
+                    *ci += s;
+                }
+            }
+        }
+        beq_run(
+            &c,
+            &mut y1,
+            &mut y2,
+            &mut out[3 * loops..],
+            &input,
+            3 * loops,
+        );
+        if ramp {
+            self.coefs = next;
         }
         self.y1 = zap(y1);
         self.y2 = zap(y2);
+    }
+
+    /// `_aa`/`_aaa`: every parameter audio-rate. Once per group of three samples the next parameter
+    /// sample is read (one sample per group, as scsynth's `ZXP` in the group loop does) and, if it
+    /// differs from the recorded parameters, the coefficients are recomputed; the block's last
+    /// `mFilterRemain` samples use the last coefficients.
+    fn next_aa(&mut self, ctx: &mut ProcessCtx<'_>) {
+        let kind = BeqKind::from_tag(self.kind);
+        let (on_change, on_remain) = kind.aa_updates();
+        let ins = ctx.ins;
+        let input = sig(&ins, Self::IN);
+        let freq = ins.audio(Self::FREQ);
+        let width = ins.audio(Self::WIDTH);
+        let db = if kind.has_db() {
+            ins.audio(Self::DB)
+        } else {
+            &[]
+        };
+        let param = |pos: usize| {
+            let at = |s: &[f32]| s.get(pos).copied().unwrap_or(0.0);
+            [
+                at(freq),
+                at(width),
+                if kind.has_db() { at(db) } else { 0.0 },
+            ]
+        };
+        let out = ctx.outs.audio(0);
+        let n = out.len();
+        let (loops, remain) = (n / 3, n % 3);
+        let mut c = self.coefs;
+        let (mut y1, mut y2) = (self.y1, self.y2);
+        // The parameters' read position, and the last values read.
+        let mut pos = 0;
+        let mut next = None;
+        for g in 0..loops {
+            let read = param(pos);
+            pos += 1;
+            next = Some(read);
+            if self.changed(read) {
+                c = kind.coefs(read[0], read[1], read[2], ctx.own.sample_dur);
+                match on_change {
+                    AaUpdate::Read => self.record(read),
+                    AaUpdate::Advance => {
+                        self.record(param(pos));
+                        pos += 1;
+                    }
+                    AaUpdate::None => {}
+                }
+            }
+            beq_run(
+                &c,
+                &mut y1,
+                &mut y2,
+                &mut out[3 * g..3 * g + 3],
+                &input,
+                3 * g,
+            );
+        }
+        for (j, o) in out[3 * loops..3 * loops + remain].iter_mut().enumerate() {
+            *o = beq_tick(&c, &mut y1, &mut y2, input.at(3 * loops + j));
+            match on_remain {
+                AaUpdate::Advance => {
+                    self.record(param(pos));
+                    pos += 1;
+                }
+                // With no group in the block (a block under three samples) scsynth records values
+                // it never read, uninitialised memory; plyphon records nothing.
+                AaUpdate::Read => {
+                    if let Some(read) = next {
+                        self.record(read);
+                    }
+                }
+                AaUpdate::None => {}
+            }
+        }
+        self.coefs = c;
+        self.y1 = zap(y1);
+        self.y2 = zap(y2);
+    }
+}
+
+impl Unit for Beq {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // The constructor computes the coefficients from the first parameter values and runs the
+        // `_kk` calc for one sample (`PUSH_LOOPVALS`), whatever calc it selected.
+        let kind = BeqKind::from_tag(self.kind);
+        let params = Self::params(ctx, kind);
+        self.record(params);
+        self.coefs = kind.coefs(params[0], params[1], params[2], ctx.own.sample_dur);
+        self.y1 = 0.0;
+        self.y2 = 0.0;
+        self.next_kk(ctx, true);
+        DoneAction::Nothing
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        match self.calc {
+            beq_calc::AA => self.next_aa(ctx),
+            beq_calc::II => self.next_kk(ctx, false),
+            _ => self.next_kk(ctx, true),
+        }
         DoneAction::Nothing
     }
 }
@@ -408,21 +650,28 @@ pub struct BeqCtor(pub BeqKind);
 
 impl UnitDef for BeqCtor {
     fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
-        if ctx.input_rates.len() < self.0.num_inputs() {
+        let kind = self.0;
+        if ctx.input_rates.len() < kind.num_inputs() {
             return Err(BuildError::WrongInputCount);
         }
+        let params = &ctx.input_rates[Beq::FREQ..kind.num_inputs()];
+        let calc = if params.iter().all(|&r| r == Rate::Audio) {
+            beq_calc::AA
+        } else if kind.has_ii() && params.iter().all(|&r| r == Rate::Scalar) {
+            beq_calc::II
+        } else {
+            beq_calc::KK
+        };
         Ok(unit_spec(Beq {
             y1: 0.0,
             y2: 0.0,
-            a0: 0.0,
-            a1: 0.0,
-            a2: 0.0,
-            b1: 0.0,
-            b2: 0.0,
-            freq: f32::NAN, // force coefficient computation on the first block
-            width: f32::NAN,
-            db: f32::NAN,
-            kind: self.0.to_tag(),
+            coefs: [0.0; 5],
+            freq: 0.0,
+            width: 0.0,
+            db: 0.0,
+            kind: kind.to_tag(),
+            calc,
+            _pad: 0,
         }))
     }
 }

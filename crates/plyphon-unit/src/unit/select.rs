@@ -1,14 +1,16 @@
 //! Selection and buffer-lookup units - plyphon's ports of scsynth's `Select`, `TWindex`, the
-//! `Index`/`IndexL`/`WrapIndex`/`FoldIndex` family, `Shaper` and `DegreeToKey` (`OscUGens.cpp`).
+//! `Index`/`IndexL`/`WrapIndex`/`FoldIndex` family, `IndexInBetween`, `DetectIndex`, `Shaper` and
+//! `DegreeToKey` (`OscUGens.cpp`).
 //!
 //! `Select` passes through one of its trailing signal inputs, chosen by an index. `TWindex` chooses an
 //! index at random on each trigger, weighted by its trailing inputs. The rest read a value
 //! out of a `/b_alloc`'d buffer: the `Index` family treats the buffer as a lookup table indexed by
 //! `in` (differing only in how an out-of-range or fractional index is treated - `Index` clips, `IndexL`
-//! interpolates, `WrapIndex`/`FoldIndex` wrap/fold); `Shaper` treats it as a `(a, b)`-format transfer
-//! function and waveshapes `in`; and `DegreeToKey` treats it as a scale and maps a degree to a key with
-//! octave wrapping. All read their index/signal at whatever rate the SynthDef assigns and output at the
-//! unit's own rate.
+//! interpolates, `WrapIndex`/`FoldIndex` wrap/fold); `IndexInBetween` and `DetectIndex` search the
+//! table for `in` and output where it falls or where it is; `Shaper` treats it as a `(a, b)`-format
+//! transfer function and waveshapes `in`; and `DegreeToKey` treats it as a scale and maps a degree to
+//! a key with octave wrapping. All read their index/signal at whatever rate the SynthDef assigns and
+//! output at the unit's own rate.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -16,7 +18,8 @@ use crate::error::BuildError;
 use crate::unit::io::{buffer_at, sample_channel};
 use crate::unit::registry::{BuildContext, UnitDef};
 use crate::unit::trigger::{drive, sig};
-use crate::unit::{BuiltUnit, DoneAction, Inputs, ProcessCtx, Unit, unit_spec};
+use crate::unit::{BuiltUnit, DoneAction, Inputs, LocalBufs, ProcessCtx, Unit, unit_spec};
+use plyphon_dsp::buffer::BufferTable;
 use plyphon_dsp::interp::lininterp;
 use plyphon_dsp::math;
 use plyphon_dsp::ops;
@@ -394,6 +397,185 @@ impl UnitDef for DegreeToKeyCtor {
             return Err(BuildError::WrongInputCount);
         }
         Ok(unit_spec(DegreeToKey {
+            audio: (ctx.rate == Rate::Audio) as u32,
+        }))
+    }
+}
+
+/// The table buffer `bufnum` reads, as scsynth's `UnitGetTable` resolves it (`(uint32)bufnum`), or
+/// `None` when there is none - the caller then clears its output for the calc and leaves its state
+/// alone, as `GET_TABLE` returns early after `ClearUnitOutputs`.
+fn get_table<'a>(
+    ins: &Inputs<'_>,
+    buffers: &'a BufferTable,
+    local_bufs: &'a LocalBufs<'_>,
+) -> Option<&'a [f32]> {
+    let bufnum = ins.control(0) as u32 as usize;
+    buffer_at(buffers, local_bufs, bufnum).map(|buf| buf.data())
+}
+
+/// `IndexInBetween_FindIndex`: the fractional index at which `x` falls in the ascending `table` -
+/// the first entry greater than `x` and the one before it, interpolated linearly - clamped to 0
+/// below the first entry and to the last index when no entry exceeds `x`.
+fn index_in_between(table: &[f32], x: f32) -> f32 {
+    let maxindex = table.len() as i32 - 1;
+    for i in 0..=maxindex {
+        let hi = table[i as usize];
+        if hi > x {
+            if i == 0 {
+                return 0.0;
+            }
+            let lo = table[i as usize - 1];
+            // `(in - lo) / (hi - lo) + i - 1`, evaluated left to right in single precision.
+            return (x - lo) / (hi - lo) + i as f32 - 1.0;
+        }
+    }
+    maxindex as f32
+}
+
+/// `IndexInBetween.ar/kr(bufnum, in)`: the inverse of `IndexL` - finds where `in` falls in the
+/// ascending table in buffer `bufnum` and outputs that fractional index. Input `0` is `bufnum`;
+/// input `1` the value to look up.
+///
+/// A direct port of scsynth's `IndexInBetween`: at control rate it looks up the first sample of
+/// `in` (`next_1`); at audio rate every sample of an audio-rate `in` (`next_a`), or the one value of
+/// any other `in` for the whole block (`next_k`). A missing buffer outputs zero.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct IndexInBetween {
+    audio: u32,
+}
+
+impl IndexInBetween {
+    const IN: usize = 1;
+}
+
+impl Unit for IndexInBetween {
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let ins = ctx.ins;
+        let Some(table) = get_table(&ins, ctx.buffers, &ctx.local_bufs) else {
+            ctx.outs.audio(0).fill(0.0);
+            return DoneAction::Nothing;
+        };
+        if self.audio != 0 && ins.rate(Self::IN) == Rate::Audio {
+            for (o, &x) in ctx.outs.audio(0).iter_mut().zip(ins.audio(Self::IN)) {
+                *o = index_in_between(table, x);
+            }
+        } else {
+            let value = index_in_between(table, ins.control(Self::IN));
+            ctx.outs.audio(0).fill(value);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`IndexInBetween`].
+pub struct IndexInBetweenCtor;
+
+impl UnitDef for IndexInBetweenCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 2 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(IndexInBetween {
+            audio: (ctx.rate == Rate::Audio) as u32,
+        }))
+    }
+}
+
+/// `DetectIndex_FindIndex`: the index of the first entry of `table` equal to `x`, or `-1`.
+fn detect_index(table: &[f32], x: f32) -> i32 {
+    table
+        .iter()
+        .position(|&v| v == x)
+        .map_or(-1, |index| index as i32)
+}
+
+/// `DetectIndex.ar/kr(bufnum, in)`: the index of the first entry of the table in buffer `bufnum`
+/// equal to `in`, or `-1` if there is none. Input `0` is `bufnum`; input `1` the value to find.
+///
+/// A direct port of scsynth's `DetectIndex`, which searches again only when `in` changes: the last
+/// input and its index persist across blocks (the index as a float, as scsynth keeps it). At
+/// control rate it looks up the first sample of `in` (`next_1`); at audio rate every sample of an
+/// audio-rate `in` (`next_a`), or the one value of any other `in` for the whole block (`next_k`). A
+/// missing buffer outputs zero and leaves the remembered input alone.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct DetectIndex {
+    /// The last index found (scsynth's `mPrev`).
+    prev: f32,
+    /// The input it was found for (scsynth's `mPrevIn`), `NaN` before the first search.
+    prev_in: f32,
+    audio: u32,
+}
+
+impl DetectIndex {
+    const IN: usize = 1;
+
+    /// `next_1`/`next_k`: the index for the one value `x`, searching only if it changed.
+    fn lookup(&mut self, table: &[f32], x: f32) -> f32 {
+        let index = if x == self.prev_in {
+            self.prev as i32
+        } else {
+            let index = detect_index(table, x);
+            self.prev = index as f32;
+            self.prev_in = x;
+            index
+        };
+        index as f32
+    }
+}
+
+impl Unit for DetectIndex {
+    fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        // `DetectIndex_next_1(unit, 1)`.
+        let ins = ctx.ins;
+        *ctx.outs.control(0) = match get_table(&ins, ctx.buffers, &ctx.local_bufs) {
+            Some(table) => self.lookup(table, ins.control(Self::IN)),
+            None => 0.0,
+        };
+        DoneAction::Nothing
+    }
+
+    fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
+        let ins = ctx.ins;
+        let Some(table) = get_table(&ins, ctx.buffers, &ctx.local_bufs) else {
+            ctx.outs.audio(0).fill(0.0);
+            return DoneAction::Nothing;
+        };
+        if self.audio != 0 && ins.rate(Self::IN) == Rate::Audio {
+            // `DetectIndex_next_a`.
+            let mut prev = self.prev_in;
+            let mut prev_index = self.prev as i32;
+            for (o, &x) in ctx.outs.audio(0).iter_mut().zip(ins.audio(Self::IN)) {
+                if x != prev {
+                    prev_index = detect_index(table, x);
+                }
+                prev = x;
+                *o = prev_index as f32;
+            }
+            self.prev = prev_index as f32;
+            self.prev_in = prev;
+        } else {
+            let value = self.lookup(table, ins.control(Self::IN));
+            ctx.outs.audio(0).fill(value);
+        }
+        DoneAction::Nothing
+    }
+}
+
+/// Constructor for [`DetectIndex`].
+pub struct DetectIndexCtor;
+
+impl UnitDef for DetectIndexCtor {
+    fn build(&self, ctx: &BuildContext<'_>) -> Result<BuiltUnit, BuildError> {
+        if ctx.input_rates.len() < 2 {
+            return Err(BuildError::WrongInputCount);
+        }
+        Ok(unit_spec(DetectIndex {
+            prev: -1.0,
+            // Ensures the first input differs from it.
+            prev_in: f32::NAN,
             audio: (ctx.rate == Rate::Audio) as u32,
         }))
     }

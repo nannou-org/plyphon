@@ -46,6 +46,7 @@ pub mod io;
 pub mod lf;
 pub mod lf_noise;
 pub mod line;
+pub mod linen;
 pub mod local_buf;
 pub mod local_io;
 pub mod measure;
@@ -63,6 +64,7 @@ pub mod pitch_shift;
 pub mod play_buf;
 pub mod pluck;
 pub mod poll;
+pub mod psin_grain;
 #[cfg(feature = "fft")]
 pub mod pv;
 #[cfg(feature = "fft")]
@@ -82,6 +84,7 @@ pub mod resonant;
 pub mod scope_out;
 pub mod section;
 pub mod select;
+pub mod send_peak_rms;
 pub mod send_reply;
 pub mod send_trig;
 pub mod shape;
@@ -93,6 +96,7 @@ pub mod two_pole;
 pub mod unary_op;
 pub mod util;
 pub mod vdisk_in;
+pub mod vibrato;
 pub mod wavetable_osc;
 
 use alloc::boxed::Box;
@@ -206,10 +210,11 @@ pub use filter::Butter;
 pub use info::{BufInfo, BufInfoKind, Info, InfoKind};
 pub use input::In;
 pub use io::{
-    audio_crossfade, audio_in, audio_in_touched, audio_out, audio_out_decimated,
-    audio_replace_decimated, buffer_at, buffer_at_mut, buffer_pair_mut, control_crossfade,
-    control_in, control_out, control_replace, local_in, local_out, num_audio_buses, num_buffers,
-    num_control_buses, num_input_buses, num_output_buses, recording_at_mut, stream_at_mut,
+    audio_channel_mut, audio_in, audio_in_touched, audio_out, audio_out_decimated,
+    audio_replace_decimated, audio_touch, buffer_at, buffer_at_mut, buffer_pair_mut,
+    control_crossfade, control_in, control_in_touched, control_out, control_replace, local_in,
+    local_out, num_audio_buses, num_buffers, num_control_buses, num_input_buses, num_output_buses,
+    recording_at_mut, stream_at_mut,
 };
 pub use lf::{Impulse, LFPulse, LFSaw};
 pub use line::Line;

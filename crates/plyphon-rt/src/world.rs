@@ -637,7 +637,13 @@ impl World {
                 }
             }
             Command::SetControlBus { bus, value } => {
-                self.buses.control_mut().set(bus as usize, value);
+                // Commands apply before the block they precede, whose counter is one on; scsynth
+                // stamps a `/c_set` with that block's `mBufCounter` too, so an `Out.kr` in it sums
+                // onto the value and `InTrig` reads it.
+                let next_block = self.buf_counter + 1;
+                self.buses
+                    .control_mut()
+                    .set(bus as usize, next_block, value);
             }
             Command::MapControl { node, param, bus } => {
                 let World { tree, pool, .. } = self;

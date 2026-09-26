@@ -62,8 +62,8 @@ use crate::unit::eq::{BeqCtor, BeqKind, FormletCtor, MidEQCtor};
 use crate::unit::fft::{FftCtor, IfftCtor};
 use crate::unit::filter::{ButterCtor, Kind};
 use crate::unit::filter_simple::{
-    APFCtor, BPZ2Ctor, BRZ2Ctor, Delay1Ctor, Delay2Ctor, HPZ1Ctor, HPZ2Ctor, LPZ1Ctor, LPZ2Ctor,
-    SlewCtor, SlopeCtor,
+    APFCtor, BPZ2Ctor, BRZ2Ctor, Delay1Ctor, Delay2Ctor, FlipCtor, HPZ1Ctor, HPZ2Ctor, LPZ1Ctor,
+    LPZ2Ctor, SlewCtor, SlopeCtor,
 };
 use crate::unit::formant::FormantCtor;
 use crate::unit::freeverb::{FreeVerb2Ctor, FreeVerbCtor};
@@ -74,7 +74,7 @@ use crate::unit::grain::{
 use crate::unit::gverb::GVerbCtor;
 use crate::unit::hilbert::{FreqShiftCtor, HilbertCtor};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
-use crate::unit::input::InCtor;
+use crate::unit::input::{InCtor, InTrigCtor, LagInCtor};
 use crate::unit::lf::{
     ImpulseCtor, LFCubCtor, LFGaussCtor, LFParCtor, LFPulseCtor, LFSawCtor, LFTriCtor, SyncSawCtor,
     VarSawCtor,
@@ -84,6 +84,7 @@ use crate::unit::lf_noise::{
     LFNoise1Ctor, LFNoise2Ctor,
 };
 use crate::unit::line::{LineCtor, XLineCtor};
+use crate::unit::linen::LinenCtor;
 use crate::unit::local_buf::{ClearBufCtor, LocalBufCtor, MaxLocalBufsCtor, SetBufCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
 use crate::unit::measure::{
@@ -113,6 +114,7 @@ use crate::unit::pitch_shift::PitchShiftCtor;
 use crate::unit::play_buf::PlayBufCtor;
 use crate::unit::pluck::PluckCtor;
 use crate::unit::poll::PollCtor;
+use crate::unit::psin_grain::PSinGrainCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_combine::{
     ComplexKind, PolarKind, PvComplexCtor, PvCopyCtor, PvCopyPhaseCtor, PvPolarCtor,
@@ -137,8 +139,10 @@ use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, Ri
 use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::section::{FOSCtor, SOSCtor};
 use crate::unit::select::{
-    DegreeToKeyCtor, IndexCtor, IndexMode, SelectCtor, ShaperCtor, TWindexCtor,
+    DegreeToKeyCtor, DetectIndexCtor, IndexCtor, IndexInBetweenCtor, IndexMode, SelectCtor,
+    ShaperCtor, TWindexCtor,
 };
+use crate::unit::send_peak_rms::SendPeakRMSCtor;
 use crate::unit::send_reply::SendReplyCtor;
 use crate::unit::send_trig::SendTrigCtor;
 use crate::unit::shape::{
@@ -160,6 +164,7 @@ use crate::unit::util::{
     SumCtor,
 };
 use crate::unit::vdisk_in::VDiskInCtor;
+use crate::unit::vibrato::VibratoCtor;
 use crate::unit::wavetable_osc::{COscCtor, OscCtor, OscNCtor, VOsc3Ctor, VOscCtor};
 use crate::unit::{BuiltUnit, InputSource};
 use plyphon_dsp::rate::{Rate, RateInfo};
@@ -247,6 +252,8 @@ impl UnitRegistry {
         // The same unit with the touched check disabled: `InFeedback` reads a bus channel written
         // by a *later* (or freed) node - last block's signal - for deliberate one-block feedback.
         registry.register("InFeedback", Box::new(InCtor { feedback: true }));
+        registry.register("InTrig", Box::new(InTrigCtor));
+        registry.register("LagIn", Box::new(LagInCtor));
         registry.register("LocalIn", Box::new(LocalInCtor));
         registry.register("LocalOut", Box::new(LocalOutCtor));
         registry.register("BinaryOpUGen", Box::new(BinaryOpCtor));
@@ -296,13 +303,16 @@ impl UnitRegistry {
         registry.register("Slope", Box::new(SlopeCtor));
         registry.register("Slew", Box::new(SlewCtor));
         registry.register("APF", Box::new(APFCtor));
+        registry.register("Flip", Box::new(FlipCtor));
         // Explicit-coefficient sections (the `B*` EQ macros feed these).
         registry.register("FOS", Box::new(FOSCtor));
         registry.register("SOS", Box::new(SOSCtor));
         // BEQSuite RBJ biquads (one kernel, response selected per name).
         registry.register("BLowPass", Box::new(BeqCtor(BeqKind::LowPass)));
         registry.register("BHiPass", Box::new(BeqCtor(BeqKind::HighPass)));
+        registry.register("BAllPass", Box::new(BeqCtor(BeqKind::AllPass)));
         registry.register("BBandPass", Box::new(BeqCtor(BeqKind::BandPass)));
+        registry.register("BBandStop", Box::new(BeqCtor(BeqKind::BandStop)));
         registry.register("BPeakEQ", Box::new(BeqCtor(BeqKind::PeakEQ)));
         registry.register("BLowShelf", Box::new(BeqCtor(BeqKind::LowShelf)));
         registry.register("BHiShelf", Box::new(BeqCtor(BeqKind::HighShelf)));
@@ -470,6 +480,8 @@ impl UnitRegistry {
         registry.register("IndexL", Box::new(IndexCtor(IndexMode::Lin)));
         registry.register("WrapIndex", Box::new(IndexCtor(IndexMode::Wrap)));
         registry.register("FoldIndex", Box::new(IndexCtor(IndexMode::Fold)));
+        registry.register("IndexInBetween", Box::new(IndexInBetweenCtor));
+        registry.register("DetectIndex", Box::new(DetectIndexCtor));
         registry.register("Shaper", Box::new(ShaperCtor));
         registry.register("DegreeToKey", Box::new(DegreeToKeyCtor));
         registry.register("RecordBuf", Box::new(RecordBufCtor));
@@ -488,7 +500,9 @@ impl UnitRegistry {
         registry.register("LFCub", Box::new(LFCubCtor));
         registry.register("VarSaw", Box::new(VarSawCtor));
         registry.register("SyncSaw", Box::new(SyncSawCtor));
+        registry.register("Vibrato", Box::new(VibratoCtor));
         registry.register("FSinOsc", Box::new(FSinOscCtor));
+        registry.register("PSinGrain", Box::new(PSinGrainCtor));
         registry.register("SinOscFB", Box::new(SinOscFBCtor));
         registry.register("LFGauss", Box::new(LFGaussCtor));
         registry.register("Saw", Box::new(SawCtor));
@@ -548,6 +562,7 @@ impl UnitRegistry {
         );
         registry.register("EnvGen", Box::new(EnvGenCtor));
         registry.register("IEnvGen", Box::new(IEnvGenCtor));
+        registry.register("Linen", Box::new(LinenCtor));
         registry.register("SendTrig", Box::new(SendTrigCtor));
         registry.register("Poll", Box::new(PollCtor));
         registry.register("Trig", Box::new(TrigCtor));
@@ -574,6 +589,7 @@ impl UnitRegistry {
         registry.register("LeastChange", Box::new(LeastChangeCtor));
         registry.register("LastValue", Box::new(LastValueCtor));
         registry.register("SendReply", Box::new(SendReplyCtor));
+        registry.register("SendPeakRMS", Box::new(SendPeakRMSCtor));
         // Info: engine constants and per-buffer info.
         registry.register("SampleRate", Box::new(InfoCtor(InfoKind::SampleRate)));
         registry.register("SampleDur", Box::new(InfoCtor(InfoKind::SampleDur)));
@@ -598,6 +614,8 @@ impl UnitRegistry {
             Box::new(InfoCtor(InfoKind::NumRunningSynths)),
         );
         registry.register("NumBuffers", Box::new(InfoCtor(InfoKind::NumBuffers)));
+        registry.register("BlockSize", Box::new(InfoCtor(InfoKind::BlockSize)));
+        registry.register("NodeID", Box::new(InfoCtor(InfoKind::NodeID)));
         registry.register("SubsampleOffset", Box::new(SubsampleOffsetCtor));
         registry.register("BufFrames", Box::new(BufInfoCtor(BufInfoKind::Frames)));
         registry.register("BufChannels", Box::new(BufInfoCtor(BufInfoKind::Channels)));

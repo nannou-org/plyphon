@@ -1,5 +1,6 @@
-//! The selection/indexing units: `Select` (pick one of several signal inputs) and the buffer-lookup
-//! family `Index` (clip), `IndexL` (linear interp), `WrapIndex` and `FoldIndex`.
+//! The selection/indexing units: `Select` (pick one of several signal inputs), the buffer-lookup
+//! family `Index` (clip), `IndexL` (linear interp), `WrapIndex` and `FoldIndex`, and the table
+//! searches `IndexInBetween` and `DetectIndex`.
 
 use plyphon::{
     AddAction, Buffer, InputRef, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, engine,
@@ -305,4 +306,86 @@ fn index_of_missing_buffer_is_silent() {
         run(units, None).abs() < 1e-6,
         "missing table should be silent"
     );
+}
+
+/// `name.<rate>(0, DC.<in_rate>(x)) -> Out`, reading `table` from buffer 0 (or no buffer), sampled
+/// mid-block.
+fn search(name: &str, rate: Rate, in_rate: Rate, x: f32, table: Option<&[f32]>) -> f32 {
+    let mut units = vec![
+        UnitSpec::new("DC", in_rate, vec![InputRef::Constant(x)], 1),
+        UnitSpec::new(
+            name,
+            rate,
+            vec![
+                InputRef::Constant(0.0),
+                InputRef::Unit { unit: 0, output: 0 },
+            ],
+            1,
+        ),
+    ];
+    let src = if rate == Rate::Audio {
+        1
+    } else {
+        units.push(UnitSpec::new(
+            "DC",
+            Rate::Audio,
+            vec![InputRef::Unit { unit: 1, output: 0 }],
+            1,
+        ));
+        2
+    };
+    units.push(out_unit(src));
+    run(units, table)
+}
+
+#[test]
+fn index_in_between_finds_the_fractional_position() {
+    let table = [0.0, 1.0, 3.0, 7.0];
+    for rate in [Rate::Audio, Rate::Control] {
+        for in_rate in [Rate::Audio, Rate::Control] {
+            let at = |x| search("IndexInBetween", rate, in_rate, x, Some(&table));
+            assert_eq!(at(2.0), 1.5, "between 1 and 3");
+            assert_eq!(at(5.0), 2.5, "between 3 and 7");
+            assert_eq!(at(0.0), 0.0, "on the first entry");
+            assert_eq!(at(-1.0), 0.0, "below the table");
+            assert_eq!(at(7.0), 3.0, "on the last entry");
+            assert_eq!(at(10.0), 3.0, "above the table");
+        }
+    }
+}
+
+#[test]
+fn index_in_between_adds_the_index_before_subtracting_one() {
+    // scsynth's `frac + i - 1` rounds `frac + 2` first: for `1 + 2^-23` between entries 1 and 2 that
+    // is exactly 2, so the result is 1, where `frac + 1` would be `1 + 2^-23`.
+    let x = 1.0 + f32::EPSILON;
+    let got = search(
+        "IndexInBetween",
+        Rate::Audio,
+        Rate::Audio,
+        x,
+        Some(&[0.0, 1.0, 2.0]),
+    );
+    assert_eq!(got, 1.0);
+}
+
+#[test]
+fn detect_index_finds_the_first_equal_entry() {
+    let table = [5.0, 7.0, 7.0, 9.0];
+    for rate in [Rate::Audio, Rate::Control] {
+        for in_rate in [Rate::Audio, Rate::Control] {
+            let at = |x| search("DetectIndex", rate, in_rate, x, Some(&table));
+            assert_eq!(at(5.0), 0.0);
+            assert_eq!(at(7.0), 1.0, "the first of two equal entries");
+            assert_eq!(at(9.0), 3.0);
+            assert_eq!(at(8.0), -1.0, "no equal entry");
+        }
+    }
+}
+
+#[test]
+fn table_search_of_a_missing_buffer_is_silent() {
+    for name in ["IndexInBetween", "DetectIndex"] {
+        assert_eq!(search(name, Rate::Audio, Rate::Audio, 1.0, None), 0.0);
+    }
 }

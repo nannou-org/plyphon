@@ -66,23 +66,27 @@ impl AudioBus {
 
     /// Write `src` into channel `ch` for block `buf_counter`.
     ///
-    /// If the channel was already written this block it accumulates (sums); otherwise it overwrites
-    /// and marks the channel touched. `src` shorter than a block leaves the remainder zeroed on a
-    /// fresh write, mirroring scsynth's `Out` semantics.
+    /// If the channel was already written this block it accumulates (sums); otherwise it copies
+    /// `src` over the channel and marks it touched (scsynth's `Out_next_a`: `Accum` or `Copy`).
+    /// `src` shorter than a block leaves the remainder zeroed on a fresh write.
     pub fn write_accumulate(&mut self, ch: usize, buf_counter: u64, src: &[f32]) {
         self.write_accumulate_decimated(ch, buf_counter, 0, src, 1);
     }
 
     /// Write `src` into channel `ch` at sample `offset` for block `buf_counter`, taking every
-    /// `factor`-th sample of `src` - the reblock/resample boundary form. A graph running at a smaller
-    /// block and/or oversampled rate writes each sub-block tick into its own slice of the
-    /// World-block-wide channel, decimating its `factor`x-oversampled interior down to the World rate
-    /// (scsynth's `Out_next_a_reblock`, which zeroes the channel on the first writer).
+    /// `factor`-th sample of `src`.
     ///
-    /// The first writer of the channel this block clears the **whole** channel and marks it touched,
-    /// so every later tick (and every other synth) then accumulates into its own slice over a clean
-    /// zero (or a co-writer's signal). `offset == 0`, `factor == 1`, full-block `src` reduces to
-    /// [`write_accumulate`](Self::write_accumulate).
+    /// A whole block written at once (`offset == 0`, `factor == 1`, `src` a full block - an
+    /// ordinary graph) is scsynth's `Out_next_a`: the first writer of the channel this block copies
+    /// `src` over it and marks it touched, and later writers sum onto it. Copying rather than
+    /// summing onto zero keeps a `-0.0` sample `-0.0`.
+    ///
+    /// Anything else is the reblock/resample boundary form, scsynth's `Out_next_a_reblock`: a graph
+    /// running at a smaller block and/or oversampled rate writes each sub-block tick into its own
+    /// slice of the World-block-wide channel, decimating its `factor`x-oversampled interior down to
+    /// the World rate. There the first writer of the channel this block clears the **whole**
+    /// channel and marks it touched, and every tick (and every other synth) then sums into its own
+    /// slice.
     pub fn write_accumulate_decimated(
         &mut self,
         ch: usize,
@@ -102,6 +106,10 @@ impl AudioBus {
         let start = ch * bs;
         let dst = &mut self.data[start..start + bs];
         if first {
+            if offset == 0 && factor == 1 && src.len() == bs {
+                dst.copy_from_slice(src);
+                return;
+            }
             dst.fill(0.0);
         }
         // World-rate output samples = the decimated source length, clamped into the channel slice.
@@ -150,47 +158,6 @@ impl AudioBus {
         }
     }
 
-    /// Crossfade `src` (decimated by `factor`) into channel `ch`'s samples `[offset, offset + len)`
-    /// for block `buf_counter`: `dst = dst*(1 - xfade) + src*xfade` - scsynth's `XOut`. The first
-    /// writer of the channel this block clears the **whole** channel before its own slice (exactly
-    /// as [`write_accumulate_decimated`](Self::write_accumulate_decimated) does), so a crossfade is
-    /// always against this block's audio or silence - never a prior block's - including every later
-    /// tick-slice under reblock. `offset == 0`, `factor == 1`, full-block `src` crossfades the whole
-    /// channel.
-    pub fn write_crossfade_decimated(
-        &mut self,
-        ch: usize,
-        buf_counter: u64,
-        offset: usize,
-        src: &[f32],
-        factor: usize,
-        xfade: f32,
-    ) {
-        if ch >= self.num_channels {
-            return;
-        }
-        let factor = factor.max(1);
-        let bs = self.block_size;
-        let first = self.touched[ch] != buf_counter;
-        self.touched[ch] = buf_counter;
-        let start = ch * bs;
-        let dst = &mut self.data[start..start + bs];
-        if first {
-            dst.fill(0.0);
-        }
-        let count = (src.len() / factor).min(bs.saturating_sub(offset));
-        if factor == 1 {
-            // The common (non-oversampled) case: a contiguous zip the compiler can vectorize.
-            for (d, &s) in dst[offset..offset + count].iter_mut().zip(src) {
-                *d = *d * (1.0 - xfade) + s * xfade;
-            }
-        } else {
-            for j in 0..count {
-                dst[offset + j] = dst[offset + j] * (1.0 - xfade) + src[j * factor] * xfade;
-            }
-        }
-    }
-
     /// Has channel `ch` been written during block `buf_counter`?
     pub fn is_touched(&self, ch: usize, buf_counter: u64) -> bool {
         self.touched[ch] == buf_counter
@@ -225,8 +192,8 @@ impl AudioBus {
 /// A bank of control-rate bus channels: one value per channel per control block.
 ///
 /// Like [`AudioBus`], channels track the block they were last written in, so multiple `Out.kr`
-/// into one channel sum. `/c_set` overwrites a channel without marking it touched, matching
-/// scsynth: a same-block `Out.kr` then overwrites it on its first (untouched) write.
+/// into one channel sum. `/c_set` marks the channels it sets as written in the coming block, as
+/// scsynth's does, so an `Out.kr` in that block sums onto the set value and `InTrig` reads it.
 #[derive(Clone, Debug)]
 pub struct ControlBus {
     data: Vec<f32>,
@@ -254,6 +221,11 @@ impl ControlBus {
         self.data.get(ch).copied().unwrap_or(0.0)
     }
 
+    /// Has channel `ch` been written during block `buf_counter`? An out-of-range channel has not.
+    pub fn is_touched(&self, ch: usize, buf_counter: u64) -> bool {
+        self.touched.get(ch) == Some(&buf_counter)
+    }
+
     /// Write `value` to channel `ch` for block `buf_counter`, summing if the channel was already
     /// written this block, overwriting otherwise (scsynth's `Out.kr` semantics).
     pub fn write_accumulate(&mut self, ch: usize, buf_counter: u64, value: f32) {
@@ -277,27 +249,29 @@ impl ControlBus {
         }
     }
 
-    /// Crossfade `value` into channel `ch` for block `buf_counter`: `ch = ch*(1-xfade) + value*xfade`
-    /// (scsynth's `XOut.kr`). The first writer of the channel this block treats the existing value as
-    /// zero (so it lands `value*xfade`) and marks the channel touched.
+    /// Crossfade `value` into channel `ch` for block `buf_counter` (scsynth's `XOut_next_k`): a
+    /// channel already written this block becomes `bus + xfade * (value - bus)`, an untouched one
+    /// `xfade * value`; either way it is marked touched.
     pub fn write_crossfade(&mut self, ch: usize, buf_counter: u64, value: f32, xfade: f32) {
         if ch >= self.num_channels {
             return;
         }
-        let cur = if self.touched[ch] == buf_counter {
-            self.data[ch]
+        if self.touched[ch] == buf_counter {
+            let bus = self.data[ch];
+            self.data[ch] = bus + xfade * (value - bus);
         } else {
-            0.0
-        };
-        self.data[ch] = cur * (1.0 - xfade) + value * xfade;
-        self.touched[ch] = buf_counter;
+            self.data[ch] = xfade * value;
+            self.touched[ch] = buf_counter;
+        }
     }
 
-    /// Set channel `ch` to `value` (scsynth's `/c_set`): a persistent overwrite that does not mark
-    /// the channel touched, so a same-block `Out.kr` still overwrites rather than sums onto it.
-    pub fn set(&mut self, ch: usize, value: f32) {
-        if let Some(slot) = self.data.get_mut(ch) {
-            *slot = value;
+    /// Set channel `ch` to `value` and mark it written during block `buf_counter` (scsynth's
+    /// `/c_set`, `/c_setn` and `/c_fill`: `data[i] = value; touched[i] = bufCounter`). Out of range
+    /// is a no-op.
+    pub fn set(&mut self, ch: usize, buf_counter: u64, value: f32) {
+        if ch < self.num_channels {
+            self.data[ch] = value;
+            self.touched[ch] = buf_counter;
         }
     }
 }
