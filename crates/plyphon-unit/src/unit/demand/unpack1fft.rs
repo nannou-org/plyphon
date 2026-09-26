@@ -21,8 +21,8 @@ use plyphon_dsp::math;
 /// magnitude (`0`) or phase (anything else); the phase of the DC and Nyquist terms is the constant
 /// `0`, which the reference reaches by wiring those cases to its clear-outputs function - so those
 /// two cases touch neither the chain buffer nor its coordinate form. Every other case forces the
-/// buffer to Cartesian form and computes `hypot`/`atan2` from the bin - exactly, where scsynth
-/// approximates both from a lookup table, the same deviation the rest of the chain plumbing carries.
+/// buffer to Cartesian form (the lookup-table `ToComplexApx`, as in scsynth) and computes
+/// `hypot`/`atan2` from the bin, as the reference does.
 ///
 /// `bufsize`, `binindex` and `whichmeasure` are read once, as the reference's constructor reads them
 /// (`ZIN0`) to pick one of its five calc functions.
@@ -100,12 +100,13 @@ impl Unpack1Fft {
         if fbufnum < 0.0 {
             return;
         }
+        let fft = ctx.fft();
         let Some(mut buffer) = ctx.buffer_mut(fbufnum as usize) else {
             return;
         };
         // Magnitudes and phases are read from the Cartesian form, converting the frame if an
         // upstream unit left it polar.
-        let Some(spectrum) = pv::to_complex(&mut buffer) else {
+        let Some(spectrum) = pv::to_complex(&mut buffer, fft.complex()) else {
             return;
         };
         let bin = self.bin as usize;

@@ -61,6 +61,7 @@ fn pull(ctx: &mut ProcessCtx<'_>, input: i64) -> Option<f32> {
         node_msgs: &mut ctx.node_msgs,
         buf_counter: ctx.buf_counter,
         rgen: &mut *ctx.rgen,
+        fft: ctx.fft,
     };
     Some(demand_next(&ctx.ins, &mut ctx.demand, &mut world, input))
 }
@@ -90,8 +91,10 @@ impl Unit for PackFft {
         let Some(bufnum) = pv::pv_frame(ctx) else {
             return DoneAction::Nothing;
         };
-        let Some(numbins) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
-            .and_then(|mut buffer| pv::to_complex(&mut buffer).map(|s| s.bins.len()))
+        let Some(numbins) =
+            unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum).and_then(|mut buffer| {
+                pv::to_complex(&mut buffer, ctx.fft.complex()).map(|s| s.bins.len())
+            })
         else {
             return DoneAction::Nothing;
         };

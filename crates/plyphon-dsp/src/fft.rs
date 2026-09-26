@@ -8,7 +8,8 @@
 //! is compiled either.
 //!
 //! Under `fft` it precomputes, off the audio thread, one real FFT/IFFT plan per supported power-of-two
-//! size plus the sine and Hann window tables. The sizes are scsynth's whole range, `SC_FFT_MINSIZE`
+//! size, the sine and Hann window tables, and the polar/Cartesian lookup tables of
+//! [`complex`](crate::complex). The sizes are scsynth's whole range, `SC_FFT_MINSIZE`
 //! (8) to `SC_FFT_ABSOLUTE_MAXSIZE` (262144): scsynth precomputes up to 32768 and builds the larger
 //! plans on first use, which would allocate on the audio thread here, so every size is built up
 //! front. The transforms run **allocation-free** on the RT thread
@@ -29,6 +30,8 @@ use realfft::num_complex::Complex;
 #[cfg(feature = "fft")]
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
+#[cfg(feature = "fft")]
+use crate::complex::ComplexTables;
 #[cfg(feature = "fft")]
 use crate::math;
 
@@ -113,6 +116,8 @@ struct FftInner {
     /// `windows[size_index][WindowType::index]`: the sine and Hann windows.
     windows: [[Vec<f32>; 2]; NUM_SIZES],
     scratch: RefCell<Scratch>,
+    /// scsynth's polar/Cartesian lookup tables, for the spectral units' bin conversions.
+    complex: ComplexTables,
 }
 
 #[cfg(feature = "fft")]
@@ -147,12 +152,14 @@ impl FftInner {
             inverse,
             windows,
             scratch,
+            complex: ComplexTables::new(),
         }
     }
 }
 
 impl FftTables {
-    /// Build the FFT plans and windows (off the audio thread). Empty without the `fft` feature.
+    /// Build the FFT plans, windows and lookup tables (off the audio thread). Empty without the `fft`
+    /// feature.
     pub fn new() -> Self {
         FftTables {
             #[cfg(feature = "fft")]
@@ -215,6 +222,12 @@ impl FftTables {
             *x *= norm;
         }
         true
+    }
+
+    /// The polar/Cartesian lookup tables the spectral units convert bins with (scsynth's
+    /// `SC_Complex.h` tables).
+    pub fn complex(&self) -> &ComplexTables {
+        &self.inner.complex
     }
 
     /// The precomputed `wintype` window for `size`. An empty slice stands for all ones: the

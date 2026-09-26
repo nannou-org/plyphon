@@ -6,6 +6,7 @@
 //! - [`rate`] - calculation rates ([`Rate`]) and the derived per-block constants ([`RateInfo`]).
 //! - [`rng`] - the per-unit Taus88 random number generator embedded in unit state.
 //! - [`wavetable`] - engine-owned wavetables (the sine table) lent to oscillator units.
+//! - `complex` - scsynth's lookup-table polar/Cartesian bin conversion (with the `fft` feature).
 //! - [`bus`] - the shared audio and control bus banks `In`/`Out` units read and write.
 //! - [`buffer`] - in-memory sample buffers and the buffer table.
 //! - [`stream`] - disk-streaming playback over lock-free chunk rings.
@@ -22,6 +23,8 @@ extern crate alloc;
 
 pub mod buffer;
 pub mod bus;
+#[cfg(feature = "fft")]
+pub mod complex;
 pub mod fft;
 pub mod interp;
 pub mod math;

@@ -272,6 +272,7 @@ impl DemandEnvGen {
             node_msgs: &mut ctx.node_msgs,
             buf_counter: ctx.buf_counter,
             rgen: &mut *ctx.rgen,
+            fft: ctx.fft,
         };
         let ins = &ctx.ins;
         let demand = &mut ctx.demand;
@@ -365,6 +366,7 @@ impl DemandEnvGen {
             node_msgs: &mut ctx.node_msgs,
             buf_counter: ctx.buf_counter,
             rgen: &mut *ctx.rgen,
+            fft: ctx.fft,
         };
         let ins = &ctx.ins;
         let demand = &mut ctx.demand;
@@ -462,6 +464,7 @@ impl Unit for DemandEnvGen {
                 node_msgs: &mut ctx.node_msgs,
                 buf_counter: ctx.buf_counter,
                 rgen: &mut *ctx.rgen,
+                fft: ctx.fft,
             };
             demand_next(&ctx.ins, &mut ctx.demand, &mut world, Self::LEVEL) as f64
         };

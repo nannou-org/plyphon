@@ -104,7 +104,7 @@ impl Unit for PvMagThresh {
         let thresh = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
             && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
-            && let Some(spectrum) = pv::to_polar(&mut buffer)
+            && let Some(spectrum) = pv::to_polar(&mut buffer, ctx.fft.complex())
         {
             *spectrum.dc = MagKind::real(kind, *spectrum.dc, thresh);
             *spectrum.nyq = MagKind::real(kind, *spectrum.nyq, thresh);
@@ -149,7 +149,7 @@ impl Unit for PvLocalMax {
         let thresh = ctx.ins.control(1);
         if let Some(bufnum) = pv::pv_frame(ctx)
             && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
-            && let Some(spectrum) = pv::to_polar(&mut buffer)
+            && let Some(spectrum) = pv::to_polar(&mut buffer, ctx.fft.complex())
         {
             let n = spectrum.bins.len();
             if n >= 2 {
@@ -219,7 +219,7 @@ impl Unit for PvPhaseQuarter {
         let negate = self.negate != 0;
         if let Some(bufnum) = pv::pv_frame(ctx)
             && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
-            && let Some(spectrum) = pv::to_complex(&mut buffer)
+            && let Some(spectrum) = pv::to_complex(&mut buffer, ctx.fft.complex())
         {
             for bin in spectrum.bins.iter_mut() {
                 let (re, im) = (bin.x, bin.y);
@@ -328,10 +328,11 @@ impl Unit for PvConj {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         if let Some(bufnum) = pv::pv_frame(ctx)
             && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
-            && let Some(spectrum) = pv::to_complex(&mut buffer)
+            && let Some(spectrum) = pv::to_complex(&mut buffer, ctx.fft.complex())
         {
+            // scsynth subtracts from zero, so a `+0` imaginary part stays `+0`.
             for bin in spectrum.bins.iter_mut() {
-                bin.y = -bin.y;
+                bin.y = 0.0 - bin.y;
             }
         }
         DoneAction::Nothing
@@ -431,7 +432,7 @@ impl Unit for PvDiffuser {
         // polar but shifts nothing.
         let n = ((trig * numbins as f32) as i32).clamp(0, numbins as i32) as usize;
         if let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
-            && let Some(spectrum) = pv::to_polar(&mut buffer)
+            && let Some(spectrum) = pv::to_polar(&mut buffer, ctx.fft.complex())
         {
             for (bin, &shift) in spectrum.bins.iter_mut().zip(shifts.iter()).take(n) {
                 bin.y += shift;
@@ -528,7 +529,7 @@ impl Unit for PvBinShift {
         dest.fill(0.0);
 
         if let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
-            && let Some(spectrum) = pv::to_complex(&mut buffer)
+            && let Some(spectrum) = pv::to_complex(&mut buffer, ctx.fft.complex())
         {
             let mut fpos = shift;
             for bin in spectrum.bins.iter() {
@@ -624,7 +625,7 @@ impl Unit for PvMagSmear {
 
         if numbins > 0
             && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
-            && let Some(spectrum) = pv::to_polar(&mut buffer)
+            && let Some(spectrum) = pv::to_polar(&mut buffer, ctx.fft.complex())
         {
             let last = numbins as i32 - 1;
             let width = (width_in as i32).clamp(0, last);

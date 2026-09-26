@@ -400,6 +400,7 @@ impl Graph {
                             node_msgs: &mut node_msgs,
                             buf_counter: block.buf_counter,
                             rgen: &mut block.rgens[*rgen as usize],
+                            fft: block.fft,
                         };
                         DemandAccess::new(
                             def.demand_units(),

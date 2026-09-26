@@ -57,6 +57,7 @@ use alloc::boxed::Box;
 
 use bytemuck::Pod;
 use plyphon_dsp::buffer::{BufView, BufViewMut, BufferTable};
+use plyphon_dsp::fft::FftTables;
 use plyphon_dsp::rng::Rng;
 
 use crate::unit::{
@@ -263,6 +264,10 @@ pub struct DemandWorld<'w, 's> {
     /// The random stream the synth draws from (scsynth's `mParent->mRGen`), reached via
     /// [`DemandCtx::rgen`]: the demand randoms (`Dwhite`, `Drand`, ...) draw from it.
     pub rgen: &'w mut Rng,
+    /// The World's shared FFT tables, reached via [`DemandCtx::fft`]: `Unpack1FFT` converts the
+    /// chain buffer with their polar/Cartesian lookup tables, as calc-side units do through
+    /// [`ProcessCtx::fft`](super::ProcessCtx::fft).
+    pub fft: &'w FftTables,
 }
 
 /// What a demand unit touches while producing or resetting - the pull-side analogue of
@@ -286,9 +291,10 @@ pub struct DemandCtx<'a> {
     node_msgs: NodeMsgSink<'a>,
     buf_counter: u64,
     rgen: &'a mut Rng,
+    fft: &'a FftTables,
 }
 
-impl DemandCtx<'_> {
+impl<'a> DemandCtx<'a> {
     /// Number of inputs this unit has.
     pub fn num_inputs(&self) -> usize {
         self.inputs.len()
@@ -320,6 +326,7 @@ impl DemandCtx<'_> {
                     node_msgs: &mut self.node_msgs,
                     buf_counter: self.buf_counter,
                     rgen: &mut *self.rgen,
+                    fft: self.fft,
                 },
                 d as usize,
                 Op::Produce,
@@ -347,6 +354,7 @@ impl DemandCtx<'_> {
                     node_msgs: &mut self.node_msgs,
                     buf_counter: self.buf_counter,
                     rgen: &mut *self.rgen,
+                    fft: self.fft,
                 },
                 d as usize,
                 Op::Reset,
@@ -386,6 +394,13 @@ impl DemandCtx<'_> {
     /// The random stream the synth draws from (scsynth's `mParent->mRGen`).
     pub fn rgen(&mut self) -> &mut Rng {
         self.rgen
+    }
+
+    /// The World's shared FFT tables (`Unpack1FFT` converts with their polar/Cartesian lookup
+    /// tables). The borrow is the World's, not this context's, so it can be held while a buffer is
+    /// borrowed mutably.
+    pub fn fft(&self) -> &'a FftTables {
+        self.fft
     }
 
     /// This unit's aux memory (reserved with [`demand_unit_spec_aux`]) as a slice of `Pod` elements
@@ -471,6 +486,7 @@ fn pull(
             node_msgs: world.node_msgs.reborrow(),
             buf_counter: world.buf_counter,
             rgen: &mut *world.rgen,
+            fft: world.fft,
         };
         match op {
             Op::Produce => (v.produce)(&mut buf.0[..size], &mut ctx),

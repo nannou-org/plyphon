@@ -62,8 +62,10 @@ fn goertzel(samples: &[f32], freq: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 /// The FFT chain `IFFT(PV_Diffuser(FFT(LocalBuf(n), tone), trig))` with a sine at bin
-/// `bin_index`, or the same chain without the diffuser when `trig` is `None`. The diffuser adds a
-/// fixed random phase to the first `trig * numbins` bins.
+/// `bin_index`. The diffuser adds a fixed random phase to the first `trig * numbins` bins. When
+/// `trig` is `None` the diffuser is replaced by `PV_MagAbove(chain, 0)`, which changes nothing but
+/// takes the frame through the same lookup-table polar round trip, so the two chains differ only
+/// by the phase offsets.
 fn diffuser_chain(trig: Option<f32>, bin_index: f32, blocks: usize) -> Vec<f32> {
     diffuser_chain_sized(1024, trig, bin_index, blocks)
 }
@@ -99,25 +101,19 @@ fn diffuser_chain_sized(
             1,
         ),
     ];
-    let chain = if let Some(trig) = trig {
+    units.push(match trig {
         // PV_Diffuser(fbufnum, trig).
-        units.push(UnitSpec::new(
-            "PV_Diffuser",
-            Rate::Control,
-            vec![u(3), c(trig)],
-            1,
-        ));
-        4
-    } else {
-        3
-    };
+        Some(trig) => UnitSpec::new("PV_Diffuser", Rate::Control, vec![u(3), c(trig)], 1),
+        // PV_MagAbove(fbufnum, 0): the polar round trip alone.
+        None => UnitSpec::new("PV_MagAbove", Rate::Control, vec![u(3), c(0.0)], 1),
+    });
     units.push(UnitSpec::new(
         "IFFT",
         Rate::Audio,
-        vec![u(chain), c(0.0), c(fft_size as f32)],
+        vec![u(4), c(0.0), c(fft_size as f32)],
         1,
     ));
-    units.push(out(chain + 1));
+    units.push(out(5));
     render(units, blocks)
 }
 
@@ -142,7 +138,7 @@ fn pv_diffuser_preserves_magnitude_but_alters_the_waveform() {
         "diffused tone should still dominate (at={at:.4}, off={off:.4})"
     );
 
-    // The plain reconstruction (no diffuser) at the same bin: the diffuser changes the waveform
+    // The plain reconstruction (the polar round trip alone) at the same bin: the diffuser changes the waveform
     // (per-bin phase shift) so the two time series differ, even though both hold the tone.
     let plain = diffuser_chain(None, 20.0, 12_288 / BLOCK);
     let plain_tail = &plain[8_192..];
@@ -177,18 +173,13 @@ fn pv_diffuser_diffuses_a_16384_frame_chain() {
 }
 
 /// scsynth's `PV_Diffuser_next` shifts only the first `clip(trig * numbins, 0, numbins)` bins, so
-/// a zero trig leaves every phase untouched: the chain reconstructs the same waveform as one with
-/// no diffuser at all (up to the polar round-trip's float error).
+/// a zero trig leaves every phase untouched: the chain reconstructs exactly the waveform of the
+/// polar round trip alone.
 #[test]
 fn pv_diffuser_zero_trig_passes_the_frame_through() {
     let diffused = diffuser_chain(Some(0.0), 20.0, 12_288 / BLOCK);
     let plain = diffuser_chain(None, 20.0, 12_288 / BLOCK);
-    for (i, (a, b)) in diffused[8_192..].iter().zip(&plain[8_192..]).enumerate() {
-        assert!(
-            (a - b).abs() < 1e-4,
-            "zero-trig diffuser altered sample {i}: {a} vs {b}"
-        );
-    }
+    assert_eq!(diffused, plain, "a zero-trig diffuser altered the frame");
 }
 
 /// A `0.5` trig shifts only the lower half of the spectrum: a tone in an upper bin passes through
