@@ -3,17 +3,17 @@
 //! Every `PV_*` unit reads a frame-ready signal (input 0) carrying the FFT-chain buffer number (or
 //! `< 0` between frames), edits that buffer's packed spectrum in place, and passes the signal on
 //! (output 0) so the next unit in the chain sees the same frame. [`pv_frame`] does that read +
-//! passthrough (scsynth's `PV_GET_BUF` preamble). The packed spectrum is scsynth's
-//! `[dc, nyq, x0, y0, x1, y1, ...]`; [`Spectrum`] is a typed view over it, and
-//! [`to_polar`]/[`to_complex`] convert it in place - idempotently, tracking the buffer's
-//! [`SpectrumCoord`] - with scsynth's lookup-table `ToPolarApx`/`ToComplexApx` (see
-//! [`plyphon_dsp::complex`]).
+//! passthrough (scsynth's `PV_GET_BUF` preamble), and [`pv_pair`] the two-buffer form
+//! (`PV_GET_BUF2`). The packed spectrum is scsynth's `[dc, nyq, x0, y0, x1, y1, ...]`; [`Spectrum`]
+//! is a typed view over it, and [`to_polar`]/[`to_complex`] convert it in place - idempotently,
+//! tracking the buffer's [`SpectrumCoord`] - with scsynth's lookup-table `ToPolarApx`/`ToComplexApx`
+//! (see [`plyphon_dsp::complex`]).
 //!
 //! Compiled only with the `fft` feature.
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::unit::ProcessCtx;
+use crate::unit::{self, ProcessCtx};
 use plyphon_dsp::buffer::{BufViewMut, SpectrumCoord};
 use plyphon_dsp::complex::ComplexTables;
 
@@ -97,43 +97,109 @@ pub fn to_complex<'a>(buf: &'a mut BufViewMut<'_>, tables: &ComplexTables) -> Op
     Spectrum::new(buf.data_mut())
 }
 
-/// The magnitude of bin `b`, reading it in whatever form `coord` says `b` is stored: the table
-/// magnitude of `(re, im)` for a complex bin, or `mag` directly for a polar one. Lets a unit read
-/// another buffer's magnitudes without converting (mutating) it.
-pub fn bin_magnitude(coord: SpectrumCoord, b: Bin, tables: &ComplexTables) -> f32 {
-    bin_as_polar(coord, b, tables).x
+/// Buffer `B` of a two-buffer op, as [`pv_pair`] hands it over (already converted).
+pub enum Second<'a> {
+    /// `B` is a different buffer: its DC and Nyquist terms and its bins, read-only.
+    Other {
+        /// `B`'s DC term.
+        dc: f32,
+        /// `B`'s Nyquist term.
+        nyq: f32,
+        /// `B`'s bins, as many as `A` has.
+        bins: &'a [Bin],
+    },
+    /// Both inputs name one buffer, so `B` is `A` itself: every read of `B` sees what the op has
+    /// written to `A` so far, as in scsynth, where both pointers alias the one buffer.
+    Same,
 }
 
-/// Read bin `b` (stored in form `coord`) as a complex `(re, im)` pair, without mutating its buffer -
-/// for a two-buffer complex op reading its read-only second buffer.
-pub fn bin_as_complex(coord: SpectrumCoord, b: Bin, tables: &ComplexTables) -> Bin {
-    match coord {
-        SpectrumCoord::Complex => b,
-        SpectrumCoord::Polar => {
-            let (x, y) = tables.to_complex(b.x, b.y);
-            Bin { x, y }
+impl Second<'_> {
+    /// Whether `B` is `A` itself.
+    pub fn is_same(&self) -> bool {
+        matches!(self, Second::Same)
+    }
+
+    /// `B`'s DC term, given `A`'s as it is now.
+    pub fn dc(&self, a_dc: f32) -> f32 {
+        match self {
+            Second::Other { dc, .. } => *dc,
+            Second::Same => a_dc,
+        }
+    }
+
+    /// `B`'s Nyquist term, given `A`'s as it is now.
+    pub fn nyq(&self, a_nyq: f32) -> f32 {
+        match self {
+            Second::Other { nyq, .. } => *nyq,
+            Second::Same => a_nyq,
+        }
+    }
+
+    /// `B`'s bin `i`, given `A`'s bin `i` as it is now.
+    pub fn bin(&self, i: usize, a_bin: Bin) -> Bin {
+        match self {
+            // `pv_pair` only pairs buffers of equal length, so `B` has every bin `A` has.
+            Second::Other { bins, .. } => bins[i],
+            Second::Same => a_bin,
         }
     }
 }
 
-/// Read bin `b` (stored in form `coord`) as a polar `(mag, phase)` pair, without mutating its buffer.
-pub fn bin_as_polar(coord: SpectrumCoord, b: Bin, tables: &ComplexTables) -> Bin {
-    match coord {
-        SpectrumCoord::Polar => b,
-        SpectrumCoord::Complex => {
-            let (x, y) = tables.to_polar(b.x, b.y);
-            Bin { x, y }
+/// A converter for [`pv_pair`]: [`to_polar`] or [`to_complex`].
+pub type Convert = for<'b, 'c> fn(&'b mut BufViewMut<'c>, &ComplexTables) -> Option<Spectrum<'b>>;
+
+/// The two-buffer preamble - scsynth's `PV_GET_BUF2` followed by the unit converting `buf1` then
+/// `buf2` with `convert` - then `op` on `A`'s spectrum and [`Second`] `B`, the result going into `A`.
+/// The conversions use the World's lookup tables, `ctx.fft.complex()`.
+///
+/// Inputs 0 and 1 carry the frame signals of `A` and `B`. Unless both carry a frame, output 0 is
+/// `-1` and nothing else happens. Otherwise output 0 passes `A`'s number on; if the two buffers
+/// hold different numbers of samples the unit stops there, as scsynth does. Both buffers are
+/// converted in place, so a chain continuing from `B` sees it in the new form too, and when both
+/// inputs name the same buffer the op still runs, on that buffer alone ([`Second::Same`]).
+pub fn pv_pair(
+    ctx: &mut ProcessCtx<'_>,
+    convert: Convert,
+    op: impl FnOnce(Spectrum<'_>, Second<'_>),
+) {
+    let fbufnum1 = ctx.ins.control(0);
+    let fbufnum2 = ctx.ins.control(1);
+    if fbufnum1 < 0.0 || fbufnum2 < 0.0 {
+        *ctx.outs.control(0) = -1.0;
+        return;
+    }
+    *ctx.outs.control(0) = fbufnum1;
+    let (a, b) = (fbufnum1 as usize, fbufnum2 as usize);
+    let samples = |i| unit::buffer_at(ctx.buffers, &ctx.local_bufs, i).map(|buf| buf.data().len());
+    match (samples(a), samples(b)) {
+        (Some(samples_a), Some(samples_b)) if samples_a == samples_b => {}
+        _ => return,
+    }
+    let tables = ctx.fft.complex();
+    for i in [a, b] {
+        if let Some(mut buf) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, i) {
+            convert(&mut buf, tables);
         }
     }
-}
-
-/// A read-only packed view of the bins (skipping `dc`/`nyq`), for the second buffer of a two-buffer
-/// op (`PV_MagMul` reads `B` while rewriting `A`). Empty if the slice is too short or odd.
-pub fn bins(data: &[f32]) -> &[Bin] {
-    if data.len() < 2 {
-        return &[];
+    if a == b {
+        if let Some(mut buf) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, a)
+            && let Some(p) = Spectrum::new(buf.data_mut())
+        {
+            op(p, Second::Same);
+        }
+    } else if let Some((mut buf_a, buf_b)) =
+        unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a, b)
+        && let Some(p) = Spectrum::new(buf_a.data_mut())
+        && let [dc, nyq, bin_floats @ ..] = buf_b.data()
+        && let Ok(bins) = bytemuck::try_cast_slice(bin_floats)
+    {
+        let q = Second::Other {
+            dc: *dc,
+            nyq: *nyq,
+            bins,
+        };
+        op(p, q);
     }
-    bytemuck::try_cast_slice(&data[2..]).unwrap_or(&[])
 }
 
 #[cfg(test)]

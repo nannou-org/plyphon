@@ -1,11 +1,10 @@
 //! Two-buffer spectral (`PV_*`) operators - plyphon's ports of scsynth's `PV_Add`, `PV_Mul`,
 //! `PV_Div`, `PV_Min`, `PV_Max`, `PV_CopyPhase` and `PV_Copy` (`PV_UGens.cpp`).
 //!
-//! Each reads a second FFT-chain buffer `B` and combines it into buffer `A` in place, via the shared
-//! two-buffer seam [`buffer_pair_mut`](crate::unit::buffer_pair_mut) (as `PV_MagMul` does). That seam
-//! lends `A` mutably and `B` read-only, so - like `PV_MagMul` - `B`'s bins are read in whatever form
-//! it is already in ([`pv::bin_as_complex`]/[`pv::bin_as_polar`]) and `B` is left untouched, while
-//! only `A` is converted. Compiled only with the `fft` feature.
+//! Each but `PV_Copy` reads a second FFT-chain buffer `B` and combines it into buffer `A` in place,
+//! through the shared two-buffer preamble [`pv::pv_pair`] (as `PV_MagMul` does): both buffers are
+//! converted in place to the form the op works in, and when both inputs name one buffer the op runs
+//! on that buffer against itself, as in scsynth. Compiled only with the `fft` feature.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -52,13 +51,6 @@ impl PolarKind {
     }
 }
 
-/// The B-buffer index if a frame is ready on both A (input 0) and B (input 1). Passes A downstream.
-fn frame_pair(ctx: &mut ProcessCtx<'_>) -> Option<(usize, usize)> {
-    let fbuf_b = ctx.ins.control(1);
-    let a = pv::pv_frame(ctx)?;
-    (fbuf_b >= 0.0).then_some((a, fbuf_b as usize))
-}
-
 /// `PV_Add`/`PV_Mul`/`PV_Div(bufferA, bufferB)`: combine two spectra bin-by-bin in Cartesian form.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -75,52 +67,45 @@ impl Unit for PvComplex {
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let kind = self.kind;
-        if let Some((a_idx, b_idx)) = frame_pair(ctx)
-            && let Some((mut buf_a, buf_b)) =
-                unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, b_idx)
-            && buf_a.num_frames() == buf_b.num_frames()
-            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
-            // must not panic the audio thread on the raw reads below.
-            && buf_b.data().len() >= 2
-        {
-            let coord_b = buf_b.coord();
-            let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
-            let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_complex(&mut buf_a, ctx.fft.complex()) {
-                match kind {
-                    1 => {
-                        *a.dc *= b_dc;
-                        *a.nyq *= b_nyq;
-                        for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                            let q = pv::bin_as_complex(coord_b, qraw, ctx.fft.complex());
-                            let (ar, ai) = (p.x, p.y);
-                            p.x = ar * q.x - ai * q.y;
-                            p.y = ar * q.y + ai * q.x;
-                        }
-                    }
-                    2 => {
-                        *a.dc /= b_dc;
-                        *a.nyq /= b_nyq;
-                        for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                            let q = pv::bin_as_complex(coord_b, qraw, ctx.fft.complex());
-                            let denom = q.x * q.x + q.y * q.y;
-                            let (ar, ai) = (p.x, p.y);
-                            p.x = (ar * q.x + ai * q.y) / denom;
-                            p.y = (ai * q.x - ar * q.y) / denom;
-                        }
-                    }
-                    _ => {
-                        *a.dc += b_dc;
-                        *a.nyq += b_nyq;
-                        for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                            let q = pv::bin_as_complex(coord_b, qraw, ctx.fft.complex());
-                            p.x += q.x;
-                            p.y += q.y;
-                        }
-                    }
+        pv::pv_pair(ctx, pv::to_complex, |p, q| match kind {
+            1 => {
+                *p.dc *= q.dc(*p.dc);
+                *p.nyq *= q.nyq(*p.nyq);
+                for (i, bin) in p.bins.iter_mut().enumerate() {
+                    let qb = q.bin(i, *bin);
+                    // scsynth's three-multiplication complex product, in its order.
+                    let preal = bin.x;
+                    let realmul = preal * qb.x;
+                    let imagmul = bin.y * qb.y;
+                    bin.x = realmul - imagmul;
+                    // When `B` is `A`, `B`'s real part is the one just written.
+                    let qreal = if q.is_same() { bin.x } else { qb.x };
+                    bin.y = (preal + bin.y) * (qreal + qb.y) - realmul - imagmul;
                 }
             }
-        }
+            2 => {
+                *p.dc /= q.dc(*p.dc);
+                *p.nyq /= q.nyq(*p.nyq);
+                for (i, bin) in p.bins.iter_mut().enumerate() {
+                    let qb = q.bin(i, *bin);
+                    let hypot = qb.x * qb.x + qb.y * qb.y;
+                    let preal = bin.x;
+                    bin.x = (preal * qb.x + bin.y * qb.y) / hypot;
+                    // When `B` is `A`, `B`'s real part is the one just written.
+                    let qreal = if q.is_same() { bin.x } else { qb.x };
+                    bin.y = (bin.y * qreal - preal * qb.y) / hypot;
+                }
+            }
+            _ => {
+                *p.dc += q.dc(*p.dc);
+                *p.nyq += q.nyq(*p.nyq);
+                for (i, bin) in p.bins.iter_mut().enumerate() {
+                    let qb = q.bin(i, *bin);
+                    bin.x += qb.x;
+                    bin.y += qb.y;
+                }
+            }
+        });
         DoneAction::Nothing
     }
 }
@@ -156,38 +141,26 @@ impl Unit for PvPolar {
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         let is_min = self.kind == 1;
-        if let Some((a_idx, b_idx)) = frame_pair(ctx)
-            && let Some((mut buf_a, buf_b)) =
-                unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, b_idx)
-            && buf_a.num_frames() == buf_b.num_frames()
-            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
-            // must not panic the audio thread on the raw reads below.
-            && buf_b.data().len() >= 2
-        {
-            let coord_b = buf_b.coord();
-            let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
-            let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_polar(&mut buf_a, ctx.fft.complex()) {
-                // `dc`/`nyq` compare by absolute value; bins by (non-negative) magnitude.
-                let pick_real = |pv: f32, qv: f32| {
-                    let take = if is_min {
-                        qv.abs() < pv.abs()
-                    } else {
-                        qv.abs() > pv.abs()
-                    };
-                    if take { qv } else { pv }
+        pv::pv_pair(ctx, pv::to_polar, |p, q| {
+            // `dc`/`nyq` compare by absolute value; bins by magnitude.
+            let pick_real = |pv: f32, qv: f32| {
+                let take = if is_min {
+                    qv.abs() < pv.abs()
+                } else {
+                    qv.abs() > pv.abs()
                 };
-                *a.dc = pick_real(*a.dc, b_dc);
-                *a.nyq = pick_real(*a.nyq, b_nyq);
-                for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                    let q = pv::bin_as_polar(coord_b, qraw, ctx.fft.complex());
-                    let take = if is_min { q.x < p.x } else { q.x > p.x };
-                    if take {
-                        *p = q;
-                    }
+                if take { qv } else { pv }
+            };
+            *p.dc = pick_real(*p.dc, q.dc(*p.dc));
+            *p.nyq = pick_real(*p.nyq, q.nyq(*p.nyq));
+            for (i, bin) in p.bins.iter_mut().enumerate() {
+                let qb = q.bin(i, *bin);
+                let take = if is_min { qb.x < bin.x } else { qb.x > bin.x };
+                if take {
+                    *bin = qb;
                 }
             }
-        }
+        });
         DoneAction::Nothing
     }
 }
@@ -221,30 +194,18 @@ impl Unit for PvCopyPhase {
     }
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        if let Some((a_idx, b_idx)) = frame_pair(ctx)
-            && let Some((mut buf_a, buf_b)) =
-                unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a_idx, b_idx)
-            && buf_a.num_frames() == buf_b.num_frames()
-            // A frame needs at least its `[dc, nyq]` header; a shorter buffer (`LocalBuf(1, 1)`)
-            // must not panic the audio thread on the raw reads below.
-            && buf_b.data().len() >= 2
-        {
-            let coord_b = buf_b.coord();
-            let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
-            let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_polar(&mut buf_a, ctx.fft.complex()) {
-                // scsynth flips A's real DC/Nyquist sign to agree with B's.
-                if (*a.dc > 0.0) == (b_dc < 0.0) {
-                    *a.dc = -*a.dc;
-                }
-                if (*a.nyq > 0.0) == (b_nyq < 0.0) {
-                    *a.nyq = -*a.nyq;
-                }
-                for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                    p.y = pv::bin_as_polar(coord_b, qraw, ctx.fft.complex()).y;
-                }
+        pv::pv_pair(ctx, pv::to_polar, |p, q| {
+            // scsynth flips A's real DC/Nyquist sign to agree with B's.
+            if (*p.dc > 0.0) == (q.dc(*p.dc) < 0.0) {
+                *p.dc = -*p.dc;
             }
-        }
+            if (*p.nyq > 0.0) == (q.nyq(*p.nyq) < 0.0) {
+                *p.nyq = -*p.nyq;
+            }
+            for (i, bin) in p.bins.iter_mut().enumerate() {
+                bin.y = q.bin(i, *bin).y;
+            }
+        });
         DoneAction::Nothing
     }
 }
