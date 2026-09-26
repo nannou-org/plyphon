@@ -22,6 +22,7 @@ Listed in reverse-topological order - dependents first, their dependencies below
 | [`plyphon-cli`](crates/plyphon-cli) | The `plyphon` binary - an scsynth-compatible OSC synthesis server (UDP/TCP) and offline renderer, built on the crates below. |
 | [`plyphon-osc`](crates/plyphon-osc) | SuperCollider-compatible OSC command front-end. |
 | [`plyphon-buffers`](crates/plyphon-buffers) | Async `BufferSource` traits for loading sample data, the app-provided I/O seam. |
+| [`plyphon-synthdef`](crates/plyphon-synthdef) | Fluent `SynthDef` authoring with sclang-style multichannel expansion - the `SynthDefBuilder` arena, UGen builders, math operators, and the `ugen!` macro for custom wrappers. |
 | [`plyphon`](crates/plyphon) | Control-side facade - the `Controller`, `SynthDef` authoring and compilation, and the `engine()` builder. Re-exports the three crates below. |
 | [`plyphon-rt`](crates/plyphon-rt) | Real-time audio driver - the `World` engine, node tree, command protocol, and NRT cleanup. |
 | [`plyphon-unit`](crates/plyphon-unit) | Unit-generator abstraction - the `Unit` trait, the built-in units, and the compiled `GraphDef`. |
@@ -44,6 +45,7 @@ Listed in reverse-topological order - dependents first, their dependencies below
 | [`waveforms`](crates/examples/waveforms) | Cycles through the oscillators (`Saw`/`Pulse`/`LFSaw`/`LFPulse`/`Impulse`) through a filter. |
 | [`operators`](crates/examples/operators) | A ring-modulated, soft-clipped bell tone built from `BinaryOpUGen`/`UnaryOpUGen` math operators (`midicps`, `midiratio`, ring modulation, `softclip`). |
 | [`filters`](crates/examples/filters) | A classic resonant low-pass sweep: a saw through an LFO-swept `RLPF` (one of the resonant biquads `RLPF`/`RHPF`/`BPF`/`BRF`/`Resonz`/`Ringz`). |
+| [`filtered-saw`](crates/examples/filtered-saw) | The anatomy of a hand-written `SynthDef`: the same filtered saw, but with `freq`/`cutoff`/`rq`/`amp` exposed as parameters and swept from the control plane with `/n_set`. |
 | [`moog`](crates/examples/moog) | A resonant acid bassline: a saw through a `MoogFF` Moog-ladder filter with an LFO-swept cutoff and high feedback resonance (the filter additions `MoogFF`/`Formlet`/`MidEQ`/`SOS`/`Median`/`Lag2`/`Hilbert`/`FreqShift`). |
 | [`noise`](crates/examples/noise) | Metallic rain: `Dust2` impulses ring a `Ringz` resonator over a quiet `PinkNoise` bed (the noise family `WhiteNoise`/`ClipNoise`/`GrayNoise`/`PinkNoise`/`BrownNoise`/`Dust`/`Dust2`). |
 | [`wandering`](crates/examples/wandering) | A generative burble driven by the low-frequency/dynamic noise family: `LFNoise1` wanders the pitch, `LFNoise2` sweeps the filter, `LFDNoise3` shimmers the amplitude (`LFNoise0/1/2`/`LFClipNoise`/`LFDNoise0/1/3`/`LFDClipNoise`). |
