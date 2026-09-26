@@ -73,6 +73,7 @@ use crate::unit::gendy::{Gendy1Ctor, Gendy2Ctor, Gendy3Ctor};
 use crate::unit::grain::{
     GrainBufCtor, GrainFMCtor, GrainInCtor, GrainSinCtor, TGrainsCtor, Warp1Ctor,
 };
+use crate::unit::grain_tap::GrainTapCtor;
 use crate::unit::gverb::GVerbCtor;
 use crate::unit::hilbert::{FreqShiftCtor, HilbertCtor};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
@@ -421,6 +422,8 @@ impl UnitRegistry {
         registry.register("PitchShift", Box::new(PitchShiftCtor));
         // Autocorrelation pitch tracker.
         registry.register("Pitch", Box::new(PitchCtor));
+        // Granulating tap on a buffer written as a delay line.
+        registry.register("GrainTap", Box::new(GrainTapCtor));
         // Freeverb: eight parallel damped combs into four series allpasses (mono and true-stereo).
         registry.register("FreeVerb", Box::new(FreeVerbCtor));
         registry.register("FreeVerb2", Box::new(FreeVerb2Ctor));

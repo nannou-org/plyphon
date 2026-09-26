@@ -38,6 +38,7 @@ pub mod formant;
 pub mod freeverb;
 pub mod gendy;
 pub mod grain;
+pub mod grain_tap;
 pub mod gverb;
 pub mod hilbert;
 pub mod info;
