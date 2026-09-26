@@ -24,6 +24,7 @@ use crate::unit::chaos::{
 };
 #[cfg(feature = "fft")]
 use crate::unit::convolution::ConvolutionCtor;
+use crate::unit::convolution3::Convolution3Ctor;
 use crate::unit::decay::{Decay2Ctor, DecayCtor};
 use crate::unit::delay::{
     BufDelayCtor, BufFeedbackDelayCtor, DelayCtor, FeedbackDelayCtor, Interp,
@@ -481,6 +482,7 @@ impl UnitRegistry {
         registry.register("GbmanL", Box::new(GbmanLCtor));
         registry.register("QuadC", Box::new(QuadCCtor));
         registry.register("PlayBuf", Box::new(PlayBufCtor));
+        registry.register("Convolution3", Box::new(Convolution3Ctor));
         registry.register("BufRd", Box::new(BufRdCtor));
         registry.register("DiskIn", Box::new(DiskInCtor));
         registry.register("VDiskIn", Box::new(VDiskInCtor));
