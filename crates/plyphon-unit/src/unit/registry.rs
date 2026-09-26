@@ -67,6 +67,8 @@ use crate::unit::dynamics::{CompanderCtor, DetectSilenceCtor, LookAheadCtor, Loo
 use crate::unit::env::{EnvGenCtor, IEnvGenCtor};
 use crate::unit::eq::{BeqCtor, BeqKind, FormletCtor, MidEQCtor};
 #[cfg(feature = "fft")]
+use crate::unit::feature_detection::{PvHainsworthFooteCtor, PvJensenAndersenCtor};
+#[cfg(feature = "fft")]
 use crate::unit::fft::{FftCtor, IfftCtor};
 #[cfg(feature = "fft")]
 use crate::unit::fft_trigger::FftTriggerCtor;
@@ -165,6 +167,7 @@ use crate::unit::rand::{
 use crate::unit::rate_conv::{A2KCtor, DcCtor, K2ACtor, T2ACtor, T2KCtor};
 use crate::unit::record_buf::RecordBufCtor;
 use crate::unit::resonant::{BPFCtor, BRFCtor, RHPFCtor, RLPFCtor, ResonzCtor, RingzCtor};
+use crate::unit::running_sum::RunningSumCtor;
 use crate::unit::scope_out::ScopeOutCtor;
 use crate::unit::section::{FOSCtor, SOSCtor};
 use crate::unit::select::{
@@ -635,6 +638,7 @@ impl UnitRegistry {
         registry.register("Peak", Box::new(PeakCtor));
         registry.register("RunningMin", Box::new(RunningMinCtor));
         registry.register("RunningMax", Box::new(RunningMaxCtor));
+        registry.register("RunningSum", Box::new(RunningSumCtor));
         registry.register("PeakFollower", Box::new(PeakFollowerCtor));
         registry.register("MostChange", Box::new(MostChangeCtor));
         registry.register("LeastChange", Box::new(LeastChangeCtor));
@@ -773,6 +777,8 @@ impl UnitRegistry {
             registry.register("PV_RandComb", Box::new(PvRandCombCtor));
             registry.register("PV_RandWipe", Box::new(PvRandWipeCtor));
             registry.register("PV_BinScramble", Box::new(PvBinScrambleCtor));
+            registry.register("PV_JensenAndersen", Box::new(PvJensenAndersenCtor));
+            registry.register("PV_HainsworthFoote", Box::new(PvHainsworthFooteCtor));
             // Machine listening over an FFT chain.
             registry.register("BeatTrack", Box::new(BeatTrackCtor));
             registry.register("KeyTrack", Box::new(KeyTrackCtor));
