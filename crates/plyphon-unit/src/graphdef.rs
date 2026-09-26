@@ -150,8 +150,9 @@ impl Span {
 pub struct BlockLayout {
     /// Heterogeneous calc-unit state (each calc unit's `Pod` bytes at its `state_offset`).
     pub state: Span,
-    /// Heterogeneous demand-unit state (each demand unit's `Pod` bytes at its `state_offset`). Empty
-    /// when the def has no demand units.
+    /// Heterogeneous demand-unit state (each demand unit's `Pod` bytes at its `state_offset`), followed
+    /// by the demand units' aux regions (at their `aux_offset`s). Empty when the def has no demand
+    /// units.
     pub demand_state: Span,
     /// Heterogeneous per-unit auxiliary memory whose size is fixed at compile time (a reverb's fixed
     /// lines, a filter bank's state): each unit's bytes at its `aux_offset`. Empty when no unit

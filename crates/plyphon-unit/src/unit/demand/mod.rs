@@ -21,6 +21,11 @@
 //! - [`MAX_DEMAND_STATE`] / [`MAX_DEMAND_DEPTH`] bound the stack copy and the recursion depth. A
 //!   SynthDef that would exceed either is rejected at compile time (off-RT), keeping the audio thread
 //!   bounded and `unsafe`-free.
+//! - A unit that needs more memory than its state, sized when the SynthDef is compiled (`Dshuf`'s
+//!   index table), reserves an aux region with [`demand_unit_spec_aux`] and reaches it through
+//!   [`DemandCtx::aux_mut`]. The regions follow every unit's state in the same span, in demand-plan
+//!   order, and a pull lends a unit its region by splitting the arena below it, so a nested pull
+//!   (always into an earlier unit) never reaches a region lent further up.
 
 pub mod dbrown;
 pub mod dbufrd;
@@ -39,6 +44,7 @@ pub mod dreset;
 pub mod dseq;
 pub mod dser;
 pub mod dseries;
+pub mod dshuf;
 pub mod dswitch;
 pub mod duty;
 pub mod dwhite;
@@ -75,6 +81,7 @@ pub use dreset::Dreset;
 pub use dseq::Dseq;
 pub use dser::Dser;
 pub use dseries::Dseries;
+pub use dshuf::Dshuf;
 pub use dswitch::{Dswitch, Dswitch1};
 pub use duty::Duty;
 pub use dwhite::Dwhite;
@@ -167,6 +174,11 @@ pub struct DemandVtbl {
     pub state_offset: usize,
     /// Exactly `size_of::<T>()` - the bytes this unit's state occupies (`<= MAX_DEMAND_STATE`).
     pub state_size: usize,
+    /// Byte offset of this unit's aux region within the demand-state span. The regions follow every
+    /// unit's state, in demand-plan order, so it is at or past the end of every earlier unit's region.
+    pub aux_offset: usize,
+    /// Bytes of this unit's aux region (`0` for most units).
+    pub aux_size: usize,
 }
 
 /// A built demand unit: its vtable plus the initial state image. Produced off the audio thread by a
@@ -185,6 +197,10 @@ pub struct BuiltDemandUnit {
     pub align: usize,
     /// Initial state bytes to copy into the demand arena when a synth is built on-RT.
     pub init_bytes: Box<[u8]>,
+    /// Bytes of aux memory the unit reserves (see [`demand_unit_spec_aux`]); `0` for most units.
+    pub aux_bytes: usize,
+    /// Alignment of the aux region (`1` when `aux_bytes == 0`).
+    pub aux_align: usize,
 }
 
 /// Build a [`BuiltDemandUnit`] from an initial state, monomorphising the thunks for `T` (the demand
@@ -197,6 +213,26 @@ pub fn demand_unit_spec<T: DemandUnit>(state: T) -> BuiltDemandUnit {
         size: core::mem::size_of::<T>(),
         align: core::mem::align_of::<T>(),
         init_bytes: bytemuck::bytes_of(&state).to_vec().into_boxed_slice(),
+        aux_bytes: 0,
+        aux_align: 1,
+    }
+}
+
+/// Build a [`BuiltDemandUnit`] that also reserves `aux_bytes` of per-instance memory aligned to
+/// `aux_align` - for a unit whose memory outgrows [`MAX_DEMAND_STATE`] but whose size is fixed when
+/// the SynthDef is compiled (`Dshuf`'s index table, sized from its input count). The demand analogue
+/// of [`unit_spec_aux`](crate::unit::unit_spec_aux). The unit reaches the region through
+/// [`DemandCtx::aux_mut`]; it is zeroed when a synth is instantiated (it is part of the demand
+/// arena's initial image) and persists for the synth's life.
+pub fn demand_unit_spec_aux<T: DemandUnit>(
+    state: T,
+    aux_bytes: usize,
+    aux_align: usize,
+) -> BuiltDemandUnit {
+    BuiltDemandUnit {
+        aux_bytes,
+        aux_align: aux_align.max(1),
+        ..demand_unit_spec(state)
     }
 }
 
@@ -235,7 +271,11 @@ pub struct DemandWorld<'w, 's> {
 /// also carries the [`DemandWorld`] reach so a source can read/write a buffer or post a value.
 pub struct DemandCtx<'a> {
     plan: &'a [DemandVtbl],
+    /// The demand arena below this unit's aux region: every unit's state, and the aux regions of the
+    /// earlier units a nested pull can reach.
     arena: &'a mut [u8],
+    /// This unit's own aux region, split off above `arena`.
+    aux: &'a mut [u8],
     inputs: &'a [InputSource],
     audio_wires: &'a [f32],
     control_wires: &'a [f32],
@@ -348,6 +388,13 @@ impl DemandCtx<'_> {
         self.rgen
     }
 
+    /// This unit's aux memory (reserved with [`demand_unit_spec_aux`]) as a slice of `Pod` elements
+    /// `T`. Empty for a unit that reserved none, or whose region does not fit `T`'s size or alignment
+    /// (a unit sizes and aligns its region for `T`, so that does not happen for a well-built unit).
+    pub fn aux_mut<T: Pod>(&mut self) -> &mut [T] {
+        bytemuck::try_cast_slice_mut(&mut *self.aux).unwrap_or(&mut [])
+    }
+
     /// Post one polled `value` to the host (`Dpoll`): a [`NodeMsg`] of kind [`NodeMsgKind::Poll`]
     /// carrying the baked `label` and the optional `trigid` (echoed as `reply_id`). Best-effort - it
     /// is dropped if the block's message capacity is reached, like every other node message.
@@ -374,6 +421,15 @@ impl DemandCtx<'_> {
 /// recursive [`DemandCtx::demand`] can reborrow the arena and descend into a *different* slot - and
 /// the graph is a DAG, so a unit never targets its own slot. Allocation-free; the buffer is fixed at
 /// [`MAX_DEMAND_STATE`] and compilation guarantees `state_size <= MAX_DEMAND_STATE`.
+///
+/// A unit's aux region is too large to copy, so it is lent in place instead, by splitting the arena
+/// at the region's start: the unit gets the region above the split, and the [`DemandCtx`] (hence any
+/// nested pull) gets only the arena below it. Nothing a nested pull needs lies above the split:
+/// every unit's state comes before all the aux regions, and the regions are laid out in demand-plan
+/// order, while compilation only lets a demand unit take earlier demand units as inputs - so every
+/// unit reachable from this one has a lower index and its region ends at or before this one begins.
+/// Each nested pull splits its own (smaller) arena the same way, so the regions lent at every level
+/// of the recursion are disjoint and none is reachable from below it.
 // The argument list (plan, arena, the two wire arrays, block size, world, unit, op) is the genuine set
 // this recursive core threads; bundling it would only obscure the reborrow at each call.
 #[allow(clippy::too_many_arguments)]
@@ -394,12 +450,15 @@ fn pull(
         size <= MAX_DEMAND_STATE,
         "demand state exceeds MAX_DEMAND_STATE"
     );
+    let (arena, above) = arena.split_at_mut(v.aux_offset);
+    let aux = &mut above[..v.aux_size];
     let mut buf = StateBuf([0u8; MAX_DEMAND_STATE]);
     buf.0[..size].copy_from_slice(&arena[off..off + size]);
     let out = {
         let mut ctx = DemandCtx {
             plan,
             arena: &mut *arena,
+            aux,
             inputs: &v.inputs,
             audio_wires,
             control_wires,
