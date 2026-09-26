@@ -140,6 +140,11 @@ use crate::unit::pv_combine::{
     ComplexKind, PolarKind, PvComplexCtor, PvCopyCtor, PvCopyPhaseCtor, PvPolarCtor,
 };
 #[cfg(feature = "fft")]
+use crate::unit::pv_extra::{
+    PvBinWipeCtor, PvConformalMapCtor, PvMagDivCtor, PvMagFreezeCtor, PvMagShiftCtor,
+    PvPhaseShiftCtor, PvRectComb2Ctor,
+};
+#[cfg(feature = "fft")]
 use crate::unit::pv_mag_mul::PvMagMulCtor;
 #[cfg(feature = "fft")]
 use crate::unit::pv_mag_squared::PvMagSquaredCtor;
@@ -752,6 +757,13 @@ impl UnitRegistry {
             registry.register("PV_BinShift", Box::new(PvBinShiftCtor));
             registry.register("PV_MagSmear", Box::new(PvMagSmearCtor));
             registry.register("PV_RectComb", Box::new(PvRectCombCtor));
+            registry.register("PV_MagFreeze", Box::new(PvMagFreezeCtor));
+            registry.register("PV_MagShift", Box::new(PvMagShiftCtor));
+            registry.register("PV_PhaseShift", Box::new(PvPhaseShiftCtor));
+            registry.register("PV_MagDiv", Box::new(PvMagDivCtor));
+            registry.register("PV_BinWipe", Box::new(PvBinWipeCtor));
+            registry.register("PV_RectComb2", Box::new(PvRectComb2Ctor));
+            registry.register("PV_ConformalMap", Box::new(PvConformalMapCtor));
             // Machine listening over an FFT chain.
             registry.register("BeatTrack", Box::new(BeatTrackCtor));
             registry.register("KeyTrack", Box::new(KeyTrackCtor));

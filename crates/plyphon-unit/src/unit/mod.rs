@@ -88,6 +88,8 @@ pub mod pv;
 #[cfg(feature = "fft")]
 pub mod pv_combine;
 #[cfg(feature = "fft")]
+pub mod pv_extra;
+#[cfg(feature = "fft")]
 pub mod pv_mag_mul;
 #[cfg(feature = "fft")]
 pub mod pv_mag_squared;
