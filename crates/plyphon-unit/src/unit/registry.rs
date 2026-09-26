@@ -154,6 +154,8 @@ use crate::unit::shape::{
     InRangeCtor, InRectCtor, LinExpCtor, RangeKind, RangeShaperCtor, UnwrapCtor,
 };
 use crate::unit::sin_osc::{FSinOscCtor, SinOscCtor, SinOscFBCtor};
+#[cfg(feature = "fft")]
+use crate::unit::stereo_convolution2l::StereoConvolution2LCtor;
 use crate::unit::test::{CheckBadValuesCtor, SanitizeCtor};
 use crate::unit::timing::{
     PhasorCtor, PulseCountCtor, PulseDividerCtor, StepperCtor, SweepCtor, TimerCtor,
@@ -702,6 +704,7 @@ impl UnitRegistry {
             registry.register("Convolution", Box::new(ConvolutionCtor));
             registry.register("Convolution2", Box::new(Convolution2Ctor));
             registry.register("Convolution2L", Box::new(Convolution2LCtor));
+            registry.register("StereoConvolution2L", Box::new(StereoConvolution2LCtor));
             registry.register("PV_MagMul", Box::new(PvMagMulCtor));
             registry.register("PV_MagSquared", Box::new(PvMagSquaredCtor));
             registry.register("PV_MagAbove", Box::new(PvMagThreshCtor(MagKind::Above)));

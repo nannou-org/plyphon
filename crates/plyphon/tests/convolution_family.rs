@@ -546,6 +546,104 @@ fn convolution2_rates_and_arities() {
     );
 }
 
+/// Tolerance for `StereoConvolution2L`, whose repeated unnormalized in-place transforms amplify the
+/// single- versus double-precision difference.
+const STEREO_TOL: f32 = 1e-3;
+
+#[test]
+fn stereo_convolution2l_matches_scsynth_transform_for_transform() {
+    // The reference's `scfft` wiring (see the unit's docs) makes the left output a product spectrum
+    // and repeatedly inverse-transforms kernel set B in place, so after the first trigger's two-frame
+    // crossfade the output grows by orders of magnitude, until the second trigger reloads set A.
+    // Both channels follow the reference throughout.
+    let r = render(&Case {
+        unit: "StereoConvolution2L",
+        rate: Rate::Audio,
+        inputs: vec![
+            Src::Signal,
+            Src::Sched(|b| if (6..20).contains(&b) { 3.0 } else { 1.0 }),
+            Src::Sched(|b| if (6..20).contains(&b) { 4.0 } else { 2.0 }),
+            Src::Sched(|b| if b == 6 || b == 20 { 1.0 } else { 0.0 }),
+            Src::Const(128.0),
+            Src::Const(2.0),
+        ],
+        outputs: 2,
+        buffers: vec![
+            (1, kernel(128, 0xabcd_ef01, 0.97)),
+            (2, kernel(128, 0x5eed_1234, 0.985)),
+            (3, kernel(128, 0x0bad_f00d, 0.95)),
+            (4, kernel(128, 0x1357_9bdf, 0.96)),
+        ],
+        blocks: 32,
+    });
+    assert!(!r.ended, "StereoConvolution2L runs");
+    assert_points(
+        "StereoConvolution2L left",
+        &r.channels[0],
+        1,
+        11,
+        &STEREO_L,
+        STEREO_TOL,
+    );
+    assert_points(
+        "StereoConvolution2L right",
+        &r.channels[1],
+        1,
+        11,
+        &STEREO_R,
+        STEREO_TOL,
+    );
+}
+
+#[test]
+fn stereo_convolution2l_without_its_kernels_is_silenced() {
+    let case = |kernel_r: fn(usize) -> f32, trigger: fn(usize) -> f32| Case {
+        unit: "StereoConvolution2L",
+        rate: Rate::Audio,
+        inputs: vec![
+            Src::Signal,
+            Src::Const(1.0),
+            Src::Sched(kernel_r),
+            Src::Sched(trigger),
+            Src::Const(64.0),
+            Src::Const(1.0),
+        ],
+        outputs: 2,
+        buffers: vec![(1, kernel(64, 1, 0.9))],
+        blocks: 8,
+    };
+    // No right kernel when the synth starts.
+    assert_silenced(
+        "StereoConvolution2L, no buffer",
+        &render(&case(|_| 9.0, |_| 0.0)),
+        0,
+    );
+    // A missing right kernel at a trigger: the reference clears the outputs and marks the unit
+    // done, then dereferences the missing buffer; here the unit stops there.
+    let r = render(&case(
+        |b| if b >= 4 { 9.0 } else { 1.0 },
+        |b| if b == 4 { 1.0 } else { 0.0 },
+    ));
+    assert!(
+        r.channels[1][..4 * BLOCK].iter().any(|&s| s != 0.0),
+        "StereoConvolution2L plays before the failed trigger"
+    );
+    assert_silenced("StereoConvolution2L, failed re-read", &r, 4 * BLOCK);
+}
+
+#[test]
+fn stereo_convolution2l_rates_and_arities() {
+    // The reference's calc always runs a whole audio block.
+    assert_eq!(
+        compile_unit("StereoConvolution2L", Rate::Control, 6, 2),
+        Err(BuildError::UnsupportedRate(Rate::Control))
+    );
+    assert_eq!(
+        compile_unit("StereoConvolution2L", Rate::Audio, 5, 2),
+        Err(BuildError::WrongInputCount)
+    );
+}
+
 // Reference values: scsynth's own code over the same inputs (see the module docs).
 
 #[rustfmt::skip]
@@ -707,4 +805,66 @@ const CONV2L: [u32; 158] = [
     0xbe4e_a1cb, 0xbe18_5366, 0x3efd_3819, 0x3eca_ad42, 0x3e73_70b5, 0x3e82_f350, 0xbe54_507f,
     0xbeca_7010, 0xbe3e_1205, 0xbeaa_608c, 0xbdac_1f07, 0x3e4e_4493, 0x3e48_4bc7, 0x3dfd_3d58,
     0x3e22_d81c, 0x3def_9893, 0xbdf7_44b2, 0xbc3d_a3b0,
+];
+
+#[rustfmt::skip]
+const STEREO_L: [u32; 187] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0xbfd9_2783,
+    0x3e1e_1d3e, 0x3f82_978e, 0x3e98_2e1d, 0x3f9a_4c15, 0xc002_6abe, 0xbeeb_c26e, 0xbf96_27d1,
+    0x3f9a_27c4, 0x3d78_0ed4, 0x4025_da8f, 0x40b5_ab9a, 0x3f2c_caa0, 0x3ef9_ae78, 0xbf36_4c72,
+    0x401f_b2cf, 0xbf77_b724, 0xbe53_35e6, 0xc05e_d79c, 0xbebb_15b4, 0xbe8c_c51f, 0xbf28_2666,
+    0x3f68_bcd1, 0x4044_90a0, 0xbdf2_5450, 0x3e00_a93c, 0xc165_c391, 0x3fcc_4924, 0xc036_70b5,
+    0xc06f_472b, 0x409c_d104, 0xc008_9dd1, 0x3fd5_4708, 0x4029_8ac9, 0xc088_f715, 0xc05b_0210,
+    0x3ff0_7daf, 0x3f07_a48c, 0xbf13_5eb6, 0x3f65_9ff0, 0x3fbc_64c1, 0x3fd3_b83e, 0xbd93_1df0,
+    0x3fc1_c7fd, 0xbee0_3ef0, 0x3f2d_3982, 0x40b4_4780, 0xc285_a5fc, 0x4274_0aa2, 0xc21f_e52b,
+    0x41ce_5b32, 0xc188_ad5e, 0xc24b_6718, 0xbf35_23f0, 0x4110_b349, 0x41bf_f467, 0x404e_aae4,
+    0x407a_ea9e, 0xbfa3_4aea, 0xc1a9_bcfb, 0x4395_d2fd, 0xc207_cc28, 0x4116_cf3b, 0xc171_a468,
+    0xc09d_e469, 0x41a0_e7b0, 0x42b0_4693, 0xc094_cb62, 0xc358_63db, 0xc3dd_0351, 0x4574_fe33,
+    0x4528_6d82, 0x4483_7928, 0x437c_45e1, 0xc471_dc81, 0x42fa_2fd0, 0xc2b4_8e97, 0x4400_a256,
+    0x43e5_bebe, 0xc31a_ec8f, 0xc505_1e89, 0xc3a3_b252, 0x4766_cc96, 0xc61f_c45f, 0x4664_af21,
+    0xc69d_2eb0, 0x45a4_1ccd, 0x44b1_70e2, 0xc52e_7ce0, 0x4634_b85c, 0x449a_ab36, 0x43e1_7f40,
+    0x4596_4792, 0x4973_4e77, 0x48c9_1c66, 0xc921_6d9f, 0x48a9_fab5, 0x475b_eaf8, 0xc8d6_e0e6,
+    0x4997_dc2f, 0xc74a_7e40, 0x47aa_993e, 0x4939_45ed, 0xc905_d307, 0x49a1_415c, 0x4bb5_36c0,
+    0x4b19_647a, 0x4c27_e33a, 0xcaca_f646, 0x4b54_5e8f, 0x4985_86bc, 0xc9cc_e849, 0x49d5_dd5e,
+    0x49a5_0c68, 0x498a_fe1e, 0x4942_9798, 0x49e1_0d81, 0x4e07_3520, 0x4d3d_c10f, 0xcd56_ded3,
+    0x4e5c_fd3b, 0x4d6e_273c, 0x4c37_90fa, 0x4c65_01e2, 0xcd2c_38b8, 0x4cd2_f2ad, 0x4c6a_83e1,
+    0xce1a_c438, 0x50a2_a397, 0x4f4b_55f1, 0x4f2d_a389, 0x4e60_d9b3, 0xcd34_7670, 0xce3c_9834,
+    0xcd26_c26a, 0x4c56_1050, 0x4c88_0258, 0xccb0_933c, 0xcca3_7a0f, 0x4bbc_1bae, 0x4c2c_ba5a,
+    0x4c7d_a195, 0xca2e_af50, 0x4cbe_05b1, 0xcd62_4e65, 0xce70_2d05, 0x4e1e_f82d, 0xcf3b_f3c8,
+    0x4f11_8e42, 0xcc8a_81fb, 0xd036_c503, 0xc046_caa0, 0xbfde_08bc, 0xc037_e46a, 0xc122_4b66,
+    0x3f8f_acfe, 0xc10a_7813, 0x3f0e_5eee, 0xc0c1_6d6a, 0xbff7_be0b, 0x40ba_e173, 0xbf9d_1d16,
+    0xbf54_e82e, 0xbf73_f2c0, 0x3fd0_28df, 0xc08f_0075, 0xbf9f_acd4, 0xc0d7_8e0f, 0x3eda_f614,
+    0x3e3a_2d2c, 0xbfe1_f33a, 0x3dc8_5aaa, 0xc056_595c, 0xbf1b_d772, 0xbf54_ffe1, 0xbf39_a658,
+    0xbfce_62ba, 0x3fdd_d822, 0xbf86_a44f, 0xbf05_9f12, 0xbf84_c560,
+];
+
+#[rustfmt::skip]
+const STEREO_R: [u32; 187] = [
+    0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_0000, 0x3c6e_c1be,
+    0x3cd8_e90d, 0xbd49_63b4, 0x3d61_254b, 0xbc8c_fe50, 0x3b9f_3a06, 0x3d2b_64de, 0xbc35_56e7,
+    0x3cde_225b, 0xbc2b_09fc, 0xbbc6_bb21, 0x3ac7_7ca9, 0xbcf6_06ac, 0x3b02_bbe2, 0xbb94_ba04,
+    0xbc43_0cbc, 0xbdc2_14d6, 0x3d45_d077, 0xbc2f_1ba0, 0x3d20_4273, 0xbcc0_64d0, 0x3d3e_c4bb,
+    0x3b82_548c, 0x3c9b_7479, 0xbb86_9890, 0x3d5e_c9f2, 0xbb8f_c5b4, 0x3c9c_7b22, 0x3d8c_e71f,
+    0x38ce_8980, 0x3d6d_acee, 0x3ce7_3ac5, 0x3d6a_39c0, 0x3c06_d2da, 0xbca8_6fb3, 0x3e58_27f0,
+    0xbe90_a7a6, 0x3d1f_0b2c, 0x3b80_8350, 0xbeb5_1605, 0x3eaf_accd, 0xbe08_0894, 0xbdf5_3082,
+    0xbeb9_cefc, 0x3f1b_346c, 0xbeaa_5005, 0xbb01_b6fc, 0x394e_3400, 0x3f03_140d, 0xbde4_5a45,
+    0x3e9c_a0fe, 0xbed8_6609, 0x3e82_6527, 0x3e90_21eb, 0xbc68_d678, 0x3f0e_040d, 0xbf01_b838,
+    0x3dfe_09df, 0xc0ca_c77b, 0xc142_1776, 0xc074_55db, 0x3fcf_25bd, 0xc05c_8562, 0x3faf_81f6,
+    0x411a_024e, 0xc133_0668, 0xc12e_0073, 0x416a_e0a9, 0x4050_c0f7, 0xbf40_c46a, 0xc156_274c,
+    0x4142_5d13, 0x40cd_01ac, 0x416f_180c, 0xbf81_614b, 0x40f2_9324, 0xc17c_9dd2, 0x40ca_b335,
+    0x419a_2a2c, 0xbf8c_e220, 0xc103_7039, 0x4183_80fb, 0x4164_0973, 0xbc41_5c00, 0xc1f8_9a3a,
+    0xc13c_cce5, 0x4185_496d, 0x412e_0a17, 0x40ce_44b8, 0x4101_0831, 0xc0dd_bdc4, 0xc134_16e4,
+    0xc0c6_0631, 0xc072_9132, 0xc060_2514, 0xc10a_efc5, 0x4085_e29e, 0x41ac_af00, 0x3f02_8f6c,
+    0x3f86_e298, 0x3fe4_e1c6, 0xc12a_fe2f, 0xc0c6_2526, 0x41ea_ffc3, 0x41ce_a13a, 0xc017_4164,
+    0x40a0_13b4, 0x4086_46cb, 0x4190_578c, 0x4108_a89e, 0x40e8_5a56, 0xc12d_bfc9, 0xc122_9b0e,
+    0xc00d_1ab5, 0x417e_cdfe, 0xbe6e_ed60, 0xc161_27c5, 0x40bc_29c0, 0x4102_3ca7, 0x40cc_e84b,
+    0xc0d4_a182, 0xc195_62c8, 0xc11a_fe56, 0xbf49_1138, 0xc0b8_414f, 0x407f_dbe6, 0xc049_b162,
+    0x3f81_c18e, 0xc2f9_65fc, 0x4256_cf59, 0x41bc_5b51, 0xc29d_b2ef, 0x4223_11c6, 0x41d1_ce77,
+    0x40ac_5043, 0x4223_f992, 0x41e8_9ba8, 0xc165_32cd, 0xc0d8_d6d6, 0x404a_0395, 0x3fb9_1f06,
+    0x406e_5b94, 0xc035_b7c3, 0x3fae_f07d, 0xc174_cc32, 0x40a2_035f, 0x4050_37b6, 0x4006_8c17,
+    0xc122_3451, 0xc1c3_2c94, 0x420f_14eb, 0x3dc6_096f, 0xbcce_2604, 0xbc19_f52e, 0xbd86_c0b2,
+    0xbd56_8a56, 0xbc6e_2c6d, 0xbcc0_fee7, 0xbc84_9ab5, 0xbc95_3b98, 0xbccb_f1e5, 0xbcff_9230,
+    0xbdc9_d808, 0x3d42_29cb, 0x3bc2_d094, 0x3c8a_33af, 0x3d6f_63b9, 0x3cd6_f632, 0x3caa_2122,
+    0xbd3b_c22c, 0x3d91_eb88, 0xbd2c_934c, 0x3ce8_ad0c, 0xbd36_753e, 0xbd3d_3ed2, 0xbd25_f0f4,
+    0xbce8_fed6, 0x3d88_849a, 0xbdc1_1368, 0x3c85_0119, 0xbcda_2870,
 ];
