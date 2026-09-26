@@ -527,3 +527,110 @@ fn mfcc_skips_a_frame_too_small_for_its_filterbank() {
     assert_eq!(got[2], got[0]);
     assert_eq!(got[0], vec![0x3f2a2f32, 0x3e94320f, 0x3e9dea02]);
 }
+
+// ---- Onsets ----
+
+/// Eight 512-sample frames: quiet ones, two loud ones (2 and 5) and one with a steep tilt.
+fn onsets_frames() -> Vec<Vec<f32>> {
+    vec![
+        frame(512, 31, 0.1, 0.0),
+        frame(512, 32, 0.12, 0.01),
+        frame(512, 33, 3.0, 0.02),
+        frame(512, 34, 0.1, 0.0),
+        frame(512, 35, 0.08, 0.0),
+        frame(512, 36, 5.0, 0.0),
+        frame(512, 37, 0.5, 0.5),
+        frame(512, 38, 0.1, 0.0),
+    ]
+}
+
+/// A gap, then the frames in a varied order with two more gaps; each loud frame is an onset.
+const ONSETS_CHAIN: [f32; 24] = [
+    -1.0, 0.0, 1.0, 3.0, 4.0, -1.0, 7.0, 2.0, 0.0, 1.0, 3.0, -1.0, 4.0, 7.0, 0.0, 5.0, 1.0, 3.0,
+    4.0, 7.0, 6.0, 0.0, 2.0, 1.0,
+];
+
+/// `(label, [threshold, odftype, relaxtime, floor, mingap, medianspan, whtype, rawodf], output
+/// bits per block of `ONSETS_CHAIN`)`, from scsynth's `Onsets.cpp` and `onsetsds.c`:
+///
+/// - `ODF_n`: the raw detection function of each type with the default parameters;
+/// - `DETECT_*`: detections with the defaults, shorter gaps, a negative `mingap` (a gap that never
+///   ends), the MKL function, an even median span and a span of one;
+/// - `RAW_*`: no whitening, no relaxation, and a fast relaxation with a high floor.
+#[rustfmt::skip]
+const ONSETS_CASES: [(&str, [f32; 8], [u32; 24]); 17] = [
+    ("ODF_0", [0.5, 0.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0], [0x00000000, 0x403fb1ce, 0x3f97cc01, 0x4032b195, 0x3fee1b4e, 0x3fee1b4e, 0x4039831f, 0x409d8809, 0x3e53e78c, 0x3d65dc38, 0x3e84052c, 0x3e84052c, 0x3e0ae151, 0x3e98bff3, 0x3e630c4a, 0x409f2e08, 0x3adbbb67, 0x3bab713b, 0x3b80c1d3, 0x3bc22fdb, 0x3ab8afb4, 0x3bd5c15f, 0x3f1e7d87, 0x3af81976]),
+    ("ODF_1", [0.5, 1.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0], [0x00000000, 0x4068e122, 0x400bac34, 0x4060fd58, 0x4037276e, 0x4037276e, 0x40655860, 0x409e7647, 0x3f3f4de1, 0x3ec92d22, 0x3f4551a9, 0x3f4551a9, 0x3f1a1f40, 0x3f5387ed, 0x3f47f069, 0x409f8297, 0x3d94d091, 0x3e0043b3, 0x3dd092a3, 0x3e077343, 0x3cd94421, 0x3e07beb2, 0x3fb039f5, 0x3d9fc5cc]),
+    ("ODF_2", [0.5, 2.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0], [0x00000000, 0x406db22f, 0x40918e1b, 0x408affd0, 0x4094c284, 0x4094c284, 0x4099a64e, 0x40c4e0eb, 0x40a2e074, 0x3f5ac473, 0x3f687ed9, 0x3f687ed9, 0x3f7ee783, 0x3f883170, 0x3f94108d, 0x40a58c96, 0x4039eee2, 0x3e0d5523, 0x3e11b19f, 0x3e231f1d, 0x3cda24f7, 0x3e06e83f, 0x3fb37a25, 0x3f8b09f5]),
+    ("ODF_3", [0.5, 3.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0], [0x00000000, 0x406db22f, 0x3f5f02ab, 0x4065714e, 0x3fba6040, 0x3fba6040, 0x405ea327, 0x40bfec12, 0x3d4b0ffc, 0x3de024b7, 0x3f4d2cfc, 0x3f4d2cfc, 0x3ea78ae2, 0x3f4efeea, 0x3f0865eb, 0x40a58c96, 0x00000000, 0x3df5d9ec, 0x3d4f22e0, 0x3dfa8ef9, 0x3c258a21, 0x3dfc074a, 0x3fb34bc2, 0x00000000]),
+    ("ODF_4", [0.5, 4.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0], [0x00000000, 0x4071914a, 0x4089ca3a, 0x40847699, 0x40778f2a, 0x40778f2a, 0x40808275, 0x4073f427, 0x407aacc6, 0x40838380, 0x40736a83, 0x40736a83, 0x4081ea61, 0x407bd3a5, 0x40822cea, 0x4077ac47, 0x4007ea5f, 0x40653f2b, 0x404be60d, 0x40674235, 0x3ea56821, 0x406a7175, 0x4088b056, 0x4016f354]),
+    ("ODF_5", [0.5, 5.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0], [0x00000000, 0x4031f56d, 0x3fed66a0, 0x403963c6, 0x400d0bab, 0x400d0bab, 0x403957a0, 0x4070e920, 0x3f19d911, 0x3e91ae57, 0x3f293640, 0x3f293640, 0x3ee6eabe, 0x3f25bb7b, 0x3f10afe9, 0x40774dfd, 0x3d6b4c1e, 0x3db3cf13, 0x3d94d61b, 0x3dd0de97, 0x3c8a17f2, 0x3dbf4cc5, 0x3f8ee61f, 0x3d525f55]),
+    ("ODF_6", [0.5, 6.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0], [0x00000000, 0x40805499, 0x3f0120f0, 0x3f7d9c59, 0x3f1ef14b, 0x3f1ef14b, 0x3f4f0e36, 0x3f68d28b, 0x3e058ae4, 0x3ee71b28, 0x3f6ab9a5, 0x3f6ab9a5, 0x3f128a83, 0x3f42fd35, 0x3f290a5a, 0x4008d41a, 0x3c5ff240, 0x3f233e53, 0x3edab19b, 0x3f132365, 0x3dd41efc, 0x3f70c4aa, 0x3ff67ce2, 0x3d852ffe]),
+    ("DETECT_DEFAULT", [0.5, 3.0, 1.0, 0.1, 10.0, 11.0, 1.0, 0.0], [0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000]),
+    ("DETECT_GAP0", [0.3, 3.0, 1.0, 0.1, 0.0, 11.0, 1.0, 0.0], [0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000]),
+    ("DETECT_GAP2_POWER", [0.3, 0.0, 1.0, 0.1, 2.0, 11.0, 1.0, 0.0], [0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000]),
+    ("DETECT_GAP_NEG", [0.3, 1.0, 1.0, 0.1, -1.0, 11.0, 1.0, 0.0], [0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000]),
+    ("DETECT_MKL", [0.2, 6.0, 1.0, 0.1, 1.0, 5.0, 1.0, 0.0], [0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000, 0x00000000]),
+    ("RAW_NOWHITEN", [0.5, 3.0, 1.0, 0.1, 10.0, 11.0, 0.0, 1.0], [0x00000000, 0x3ec429a2, 0x3db67f4a, 0x3ec037af, 0x3e195b56, 0x3e195b56, 0x3ebd94bd, 0x4085f520, 0x3ba72f13, 0x3db0dd5e, 0x3ec037af, 0x3ec037af, 0x3e195b56, 0x3ebd94bd, 0x3e90541c, 0x419d0c82, 0x00000000, 0x3eba364a, 0x3e195b56, 0x3ebd94bd, 0x3cf137b4, 0x3ebe0b14, 0x4087351f, 0x00000000]),
+    ("DETECT_EVEN", [0.3, 2.0, 1.0, 0.1, 1.0, 4.0, 1.0, 0.0], [0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x00000000]),
+    ("DETECT_SPAN1", [0.5, 5.0, 1.0, 0.1, 1.0, 1.0, 1.0, 0.0], [0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000]),
+    ("RAW_RELAX0", [0.5, 4.0, 0.0, 0.1, 10.0, 11.0, 1.0, 1.0], [0x00000000, 0x4071914a, 0x4089ca3a, 0x40847699, 0x40778f2a, 0x40778f2a, 0x40808275, 0x4073f427, 0x407ec6e7, 0x407c4e4c, 0x40847699, 0x40847699, 0x40778f2a, 0x40808275, 0x40798ed8, 0x4077ac47, 0x407afed8, 0x4068c0ef, 0x40778f2a, 0x40808275, 0x407f61c9, 0x4067b24b, 0x4088b056, 0x406b53c7]),
+    ("RAW_FAST_FLOOR", [0.5, 1.0, 0.05, 1.0, 10.0, 7.0, 1.0, 1.0], [0x00000000, 0x3ec07d18, 0x3e660650, 0x3ebd3faf, 0x3e9834dd, 0x3e9834dd, 0x3ec41c12, 0x4055e21a, 0x3eb75f68, 0x3e5d1139, 0x3ebbe36d, 0x3ebbe36d, 0x3e982ea0, 0x3ec41c12, 0x3ec07d18, 0x409e9233, 0x3db51a03, 0x3e39a7d7, 0x3e33283d, 0x3e8a2542, 0x3d818932, 0x3eb237ae, 0x4050f2e8, 0x3e545f03]),
+];
+
+#[test]
+fn onsets_matches_scsynth() {
+    for (label, args, want) in ONSETS_CASES {
+        let got = run("Onsets", &args, 1, &onsets_frames(), &ONSETS_CHAIN, SR);
+        let want: Vec<[u32; 1]> = want.iter().map(|&w| [w]).collect();
+        check(label, &got, &want);
+    }
+}
+
+#[test]
+fn onsets_reads_the_start_of_a_larger_frame() {
+    // After the first frame fixes the detector at 512 samples, a 1024-sample frame contributes its
+    // first 512 (its DC, Nyquist and lowest 255 bins).
+    let mut frames = onsets_frames();
+    frames.push(frame(1024, 39, 1.0, 0.0));
+    let chain = [
+        0.0, 1.0, 8.0, 2.0, 8.0, 0.0, 3.0, 4.0, 5.0, 6.0, 7.0, 1.0, 2.0, 3.0, 4.0, 8.0, 0.0, 1.0,
+        2.0, 3.0, 4.0, 5.0, 6.0, 7.0,
+    ];
+    const WANT: [u32; 24] = [
+        0x406db22f, 0x3f5f02ab, 0x40b1c806, 0x404aed66, 0x404f17e9, 0x3bf8ae87, 0x3ea486be,
+        0x3e41fefc, 0x40a284cd, 0x00000000, 0x3df66fcc, 0x3c967098, 0x3fab9d40, 0x3b0a4cf4,
+        0x3d4c69ad, 0x3faa2c6e, 0x3b084983, 0x3cebc789, 0x3fb52ac4, 0x3b147f97, 0x3d593825,
+        0x40a20a86, 0x00000000, 0x3df66e23,
+    ];
+    let args = [0.5, 3.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0];
+    let got = run("Onsets", &args, 1, &frames, &chain, SR);
+    let want: Vec<[u32; 1]> = WANT.iter().map(|&w| [w]).collect();
+    check("Onsets larger frame", &got, &want);
+}
+
+#[test]
+fn onsets_skips_a_frame_smaller_than_its_first() {
+    // The reference would read past the end of the smaller frame; plyphon skips it and holds the
+    // previous output.
+    let mut frames = onsets_frames();
+    frames.push(frame(256, 40, 1.0, 0.0));
+    let args = [0.5, 3.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0];
+    let got = run("Onsets", &args, 1, &frames, &[0.0, 8.0, 8.0, 1.0], SR);
+    let want = run("Onsets", &args, 1, &frames, &[0.0, -1.0, -1.0, 1.0], SR);
+    assert_eq!(got, want);
+}
+
+#[test]
+fn onsets_skips_frames_it_cannot_set_up_for() {
+    // An unknown detection function or a median span under one frame crashes scsynth; plyphon
+    // never sets the detector up, and outputs its held zero.
+    for args in [
+        [0.5, 7.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0],
+        [0.5, -1.0, 1.0, 0.1, 10.0, 11.0, 1.0, 1.0],
+        [0.5, 3.0, 1.0, 0.1, 10.0, 0.0, 1.0, 1.0],
+    ] {
+        let got = run("Onsets", &args, 1, &onsets_frames(), &[0.0, 2.0, 5.0], SR);
+        assert_eq!(got, vec![vec![0]; 3], "{args:?}");
+    }
+}

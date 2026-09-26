@@ -117,6 +117,8 @@ use crate::unit::noise::{
     LogisticCtor, MantissaMaskCtor, PinkNoiseCtor, WhiteNoiseCtor,
 };
 use crate::unit::one_pole::{IntegratorCtor, LeakDCCtor, OnePoleCtor, OneZeroCtor};
+#[cfg(feature = "fft")]
+use crate::unit::onsets::OnsetsCtor;
 use crate::unit::out::{OffsetOutCtor, OutCtor, ReplaceOutCtor, XOutCtor};
 #[cfg(feature = "fft")]
 use crate::unit::pack_fft::PackFftCtor;
@@ -763,6 +765,7 @@ impl UnitRegistry {
             registry.register("SpecPcile", Box::new(SpecPcileCtor));
             registry.register("Loudness", Box::new(LoudnessCtor));
             registry.register("MFCC", Box::new(MfccCtor));
+            registry.register("Onsets", Box::new(OnsetsCtor));
         }
         registry
     }

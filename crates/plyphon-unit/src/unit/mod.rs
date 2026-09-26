@@ -68,6 +68,8 @@ pub mod moog;
 pub mod node_ctl;
 pub mod noise;
 pub mod one_pole;
+#[cfg(feature = "fft")]
+pub mod onsets;
 pub mod out;
 #[cfg(feature = "fft")]
 pub mod pack_fft;
