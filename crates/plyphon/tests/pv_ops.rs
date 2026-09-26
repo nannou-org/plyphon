@@ -182,21 +182,93 @@ fn u(unit: u32) -> InputRef {
 }
 
 /// A packed spectrum with pairwise-distinct, non-zero terms throughout, so a dropped, swapped or
-/// silently converted slot cannot pass unnoticed.
+/// silently converted slot cannot pass unnoticed. The imaginary parts alternate in sign and grow
+/// faster than the real parts, so the bins spread over two quadrants and both of the polar
+/// conversion's table branches.
 fn test_frame() -> Vec<f32> {
     let mut data = vec![0.0f32; FRAME];
     data[0] = 0.8125;
     data[1] = -0.4375;
     for i in 0..BINS {
         data[2 + 2 * i] = 0.5 + i as f32 / 32.0;
-        data[3 + 2 * i] = -0.25 - i as f32 / 64.0;
+        let im = 0.25 + (i * i) as f32 / 256.0;
+        data[3 + 2 * i] = if i % 2 == 0 { -im } else { im };
     }
     data
 }
 
-/// The polar form of a Cartesian bin, as the shared chain plumbing computes it.
-fn to_polar(re: f32, im: f32) -> (f32, f32) {
-    (im.hypot(re), im.atan2(re))
+// The expected frames below are scsynth's, from a C++ harness that includes scsynth's `FFT_UGens.h`
+// (`ToPolarApx`/`ToComplexApx`, over `SC_Complex.h`'s lookup tables) and runs the calc bodies of
+// `PV_UGens.cpp` over [`test_frame`]. They are the same on macOS and glibc Linux.
+
+/// [`test_frame`] in polar form: `ToPolarApx`, which `PV_MagAbove` at threshold 0 leaves behind.
+const POLAR_FRAME: [u32; FRAME] = [
+    0x3f500000, 0xbee00000, 0x3f0f1bbd, 0xbeed6338, 0x3f16b617, 0x3ee41aee, 0x3f1f4662, 0xbee210c9,
+    0x3f2891f7, 0x3ee4eb3b, 0x3f32e2ac, 0xbeed6338, 0x3f3e14f3, 0x3ef93f18, 0x3f4a70d4, 0xbf044eee,
+    0x3f57d8b4, 0x3f0cd52f, 0x3f66ca3a, 0xbf16961b, 0x3f76fc8d, 0x3f20867d, 0x3f847a35, 0xbf2b0469,
+    0x3f8e3205, 0x3f354e2b, 0x3f98d9b5, 0xbf3f9a9d, 0x3fa45aa9, 0x3f49b03f, 0x3fb0fbfc, 0x40aea9b0,
+    0x3fbe5810, 0x3f5caca3, 0x3fccfa64, 0x40ac6745, 0x3fdc50ad, 0x3f6dde45, 0x3fecf009, 0x40aa5d66,
+    0x3ffe6666, 0x3f7d19df, 0x40088d98, 0x40a894e2, 0x40125377, 0x3f853851, 0x401cbac7, 0x40a706b8,
+    0x4027773d, 0x3f8b243b, 0x4032e2ac, 0x40a5a217, 0x403ebcdf, 0x3f903d47, 0x404b2e4f, 0x40a46fcf,
+    0x40581570, 0x3f94b194, 0x40659d17, 0x40a36979, 0x40737749, 0x3f98a335, 0x4080fc50, 0x40a277ed,
+];
+
+/// `PV_BinShift(stretch 1, shift 1, interp 0)` behind the polar frame: `ToComplexApx`, then every
+/// bin moved up one.
+const SHIFTED_AFTER_POLAR: [u32; FRAME] = [
+    0x3f500000, 0xbee00000, 0x00000000, 0x00000000, 0x3f000650, 0xbe7fcd7b, 0x3f080b06, 0x3e81b5ca,
+    0x3f1008f7, 0xbe87fa0a, 0x3f180d67, 0x3e918c0e, 0x3f2007e4, 0xbe9fe06c, 0x3f280c3c, 0x3eb1a9c1,
+    0x3f301080, 0xbec7d5e3, 0x3f3805a7, 0x3ee19d8e, 0x3f40175f, 0xbeffd9dc, 0x3f480f9c, 0x3f10d671,
+    0x3f501faf, 0xbf23f7d1, 0x3f580dd3, 0x3f38eddc, 0x3f6021ee, 0xbf4fe372, 0x3f67e57c, 0x3f68f750,
+    0x3f701d58, 0xbf82098a, 0x3f77fdba, 0x3f906a75, 0x3f80151f, 0xbfa008b6, 0x3f83eb54, 0x3fb07445,
+    0x3f87fc0b, 0xbfc207b0, 0x3f8bdfa2, 0x3fd47f18, 0x3f8ffb3a, 0xbfe811db, 0x3f9422f7, 0x3ffc63e1,
+    0x3f98326b, 0xc00903ea, 0x3f9bd7c8, 0x40143ba9, 0x3f9fe06c, 0xc02007e4, 0x3fa3e516, 0x402c3c9f,
+    0x3fa7cd90, 0xc0390c76, 0x3fac18c0, 0x40463630, 0x3fb063a8, 0xc0540014, 0x3fb41cc9, 0x406232b2,
+];
+
+/// `PV_MagSmear(bins 1)` over [`test_frame`].
+const SMEARED_1: [u32; FRAME] = [
+    0x3f500000, 0xbee00000, 0x3ec3e138, 0xbeed6338, 0x3f170812, 0x3ee41aee, 0x3f1f84d0, 0xbee210c9,
+    0x3f28e902, 0x3ee4eb3b, 0x3f332dde, 0xbeed6338, 0x3f3e7827, 0x3ef93f18, 0x3f4aca2a, 0xbf044eee,
+    0x3f585beb, 0x3f0cd52f, 0x3f67352a, 0xbf16961b, 0x3f7793bb, 0x3f20867d, 0x3f84b8d6, 0xbf2b0469,
+    0x3f8e81fb, 0x3f354e2b, 0x3f992222, 0xbf3f9a9d, 0x3fa4bac9, 0x3f49b03f, 0x3fb13a3c, 0x40aea9b0,
+    0x3fbec4d0, 0x3f5caca3, 0x3fcd3660, 0x40ac6745, 0x3fdcbe5e, 0x3f6dde45, 0x3fed37b4, 0x40aa5d66,
+    0x3ffed08b, 0x3f7d19df, 0x4008b16c, 0x40a894e2, 0x40128948, 0x3f853851, 0x401cd72a, 0x40a706b8,
+    0x4027b190, 0x3f8b243b, 0x40330798, 0x40a5a217, 0x403eef4a, 0x3f903d47, 0x404b558b, 0x40a46fcf,
+    0x40584af3, 0x3f94b194, 0x4065b89b, 0x40a36979, 0x4073af00, 0x3f98a335, 0x4027254e, 0x40a277ed,
+];
+
+/// `PV_MagSmear(bins 1e9)` over [`test_frame`]: the width clamps to the whole spectrum.
+const SMEARED_ALL: [u32; FRAME] = [
+    0x3f500000, 0xbee00000, 0x3f67e896, 0xbeed6338, 0x3f67e896, 0x3ee41aee, 0x3f67e896, 0xbee210c9,
+    0x3f67e896, 0x3ee4eb3b, 0x3f67e896, 0xbeed6338, 0x3f67e896, 0x3ef93f18, 0x3f67e896, 0xbf044eee,
+    0x3f67e896, 0x3f0cd52f, 0x3f67e896, 0xbf16961b, 0x3f67e896, 0x3f20867d, 0x3f67e896, 0xbf2b0469,
+    0x3f67e896, 0x3f354e2b, 0x3f67e896, 0xbf3f9a9d, 0x3f67e896, 0x3f49b03f, 0x3f67e896, 0x40aea9b0,
+    0x3f67e896, 0x3f5caca3, 0x3f67e896, 0x40ac6745, 0x3f67e896, 0x3f6dde45, 0x3f67e896, 0x40aa5d66,
+    0x3f67e896, 0x3f7d19df, 0x3f67e896, 0x40a894e2, 0x3f67e896, 0x3f853851, 0x3f67e896, 0x40a706b8,
+    0x3f67e896, 0x3f8b243b, 0x3f67e896, 0x40a5a217, 0x3f67e896, 0x3f903d47, 0x3f67e896, 0x40a46fcf,
+    0x3f67e896, 0x3f94b194, 0x3f67e896, 0x40a36979, 0x3f67e896, 0x3f98a335, 0x3f67e896, 0x40a277ed,
+];
+
+/// The polar form of bin `i` of [`test_frame`], from [`POLAR_FRAME`].
+fn polar(i: usize) -> (f32, f32) {
+    (
+        f32::from_bits(POLAR_FRAME[2 + 2 * i]),
+        f32::from_bits(POLAR_FRAME[3 + 2 * i]),
+    )
+}
+
+/// Assert `got` matches the expected bit patterns slot by slot.
+fn assert_bits(got: &[f32], want: &[u32], what: &str) {
+    assert_eq!(got.len(), want.len(), "{what}: frame length");
+    for (i, (g, &w)) in got.iter().zip(want).enumerate() {
+        assert_eq!(
+            g.to_bits(),
+            w,
+            "{what}: slot {i} is {g}, scsynth has {}",
+            f32::from_bits(w)
+        );
+    }
 }
 
 /// An engine holding `frame` in buffer 0 and a wider, distinctly filled buffer 1, running `units` as
@@ -360,18 +432,15 @@ fn pv_bin_shift_maps_bins_and_leaves_complex() {
     );
 
     // Behind a polar predecessor the frame arrives as magnitude/phase pairs. The op converts before
-    // it maps, so the shifted frame reads back as Cartesian bins - which the polar pairs are not.
+    // it maps, so the shifted frame reads back as Cartesian bins - which the polar pairs are not -
+    // after scsynth's table round trip.
     let got = frame_after(bin_shift(u(0), 1.0, 1.0, 0.0), Some(polar_identity(c(0.0))));
-    for k in 1..BINS {
-        let (want_re, want_im) = (frame[2 + 2 * (k - 1)], frame[3 + 2 * (k - 1)]);
-        assert!(
-            (got[2 + 2 * k] - want_re).abs() < 1e-5 && (got[3 + 2 * k] - want_im).abs() < 1e-5,
-            "after a polar predecessor bin {k} is ({}, {}), expected ({want_re}, {want_im})",
-            got[2 + 2 * k],
-            got[3 + 2 * k]
-        );
-    }
-    let (polar_mag, polar_phase) = to_polar(frame[2], frame[3]);
+    assert_bits(
+        &got,
+        &SHIFTED_AFTER_POLAR,
+        "shift behind a polar predecessor",
+    );
+    let (polar_mag, polar_phase) = polar(0);
     assert!(
         (polar_mag - frame[2]).abs() > 1e-3 || (polar_phase - frame[3]).abs() > 1e-3,
         "the polar and Cartesian forms must differ for the conversion check to discriminate"
@@ -381,28 +450,15 @@ fn pv_bin_shift_maps_bins_and_leaves_complex() {
 #[test]
 fn pv_mag_smear_averages_and_leaves_polar() {
     let frame = test_frame();
-    let polar: Vec<(f32, f32)> = (0..BINS)
-        .map(|i| to_polar(frame[2 + 2 * i], frame[3 + 2 * i]))
-        .collect();
     let smear = |bins: f32| UnitSpec::new("PV_MagSmear", Rate::Control, vec![c(0.0), c(bins)], 1);
 
     // A width of one averages each magnitude with its two neighbours. The window is truncated at the
     // edges but the divisor is not, so the outermost bins are attenuated - the reference's shape.
+    // Phases, and the DC and Nyquist terms, survive.
     let got = frame_after(smear(1.0), None);
+    assert_bits(&got, &SMEARED_1, "smear of width 1");
     for j in 0..BINS {
-        let lo = j.saturating_sub(1);
-        let hi = (j + 1).min(BINS - 1);
-        let sum: f32 = polar[lo..=hi].iter().map(|&(mag, _)| mag).sum();
-        let want = sum / 3.0;
-        assert!(
-            (got[2 + 2 * j] - want).abs() < 1e-5,
-            "smeared magnitude {j} is {}, expected {want}",
-            got[2 + 2 * j]
-        );
-        assert!(
-            (got[3 + 2 * j] - polar[j].1).abs() < 1e-6,
-            "phase {j} must survive a magnitude smear"
-        );
+        assert_eq!(got[3 + 2 * j], polar(j).1, "phase {j} must survive a smear");
     }
     assert_eq!(got[0], frame[0], "the DC term passes through a smear");
     assert_eq!(got[1], frame[1], "the Nyquist term passes through a smear");
@@ -417,15 +473,7 @@ fn pv_mag_smear_averages_and_leaves_polar() {
     // The width is truncated to an integer and clamped to the spectrum, so a huge width averages the
     // whole spectrum into every bin.
     let got = frame_after(smear(1.0e9), None);
-    let total: f32 = polar.iter().map(|&(mag, _)| mag).sum();
-    let want = total / (2 * (BINS - 1) + 1) as f32;
-    for j in 0..BINS {
-        assert!(
-            (got[2 + 2 * j] - want).abs() < 1e-5,
-            "fully smeared magnitude {j} is {}, expected {want}",
-            got[2 + 2 * j]
-        );
-    }
+    assert_bits(&got, &SMEARED_ALL, "smear of width 1e9");
 
     // A negative width, and a NaN (which reads as zero), both clamp to a window of one: the
     // magnitudes are untouched, though the frame still ends polar. An infinite width saturates
@@ -438,14 +486,7 @@ fn pv_mag_smear_averages_and_leaves_polar() {
     );
     for width in [-5.0f32, f32::NAN] {
         let got = frame_after(smear(width), None);
-        for j in 0..BINS {
-            assert!(
-                (got[2 + 2 * j] - polar[j].0).abs() < 1e-6,
-                "width {width}: magnitude {j} is {}, expected {}",
-                got[2 + 2 * j],
-                polar[j].0
-            );
-        }
+        assert_bits(&got, &POLAR_FRAME, &format!("smear of width {width}"));
     }
 }
 
@@ -510,9 +551,8 @@ fn pv_rect_comb_zeroes_teeth_without_conversion() {
             assert_eq!((re, im), (0.0, 0.0), "bin {i} is outside every tooth");
         }
     }
-    let roundtrip = to_polar(frame[2], frame[3]);
     assert!(
-        roundtrip != (frame[2], frame[3]),
+        polar(0) != (frame[2], frame[3]),
         "a polar conversion must change the stored pair for the bit-identity check to discriminate"
     );
 
@@ -521,12 +561,10 @@ fn pv_rect_comb_zeroes_teeth_without_conversion() {
     let got = frame_after(comb(u(0)), Some(polar_identity(c(0.0))));
     for (i, &zero) in zeroed.iter().enumerate() {
         if !zero {
-            let (mag, phase) = to_polar(frame[2 + 2 * i], frame[3 + 2 * i]);
-            assert!(
-                (got[2 + 2 * i] - mag).abs() < 1e-6 && (got[3 + 2 * i] - phase).abs() < 1e-6,
-                "bin {i} should still be the polar pair ({mag}, {phase}), got ({}, {})",
-                got[2 + 2 * i],
-                got[3 + 2 * i]
+            assert_eq!(
+                (got[2 + 2 * i], got[3 + 2 * i]),
+                polar(i),
+                "bin {i} should still be the polar pair"
             );
         }
     }
@@ -635,12 +673,16 @@ fn pv_bin_shift_and_mag_smear_size_their_scratch_from_the_frame() {
     let smear = UnitSpec::new("PV_MagSmear", Rate::Control, vec![c(0.0), c(1.0)], 1);
     let (_c, mut world) = frame_engine(read_frame(vec![smear], 0.0, FRAME, vec![]), &big, 1);
     let got = one_block(&mut world, 1);
-    let mag = |k: usize| to_polar(big[2 + 2 * k], big[3 + 2 * k]).0;
-    let want = (mag(0) + mag(1) + mag(2)) / 3.0;
-    assert!(
-        (got[4] - want).abs() < 1e-5,
-        "bin 1 averages bins 0..=2: got {}, want {want}",
-        got[4]
+    // scsynth's `PV_MagSmear(bins 1)` over the whole 16384-frame buffer, from the same harness as
+    // the frames above: the head of the frame, bins 0..=2 included.
+    const BIG_SMEARED_HEAD: [u32; 8] = [
+        0x3f800000, 0x3f8151d0, 0x3f79f743, 0x3f4a71c0, 0x3fbd5cae, 0x3f4a71c0, 0x3fc11b3e,
+        0x3f4a516c,
+    ];
+    assert_bits(
+        &got[..8],
+        &BIG_SMEARED_HEAD,
+        "head of a smeared 16384-frame chain",
     );
 }
 

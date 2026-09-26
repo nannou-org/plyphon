@@ -88,6 +88,7 @@ impl Unit for Duty {
             node_msgs: &mut ctx.node_msgs,
             buf_counter: ctx.buf_counter,
             rgen: &mut *ctx.rgen,
+            fft: ctx.fft,
         };
         let frame_rate = if self.audio != 0 {
             ctx.audio.sample_rate
@@ -113,6 +114,7 @@ impl Unit for Duty {
             node_msgs: &mut ctx.node_msgs,
             buf_counter: ctx.buf_counter,
             rgen: &mut *ctx.rgen,
+            fft: ctx.fft,
         };
 
         // A rising reset restarts the count and resets the demand sources.
@@ -232,6 +234,7 @@ impl Unit for TDuty {
                 node_msgs: &mut ctx.node_msgs,
                 buf_counter: ctx.buf_counter,
                 rgen: &mut *ctx.rgen,
+                fft: ctx.fft,
             };
             let frame_rate = if self.audio != 0 {
                 ctx.audio.sample_rate
@@ -253,6 +256,7 @@ impl Unit for TDuty {
             node_msgs: &mut ctx.node_msgs,
             buf_counter: ctx.buf_counter,
             rgen: &mut *ctx.rgen,
+            fft: ctx.fft,
         };
         let frame_rate = if self.audio != 0 {
             ctx.audio.sample_rate

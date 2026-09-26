@@ -86,13 +86,13 @@ impl Unit for PvComplex {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
             let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_complex(&mut buf_a) {
+            if let Some(a) = pv::to_complex(&mut buf_a, ctx.fft.complex()) {
                 match kind {
                     1 => {
                         *a.dc *= b_dc;
                         *a.nyq *= b_nyq;
                         for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                            let q = pv::bin_as_complex(coord_b, qraw);
+                            let q = pv::bin_as_complex(coord_b, qraw, ctx.fft.complex());
                             let (ar, ai) = (p.x, p.y);
                             p.x = ar * q.x - ai * q.y;
                             p.y = ar * q.y + ai * q.x;
@@ -102,7 +102,7 @@ impl Unit for PvComplex {
                         *a.dc /= b_dc;
                         *a.nyq /= b_nyq;
                         for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                            let q = pv::bin_as_complex(coord_b, qraw);
+                            let q = pv::bin_as_complex(coord_b, qraw, ctx.fft.complex());
                             let denom = q.x * q.x + q.y * q.y;
                             let (ar, ai) = (p.x, p.y);
                             p.x = (ar * q.x + ai * q.y) / denom;
@@ -113,7 +113,7 @@ impl Unit for PvComplex {
                         *a.dc += b_dc;
                         *a.nyq += b_nyq;
                         for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                            let q = pv::bin_as_complex(coord_b, qraw);
+                            let q = pv::bin_as_complex(coord_b, qraw, ctx.fft.complex());
                             p.x += q.x;
                             p.y += q.y;
                         }
@@ -167,7 +167,7 @@ impl Unit for PvPolar {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
             let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_polar(&mut buf_a) {
+            if let Some(a) = pv::to_polar(&mut buf_a, ctx.fft.complex()) {
                 // `dc`/`nyq` compare by absolute value; bins by (non-negative) magnitude.
                 let pick_real = |pv: f32, qv: f32| {
                     let take = if is_min {
@@ -180,7 +180,7 @@ impl Unit for PvPolar {
                 *a.dc = pick_real(*a.dc, b_dc);
                 *a.nyq = pick_real(*a.nyq, b_nyq);
                 for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                    let q = pv::bin_as_polar(coord_b, qraw);
+                    let q = pv::bin_as_polar(coord_b, qraw, ctx.fft.complex());
                     let take = if is_min { q.x < p.x } else { q.x > p.x };
                     if take {
                         *p = q;
@@ -232,7 +232,7 @@ impl Unit for PvCopyPhase {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
             let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_polar(&mut buf_a) {
+            if let Some(a) = pv::to_polar(&mut buf_a, ctx.fft.complex()) {
                 // scsynth flips A's real DC/Nyquist sign to agree with B's.
                 if (*a.dc > 0.0) == (b_dc < 0.0) {
                     *a.dc = -*a.dc;
@@ -241,7 +241,7 @@ impl Unit for PvCopyPhase {
                     *a.nyq = -*a.nyq;
                 }
                 for (p, &qraw) in a.bins.iter_mut().zip(b_bins) {
-                    p.y = pv::bin_as_polar(coord_b, qraw).y;
+                    p.y = pv::bin_as_polar(coord_b, qraw, ctx.fft.complex()).y;
                 }
             }
         }

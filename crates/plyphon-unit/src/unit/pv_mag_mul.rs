@@ -53,11 +53,11 @@ impl Unit for PvMagMul {
             let coord_b = buf_b.coord();
             let (b_dc, b_nyq) = (buf_b.data()[0], buf_b.data()[1]);
             let b_bins = pv::bins(buf_b.data());
-            if let Some(a) = pv::to_polar(&mut buf_a) {
+            if let Some(a) = pv::to_polar(&mut buf_a, ctx.fft.complex()) {
                 *a.dc *= b_dc;
                 *a.nyq *= b_nyq;
                 for (a_bin, &b_bin) in a.bins.iter_mut().zip(b_bins) {
-                    a_bin.x *= pv::bin_magnitude(coord_b, b_bin);
+                    a_bin.x *= pv::bin_magnitude(coord_b, b_bin, ctx.fft.complex());
                 }
             }
         }

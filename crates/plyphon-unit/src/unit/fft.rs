@@ -233,7 +233,7 @@ impl Unit for Ifft {
             {
                 // A polar `PV_*` unit may have left the frame in polar form; restore Cartesian
                 // before the inverse transform (scsynth's `ToComplexApx` in `IFFT_next`).
-                pv::to_complex(&mut buffer);
+                pv::to_complex(&mut buffer, ctx.fft.complex());
                 if ctx.fft.inverse(n, &buffer.data()[..n], temp) {
                     // An empty window is the rectangular one: all ones.
                     for (j, &t) in temp.iter().enumerate() {
