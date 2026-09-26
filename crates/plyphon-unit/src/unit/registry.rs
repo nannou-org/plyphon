@@ -68,6 +68,8 @@ use crate::unit::env::{EnvGenCtor, IEnvGenCtor};
 use crate::unit::eq::{BeqCtor, BeqKind, FormletCtor, MidEQCtor};
 #[cfg(feature = "fft")]
 use crate::unit::fft::{FftCtor, IfftCtor};
+#[cfg(feature = "fft")]
+use crate::unit::fft_trigger::FftTriggerCtor;
 use crate::unit::filter::{ButterCtor, Kind};
 use crate::unit::filter_simple::{
     APFCtor, BPZ2Ctor, BRZ2Ctor, Delay1Ctor, Delay2Ctor, FlipCtor, HPZ1Ctor, HPZ2Ctor, LPZ1Ctor,
@@ -731,6 +733,7 @@ impl UnitRegistry {
         {
             registry.register("FFT", Box::new(FftCtor));
             registry.register("IFFT", Box::new(IfftCtor));
+            registry.register("FFTTrigger", Box::new(FftTriggerCtor));
             registry.register("Convolution", Box::new(ConvolutionCtor));
             registry.register("Convolution2", Box::new(Convolution2Ctor));
             registry.register("Convolution2L", Box::new(Convolution2LCtor));

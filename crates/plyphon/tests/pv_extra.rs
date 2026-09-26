@@ -1,5 +1,5 @@
-//! `PV_MagFreeze`, `PV_MagShift`, `PV_PhaseShift`, `PV_MagDiv`, `PV_BinWipe`, `PV_RectComb2` and
-//! `PV_ConformalMap`.
+//! `FFTTrigger`, `PV_MagFreeze`, `PV_MagShift`, `PV_PhaseShift`, `PV_MagDiv`, `PV_BinWipe`,
+//! `PV_RectComb2` and `PV_ConformalMap`.
 //!
 //! The spectral ops are driven over pre-filled chain buffers, with the chain signal supplied
 //! directly (a constant buffer number, or a control bus where a test changes it between blocks), and
@@ -485,4 +485,119 @@ fn a_failed_first_frame_allocation_outputs_no_frame() {
             "{op}: no frame, got {got:?}"
         );
     }
+}
+
+/// The chain signal of `FFTTrigger(buffer, hop, polar)` over `blocks` blocks of `block_size`
+/// samples, with a 1024-sample buffer 3 and `locals` 16-sample `LocalBuf`s declared first.
+fn trigger_outputs(
+    buffer: InputRef,
+    hop: f32,
+    block_size: usize,
+    locals: usize,
+    blocks: usize,
+) -> Vec<f32> {
+    let (mut controller, _nrt, mut world) = engine(Options {
+        sample_rate: SR,
+        block_size,
+        output_channels: 1,
+        ..Options::default()
+    });
+    controller
+        .buffer_set(3, Box::new(Buffer::zeroed(1024, 1, SR)))
+        .unwrap();
+    let mut units: Vec<UnitSpec> = (0..locals)
+        .map(|_| UnitSpec::new("LocalBuf", Rate::Scalar, vec![c(1.0), c(16.0)], 1))
+        .collect();
+    let trig = units.len() as u32;
+    units.push(kr("FFTTrigger", vec![buffer, c(hop), c(0.0)]));
+    units.push(to_audio(u(trig)));
+    units.push(UnitSpec::new(
+        "Out",
+        Rate::Audio,
+        vec![c(0.0), u(trig + 1)],
+        0,
+    ));
+    controller.add_synthdef(SynthDef {
+        name: "t".to_string(),
+        params: vec![],
+        units,
+    });
+    controller
+        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    (0..blocks)
+        .map(|_| {
+            let mut buf = vec![0.0f32; block_size];
+            world.fill(&mut buf, 1);
+            buf[0]
+        })
+        .collect()
+}
+
+#[test]
+fn fft_trigger_announces_a_frame_every_hop() {
+    // `(int)((1024 * 0.5) / 64) - 1 = 7` blocks of -1 between frames.
+    let mut want = vec![-1.0; 7];
+    want.push(3.0);
+    let want: Vec<f32> = want.iter().cycle().take(20).copied().collect();
+    assert_eq!(trigger_outputs(c(3.0), 0.5, 64, 0, 20), want, "hop 0.5");
+
+    // `(int)((1024 * 0.3) / 64) - 1 = (int)4.8 - 1 = 3`.
+    let want = [-1.0, -1.0, -1.0, 3.0].repeat(3);
+    assert_eq!(trigger_outputs(c(3.0), 0.3, 64, 0, 12), want, "hop 0.3");
+
+    // A buffer with no storage has no samples, so every block is a frame.
+    assert_eq!(
+        trigger_outputs(c(7.0), 0.5, 64, 0, 3),
+        [7.0; 3],
+        "missing buffer"
+    );
+}
+
+#[test]
+fn fft_trigger_resolves_local_buffer_numbers() {
+    let capacity = Options::default().max_buffers as f32;
+    // A graph-local buffer's number passes through (16 samples at a 16-sample block, hop 1: every
+    // block is a frame).
+    assert_eq!(
+        trigger_outputs(u(0), 1.0, 16, 1, 2),
+        [capacity; 2],
+        "local buffer"
+    );
+    // A local number past the synth's local buffers falls back to world buffer 0, whose number the
+    // unit then outputs.
+    assert_eq!(
+        trigger_outputs(c(capacity + 5.0), 0.5, 64, 1, 2),
+        [0.0; 2],
+        "out-of-range local buffer"
+    );
+}
+
+const TRIGGER_POLAR: [u32; 16] = [
+    0x3f500000, 0xbee00000, 0x3ecfb4f4, 0x3e95a554, 0x3f14ec37, 0x3e69fe08, 0x3f3e8512, 0x3dbe5c6e,
+    0x3f5e45ea, 0xbdde1680, 0x3f6e46be, 0xbebb31a0, 0x3f69ab92, 0xbf2859fe, 0x3f4d4620, 0xbf757c05,
+];
+
+#[test]
+fn fft_trigger_tags_the_frame_coordinates() {
+    // `PV_ConformalMap(chain, 0, 0)` is the identity on Cartesian bins, but first converts a polar
+    // frame back to Cartesian form - so it shows which form `FFTTrigger` told the chain the frame
+    // is in. With 16-sample frames and blocks and hop 1, every block is a frame.
+    let run = |polar: f32| {
+        frame_after(
+            vec![
+                kr("FFTTrigger", vec![c(BUF_X), c(1.0), c(polar)]),
+                kr("PV_ConformalMap", vec![u(0), c(0.0), c(0.0)]),
+            ],
+            BUF_X,
+            1,
+        )
+    };
+    let x = frame_x();
+    assert_eq!(bits(&run(0.0)), bits(&x), "Cartesian: untouched");
+
+    // Tagged polar, X's pairs are read as (magnitude, phase) and converted with `ToComplexApx`.
+    assert_eq!(bits(&run(1.0)), TRIGGER_POLAR, "polar: converted");
+    // Only exactly 1 means polar.
+    assert_eq!(bits(&run(0.5)), bits(&x), "0.5 is Cartesian");
 }
