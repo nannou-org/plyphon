@@ -330,8 +330,9 @@ impl Unit for PvConj {
             && let Some(mut buffer) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, bufnum)
             && let Some(spectrum) = pv::to_complex(&mut buffer, ctx.fft.complex())
         {
+            // scsynth subtracts from zero, so a `+0` imaginary part stays `+0`.
             for bin in spectrum.bins.iter_mut() {
-                bin.y = -bin.y;
+                bin.y = 0.0 - bin.y;
             }
         }
         DoneAction::Nothing

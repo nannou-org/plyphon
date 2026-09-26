@@ -372,6 +372,25 @@ fn polar_identity(chain: InputRef) -> UnitSpec {
 }
 
 #[test]
+fn pv_conj_subtracts_the_imaginary_part_from_zero() {
+    // scsynth's `PV_Conj` writes `0.f - imag`, so a `+0` imaginary part stays `+0` where a plain
+    // negation would flip it to `-0`; `-0` becomes `+0` either way.
+    let mut frame = test_frame();
+    frame[3] = 0.0;
+    frame[5] = -0.0;
+    let conj = UnitSpec::new("PV_Conj", Rate::Control, vec![c(0.0)], 1);
+    let (_c, mut world) = frame_engine(read_frame(vec![conj], 0.0, FRAME, vec![]), &frame, 1);
+    let got = one_block(&mut world, 1);
+    let mut want = frame.clone();
+    for k in 0..BINS {
+        want[3 + 2 * k] = 0.0 - frame[3 + 2 * k];
+    }
+    assert_eq!(got[3].to_bits(), 0.0f32.to_bits(), "+0 stays +0");
+    assert_eq!(got[5].to_bits(), 0.0f32.to_bits(), "-0 becomes +0");
+    assert_eq!(got, want, "every imaginary part is subtracted from zero");
+}
+
+#[test]
 fn pv_bin_shift_maps_bins_and_leaves_complex() {
     let frame = test_frame();
 
