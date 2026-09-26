@@ -5,7 +5,9 @@
 //! way the server drives them: the constructor (which runs the calc for one sample) at 48 kHz unless
 //! a test says otherwise, then 64-sample blocks, with any input change applied at the start of a
 //! block. The source was compiled with floating-point contraction disabled, so each expression is
-//! evaluated as written.
+//! evaluated as written, and run on macOS and on Linux with glibc. The two platforms agree on every
+//! value except where a map calls `sin` and the platforms' `sin` differ; those cases are pinned per
+//! platform in `libm_dependent`.
 //!
 //! Each unit is pinned at two rates: [`SLOW`], whose hold of `48000/7000` samples is fractional so
 //! the map iterates less than once per sample on an uneven cadence, and [`FAST`], where the hold
@@ -27,6 +29,11 @@ const SLOW: f32 = 7_000.0;
 const FAST: f32 = 48_000.0;
 /// Samples rendered for each rate case; the `*_LATER` pins reach its last sample.
 const FRAMES: usize = 4_096;
+/// A sample rate `f32` cannot represent exactly.
+const ODD_RATE: f64 = 44_100.3;
+/// A `freq` whose hold at [`ODD_RATE`] is exactly 3 samples in scsynth's arithmetic but one ULP
+/// more in an all-`f32` division.
+const ODD_FREQ: f32 = 14_700.1;
 
 // ---------------------------------------------------------------------------------------------
 // Rendering
@@ -330,27 +337,8 @@ fn henon_ignores_seed_changes_while_stable() {
 /// `freq`.
 const LATOOCARFIAN: &[f32] = &[SLOW, 1.0, 3.0, 0.5, 0.5, 0.5, 0.5];
 
-#[test]
-fn latoocarfian_l_matches_scsynth() {
-    assert_pinned(
-        "LatoocarfianL",
-        &LATOOCARFIAN[1..],
-        (&LATOOCARFIAN_L_SLOW_BLOCK, &LATOOCARFIAN_L_SLOW_LATER),
-        (&LATOOCARFIAN_L_FAST_BLOCK, &LATOOCARFIAN_L_FAST_LATER),
-    );
-}
-
-/// `LatoocarfianC`'s constructor sets every cubic coefficient to `xi`, so its first hold plays
-/// `xi*(1 + t + t^2 + t^3)` rather than holding `xi`.
-#[test]
-fn latoocarfian_c_matches_scsynth() {
-    assert_pinned(
-        "LatoocarfianC",
-        &LATOOCARFIAN[1..],
-        (&LATOOCARFIAN_C_SLOW_BLOCK, &LATOOCARFIAN_C_SLOW_LATER),
-        (&LATOOCARFIAN_C_FAST_BLOCK, &LATOOCARFIAN_C_FAST_LATER),
-    );
-}
+// The free-running renders of LatoocarfianL and LatoocarfianC depend on the platform's `sin`; they
+// are pinned in `libm_dependent` below.
 
 /// A run-time change of `xi` shifts the running iterate into the history and re-seeds both
 /// variables.
@@ -485,9 +473,11 @@ type Pins = (
 );
 
 /// The chaos generators plyphon ported before the ones above render scsynth's output.
+/// `StandardN`, `LatoocarfianN` and `StandardL` depend on the platform's `sin` and are pinned in
+/// `libm_dependent`.
 #[test]
 fn earlier_ports_match_scsynth() {
-    let cases: [(&str, &[f32], Pins); 11] = [
+    let cases: [(&str, &[f32], Pins); 8] = [
         (
             "CuspN",
             CUSP,
@@ -521,22 +511,6 @@ fn earlier_ports_match_scsynth() {
             ),
         ),
         (
-            "StandardN",
-            STANDARD,
-            (
-                (&STANDARD_N_SLOW_BLOCK, &STANDARD_N_SLOW_LATER),
-                (&STANDARD_N_FAST_BLOCK, &STANDARD_N_FAST_LATER),
-            ),
-        ),
-        (
-            "LatoocarfianN",
-            LATOOCARFIAN,
-            (
-                (&LATOOCARFIAN_N_SLOW_BLOCK, &LATOOCARFIAN_N_SLOW_LATER),
-                (&LATOOCARFIAN_N_FAST_BLOCK, &LATOOCARFIAN_N_FAST_LATER),
-            ),
-        ),
-        (
             "CuspL",
             CUSP,
             (
@@ -566,14 +540,6 @@ fn earlier_ports_match_scsynth() {
             (
                 (&LORENZ_L_SLOW_BLOCK, &LORENZ_L_SLOW_LATER),
                 (&LORENZ_L_FAST_BLOCK, &LORENZ_L_FAST_LATER),
-            ),
-        ),
-        (
-            "StandardL",
-            STANDARD,
-            (
-                (&STANDARD_L_SLOW_BLOCK, &STANDARD_L_SLOW_LATER),
-                (&STANDARD_L_FAST_BLOCK, &STANDARD_L_FAST_LATER),
             ),
         ),
     ];
@@ -625,19 +591,6 @@ fn earlier_ports_without_reseed_ignore_seed_changes() {
     assert_change_ignored("LinCongN", LIN_CONG, 4, 0.75);
 }
 
-/// `StandardN(freq, k=100, xi=-1, yi=0)`: the kick drives the momentum to about `-84`, far below
-/// `mod2pi`'s `[-2π, 4π)` fast path, so its truncating branch wraps both variables - negative,
-/// where a Euclidean wrap would not be.
-#[test]
-fn standard_n_wraps_like_mod2pi() {
-    assert_pinned(
-        "StandardN",
-        &[100.0, -1.0, 0.0],
-        (&STANDARD_N_WIDE_SLOW_BLOCK, &STANDARD_N_WIDE_SLOW_LATER),
-        (&STANDARD_N_WIDE_FAST_BLOCK, &STANDARD_N_WIDE_FAST_LATER),
-    );
-}
-
 /// `LinCongN` takes its modulo through scsynth's `sc_mod`, which parts from the exact remainder once
 /// the quotient passes `2^29`.
 #[test]
@@ -652,28 +605,13 @@ fn lin_cong_n_wraps_like_sc_mod() {
 /// A sample rate `f32` cannot represent exactly. At 44100.3 Hz and `freq = 14700.1`, scsynth's hold
 /// (the `f64` rate over the `f32` frequency, narrowed to `f32`) is exactly 3 samples, while an
 /// all-`f32` division gives one ULP more, which would put every iteration a sample late.
+/// StandardN's case is in `libm_dependent`.
 #[test]
 fn sample_and_hold_hold_length_divides_like_scsynth() {
-    const ODD_RATE: f64 = 44_100.3;
-    for (name, consts, block, later) in [
-        (
-            "CuspN",
-            &[14_700.1, 1.0, 1.9, 0.25],
-            &CUSP_N_ODD_RATE_BLOCK,
-            &CUSP_N_ODD_RATE_LATER,
-        ),
-        (
-            "StandardN",
-            &[14_700.1, 1.0, 0.5, 0.0],
-            &STANDARD_N_ODD_RATE_BLOCK,
-            &STANDARD_N_ODD_RATE_LATER,
-        ),
-    ] {
-        let out = render_at(ODD_RATE, name, consts, FRAMES);
-        let what = format!("{name} at {ODD_RATE} Hz");
-        assert_bits(&out[..BLOCK], block, &what);
-        assert_points(&out, later, &what);
-    }
+    let out = render_at(ODD_RATE, "CuspN", &[ODD_FREQ, 1.0, 1.9, 0.25], FRAMES);
+    let what = format!("CuspN at {ODD_RATE} Hz");
+    assert_bits(&out[..BLOCK], &CUSP_N_ODD_RATE_BLOCK, &what);
+    assert_points(&out, &CUSP_N_ODD_RATE_LATER, &what);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -918,6 +856,7 @@ const FB_SINE_C_RESEED_Y: [u32; 64] = [
     0xbf7e_4efd, 0xbf7d_3688, 0xbf77_8020, 0xbf6e_7170, 0xbf5e_19d1, 0xbf47_d829, 0xbf2c_e57f,
     0xbf0e_7ad9,
 ];
+
 #[rustfmt::skip]
 const HENON_N_SLOW_BLOCK: [u32; 64] = [
     0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3e99_999a,
@@ -1065,89 +1004,6 @@ const HENON_C_LATCH: [u32; 192] = [
     0x3f4a_b4fa, 0x3f4b_a4fb, 0x3f4c_6c9e, 0x3f4d_09db, 0x3f4d_7aa9, 0x3f4d_bcfc, 0x3f4d_cecd,
     0x3f4d_ae11, 0x3f4d_58bf, 0x3f4c_cccd,
 ];
-#[rustfmt::skip]
-const LATOOCARFIAN_L_SLOW_BLOCK: [u32; 64] = [
-    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
-    0x3f25_316c, 0x3f4a_62d8, 0x3f6f_9443, 0x3f8a_62d8, 0x3f9c_fb8e, 0x3faf_9443, 0x3fbf_84e0,
-    0x3faa_08c4, 0x3f94_8ca9, 0x3f7e_211a, 0x3f53_28e3, 0x3f28_30ac, 0x3efa_70ea, 0x3eb0_c766,
-    0x3e7f_3689, 0x3e1c_de46, 0x3d6a_180d, 0xbd1f_48fe, 0xbe0a_2a82, 0xbe6c_82c5, 0xbea0_6737,
-    0xbe71_7e31, 0xbe22_2df5, 0xbda5_bb71, 0xbb63_5f22, 0x3d97_857f, 0x3e1b_12fc, 0x3e5f_0e9e,
-    0x3e83_060e, 0x3e96_84cc, 0x3eaa_038a, 0x3ebd_8249, 0x3ed1_0107, 0x3ee4_7fc5, 0x3ef5_358d,
-    0x3f14_4aec, 0x3f2d_fb12, 0x3f47_ab38, 0x3f61_5b5e, 0x3f7b_0b83, 0x3f8a_5dd5, 0x3f95_602e,
-    0x3f8e_afe4, 0x3f87_ff9a, 0x3f81_4f51, 0x3f75_3e0e, 0x3f67_dd7a, 0x3f4f_058c, 0x3f2d_1b2b,
-    0x3f0b_30ca, 0x3ed2_8cd2, 0x3e8e_b80f, 0x3e15_c69a, 0x3c61_d15c, 0xbdcc_5629, 0xbe2a_ab67,
-    0xbe6f_2bb9,
-];
-
-const LATOOCARFIAN_L_SLOW_LATER: [(usize, u32); 4] = [
-    (511, 0xbecc_8e8c),
-    (1023, 0x3f30_eb12),
-    (2047, 0xbe46_6c66),
-    (4095, 0xbf50_10a4),
-];
-
-#[rustfmt::skip]
-const LATOOCARFIAN_L_FAST_BLOCK: [u32; 64] = [
-    0x3f00_0000, 0x3fbf_84e0, 0x3eb0_c766, 0xbea0_6737, 0x3e5f_0e9e, 0x3ef5_358d, 0x3f95_602e,
-    0x3f4f_058c, 0xbdcc_5629, 0xbf0e_f909, 0x3ec8_05fe, 0xbed1_8d4c, 0x3dea_e469, 0xbf1a_abae,
-    0xbf13_ca7b, 0xbfbd_1d92, 0xbe16_3331, 0x3f18_b54e, 0xbee9_a4ac, 0x3e65_8a43, 0xbefa_a85e,
-    0xbe94_1032, 0xbfac_5a53, 0xbf1b_060b, 0xbc03_992d, 0xbd27_f2d3, 0xbf83_b701, 0xbf37_56e6,
-    0xbf1c_e58d, 0xbed0_4be5, 0xbf11_62f7, 0xbf8f_ff1e, 0xbe9a_b1a0, 0x3e90_febe, 0xbeb1_0495,
-    0xbf24_e169, 0xbfaf_4fc6, 0xbe99_5c31, 0x3eba_8a0e, 0xbe8b_7cfa, 0xbeb4_07e5, 0xbf93_8e3b,
-    0xbf55_8ef1, 0xbc6a_6605, 0x3ed1_b28a, 0xbf05_2f6f, 0xbc95_ed83, 0xbf79_3e8e, 0xbf38_9213,
-    0xbf3e_3f95, 0xbeb2_c0a1, 0xbe71_4e54, 0xbf82_a1a7, 0xbf82_a952, 0x3e53_9acb, 0x3f7d_1106,
-    0xbf26_cb8a, 0x3ecd_d803, 0xbe93_19e7, 0x3e9b_83d7, 0xbd84_b66b, 0x3f04_1835, 0x3f21_d9c5,
-    0x3fbc_9803,
-];
-
-const LATOOCARFIAN_L_FAST_LATER: [(usize, u32); 4] = [
-    (511, 0xbf5b_626e),
-    (1023, 0xbede_24be),
-    (2047, 0x3f74_16ee),
-    (4095, 0x3f10_d5ce),
-];
-
-#[rustfmt::skip]
-const LATOOCARFIAN_C_SLOW_BLOCK: [u32; 64] = [
-    0x3f15_c92f, 0x3f33_65ed, 0x3f5b_3800, 0x3f87_d097, 0x3fa9_81a1, 0x3fd3_e000, 0x3f00_0000,
-    0x3efb_5df4, 0x3ef0_a1cd, 0x3ee4_8a83, 0x3edb_d710, 0x3edb_466c, 0x3ee7_9791, 0x3f00_0000,
-    0x3f1c_9e27, 0x3f48_4950, 0x3f7b_84ae, 0x3f97_69b7, 0x3fad_5c62, 0x3fbb_dbf0, 0x3fbf_84e0,
-    0x3fb8_155c, 0x3fa6_c2be, 0x3f8e_b1d1, 0x3f66_0ebe, 0x3f2d_d068, 0x3ef5_e467, 0x3eb0_c766,
-    0x3e59_52a7, 0x3da6_8a4c, 0xbd27_d415, 0xbe17_b724, 0xbe6f_5c86, 0xbe95_203c, 0xbea0_6737,
-    0xbe97_e548, 0xbe72_fc83, 0xbe18_4ca5, 0xbd36_8d4c, 0x3d7c_5c5b, 0x3e1f_fa3e, 0x3e5f_0e9e,
-    0x3e88_6499, 0x3e9a_0c4a, 0x3ea7_d06b, 0x3eb5_0302, 0x3ec4_f617, 0x3eda_fbb4, 0x3ef5_358d,
-    0x3f10_e921, 0x3f2e_0db8, 0x3f4e_861e, 0x3f6e_cfe5, 0x3f85_b44f, 0x3f95_602e, 0x3f96_73c3,
-    0x3f93_eb97, 0x3f8e_5ef8, 0x3f86_6534, 0x3f79_2b31, 0x3f63_0ee6, 0x3f4f_058c, 0x3f33_8d81,
-    0x3f12_06cd,
-];
-
-const LATOOCARFIAN_C_SLOW_LATER: [(usize, u32); 4] = [
-    (511, 0x3ef0_3ddb),
-    (1023, 0x3f82_d964),
-    (2047, 0xbd30_4e7a),
-    (4095, 0xbf87_0cd1),
-];
-
-#[rustfmt::skip]
-const LATOOCARFIAN_C_FAST_BLOCK: [u32; 64] = [
-    0x3f00_0000, 0x3f00_0000, 0x3fbf_84e0, 0x3eb0_c766, 0xbea0_6737, 0x3e5f_0e9e, 0x3ef5_358d,
-    0x3f95_602e, 0x3f4f_058c, 0xbdcc_5629, 0xbf0e_f909, 0x3ec8_05fe, 0xbed1_8d4c, 0x3dea_e469,
-    0xbf1a_abae, 0xbf13_ca7b, 0xbfbd_1d92, 0xbe16_3331, 0x3f18_b54e, 0xbee9_a4ac, 0x3e65_8a43,
-    0xbefa_a85e, 0xbe94_1032, 0xbfac_5a53, 0xbf1b_060b, 0xbc03_992d, 0xbd27_f2d3, 0xbf83_b701,
-    0xbf37_56e6, 0xbf1c_e58d, 0xbed0_4be5, 0xbf11_62f7, 0xbf8f_ff1e, 0xbe9a_b1a0, 0x3e90_febe,
-    0xbeb1_0495, 0xbf24_e169, 0xbfaf_4fc6, 0xbe99_5c31, 0x3eba_8a0e, 0xbe8b_7cfa, 0xbeb4_07e5,
-    0xbf93_8e3b, 0xbf55_8ef1, 0xbc6a_6605, 0x3ed1_b28a, 0xbf05_2f6f, 0xbc95_ed83, 0xbf79_3e8e,
-    0xbf38_9213, 0xbf3e_3f95, 0xbeb2_c0a1, 0xbe71_4e54, 0xbf82_a1a7, 0xbf82_a952, 0x3e53_9acb,
-    0x3f7d_1106, 0xbf26_cb8a, 0x3ecd_d803, 0xbe93_19e7, 0x3e9b_83d7, 0xbd84_b66b, 0x3f04_1835,
-    0x3f21_d9c5,
-];
-
-const LATOOCARFIAN_C_FAST_LATER: [(usize, u32); 4] = [
-    (511, 0xbf69_a27b),
-    (1023, 0x3ea3_e254),
-    (2047, 0x3e07_690a),
-    (4095, 0xbf38_841f),
-];
 
 #[rustfmt::skip]
 const LATOOCARFIAN_L_RESEED: [u32; 64] = [
@@ -1176,6 +1032,7 @@ const LATOOCARFIAN_C_RESEED: [u32; 64] = [
     0x3edc_8273, 0x3eb9_4514, 0x3e9a_e5c8, 0x3e86_306c, 0x3e60_d50b, 0x3e35_7260, 0x3e10_648a,
     0x3def_ae75,
 ];
+
 #[rustfmt::skip]
 const LIN_CONG_L_SLOW_BLOCK: [u32; 64] = [
     0x3e10_0000, 0x3d00_0002, 0xbd9f_fffe, 0xbe3f_ffff, 0xbe97_ffff, 0xbecf_ffff, 0xbf00_0000,
@@ -1287,6 +1144,7 @@ const LIN_CONG_C_WIDE: [u32; 64] = [
     0xbd31_0c7a, 0x3d88_b9a6, 0x3e41_01f7, 0x3e99_5a8b, 0x3ec1_3f7d, 0x3ecd_3e61, 0x3ebd_0083,
     0x3e94_9557,
 ];
+
 #[rustfmt::skip]
 const GBMAN_L_SLOW_BLOCK: [u32; 64] = [
     0x3ffb_ffff, 0x3feb_3333, 0x3fda_6666, 0x3fc9_999a, 0x3fb8_cccd, 0x3fa8_0000, 0x3f99_999a,
@@ -1384,6 +1242,7 @@ const QUAD_C_RESEED: [u32; 64] = [
     0xbf10_a7f8, 0xbf49_d474, 0xbf6c_7cde, 0xbf6e_e5f9, 0xbf47_1696, 0xbef1_e2cb, 0xbda7_1ce2,
     0x3ea9_4b17,
 ];
+
 #[rustfmt::skip]
 const CUSP_N_SLOW_BLOCK: [u32; 64] = [
     0x3e80_0000, 0x3e80_0000, 0x3e80_0000, 0x3e80_0000, 0x3e80_0000, 0x3e80_0000, 0x3d4c_ccd0,
@@ -1550,90 +1409,6 @@ const GBMAN_N_FAST_LATER: [(usize, u32); 4] = [
     (1023, 0x3f6d_9f44),
     (2047, 0x4070_edd4),
     (4095, 0x3fc2_2f7e),
-];
-
-#[rustfmt::skip]
-const STANDARD_N_SLOW_BLOCK: [u32; 64] = [
-    0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf30_3071,
-    0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbe8a_f246,
-    0xbe8a_f246, 0xbe8a_f246, 0xbe8a_f246, 0xbe8a_f246, 0xbe8a_f246, 0xbe8a_f246, 0x3ec5_3366,
-    0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3f3e_6ed0,
-    0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f5f_8c35,
-    0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f61_0fae,
-    0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f44_5fc2,
-    0x3f44_5fc2, 0x3f44_5fc2, 0x3f44_5fc2, 0x3f44_5fc2, 0x3f44_5fc2, 0x3ee2_7b6a, 0x3ee2_7b6a,
-    0x3ee2_7b6a, 0x3ee2_7b6a, 0x3ee2_7b6a, 0x3ee2_7b6a, 0x3ee2_7b6a, 0xbe48_2f7f, 0xbe48_2f7f,
-    0xbe48_2f7f,
-];
-
-const STANDARD_N_SLOW_LATER: [(usize, u32); 4] = [
-    (511, 0xbec0_22cf),
-    (1023, 0x3e75_6515),
-    (2047, 0xbf41_4aa0),
-    (4095, 0xbf24_0b43),
-];
-
-#[rustfmt::skip]
-const STANDARD_N_FAST_BLOCK: [u32; 64] = [
-    0xbf30_3071, 0xbe8a_f246, 0x3ec5_3366, 0x3f3e_6ed0, 0x3f5f_8c35, 0x3f61_0fae, 0x3f44_5fc2,
-    0x3ee2_7b6a, 0xbe48_2f7f, 0xbf26_5ff4, 0xbf52_160a, 0xbf52_464b, 0xbf27_198b, 0xbe4e_8ef0,
-    0x3ee0_252a, 0x3f43_d95c, 0x3f60_ca4c, 0x3f5f_4772, 0x3f3d_eb55, 0x3ec2_f944, 0xbe8d_92ad,
-    0xbf30_d897, 0xbf57_a004, 0xbf57_a935, 0xbf30_fc3e, 0xbe8e_3732, 0x3ec2_618a, 0x3f3d_c1be,
-    0x3f5f_2382, 0x3f60_8af4, 0x3f43_43e3, 0x3edd_718f, 0xbe55_ef98, 0xbf27_f6c7, 0xbf52_8fc5,
-    0xbf52_0a08, 0xbf25_f450, 0xbe44_400a, 0x3ee3_f62c, 0x3f44_bd62, 0x3f61_535b, 0x3f5f_f4d3,
-    0x3f3f_5ce9, 0x3ec9_66ac, 0xbe85_d67e, 0xbf2e_e43d, 0xbf56_801c, 0xbf56_6168, 0xbf2e_6d57,
-    0xbe83_b773, 0x3ecb_4264, 0x3f3f_dc2f, 0x3f60_5f15, 0x3f62_0ad7, 0x3f46_6d09, 0x3eeb_d096,
-    0xbe2d_e5a0, 0xbf23_6a33, 0xbf51_7189, 0xbf53_684f, 0xbf2a_f8b0, 0xbe70_7905, 0x3ed3_179d,
-    0x3f40_cc13,
-];
-
-const STANDARD_N_FAST_LATER: [(usize, u32); 4] = [
-    (511, 0x3f59_1871),
-    (1023, 0x3e60_88f9),
-    (2047, 0xbe53_9bf4),
-    (4095, 0x3e90_451c),
-];
-
-#[rustfmt::skip]
-const LATOOCARFIAN_N_SLOW_BLOCK: [u32; 64] = [
-    0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3fbf_84e0,
-    0x3fbf_84e0, 0x3fbf_84e0, 0x3fbf_84e0, 0x3fbf_84e0, 0x3fbf_84e0, 0x3fbf_84e0, 0x3eb0_c766,
-    0x3eb0_c766, 0x3eb0_c766, 0x3eb0_c766, 0x3eb0_c766, 0x3eb0_c766, 0x3eb0_c766, 0xbea0_6737,
-    0xbea0_6737, 0xbea0_6737, 0xbea0_6737, 0xbea0_6737, 0xbea0_6737, 0xbea0_6737, 0x3e5f_0e9e,
-    0x3e5f_0e9e, 0x3e5f_0e9e, 0x3e5f_0e9e, 0x3e5f_0e9e, 0x3e5f_0e9e, 0x3e5f_0e9e, 0x3ef5_358d,
-    0x3ef5_358d, 0x3ef5_358d, 0x3ef5_358d, 0x3ef5_358d, 0x3ef5_358d, 0x3ef5_358d, 0x3f95_602e,
-    0x3f95_602e, 0x3f95_602e, 0x3f95_602e, 0x3f95_602e, 0x3f95_602e, 0x3f95_602e, 0x3f4f_058c,
-    0x3f4f_058c, 0x3f4f_058c, 0x3f4f_058c, 0x3f4f_058c, 0x3f4f_058c, 0xbdcc_5629, 0xbdcc_5629,
-    0xbdcc_5629, 0xbdcc_5629, 0xbdcc_5629, 0xbdcc_5629, 0xbdcc_5629, 0xbf0e_f909, 0xbf0e_f909,
-    0xbf0e_f909,
-];
-
-const LATOOCARFIAN_N_SLOW_LATER: [(usize, u32); 4] = [
-    (511, 0xbf2e_9593),
-    (1023, 0x3f1f_51e9),
-    (2047, 0xbed3_ca4c),
-    (4095, 0xbe07_fa94),
-];
-
-#[rustfmt::skip]
-const LATOOCARFIAN_N_FAST_BLOCK: [u32; 64] = [
-    0x3fbf_84e0, 0x3eb0_c766, 0xbea0_6737, 0x3e5f_0e9e, 0x3ef5_358d, 0x3f95_602e, 0x3f4f_058c,
-    0xbdcc_5629, 0xbf0e_f909, 0x3ec8_05fe, 0xbed1_8d4c, 0x3dea_e469, 0xbf1a_abae, 0xbf13_ca7b,
-    0xbfbd_1d92, 0xbe16_3331, 0x3f18_b54e, 0xbee9_a4ac, 0x3e65_8a43, 0xbefa_a85e, 0xbe94_1032,
-    0xbfac_5a53, 0xbf1b_060b, 0xbc03_992d, 0xbd27_f2d3, 0xbf83_b701, 0xbf37_56e6, 0xbf1c_e58d,
-    0xbed0_4be5, 0xbf11_62f7, 0xbf8f_ff1e, 0xbe9a_b1a0, 0x3e90_febe, 0xbeb1_0495, 0xbf24_e169,
-    0xbfaf_4fc6, 0xbe99_5c31, 0x3eba_8a0e, 0xbe8b_7cfa, 0xbeb4_07e5, 0xbf93_8e3b, 0xbf55_8ef1,
-    0xbc6a_6605, 0x3ed1_b28a, 0xbf05_2f6f, 0xbc95_ed83, 0xbf79_3e8e, 0xbf38_9213, 0xbf3e_3f95,
-    0xbeb2_c0a1, 0xbe71_4e54, 0xbf82_a1a7, 0xbf82_a952, 0x3e53_9acb, 0x3f7d_1106, 0xbf26_cb8a,
-    0x3ecd_d803, 0xbe93_19e7, 0x3e9b_83d7, 0xbd84_b66b, 0x3f04_1835, 0x3f21_d9c5, 0x3fbc_9803,
-    0x3de0_ca4a,
-];
-
-const LATOOCARFIAN_N_FAST_LATER: [(usize, u32); 4] = [
-    (511, 0xbf2b_67fc),
-    (1023, 0xbd3b_b644),
-    (2047, 0x3f5e_f32b),
-    (4095, 0xbef1_9075),
 ];
 
 #[rustfmt::skip]
@@ -1805,45 +1580,17 @@ const LORENZ_L_FAST_LATER: [(usize, u32); 4] = [
 ];
 
 #[rustfmt::skip]
-const STANDARD_L_SLOW_BLOCK: [u32; 64] = [
-    0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f,
-    0xbf51_8f1e, 0xbf4b_dc9c, 0xbf46_2a1b, 0xbf40_779a, 0xbf3a_c518, 0xbf35_1297, 0xbf30_3071,
-    0xbf20_a060, 0xbf11_1050, 0xbf01_803f, 0xbee3_e05d, 0xbec4_c03b, 0xbea5_a01a, 0xbe8a_f246,
-    0xbe33_d990, 0xbda3_9d26, 0x3c81_e34d, 0x3de4_8ecd, 0x3e54_5263, 0x3e9b_2eb0, 0x3ec5_3366,
-    0x3edf_fc39, 0x3efa_c50c, 0x3f0a_c6f0, 0x3f18_2b59, 0x3f25_8fc3, 0x3f32_f42c, 0x3f3e_6ed0,
-    0x3f43_4319, 0x3f48_1763, 0x3f4c_ebac, 0x3f51_bff6, 0x3f56_943f, 0x3f5b_6888, 0x3f5f_8c35,
-    0x3f5f_c4b7, 0x3f5f_fd38, 0x3f60_35ba, 0x3f60_6e3c, 0x3f60_a6bd, 0x3f60_df3f, 0x3f61_0fae,
-    0x3f5c_e0b1, 0x3f58_b1b4, 0x3f54_82b7, 0x3f50_53ba, 0x3f4c_24bd, 0x3f44_5fc2, 0x3f38_4020,
-    0x3f2c_207e, 0x3f20_00dc, 0x3f13_e13a, 0x3f07_c199, 0x3ef7_43ed, 0x3ee2_7b6a, 0x3eb2_db49,
-    0x3e83_3b29,
-];
-
-const STANDARD_L_SLOW_LATER: [(usize, u32); 4] = [
-    (511, 0xbf06_98b4),
-    (1023, 0xbe74_2879),
-    (2047, 0xbf1b_2fa2),
-    (4095, 0xbe59_d815),
-];
-
-#[rustfmt::skip]
-const STANDARD_L_FAST_BLOCK: [u32; 64] = [
-    0xbf57_419f, 0xbf30_3071, 0xbe8a_f246, 0x3ec5_3366, 0x3f3e_6ed0, 0x3f5f_8c35, 0x3f61_0fae,
-    0x3f44_5fc2, 0x3ee2_7b6a, 0xbe48_2f7f, 0xbf26_5ff4, 0xbf52_160a, 0xbf52_464b, 0xbf27_198b,
-    0xbe4e_8ef0, 0x3ee0_252a, 0x3f43_d95c, 0x3f60_ca4c, 0x3f5f_4772, 0x3f3d_eb55, 0x3ec2_f944,
-    0xbe8d_92ad, 0xbf30_d897, 0xbf57_a004, 0xbf57_a935, 0xbf30_fc3e, 0xbe8e_3732, 0x3ec2_618a,
-    0x3f3d_c1be, 0x3f5f_2382, 0x3f60_8af4, 0x3f43_43e3, 0x3edd_718f, 0xbe55_ef98, 0xbf27_f6c7,
-    0xbf52_8fc5, 0xbf52_0a08, 0xbf25_f450, 0xbe44_400a, 0x3ee3_f62c, 0x3f44_bd62, 0x3f61_535b,
-    0x3f5f_f4d3, 0x3f3f_5ce9, 0x3ec9_66ac, 0xbe85_d67e, 0xbf2e_e43d, 0xbf56_801c, 0xbf56_6168,
-    0xbf2e_6d57, 0xbe83_b773, 0x3ecb_4264, 0x3f3f_dc2f, 0x3f60_5f15, 0x3f62_0ad7, 0x3f46_6d09,
-    0x3eeb_d096, 0xbe2d_e5a0, 0xbf23_6a33, 0xbf51_7189, 0xbf53_684f, 0xbf2a_f8b0, 0xbe70_7905,
-    0x3ed3_179d,
-];
-
-const STANDARD_L_FAST_LATER: [(usize, u32); 4] = [
-    (511, 0xbf61_c820),
-    (1023, 0xbee3_cfdf),
-    (2047, 0x3ef0_5b29),
-    (4095, 0xbf01_acc6),
+const CUSP_N_RESEED: [u32; 64] = [
+    0x3f40_0000, 0x3f40_0000, 0x3f40_0000, 0x3f40_0000, 0xbf25_3c19, 0xbf25_3c19, 0xbf25_3c19,
+    0xbf25_3c19, 0xbf25_3c19, 0xbf25_3c19, 0xbf25_3c19, 0xbf06_c5d3, 0xbf06_c5d3, 0xbf06_c5d3,
+    0xbf06_c5d3, 0xbf06_c5d3, 0xbf06_c5d3, 0xbf06_c5d3, 0xbec1_d65b, 0xbec1_d65b, 0xbec1_d65b,
+    0xbec1_d65b, 0xbec1_d65b, 0xbec1_d65b, 0xbec1_d65b, 0xbe2d_1e6f, 0xbe2d_1e6f, 0xbe2d_1e6f,
+    0xbe2d_1e6f, 0xbe2d_1e6f, 0xbe2d_1e6f, 0xbe2d_1e6f, 0x3e60_06b2, 0x3e60_06b2, 0x3e60_06b2,
+    0x3e60_06b2, 0x3e60_06b2, 0x3e60_06b2, 0x3de3_f39d, 0x3de3_f39d, 0x3de3_f39d, 0x3de3_f39d,
+    0x3de3_f39d, 0x3de3_f39d, 0x3de3_f39d, 0x3ebb_7386, 0x3ebb_7386, 0x3ebb_7386, 0x3ebb_7386,
+    0x3ebb_7386, 0x3ebb_7386, 0x3ebb_7386, 0xbe19_3be2, 0xbe19_3be2, 0xbe19_3be2, 0xbe19_3be2,
+    0xbe19_3be2, 0xbe19_3be2, 0xbe19_3be2, 0x3e87_af78, 0x3e87_af78, 0x3e87_af78, 0x3e87_af78,
+    0x3e87_af78,
 ];
 
 #[rustfmt::skip]
@@ -1861,61 +1608,6 @@ const CUSP_L_RESEED: [u32; 64] = [
 ];
 
 #[rustfmt::skip]
-const QUAD_L_RESEED: [u32; 64] = [
-    0xbea7_dde4, 0xbde7_e6ca, 0x3dcf_a9fa, 0x3ea1_ceb0, 0x3f00_0000, 0x3e90_0000, 0x3d80_0002,
-    0xbe1f_fffe, 0xbebf_ffff, 0xbf17_ffff, 0xbf4f_ffff, 0xbf80_0000, 0xbf2c_0000, 0xbeb0_0001,
-    0xbc80_0012, 0x3e9f_fffe, 0x3f23_ffff, 0x3f77_ffff, 0x3fa0_0000, 0x3f80_8000, 0x3f42_0000,
-    0x3f03_0000, 0x3e88_0001, 0x3ca0_0016, 0xbe67_fffd, 0xbee0_0000, 0xbec8_6000, 0xbeb0_c000,
-    0xbe99_2000, 0xbe81_8000, 0xbe53_c001, 0xbe24_8001, 0xbdf8_0000, 0xbe45_a4c0, 0xbe87_a4c0,
-    0xbeac_7720, 0xbed1_4980, 0xbef6_1be0, 0xbf1d_3f00, 0xbefa_9812, 0xbeba_b224, 0xbe75_986b,
-    0xbdeb_991e, 0x3c1f_f4d5, 0x3e09_cb2a, 0x3e77_5556, 0x3d8f_d027, 0xbdcf_0a5f, 0xbe8b_7939,
-    0xbee3_2fda, 0xbf1d_733e, 0xbf49_4e8f, 0xbf6e_e5f9, 0xbf24_b52c, 0xbeb5_08bd, 0xbd82_9c8c,
-    0x3e67_74ef, 0x3f04_0e09, 0x3f4e_3ed6, 0x3f86_eb31, 0x3f4c_9cfa, 0x3f0b_6391, 0x3e94_5450,
-    0x3d0f_0bf5,
-];
-
-#[rustfmt::skip]
-const STANDARD_L_RESEED: [u32; 64] = [
-    0xbe89_b309, 0xbe96_3c21, 0xbea2_c539, 0xbeaf_4e52, 0xbeba_0cf9, 0xbea4_7075, 0xbe8e_d3f0,
-    0xbe72_6ed7, 0xbe47_35ce, 0xbe1b_fcc5, 0xbde1_8778, 0xbd97_6ed5, 0xbcac_67e6, 0x3d02_75c5,
-    0x3dad_8fbe, 0x3e0c_f24d, 0x3e43_1cbb, 0x3e79_4729, 0x3e93_da56, 0x3e9c_3654, 0x3ea4_9252,
-    0x3eac_ee4f, 0x3eb5_4a4d, 0x3ebd_a64b, 0x3ec6_0248, 0x3ecd_2c90, 0x3ebe_e9a8, 0x3eb0_a6c0,
-    0x3ea2_63d8, 0x3e94_20f1, 0x3e85_de09, 0x3e6f_3642, 0x3e56_c390, 0x3e1d_2392, 0x3dc7_0729,
-    0x3d27_8e5a, 0xbc7b_c673, 0xbd92_b8ca, 0xbe34_60f4, 0xbe55_054c, 0xbe75_a9a5, 0xbe8b_26fe,
-    0xbe9b_792b, 0xbeab_cb57, 0xbebc_1d83, 0xbeca_1ace, 0xbec3_f244, 0xbebd_c9ba, 0xbeb7_a130,
-    0xbeb1_78a6, 0xbeab_501c, 0xbea5_2792, 0xbe9f_e040, 0xbe85_f74d, 0xbe58_1cb5, 0xbe24_4acf,
-    0xbde0_f1d4, 0xbd72_9c12, 0xbc0d_51f1, 0x3d0e_569a, 0x3da4_7363, 0x3e00_ddbc, 0x3e2f_81c7,
-    0x3e5e_25d2,
-];
-
-#[rustfmt::skip]
-const LORENZ_L_RESEED: [u32; 64] = [
-    0x3e35_de39, 0x3e0e_ae78, 0x3dce_fd70, 0x3d80_9def, 0x3cf5_c28f, 0x3cf1_63c9, 0x3ced_0503,
-    0x3ce8_a63d, 0x3ce4_4777, 0x3cdf_e8b1, 0x3cdb_89eb, 0x3cd7_caf8, 0x3ce6_1233, 0x3cf4_596d,
-    0x3d01_5054, 0x3d08_73f1, 0x3d0f_978e, 0x3d16_bb2b, 0x3d1c_d9b2, 0x3d2d_65fe, 0x3d3d_f24b,
-    0x3d4e_7e98, 0x3d5f_0ae4, 0x3d6f_9731, 0x3d80_11bf, 0x3d87_294d, 0x3d96_9ce6, 0x3da6_107f,
-    0x3db5_8417, 0x3dc4_f7b0, 0x3dd4_6b49, 0x3de3_dee1, 0x3df1_1d65, 0x3e06_4f09, 0x3e14_0f60,
-    0x3e21_cfb7, 0x3e2f_900e, 0x3e3d_5064, 0x3e56_da2a, 0x3e6e_05d3, 0x3e82_98be, 0x3e8e_2e92,
-    0x3e99_c467, 0x3ea5_5a3b, 0x3eb0_f00f, 0x3eba_de33, 0x3ecb_8209, 0x3edc_25de, 0x3eec_c9b4,
-    0x3efd_6d89, 0x3f07_08af, 0x3f0f_5a9a, 0x3f16_7c3f, 0x3f1d_79ec, 0x3f24_7798, 0x3f2b_7545,
-    0x3f32_72f2, 0x3f39_709e, 0x3f40_6e4b, 0x3f46_6c4d, 0x3f44_1638, 0x3f41_c022, 0x3f3f_6a0d,
-    0x3f3d_13f8,
-];
-#[rustfmt::skip]
-const CUSP_N_RESEED: [u32; 64] = [
-    0x3f40_0000, 0x3f40_0000, 0x3f40_0000, 0x3f40_0000, 0xbf25_3c19, 0xbf25_3c19, 0xbf25_3c19,
-    0xbf25_3c19, 0xbf25_3c19, 0xbf25_3c19, 0xbf25_3c19, 0xbf06_c5d3, 0xbf06_c5d3, 0xbf06_c5d3,
-    0xbf06_c5d3, 0xbf06_c5d3, 0xbf06_c5d3, 0xbf06_c5d3, 0xbec1_d65b, 0xbec1_d65b, 0xbec1_d65b,
-    0xbec1_d65b, 0xbec1_d65b, 0xbec1_d65b, 0xbec1_d65b, 0xbe2d_1e6f, 0xbe2d_1e6f, 0xbe2d_1e6f,
-    0xbe2d_1e6f, 0xbe2d_1e6f, 0xbe2d_1e6f, 0xbe2d_1e6f, 0x3e60_06b2, 0x3e60_06b2, 0x3e60_06b2,
-    0x3e60_06b2, 0x3e60_06b2, 0x3e60_06b2, 0x3de3_f39d, 0x3de3_f39d, 0x3de3_f39d, 0x3de3_f39d,
-    0x3de3_f39d, 0x3de3_f39d, 0x3de3_f39d, 0x3ebb_7386, 0x3ebb_7386, 0x3ebb_7386, 0x3ebb_7386,
-    0x3ebb_7386, 0x3ebb_7386, 0x3ebb_7386, 0xbe19_3be2, 0xbe19_3be2, 0xbe19_3be2, 0xbe19_3be2,
-    0xbe19_3be2, 0xbe19_3be2, 0xbe19_3be2, 0x3e87_af78, 0x3e87_af78, 0x3e87_af78, 0x3e87_af78,
-    0x3e87_af78,
-];
-
-#[rustfmt::skip]
 const QUAD_N_RESEED: [u32; 64] = [
     0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0xbf80_0000, 0xbf80_0000, 0xbf80_0000,
     0xbf80_0000, 0xbf80_0000, 0xbf80_0000, 0xbf80_0000, 0x3fa0_0000, 0x3fa0_0000, 0x3fa0_0000,
@@ -1927,6 +1619,20 @@ const QUAD_N_RESEED: [u32; 64] = [
     0xbf6e_e5f9, 0xbf6e_e5f9, 0xbf6e_e5f9, 0x3f86_eb31, 0x3f86_eb31, 0x3f86_eb31, 0x3f86_eb31,
     0x3f86_eb31, 0x3f86_eb31, 0x3f86_eb31, 0xbf31_6a24, 0xbf31_6a24, 0xbf31_6a24, 0xbf31_6a24,
     0xbf31_6a24,
+];
+
+#[rustfmt::skip]
+const QUAD_L_RESEED: [u32; 64] = [
+    0xbea7_dde4, 0xbde7_e6ca, 0x3dcf_a9fa, 0x3ea1_ceb0, 0x3f00_0000, 0x3e90_0000, 0x3d80_0002,
+    0xbe1f_fffe, 0xbebf_ffff, 0xbf17_ffff, 0xbf4f_ffff, 0xbf80_0000, 0xbf2c_0000, 0xbeb0_0001,
+    0xbc80_0012, 0x3e9f_fffe, 0x3f23_ffff, 0x3f77_ffff, 0x3fa0_0000, 0x3f80_8000, 0x3f42_0000,
+    0x3f03_0000, 0x3e88_0001, 0x3ca0_0016, 0xbe67_fffd, 0xbee0_0000, 0xbec8_6000, 0xbeb0_c000,
+    0xbe99_2000, 0xbe81_8000, 0xbe53_c001, 0xbe24_8001, 0xbdf8_0000, 0xbe45_a4c0, 0xbe87_a4c0,
+    0xbeac_7720, 0xbed1_4980, 0xbef6_1be0, 0xbf1d_3f00, 0xbefa_9812, 0xbeba_b224, 0xbe75_986b,
+    0xbdeb_991e, 0x3c1f_f4d5, 0x3e09_cb2a, 0x3e77_5556, 0x3d8f_d027, 0xbdcf_0a5f, 0xbe8b_7939,
+    0xbee3_2fda, 0xbf1d_733e, 0xbf49_4e8f, 0xbf6e_e5f9, 0xbf24_b52c, 0xbeb5_08bd, 0xbd82_9c8c,
+    0x3e67_74ef, 0x3f04_0e09, 0x3f4e_3ed6, 0x3f86_eb31, 0x3f4c_9cfa, 0x3f0b_6391, 0x3e94_5450,
+    0x3d0f_0bf5,
 ];
 
 #[rustfmt::skip]
@@ -1984,47 +1690,35 @@ const STANDARD_N_RESEED_Y: [u32; 64] = [
     0xbf35_b811, 0xbf35_b811, 0xbf35_b811, 0xbe8a_e2e1, 0xbe8a_e2e1, 0xbe8a_e2e1, 0xbe8a_e2e1,
     0xbe8a_e2e1,
 ];
-#[rustfmt::skip]
-const STANDARD_N_WIDE_SLOW_BLOCK: [u32; 64] = [
-    0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbdd3_473e,
-    0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbf40_587b,
-    0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf7c_bf71,
-    0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0x3d3f_b4f4,
-    0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3ed5_b651,
-    0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3cb8_e13c,
-    0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0xbf20_910c,
-    0xbf20_910c, 0xbf20_910c, 0xbf20_910c, 0xbf20_910c, 0xbf20_910c, 0x3d3a_c2f4, 0x3d3a_c2f4,
-    0x3d3a_c2f4, 0x3d3a_c2f4, 0x3d3a_c2f4, 0x3d3a_c2f4, 0x3d3a_c2f4, 0x3e32_8f46, 0x3e32_8f46,
-    0x3e32_8f46,
-];
 
-const STANDARD_N_WIDE_SLOW_LATER: [(usize, u32); 4] = [
-    (511, 0x3dea_bdb2),
-    (1023, 0xbf6c_9415),
-    (2047, 0xbea8_53b7),
-    (4095, 0xbf65_5ff9),
+#[rustfmt::skip]
+const STANDARD_L_RESEED: [u32; 64] = [
+    0xbe89_b309, 0xbe96_3c21, 0xbea2_c539, 0xbeaf_4e52, 0xbeba_0cf9, 0xbea4_7075, 0xbe8e_d3f0,
+    0xbe72_6ed7, 0xbe47_35ce, 0xbe1b_fcc5, 0xbde1_8778, 0xbd97_6ed5, 0xbcac_67e6, 0x3d02_75c5,
+    0x3dad_8fbe, 0x3e0c_f24d, 0x3e43_1cbb, 0x3e79_4729, 0x3e93_da56, 0x3e9c_3654, 0x3ea4_9252,
+    0x3eac_ee4f, 0x3eb5_4a4d, 0x3ebd_a64b, 0x3ec6_0248, 0x3ecd_2c90, 0x3ebe_e9a8, 0x3eb0_a6c0,
+    0x3ea2_63d8, 0x3e94_20f1, 0x3e85_de09, 0x3e6f_3642, 0x3e56_c390, 0x3e1d_2392, 0x3dc7_0729,
+    0x3d27_8e5a, 0xbc7b_c673, 0xbd92_b8ca, 0xbe34_60f4, 0xbe55_054c, 0xbe75_a9a5, 0xbe8b_26fe,
+    0xbe9b_792b, 0xbeab_cb57, 0xbebc_1d83, 0xbeca_1ace, 0xbec3_f244, 0xbebd_c9ba, 0xbeb7_a130,
+    0xbeb1_78a6, 0xbeab_501c, 0xbea5_2792, 0xbe9f_e040, 0xbe85_f74d, 0xbe58_1cb5, 0xbe24_4acf,
+    0xbde0_f1d4, 0xbd72_9c12, 0xbc0d_51f1, 0x3d0e_569a, 0x3da4_7363, 0x3e00_ddbc, 0x3e2f_81c7,
+    0x3e5e_25d2,
 ];
 
 #[rustfmt::skip]
-const STANDARD_N_WIDE_FAST_BLOCK: [u32; 64] = [
-    0xbdd3_473e, 0xbf40_587b, 0xbf7c_bf71, 0x3d3f_b4f4, 0x3ed5_b651, 0x3cb8_e13c, 0xbf20_910c,
-    0x3d3a_c2f4, 0x3e32_8f46, 0xbe8c_df63, 0xbf02_cf72, 0xbf6f_4c03, 0xbf61_25c1, 0x3f71_11ae,
-    0x3f76_882e, 0xbf34_ae4d, 0xbf77_8e72, 0x3d83_53d0, 0x3f39_e086, 0xbf3e_fa6b, 0x3f11_fd19,
-    0x3f53_f88a, 0x3f36_2b09, 0xbeea_9b18, 0xbd91_3733, 0xbf26_c7cb, 0xbf70_2f62, 0x3f69_fdc8,
-    0x3e8b_ec7b, 0xbeeb_bd2e, 0x3ec8_48b5, 0xbf3f_0298, 0x3f65_6e0e, 0x3eaf_6214, 0xbe67_fc54,
-    0xbbb6_5c4e, 0x3f45_9be5, 0x3f24_902e, 0xbe2a_609d, 0x3f6a_59a2, 0xbeb8_9f79, 0xbf4f_57a8,
-    0x3f23_5934, 0xbf4b_f311, 0x3f3f_00ef, 0xbefc_2d52, 0x3dba_7c18, 0xbe9d_5f85, 0xbf07_1b79,
-    0x3f76_3ad3, 0x3f24_e288, 0xbe99_1ed0, 0x3ee8_aae2, 0xbe98_4643, 0x3f0c_ae61, 0xbd4c_2652,
-    0x3ea1_0e76, 0x3dc9_7ef9, 0x3e4c_3d35, 0xbeba_d769, 0x3da0_b323, 0x3f41_21a0, 0xbf43_4c48,
-    0xbf33_8f2d,
+const LORENZ_L_RESEED: [u32; 64] = [
+    0x3e35_de39, 0x3e0e_ae78, 0x3dce_fd70, 0x3d80_9def, 0x3cf5_c28f, 0x3cf1_63c9, 0x3ced_0503,
+    0x3ce8_a63d, 0x3ce4_4777, 0x3cdf_e8b1, 0x3cdb_89eb, 0x3cd7_caf8, 0x3ce6_1233, 0x3cf4_596d,
+    0x3d01_5054, 0x3d08_73f1, 0x3d0f_978e, 0x3d16_bb2b, 0x3d1c_d9b2, 0x3d2d_65fe, 0x3d3d_f24b,
+    0x3d4e_7e98, 0x3d5f_0ae4, 0x3d6f_9731, 0x3d80_11bf, 0x3d87_294d, 0x3d96_9ce6, 0x3da6_107f,
+    0x3db5_8417, 0x3dc4_f7b0, 0x3dd4_6b49, 0x3de3_dee1, 0x3df1_1d65, 0x3e06_4f09, 0x3e14_0f60,
+    0x3e21_cfb7, 0x3e2f_900e, 0x3e3d_5064, 0x3e56_da2a, 0x3e6e_05d3, 0x3e82_98be, 0x3e8e_2e92,
+    0x3e99_c467, 0x3ea5_5a3b, 0x3eb0_f00f, 0x3eba_de33, 0x3ecb_8209, 0x3edc_25de, 0x3eec_c9b4,
+    0x3efd_6d89, 0x3f07_08af, 0x3f0f_5a9a, 0x3f16_7c3f, 0x3f1d_79ec, 0x3f24_7798, 0x3f2b_7545,
+    0x3f32_72f2, 0x3f39_709e, 0x3f40_6e4b, 0x3f46_6c4d, 0x3f44_1638, 0x3f41_c022, 0x3f3f_6a0d,
+    0x3f3d_13f8,
 ];
 
-const STANDARD_N_WIDE_FAST_LATER: [(usize, u32); 4] = [
-    (511, 0x3f77_8449),
-    (1023, 0xbf2b_8eef),
-    (2047, 0x3d88_b149),
-    (4095, 0xbda4_d8e9),
-];
 #[rustfmt::skip]
 const LIN_CONG_N_WIDE: [u32; 64] = [
     0xbe92_4924, 0xbe92_4924, 0xbe92_4924, 0xbe92_4924, 0xbe92_4924, 0xbe92_4924, 0x3ef2_6ab8,
@@ -2038,6 +1732,7 @@ const LIN_CONG_N_WIDE: [u32; 64] = [
     0xbe29_27d1, 0xbe29_27d1, 0xbe29_27d1, 0xbe29_27d1, 0xbe29_27d1, 0x3e15_89b8, 0x3e15_89b8,
     0x3e15_89b8,
 ];
+
 #[rustfmt::skip]
 const CUSP_N_ODD_RATE_BLOCK: [u32; 64] = [
     0x3e80_0000, 0x3e80_0000, 0x3d4c_ccd0, 0x3d4c_ccd0, 0x3d4c_ccd0, 0x3f13_3cd6, 0x3f13_3cd6,
@@ -2059,23 +1754,540 @@ const CUSP_N_ODD_RATE_LATER: [(usize, u32); 4] = [
     (4095, 0xbdcc_463c),
 ];
 
-#[rustfmt::skip]
-const STANDARD_N_ODD_RATE_BLOCK: [u32; 64] = [
-    0xbf57_419f, 0xbf57_419f, 0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbe8a_f246, 0xbe8a_f246,
-    0xbe8a_f246, 0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0,
-    0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f44_5fc2,
-    0x3f44_5fc2, 0x3f44_5fc2, 0x3ee2_7b6a, 0x3ee2_7b6a, 0x3ee2_7b6a, 0xbe48_2f7f, 0xbe48_2f7f,
-    0xbe48_2f7f, 0xbf26_5ff4, 0xbf26_5ff4, 0xbf26_5ff4, 0xbf52_160a, 0xbf52_160a, 0xbf52_160a,
-    0xbf52_464b, 0xbf52_464b, 0xbf52_464b, 0xbf27_198b, 0xbf27_198b, 0xbf27_198b, 0xbe4e_8ef0,
-    0xbe4e_8ef0, 0xbe4e_8ef0, 0x3ee0_252a, 0x3ee0_252a, 0x3ee0_252a, 0x3f43_d95c, 0x3f43_d95c,
-    0x3f43_d95c, 0x3f60_ca4c, 0x3f60_ca4c, 0x3f60_ca4c, 0x3f5f_4772, 0x3f5f_4772, 0x3f5f_4772,
-    0x3f3d_eb55, 0x3f3d_eb55, 0x3f3d_eb55, 0x3ec2_f944, 0x3ec2_f944, 0x3ec2_f944, 0xbe8d_92ad,
-    0xbe8d_92ad,
-];
+// ---------------------------------------------------------------------------------------------
+// Cases that depend on the platform's `sin`
+// ---------------------------------------------------------------------------------------------
 
-const STANDARD_N_ODD_RATE_LATER: [(usize, u32); 4] = [
-    (511, 0x3f29_e647),
-    (1023, 0xbedf_0b8c),
-    (2047, 0x3f4c_fb85),
-    (4095, 0x3e89_f200),
-];
+/// The free-running renders of the units whose maps call `sin` every iteration.
+///
+/// scsynth's own output here differs by platform: `LatoocarfianN`/`L`/`C` and `StandardN`/`L` call
+/// the C library's `sin`, whose result for some arguments differs in the last bit between Apple's
+/// libm and glibc, and the chaotic maps amplify that difference into different samples. plyphon's
+/// `sin` calls the same platform function, so each platform is pinned against scsynth's output on
+/// that platform: values captured on macOS are used on macOS, and values captured on Linux with
+/// glibc on Linux with glibc. Where the two agree a table is shared;
+/// where they differ it comes as a `cfg` pair. On any other platform these cases are not pinned,
+/// because no scsynth output was captured with that platform's `sin`.
+///
+/// The FBSine maps also call `sin`, but their pinned samples agree on both platforms, so they are
+/// pinned above for every platform. The re-seed blocks of the units here agree too.
+#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+mod libm_dependent {
+    use super::*;
+
+    #[test]
+    fn latoocarfian_l_matches_scsynth() {
+        assert_pinned(
+            "LatoocarfianL",
+            &LATOOCARFIAN[1..],
+            (&LATOOCARFIAN_L_SLOW_BLOCK, &LATOOCARFIAN_L_SLOW_LATER),
+            (&LATOOCARFIAN_L_FAST_BLOCK, &LATOOCARFIAN_L_FAST_LATER),
+        );
+    }
+
+    /// `LatoocarfianC`'s constructor sets every cubic coefficient to `xi`, so its first hold plays
+    /// `xi*(1 + t + t^2 + t^3)` rather than holding `xi`.
+    #[test]
+    fn latoocarfian_c_matches_scsynth() {
+        assert_pinned(
+            "LatoocarfianC",
+            &LATOOCARFIAN[1..],
+            (&LATOOCARFIAN_C_SLOW_BLOCK, &LATOOCARFIAN_C_SLOW_LATER),
+            (&LATOOCARFIAN_C_FAST_BLOCK, &LATOOCARFIAN_C_FAST_LATER),
+        );
+    }
+
+    /// The earlier `sin`-based ports render scsynth's output.
+    #[test]
+    fn earlier_sin_ports_match_scsynth() {
+        let cases: [(&str, &[f32], Pins); 3] = [
+            (
+                "StandardN",
+                STANDARD,
+                (
+                    (&STANDARD_N_SLOW_BLOCK, &STANDARD_N_SLOW_LATER),
+                    (&STANDARD_N_FAST_BLOCK, &STANDARD_N_FAST_LATER),
+                ),
+            ),
+            (
+                "LatoocarfianN",
+                LATOOCARFIAN,
+                (
+                    (&LATOOCARFIAN_N_SLOW_BLOCK, &LATOOCARFIAN_N_SLOW_LATER),
+                    (&LATOOCARFIAN_N_FAST_BLOCK, &LATOOCARFIAN_N_FAST_LATER),
+                ),
+            ),
+            (
+                "StandardL",
+                STANDARD,
+                (
+                    (&STANDARD_L_SLOW_BLOCK, &STANDARD_L_SLOW_LATER),
+                    (&STANDARD_L_FAST_BLOCK, &STANDARD_L_FAST_LATER),
+                ),
+            ),
+        ];
+        for (name, consts, (slow, fast)) in cases {
+            assert_pinned(name, &consts[1..], slow, fast);
+        }
+    }
+
+    /// `StandardN(freq, k=100, xi=-1, yi=0)`: the kick drives the momentum to about `-84`, far
+    /// below `mod2pi`'s `[-2π, 4π)` fast path, so its truncating branch wraps both variables -
+    /// negative, where a Euclidean wrap would not be.
+    #[test]
+    fn standard_n_wraps_like_mod2pi() {
+        assert_pinned(
+            "StandardN",
+            &[100.0, -1.0, 0.0],
+            (&STANDARD_N_WIDE_SLOW_BLOCK, &STANDARD_N_WIDE_SLOW_LATER),
+            (&STANDARD_N_WIDE_FAST_BLOCK, &STANDARD_N_WIDE_FAST_LATER),
+        );
+    }
+
+    /// `StandardN` at [`ODD_RATE`] iterates on scsynth's cadence, as `CuspN` does above.
+    #[test]
+    fn standard_n_hold_length_divides_like_scsynth() {
+        let out = render_at(ODD_RATE, "StandardN", &[ODD_FREQ, 1.0, 0.5, 0.0], FRAMES);
+        let what = format!("StandardN at {ODD_RATE} Hz");
+        assert_bits(&out[..BLOCK], &STANDARD_N_ODD_RATE_BLOCK, &what);
+        assert_points(&out, &STANDARD_N_ODD_RATE_LATER, &what);
+    }
+
+    #[rustfmt::skip]
+    const LATOOCARFIAN_L_SLOW_BLOCK: [u32; 64] = [
+        0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000,
+        0x3f25_316c, 0x3f4a_62d8, 0x3f6f_9443, 0x3f8a_62d8, 0x3f9c_fb8e, 0x3faf_9443, 0x3fbf_84e0,
+        0x3faa_08c4, 0x3f94_8ca9, 0x3f7e_211a, 0x3f53_28e3, 0x3f28_30ac, 0x3efa_70ea, 0x3eb0_c766,
+        0x3e7f_3689, 0x3e1c_de46, 0x3d6a_180d, 0xbd1f_48fe, 0xbe0a_2a82, 0xbe6c_82c5, 0xbea0_6737,
+        0xbe71_7e31, 0xbe22_2df5, 0xbda5_bb71, 0xbb63_5f22, 0x3d97_857f, 0x3e1b_12fc, 0x3e5f_0e9e,
+        0x3e83_060e, 0x3e96_84cc, 0x3eaa_038a, 0x3ebd_8249, 0x3ed1_0107, 0x3ee4_7fc5, 0x3ef5_358d,
+        0x3f14_4aec, 0x3f2d_fb12, 0x3f47_ab38, 0x3f61_5b5e, 0x3f7b_0b83, 0x3f8a_5dd5, 0x3f95_602e,
+        0x3f8e_afe4, 0x3f87_ff9a, 0x3f81_4f51, 0x3f75_3e0e, 0x3f67_dd7a, 0x3f4f_058c, 0x3f2d_1b2b,
+        0x3f0b_30ca, 0x3ed2_8cd2, 0x3e8e_b80f, 0x3e15_c69a, 0x3c61_d15c, 0xbdcc_5629, 0xbe2a_ab67,
+        0xbe6f_2bb9,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const LATOOCARFIAN_L_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0xbecc_8e8c),
+        (1023, 0x3f30_eb12),
+        (2047, 0xbe46_6c66),
+        (4095, 0xbf50_10a4),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const LATOOCARFIAN_L_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0xbecc_9c69),
+        (1023, 0xbce8_8ed4),
+        (2047, 0x3e3c_81e9),
+        (4095, 0x3ed3_b110),
+    ];
+
+    #[cfg(target_os = "macos")]
+    #[rustfmt::skip]
+    const LATOOCARFIAN_L_FAST_BLOCK: [u32; 64] = [
+        0x3f00_0000, 0x3fbf_84e0, 0x3eb0_c766, 0xbea0_6737, 0x3e5f_0e9e, 0x3ef5_358d, 0x3f95_602e,
+        0x3f4f_058c, 0xbdcc_5629, 0xbf0e_f909, 0x3ec8_05fe, 0xbed1_8d4c, 0x3dea_e469, 0xbf1a_abae,
+        0xbf13_ca7b, 0xbfbd_1d92, 0xbe16_3331, 0x3f18_b54e, 0xbee9_a4ac, 0x3e65_8a43, 0xbefa_a85e,
+        0xbe94_1032, 0xbfac_5a53, 0xbf1b_060b, 0xbc03_992d, 0xbd27_f2d3, 0xbf83_b701, 0xbf37_56e6,
+        0xbf1c_e58d, 0xbed0_4be5, 0xbf11_62f7, 0xbf8f_ff1e, 0xbe9a_b1a0, 0x3e90_febe, 0xbeb1_0495,
+        0xbf24_e169, 0xbfaf_4fc6, 0xbe99_5c31, 0x3eba_8a0e, 0xbe8b_7cfa, 0xbeb4_07e5, 0xbf93_8e3b,
+        0xbf55_8ef1, 0xbc6a_6605, 0x3ed1_b28a, 0xbf05_2f6f, 0xbc95_ed83, 0xbf79_3e8e, 0xbf38_9213,
+        0xbf3e_3f95, 0xbeb2_c0a1, 0xbe71_4e54, 0xbf82_a1a7, 0xbf82_a952, 0x3e53_9acb, 0x3f7d_1106,
+        0xbf26_cb8a, 0x3ecd_d803, 0xbe93_19e7, 0x3e9b_83d7, 0xbd84_b66b, 0x3f04_1835, 0x3f21_d9c5,
+        0x3fbc_9803,
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[rustfmt::skip]
+    const LATOOCARFIAN_L_FAST_BLOCK: [u32; 64] = [
+        0x3f00_0000, 0x3fbf_84e0, 0x3eb0_c766, 0xbea0_6737, 0x3e5f_0e9e, 0x3ef5_358d, 0x3f95_602e,
+        0x3f4f_058c, 0xbdcc_5629, 0xbf0e_f909, 0x3ec8_05fe, 0xbed1_8d4c, 0x3dea_e469, 0xbf1a_abae,
+        0xbf13_ca7b, 0xbfbd_1d92, 0xbe16_3331, 0x3f18_b54e, 0xbee9_a4ac, 0x3e65_8a43, 0xbefa_a85e,
+        0xbe94_1032, 0xbfac_5a53, 0xbf1b_060b, 0xbc03_992d, 0xbd27_f2d3, 0xbf83_b701, 0xbf37_56e6,
+        0xbf1c_e58d, 0xbed0_4be5, 0xbf11_62f7, 0xbf8f_ff1e, 0xbe9a_b1a0, 0x3e90_febe, 0xbeb1_0495,
+        0xbf24_e169, 0xbfaf_4fc6, 0xbe99_5c31, 0x3eba_8a0e, 0xbe8b_7cfa, 0xbeb4_07e5, 0xbf93_8e3b,
+        0xbf55_8ef1, 0xbc6a_6606, 0x3ed1_b28a, 0xbf05_2f6f, 0xbc95_ed84, 0xbf79_3e8e, 0xbf38_9213,
+        0xbf3e_3f95, 0xbeb2_c0a1, 0xbe71_4e55, 0xbf82_a1a7, 0xbf82_a952, 0x3e53_9acb, 0x3f7d_1105,
+        0xbf26_cb89, 0x3ecd_d804, 0xbe93_19e5, 0x3e9b_83da, 0xbd84_b651, 0x3f04_183d, 0x3f21_d9d1,
+        0x3fbc_9801,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const LATOOCARFIAN_L_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0xbf5b_626e),
+        (1023, 0xbede_24be),
+        (2047, 0x3f74_16ee),
+        (4095, 0x3f10_d5ce),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const LATOOCARFIAN_L_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0x3f49_8a76),
+        (1023, 0xbf89_f7e6),
+        (2047, 0xbf3a_0414),
+        (4095, 0x3f03_dd5c),
+    ];
+
+    #[rustfmt::skip]
+    const LATOOCARFIAN_C_SLOW_BLOCK: [u32; 64] = [
+        0x3f15_c92f, 0x3f33_65ed, 0x3f5b_3800, 0x3f87_d097, 0x3fa9_81a1, 0x3fd3_e000, 0x3f00_0000,
+        0x3efb_5df4, 0x3ef0_a1cd, 0x3ee4_8a83, 0x3edb_d710, 0x3edb_466c, 0x3ee7_9791, 0x3f00_0000,
+        0x3f1c_9e27, 0x3f48_4950, 0x3f7b_84ae, 0x3f97_69b7, 0x3fad_5c62, 0x3fbb_dbf0, 0x3fbf_84e0,
+        0x3fb8_155c, 0x3fa6_c2be, 0x3f8e_b1d1, 0x3f66_0ebe, 0x3f2d_d068, 0x3ef5_e467, 0x3eb0_c766,
+        0x3e59_52a7, 0x3da6_8a4c, 0xbd27_d415, 0xbe17_b724, 0xbe6f_5c86, 0xbe95_203c, 0xbea0_6737,
+        0xbe97_e548, 0xbe72_fc83, 0xbe18_4ca5, 0xbd36_8d4c, 0x3d7c_5c5b, 0x3e1f_fa3e, 0x3e5f_0e9e,
+        0x3e88_6499, 0x3e9a_0c4a, 0x3ea7_d06b, 0x3eb5_0302, 0x3ec4_f617, 0x3eda_fbb4, 0x3ef5_358d,
+        0x3f10_e921, 0x3f2e_0db8, 0x3f4e_861e, 0x3f6e_cfe5, 0x3f85_b44f, 0x3f95_602e, 0x3f96_73c3,
+        0x3f93_eb97, 0x3f8e_5ef8, 0x3f86_6534, 0x3f79_2b31, 0x3f63_0ee6, 0x3f4f_058c, 0x3f33_8d81,
+        0x3f12_06cd,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const LATOOCARFIAN_C_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0x3ef0_3ddb),
+        (1023, 0x3f82_d964),
+        (2047, 0xbd30_4e7a),
+        (4095, 0xbf87_0cd1),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const LATOOCARFIAN_C_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0x3ef0_3e6e),
+        (1023, 0x3eb1_40e8),
+        (2047, 0x3ddd_f661),
+        (4095, 0xbd8a_f31a),
+    ];
+
+    #[cfg(target_os = "macos")]
+    #[rustfmt::skip]
+    const LATOOCARFIAN_C_FAST_BLOCK: [u32; 64] = [
+        0x3f00_0000, 0x3f00_0000, 0x3fbf_84e0, 0x3eb0_c766, 0xbea0_6737, 0x3e5f_0e9e, 0x3ef5_358d,
+        0x3f95_602e, 0x3f4f_058c, 0xbdcc_5629, 0xbf0e_f909, 0x3ec8_05fe, 0xbed1_8d4c, 0x3dea_e469,
+        0xbf1a_abae, 0xbf13_ca7b, 0xbfbd_1d92, 0xbe16_3331, 0x3f18_b54e, 0xbee9_a4ac, 0x3e65_8a43,
+        0xbefa_a85e, 0xbe94_1032, 0xbfac_5a53, 0xbf1b_060b, 0xbc03_992d, 0xbd27_f2d3, 0xbf83_b701,
+        0xbf37_56e6, 0xbf1c_e58d, 0xbed0_4be5, 0xbf11_62f7, 0xbf8f_ff1e, 0xbe9a_b1a0, 0x3e90_febe,
+        0xbeb1_0495, 0xbf24_e169, 0xbfaf_4fc6, 0xbe99_5c31, 0x3eba_8a0e, 0xbe8b_7cfa, 0xbeb4_07e5,
+        0xbf93_8e3b, 0xbf55_8ef1, 0xbc6a_6605, 0x3ed1_b28a, 0xbf05_2f6f, 0xbc95_ed83, 0xbf79_3e8e,
+        0xbf38_9213, 0xbf3e_3f95, 0xbeb2_c0a1, 0xbe71_4e54, 0xbf82_a1a7, 0xbf82_a952, 0x3e53_9acb,
+        0x3f7d_1106, 0xbf26_cb8a, 0x3ecd_d803, 0xbe93_19e7, 0x3e9b_83d7, 0xbd84_b66b, 0x3f04_1835,
+        0x3f21_d9c5,
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[rustfmt::skip]
+    const LATOOCARFIAN_C_FAST_BLOCK: [u32; 64] = [
+        0x3f00_0000, 0x3f00_0000, 0x3fbf_84e0, 0x3eb0_c766, 0xbea0_6737, 0x3e5f_0e9e, 0x3ef5_358d,
+        0x3f95_602e, 0x3f4f_058c, 0xbdcc_5629, 0xbf0e_f909, 0x3ec8_05fe, 0xbed1_8d4c, 0x3dea_e469,
+        0xbf1a_abae, 0xbf13_ca7b, 0xbfbd_1d92, 0xbe16_3331, 0x3f18_b54e, 0xbee9_a4ac, 0x3e65_8a43,
+        0xbefa_a85e, 0xbe94_1032, 0xbfac_5a53, 0xbf1b_060b, 0xbc03_992d, 0xbd27_f2d3, 0xbf83_b701,
+        0xbf37_56e6, 0xbf1c_e58d, 0xbed0_4be5, 0xbf11_62f7, 0xbf8f_ff1e, 0xbe9a_b1a0, 0x3e90_febe,
+        0xbeb1_0495, 0xbf24_e169, 0xbfaf_4fc6, 0xbe99_5c31, 0x3eba_8a0e, 0xbe8b_7cfa, 0xbeb4_07e5,
+        0xbf93_8e3b, 0xbf55_8ef1, 0xbc6a_6606, 0x3ed1_b28a, 0xbf05_2f6f, 0xbc95_ed84, 0xbf79_3e8e,
+        0xbf38_9213, 0xbf3e_3f95, 0xbeb2_c0a1, 0xbe71_4e55, 0xbf82_a1a7, 0xbf82_a952, 0x3e53_9acb,
+        0x3f7d_1105, 0xbf26_cb89, 0x3ecd_d804, 0xbe93_19e5, 0x3e9b_83da, 0xbd84_b651, 0x3f04_183d,
+        0x3f21_d9d1,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const LATOOCARFIAN_C_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0xbf69_a27b),
+        (1023, 0x3ea3_e254),
+        (2047, 0x3e07_690a),
+        (4095, 0xbf38_841f),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const LATOOCARFIAN_C_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0x3cf0_b4e6),
+        (1023, 0xbf51_0748),
+        (2047, 0xbf82_29c5),
+        (4095, 0xbed4_d139),
+    ];
+
+    #[rustfmt::skip]
+    const STANDARD_N_SLOW_BLOCK: [u32; 64] = [
+        0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf30_3071,
+        0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbe8a_f246,
+        0xbe8a_f246, 0xbe8a_f246, 0xbe8a_f246, 0xbe8a_f246, 0xbe8a_f246, 0xbe8a_f246, 0x3ec5_3366,
+        0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3f3e_6ed0,
+        0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f5f_8c35,
+        0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f61_0fae,
+        0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f44_5fc2,
+        0x3f44_5fc2, 0x3f44_5fc2, 0x3f44_5fc2, 0x3f44_5fc2, 0x3f44_5fc2, 0x3ee2_7b6a, 0x3ee2_7b6a,
+        0x3ee2_7b6a, 0x3ee2_7b6a, 0x3ee2_7b6a, 0x3ee2_7b6a, 0x3ee2_7b6a, 0xbe48_2f7f, 0xbe48_2f7f,
+        0xbe48_2f7f,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const STANDARD_N_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0xbec0_22cf),
+        (1023, 0x3e75_6515),
+        (2047, 0xbf41_4aa0),
+        (4095, 0xbf24_0b43),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const STANDARD_N_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0xbec0_22cf),
+        (1023, 0x3e75_6515),
+        (2047, 0xbf6c_9442),
+        (4095, 0xbf17_fbb4),
+    ];
+
+    #[rustfmt::skip]
+    const STANDARD_N_FAST_BLOCK: [u32; 64] = [
+        0xbf30_3071, 0xbe8a_f246, 0x3ec5_3366, 0x3f3e_6ed0, 0x3f5f_8c35, 0x3f61_0fae, 0x3f44_5fc2,
+        0x3ee2_7b6a, 0xbe48_2f7f, 0xbf26_5ff4, 0xbf52_160a, 0xbf52_464b, 0xbf27_198b, 0xbe4e_8ef0,
+        0x3ee0_252a, 0x3f43_d95c, 0x3f60_ca4c, 0x3f5f_4772, 0x3f3d_eb55, 0x3ec2_f944, 0xbe8d_92ad,
+        0xbf30_d897, 0xbf57_a004, 0xbf57_a935, 0xbf30_fc3e, 0xbe8e_3732, 0x3ec2_618a, 0x3f3d_c1be,
+        0x3f5f_2382, 0x3f60_8af4, 0x3f43_43e3, 0x3edd_718f, 0xbe55_ef98, 0xbf27_f6c7, 0xbf52_8fc5,
+        0xbf52_0a08, 0xbf25_f450, 0xbe44_400a, 0x3ee3_f62c, 0x3f44_bd62, 0x3f61_535b, 0x3f5f_f4d3,
+        0x3f3f_5ce9, 0x3ec9_66ac, 0xbe85_d67e, 0xbf2e_e43d, 0xbf56_801c, 0xbf56_6168, 0xbf2e_6d57,
+        0xbe83_b773, 0x3ecb_4264, 0x3f3f_dc2f, 0x3f60_5f15, 0x3f62_0ad7, 0x3f46_6d09, 0x3eeb_d096,
+        0xbe2d_e5a0, 0xbf23_6a33, 0xbf51_7189, 0xbf53_684f, 0xbf2a_f8b0, 0xbe70_7905, 0x3ed3_179d,
+        0x3f40_cc13,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const STANDARD_N_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0x3f59_1871),
+        (1023, 0x3e60_88f9),
+        (2047, 0xbe53_9bf4),
+        (4095, 0x3e90_451c),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const STANDARD_N_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0x3f22_1f1b),
+        (1023, 0xbf7d_0f95),
+        (2047, 0x3eb0_c2c5),
+        (4095, 0xbf20_be7a),
+    ];
+
+    #[rustfmt::skip]
+    const LATOOCARFIAN_N_SLOW_BLOCK: [u32; 64] = [
+        0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3f00_0000, 0x3fbf_84e0,
+        0x3fbf_84e0, 0x3fbf_84e0, 0x3fbf_84e0, 0x3fbf_84e0, 0x3fbf_84e0, 0x3fbf_84e0, 0x3eb0_c766,
+        0x3eb0_c766, 0x3eb0_c766, 0x3eb0_c766, 0x3eb0_c766, 0x3eb0_c766, 0x3eb0_c766, 0xbea0_6737,
+        0xbea0_6737, 0xbea0_6737, 0xbea0_6737, 0xbea0_6737, 0xbea0_6737, 0xbea0_6737, 0x3e5f_0e9e,
+        0x3e5f_0e9e, 0x3e5f_0e9e, 0x3e5f_0e9e, 0x3e5f_0e9e, 0x3e5f_0e9e, 0x3e5f_0e9e, 0x3ef5_358d,
+        0x3ef5_358d, 0x3ef5_358d, 0x3ef5_358d, 0x3ef5_358d, 0x3ef5_358d, 0x3ef5_358d, 0x3f95_602e,
+        0x3f95_602e, 0x3f95_602e, 0x3f95_602e, 0x3f95_602e, 0x3f95_602e, 0x3f95_602e, 0x3f4f_058c,
+        0x3f4f_058c, 0x3f4f_058c, 0x3f4f_058c, 0x3f4f_058c, 0x3f4f_058c, 0xbdcc_5629, 0xbdcc_5629,
+        0xbdcc_5629, 0xbdcc_5629, 0xbdcc_5629, 0xbdcc_5629, 0xbdcc_5629, 0xbf0e_f909, 0xbf0e_f909,
+        0xbf0e_f909,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const LATOOCARFIAN_N_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0xbf2e_9593),
+        (1023, 0x3f1f_51e9),
+        (2047, 0xbed3_ca4c),
+        (4095, 0xbe07_fa94),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const LATOOCARFIAN_N_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0xbf2e_9f02),
+        (1023, 0x3ef5_c82f),
+        (2047, 0x3cb3_065f),
+        (4095, 0x3ea5_dfd3),
+    ];
+
+    #[cfg(target_os = "macos")]
+    #[rustfmt::skip]
+    const LATOOCARFIAN_N_FAST_BLOCK: [u32; 64] = [
+        0x3fbf_84e0, 0x3eb0_c766, 0xbea0_6737, 0x3e5f_0e9e, 0x3ef5_358d, 0x3f95_602e, 0x3f4f_058c,
+        0xbdcc_5629, 0xbf0e_f909, 0x3ec8_05fe, 0xbed1_8d4c, 0x3dea_e469, 0xbf1a_abae, 0xbf13_ca7b,
+        0xbfbd_1d92, 0xbe16_3331, 0x3f18_b54e, 0xbee9_a4ac, 0x3e65_8a43, 0xbefa_a85e, 0xbe94_1032,
+        0xbfac_5a53, 0xbf1b_060b, 0xbc03_992d, 0xbd27_f2d3, 0xbf83_b701, 0xbf37_56e6, 0xbf1c_e58d,
+        0xbed0_4be5, 0xbf11_62f7, 0xbf8f_ff1e, 0xbe9a_b1a0, 0x3e90_febe, 0xbeb1_0495, 0xbf24_e169,
+        0xbfaf_4fc6, 0xbe99_5c31, 0x3eba_8a0e, 0xbe8b_7cfa, 0xbeb4_07e5, 0xbf93_8e3b, 0xbf55_8ef1,
+        0xbc6a_6605, 0x3ed1_b28a, 0xbf05_2f6f, 0xbc95_ed83, 0xbf79_3e8e, 0xbf38_9213, 0xbf3e_3f95,
+        0xbeb2_c0a1, 0xbe71_4e54, 0xbf82_a1a7, 0xbf82_a952, 0x3e53_9acb, 0x3f7d_1106, 0xbf26_cb8a,
+        0x3ecd_d803, 0xbe93_19e7, 0x3e9b_83d7, 0xbd84_b66b, 0x3f04_1835, 0x3f21_d9c5, 0x3fbc_9803,
+        0x3de0_ca4a,
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[rustfmt::skip]
+    const LATOOCARFIAN_N_FAST_BLOCK: [u32; 64] = [
+        0x3fbf_84e0, 0x3eb0_c766, 0xbea0_6737, 0x3e5f_0e9e, 0x3ef5_358d, 0x3f95_602e, 0x3f4f_058c,
+        0xbdcc_5629, 0xbf0e_f909, 0x3ec8_05fe, 0xbed1_8d4c, 0x3dea_e469, 0xbf1a_abae, 0xbf13_ca7b,
+        0xbfbd_1d92, 0xbe16_3331, 0x3f18_b54e, 0xbee9_a4ac, 0x3e65_8a43, 0xbefa_a85e, 0xbe94_1032,
+        0xbfac_5a53, 0xbf1b_060b, 0xbc03_992d, 0xbd27_f2d3, 0xbf83_b701, 0xbf37_56e6, 0xbf1c_e58d,
+        0xbed0_4be5, 0xbf11_62f7, 0xbf8f_ff1e, 0xbe9a_b1a0, 0x3e90_febe, 0xbeb1_0495, 0xbf24_e169,
+        0xbfaf_4fc6, 0xbe99_5c31, 0x3eba_8a0e, 0xbe8b_7cfa, 0xbeb4_07e5, 0xbf93_8e3b, 0xbf55_8ef1,
+        0xbc6a_6606, 0x3ed1_b28a, 0xbf05_2f6f, 0xbc95_ed84, 0xbf79_3e8e, 0xbf38_9213, 0xbf3e_3f95,
+        0xbeb2_c0a1, 0xbe71_4e55, 0xbf82_a1a7, 0xbf82_a952, 0x3e53_9acb, 0x3f7d_1105, 0xbf26_cb89,
+        0x3ecd_d804, 0xbe93_19e5, 0x3e9b_83da, 0xbd84_b651, 0x3f04_183d, 0x3f21_d9d1, 0x3fbc_9801,
+        0x3de0_c950,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const LATOOCARFIAN_N_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0xbf2b_67fc),
+        (1023, 0xbd3b_b644),
+        (2047, 0x3f5e_f32b),
+        (4095, 0xbef1_9075),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const LATOOCARFIAN_N_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0xbf20_b802),
+        (1023, 0xbeeb_7f9a),
+        (2047, 0xbf20_ad0d),
+        (4095, 0xbb1f_8b86),
+    ];
+
+    #[rustfmt::skip]
+    const STANDARD_L_SLOW_BLOCK: [u32; 64] = [
+        0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f, 0xbf57_419f,
+        0xbf51_8f1e, 0xbf4b_dc9c, 0xbf46_2a1b, 0xbf40_779a, 0xbf3a_c518, 0xbf35_1297, 0xbf30_3071,
+        0xbf20_a060, 0xbf11_1050, 0xbf01_803f, 0xbee3_e05d, 0xbec4_c03b, 0xbea5_a01a, 0xbe8a_f246,
+        0xbe33_d990, 0xbda3_9d26, 0x3c81_e34d, 0x3de4_8ecd, 0x3e54_5263, 0x3e9b_2eb0, 0x3ec5_3366,
+        0x3edf_fc39, 0x3efa_c50c, 0x3f0a_c6f0, 0x3f18_2b59, 0x3f25_8fc3, 0x3f32_f42c, 0x3f3e_6ed0,
+        0x3f43_4319, 0x3f48_1763, 0x3f4c_ebac, 0x3f51_bff6, 0x3f56_943f, 0x3f5b_6888, 0x3f5f_8c35,
+        0x3f5f_c4b7, 0x3f5f_fd38, 0x3f60_35ba, 0x3f60_6e3c, 0x3f60_a6bd, 0x3f60_df3f, 0x3f61_0fae,
+        0x3f5c_e0b1, 0x3f58_b1b4, 0x3f54_82b7, 0x3f50_53ba, 0x3f4c_24bd, 0x3f44_5fc2, 0x3f38_4020,
+        0x3f2c_207e, 0x3f20_00dc, 0x3f13_e13a, 0x3f07_c199, 0x3ef7_43ed, 0x3ee2_7b6a, 0x3eb2_db49,
+        0x3e83_3b29,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const STANDARD_L_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0xbf06_98b4),
+        (1023, 0xbe74_2879),
+        (2047, 0xbf1b_2fa2),
+        (4095, 0xbe59_d815),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const STANDARD_L_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0xbf06_98b4),
+        (1023, 0xbe74_2879),
+        (2047, 0xbe18_6598),
+        (4095, 0xbe85_1c7a),
+    ];
+
+    #[rustfmt::skip]
+    const STANDARD_L_FAST_BLOCK: [u32; 64] = [
+        0xbf57_419f, 0xbf30_3071, 0xbe8a_f246, 0x3ec5_3366, 0x3f3e_6ed0, 0x3f5f_8c35, 0x3f61_0fae,
+        0x3f44_5fc2, 0x3ee2_7b6a, 0xbe48_2f7f, 0xbf26_5ff4, 0xbf52_160a, 0xbf52_464b, 0xbf27_198b,
+        0xbe4e_8ef0, 0x3ee0_252a, 0x3f43_d95c, 0x3f60_ca4c, 0x3f5f_4772, 0x3f3d_eb55, 0x3ec2_f944,
+        0xbe8d_92ad, 0xbf30_d897, 0xbf57_a004, 0xbf57_a935, 0xbf30_fc3e, 0xbe8e_3732, 0x3ec2_618a,
+        0x3f3d_c1be, 0x3f5f_2382, 0x3f60_8af4, 0x3f43_43e3, 0x3edd_718f, 0xbe55_ef98, 0xbf27_f6c7,
+        0xbf52_8fc5, 0xbf52_0a08, 0xbf25_f450, 0xbe44_400a, 0x3ee3_f62c, 0x3f44_bd62, 0x3f61_535b,
+        0x3f5f_f4d3, 0x3f3f_5ce9, 0x3ec9_66ac, 0xbe85_d67e, 0xbf2e_e43d, 0xbf56_801c, 0xbf56_6168,
+        0xbf2e_6d57, 0xbe83_b773, 0x3ecb_4264, 0x3f3f_dc2f, 0x3f60_5f15, 0x3f62_0ad7, 0x3f46_6d09,
+        0x3eeb_d096, 0xbe2d_e5a0, 0xbf23_6a33, 0xbf51_7189, 0xbf53_684f, 0xbf2a_f8b0, 0xbe70_7905,
+        0x3ed3_179d,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const STANDARD_L_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0xbf61_c820),
+        (1023, 0xbee3_cfdf),
+        (2047, 0x3ef0_5b29),
+        (4095, 0xbf01_acc6),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const STANDARD_L_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0x3e6d_9e8a),
+        (1023, 0x3f70_fb42),
+        (2047, 0xbe97_77dc),
+        (4095, 0xbf46_e65b),
+    ];
+
+    #[rustfmt::skip]
+    const STANDARD_N_WIDE_SLOW_BLOCK: [u32; 64] = [
+        0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbfa8_be61, 0xbdd3_473e,
+        0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbdd3_473e, 0xbf40_587b,
+        0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf40_587b, 0xbf7c_bf71,
+        0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0xbf7c_bf71, 0x3d3f_b4f4,
+        0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3d3f_b4f4, 0x3ed5_b651,
+        0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3ed5_b651, 0x3cb8_e13c,
+        0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0x3cb8_e13c, 0xbf20_910c,
+        0xbf20_910c, 0xbf20_910c, 0xbf20_910c, 0xbf20_910c, 0xbf20_910c, 0x3d3a_c2f4, 0x3d3a_c2f4,
+        0x3d3a_c2f4, 0x3d3a_c2f4, 0x3d3a_c2f4, 0x3d3a_c2f4, 0x3d3a_c2f4, 0x3e32_8f46, 0x3e32_8f46,
+        0x3e32_8f46,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const STANDARD_N_WIDE_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0x3dea_bdb2),
+        (1023, 0xbf6c_9415),
+        (2047, 0xbea8_53b7),
+        (4095, 0xbf65_5ff9),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const STANDARD_N_WIDE_SLOW_LATER: [(usize, u32); 4] = [
+        (511, 0x3dea_bdb2),
+        (1023, 0xbf6c_9415),
+        (2047, 0x3ec4_4a17),
+        (4095, 0xbbc3_c67b),
+    ];
+
+    #[rustfmt::skip]
+    const STANDARD_N_WIDE_FAST_BLOCK: [u32; 64] = [
+        0xbdd3_473e, 0xbf40_587b, 0xbf7c_bf71, 0x3d3f_b4f4, 0x3ed5_b651, 0x3cb8_e13c, 0xbf20_910c,
+        0x3d3a_c2f4, 0x3e32_8f46, 0xbe8c_df63, 0xbf02_cf72, 0xbf6f_4c03, 0xbf61_25c1, 0x3f71_11ae,
+        0x3f76_882e, 0xbf34_ae4d, 0xbf77_8e72, 0x3d83_53d0, 0x3f39_e086, 0xbf3e_fa6b, 0x3f11_fd19,
+        0x3f53_f88a, 0x3f36_2b09, 0xbeea_9b18, 0xbd91_3733, 0xbf26_c7cb, 0xbf70_2f62, 0x3f69_fdc8,
+        0x3e8b_ec7b, 0xbeeb_bd2e, 0x3ec8_48b5, 0xbf3f_0298, 0x3f65_6e0e, 0x3eaf_6214, 0xbe67_fc54,
+        0xbbb6_5c4e, 0x3f45_9be5, 0x3f24_902e, 0xbe2a_609d, 0x3f6a_59a2, 0xbeb8_9f79, 0xbf4f_57a8,
+        0x3f23_5934, 0xbf4b_f311, 0x3f3f_00ef, 0xbefc_2d52, 0x3dba_7c18, 0xbe9d_5f85, 0xbf07_1b79,
+        0x3f76_3ad3, 0x3f24_e288, 0xbe99_1ed0, 0x3ee8_aae2, 0xbe98_4643, 0x3f0c_ae61, 0xbd4c_2652,
+        0x3ea1_0e76, 0x3dc9_7ef9, 0x3e4c_3d35, 0xbeba_d769, 0x3da0_b323, 0x3f41_21a0, 0xbf43_4c48,
+        0xbf33_8f2d,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const STANDARD_N_WIDE_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0x3f77_8449),
+        (1023, 0xbf2b_8eef),
+        (2047, 0x3d88_b149),
+        (4095, 0xbda4_d8e9),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const STANDARD_N_WIDE_FAST_LATER: [(usize, u32); 4] = [
+        (511, 0x3e83_22e9),
+        (1023, 0x3eef_4d5d),
+        (2047, 0x3ee0_277a),
+        (4095, 0x3f2c_117c),
+    ];
+
+    #[rustfmt::skip]
+    const STANDARD_N_ODD_RATE_BLOCK: [u32; 64] = [
+        0xbf57_419f, 0xbf57_419f, 0xbf30_3071, 0xbf30_3071, 0xbf30_3071, 0xbe8a_f246, 0xbe8a_f246,
+        0xbe8a_f246, 0x3ec5_3366, 0x3ec5_3366, 0x3ec5_3366, 0x3f3e_6ed0, 0x3f3e_6ed0, 0x3f3e_6ed0,
+        0x3f5f_8c35, 0x3f5f_8c35, 0x3f5f_8c35, 0x3f61_0fae, 0x3f61_0fae, 0x3f61_0fae, 0x3f44_5fc2,
+        0x3f44_5fc2, 0x3f44_5fc2, 0x3ee2_7b6a, 0x3ee2_7b6a, 0x3ee2_7b6a, 0xbe48_2f7f, 0xbe48_2f7f,
+        0xbe48_2f7f, 0xbf26_5ff4, 0xbf26_5ff4, 0xbf26_5ff4, 0xbf52_160a, 0xbf52_160a, 0xbf52_160a,
+        0xbf52_464b, 0xbf52_464b, 0xbf52_464b, 0xbf27_198b, 0xbf27_198b, 0xbf27_198b, 0xbe4e_8ef0,
+        0xbe4e_8ef0, 0xbe4e_8ef0, 0x3ee0_252a, 0x3ee0_252a, 0x3ee0_252a, 0x3f43_d95c, 0x3f43_d95c,
+        0x3f43_d95c, 0x3f60_ca4c, 0x3f60_ca4c, 0x3f60_ca4c, 0x3f5f_4772, 0x3f5f_4772, 0x3f5f_4772,
+        0x3f3d_eb55, 0x3f3d_eb55, 0x3f3d_eb55, 0x3ec2_f944, 0x3ec2_f944, 0x3ec2_f944, 0xbe8d_92ad,
+        0xbe8d_92ad,
+    ];
+
+    #[cfg(target_os = "macos")]
+    const STANDARD_N_ODD_RATE_LATER: [(usize, u32); 4] = [
+        (511, 0x3f29_e647),
+        (1023, 0xbedf_0b8c),
+        (2047, 0x3f4c_fb85),
+        (4095, 0x3e89_f200),
+    ];
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    const STANDARD_N_ODD_RATE_LATER: [(usize, u32); 4] = [
+        (511, 0x3f29_e647),
+        (1023, 0x3f57_aafe),
+        (2047, 0x3f1f_b403),
+        (4095, 0x3f36_7b93),
+    ];
+}
