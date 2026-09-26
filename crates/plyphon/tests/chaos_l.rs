@@ -184,7 +184,7 @@ fn mod2pi(mut x: f64) -> f64 {
     x - TWO_PI * f64::from((x * REC_TWO_PI) as i32)
 }
 
-/// The Euclidean wrap `StandardN` uses, for contrast: never negative.
+/// A Euclidean wrap, for contrast: never negative.
 fn rem_euclid_2pi(x: f64) -> f64 {
     x.rem_euclid(TWO_PI)
 }
@@ -661,7 +661,7 @@ fn henon_l_escape_latch_and_recovery() {
 }
 
 /// `StandardL` wraps its phase with scsynth's truncating `mod2pi`, which returns negative values
-/// below `-2π` - unlike the Euclidean wrap the `*N` family uses.
+/// below `-2π` - unlike a Euclidean wrap.
 #[test]
 fn standard_l_wraps_like_mod2pi() {
     // `k = 100` with a negative seed drives the momentum to about `-84`, far below the `[-2π, 4π)`
