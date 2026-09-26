@@ -97,6 +97,8 @@ pub mod pv_mag_mul;
 pub mod pv_mag_squared;
 #[cfg(feature = "fft")]
 pub mod pv_ops;
+#[cfg(feature = "fft")]
+pub mod pv_random;
 pub mod ramp;
 pub mod rand;
 pub mod rate_conv;

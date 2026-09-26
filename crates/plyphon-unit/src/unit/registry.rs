@@ -155,6 +155,8 @@ use crate::unit::pv_ops::{
     MagKind, PvBinShiftCtor, PvBrickWallCtor, PvConjCtor, PvDiffuserCtor, PvLocalMaxCtor,
     PvMagSmearCtor, PvMagThreshCtor, PvPhaseQuarterCtor, PvRectCombCtor,
 };
+#[cfg(feature = "fft")]
+use crate::unit::pv_random::{PvBinScrambleCtor, PvMagNoiseCtor, PvRandCombCtor, PvRandWipeCtor};
 use crate::unit::ramp::{RampCtor, VarLagCtor};
 use crate::unit::rand::{
     CoinGateCtor, ExpRandCtor, IRandCtor, LinRandCtor, NRandCtor, RandCtor, RandIDCtor,
@@ -767,6 +769,10 @@ impl UnitRegistry {
             registry.register("PV_BinWipe", Box::new(PvBinWipeCtor));
             registry.register("PV_RectComb2", Box::new(PvRectComb2Ctor));
             registry.register("PV_ConformalMap", Box::new(PvConformalMapCtor));
+            registry.register("PV_MagNoise", Box::new(PvMagNoiseCtor));
+            registry.register("PV_RandComb", Box::new(PvRandCombCtor));
+            registry.register("PV_RandWipe", Box::new(PvRandWipeCtor));
+            registry.register("PV_BinScramble", Box::new(PvBinScrambleCtor));
             // Machine listening over an FFT chain.
             registry.register("BeatTrack", Box::new(BeatTrackCtor));
             registry.register("KeyTrack", Box::new(KeyTrackCtor));
