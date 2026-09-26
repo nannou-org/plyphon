@@ -69,7 +69,7 @@ use crate::unit::filter_simple::{
 };
 use crate::unit::formant::FormantCtor;
 use crate::unit::freeverb::{FreeVerb2Ctor, FreeVerbCtor};
-use crate::unit::gendy::Gendy1Ctor;
+use crate::unit::gendy::{Gendy1Ctor, Gendy2Ctor, Gendy3Ctor};
 use crate::unit::grain::{
     GrainBufCtor, GrainFMCtor, GrainInCtor, GrainSinCtor, TGrainsCtor, Warp1Ctor,
 };
@@ -425,6 +425,8 @@ impl UnitRegistry {
         registry.register("GVerb", Box::new(GVerbCtor));
         // Gendy1: Xenakis dynamic stochastic synthesis.
         registry.register("Gendy1", Box::new(Gendy1Ctor));
+        registry.register("Gendy2", Box::new(Gendy2Ctor));
+        registry.register("Gendy3", Box::new(Gendy3Ctor));
         registry.register("WhiteNoise", Box::new(WhiteNoiseCtor));
         // The init/trigger-time randoms share the synth's RGen stream (see the `rand` module);
         // the free-running noise generators above each embed their own.
