@@ -58,6 +58,8 @@ pub mod line;
 pub mod linen;
 pub mod local_buf;
 pub mod local_io;
+#[cfg(feature = "fft")]
+pub mod loudness;
 pub mod measure;
 pub mod median;
 pub mod moog;

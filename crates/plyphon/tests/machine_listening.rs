@@ -275,3 +275,63 @@ fn spec_pcile_ignores_a_frame_of_another_size() {
     );
     check("SpecPcile size change", &got, &WANT);
 }
+
+// ---- Loudness ----
+
+/// Five 1024-sample frames - loud, quiet, louder with a steep tilt, silent, near-silent - and a
+/// 512-sample frame, too small for the band layout.
+fn loudness_frames() -> Vec<Vec<f32>> {
+    vec![
+        frame(1024, 11, 1.0, 0.05),
+        frame(1024, 12, 0.05, 0.0),
+        frame(1024, 13, 4.0, 0.2),
+        vec![0.0; 1024],
+        frame(1024, 14, 0.0001, 0.0),
+        frame(512, 15, 1.0, 0.0),
+    ]
+}
+
+#[test]
+fn loudness_matches_scsynth() {
+    // The constructor analyses frame 0 (the chain already carries it). Silence then decays each
+    // band by `tmask` phons per frame.
+    const WANT: [[u32; 1]; 10] = [
+        [0x4061a2dd],
+        [0x4061a2dd],
+        [0x40529657],
+        [0x40942ebd],
+        [0x40942ebd],
+        [0x408a425d],
+        [0x4081001b],
+        [0x4070b92a],
+        [0x40609a50],
+        [0x406907aa],
+    ];
+    let chain = [0.0, -1.0, 1.0, 2.0, -1.0, 3.0, 3.0, 3.0, 4.0, 0.0];
+    let got = run("Loudness", &[0.25, 1.0], 1, &loudness_frames(), &chain, SR);
+    check("Loudness", &got, &WANT);
+
+    const MASKS: [[u32; 1]; 9] = [
+        [0x00000000],
+        [0x40959396],
+        [0x407a23e8],
+        [0x407a23e8],
+        [0x404b4ab5],
+        [0x40251fd3],
+        [0x40061f70],
+        [0x3fd9e237],
+        [0x40959396],
+    ];
+    let chain = [-1.0, 2.0, 0.0, -1.0, 1.0, 3.0, 3.0, 4.0, 2.0];
+    let got = run("Loudness", &[0.5, 3.0], 1, &loudness_frames(), &chain, SR);
+    check("Loudness smask/tmask", &got, &MASKS);
+}
+
+#[test]
+fn loudness_skips_a_frame_too_small_for_its_bands() {
+    // The reference reads past the end of a buffer under 1024 samples; plyphon skips the frame and
+    // holds the previous loudness.
+    let chain = [0.0, 5.0, 5.0];
+    let got = run("Loudness", &[0.25, 1.0], 1, &loudness_frames(), &chain, SR);
+    assert_eq!(got, vec![vec![0x4061a2dd]; 3]);
+}

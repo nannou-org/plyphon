@@ -98,6 +98,8 @@ use crate::unit::line::{LineCtor, XLineCtor};
 use crate::unit::linen::LinenCtor;
 use crate::unit::local_buf::{ClearBufCtor, LocalBufCtor, MaxLocalBufsCtor, SetBufCtor};
 use crate::unit::local_io::{LocalInCtor, LocalOutCtor};
+#[cfg(feature = "fft")]
+use crate::unit::loudness::LoudnessCtor;
 use crate::unit::measure::{
     LastValueCtor, LeastChangeCtor, MostChangeCtor, PeakCtor, PeakFollowerCtor, RunningMaxCtor,
     RunningMinCtor,
@@ -757,6 +759,7 @@ impl UnitRegistry {
             registry.register("SpecCentroid", Box::new(SpecCentroidCtor));
             registry.register("SpecFlatness", Box::new(SpecFlatnessCtor));
             registry.register("SpecPcile", Box::new(SpecPcileCtor));
+            registry.register("Loudness", Box::new(LoudnessCtor));
         }
         registry
     }
