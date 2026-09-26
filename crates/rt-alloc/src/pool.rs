@@ -341,14 +341,67 @@ impl<S: AsRef<[Align64]> + AsMut<[Align64]>> RtPool<S> {
 }
 
 #[cfg(feature = "alloc")]
-impl RtPool<alloc::boxed::Box<[Align64]>> {
+impl RtPool<HeapBlocks> {
     /// Build a heap-backed pool with at least `bytes` of backing (rounded up to whole 64-byte
     /// blocks, and to the minimum the layout needs).
+    ///
+    /// The backing is never written up front (see [`HeapBlocks`]), so a large pool costs only the
+    /// memory its allocations touch.
     pub fn with_capacity_bytes(bytes: usize) -> Self {
         let blocks = bytes.div_ceil(crate::layout::ALIGN).max(3);
-        let mut buf = alloc::vec::Vec::with_capacity(blocks);
-        buf.resize(blocks, Align64::ZERO);
-        Self::from_blocks(buf.into_boxed_slice())
+        Self::from_blocks(HeapBlocks::zeroed(blocks))
+    }
+}
+
+/// Heap backing for [`RtPool::with_capacity_bytes`]: whole [`Align64`] blocks carved from one
+/// zero-initialised allocation.
+///
+/// scsynth `malloc`s its real-time arena and never writes it before use, so the operating system
+/// commits each page only when the pool first touches it. Filling a `[Align64]` buffer in place
+/// would write every byte at construction and commit the whole arena. Allocating `u128`s through
+/// the global allocator's zeroed path instead returns untouched, lazily zeroed pages wherever that
+/// path is `calloc` at 16-byte alignment (macOS, Linux); elsewhere it zeroes eagerly. A `u128`
+/// allocation is only guaranteed 16-byte alignment, so the buffer carries up to three spare `u128`s
+/// and the blocks start at its first 64-byte boundary.
+#[cfg(feature = "alloc")]
+pub struct HeapBlocks {
+    buf: alloc::boxed::Box<[u128]>,
+    start: usize,
+    end: usize,
+}
+
+#[cfg(feature = "alloc")]
+impl HeapBlocks {
+    /// `u128`s per [`Align64`] block.
+    const PER_BLOCK: usize = crate::layout::ALIGN / core::mem::size_of::<u128>();
+
+    /// Allocate `blocks` zeroed, 64-byte-aligned blocks without writing them.
+    fn zeroed(blocks: usize) -> Self {
+        let words = blocks * Self::PER_BLOCK;
+        let buf = bytemuck::allocation::zeroed_slice_box::<u128>(words + Self::PER_BLOCK - 1);
+        // A boxed slice never moves its allocation, so this offset stays valid for its life.
+        let misalign = buf.as_ptr() as usize % crate::layout::ALIGN;
+        let start =
+            (crate::layout::ALIGN - misalign) % crate::layout::ALIGN / core::mem::size_of::<u128>();
+        HeapBlocks {
+            buf,
+            start,
+            end: start + words,
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl AsRef<[Align64]> for HeapBlocks {
+    fn as_ref(&self) -> &[Align64] {
+        cast_slice(&self.buf[self.start..self.end])
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl AsMut<[Align64]> for HeapBlocks {
+    fn as_mut(&mut self) -> &mut [Align64] {
+        cast_slice_mut(&mut self.buf[self.start..self.end])
     }
 }
 
@@ -550,14 +603,14 @@ mod tests {
     use super::*;
     use crate::layout::ALIGN;
 
-    fn pool(bytes: usize) -> RtPool<alloc::boxed::Box<[Align64]>> {
+    fn pool(bytes: usize) -> RtPool<HeapBlocks> {
         RtPool::with_capacity_bytes(bytes)
     }
 
     /// A pool packed into exactly four equal 128-byte (`MIN_CHUNK`) chunks with no trailing free
     /// space, so coalescing has unambiguous neighbours and no confounding remainder. Returns the
     /// four regions in physical order.
-    fn filled_quad() -> (RtPool<alloc::boxed::Box<[Align64]>>, [Region; 4]) {
+    fn filled_quad() -> (RtPool<HeapBlocks>, [Region; 4]) {
         // 9 blocks = 576 bytes backing -> 512-byte arena -> four 128-byte chunks, exactly.
         let mut p = pool(576);
         let regions: alloc::vec::Vec<Region> =
@@ -572,6 +625,19 @@ mod tests {
         let p = pool(8 * 1024);
         assert_eq!(p.used_bytes(), 0);
         assert_eq!(p.free_bytes(), p.total_bytes());
+    }
+
+    #[test]
+    fn heap_blocks_are_sized_aligned_and_zeroed() {
+        for blocks in [1, 3, 9, 1000] {
+            let mut heap = HeapBlocks::zeroed(blocks);
+            let slice = heap.as_mut();
+            assert_eq!(slice.len(), blocks);
+            // The blocks sit on a real 64-byte boundary, not just a 64-byte offset.
+            assert_eq!(slice.as_ptr() as usize % ALIGN, 0);
+            let bytes: &[u8] = cast_slice(heap.as_ref());
+            assert!(bytes.iter().all(|&byte| byte == 0));
+        }
     }
 
     #[test]

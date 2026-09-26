@@ -22,7 +22,7 @@ use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use offset_allocator::{Allocation, Allocator};
-use rt_alloc::{Align64, Region, RtPool};
+use rt_alloc::{HeapBlocks, Region, RtPool};
 
 const POOL_BYTES: usize = 8 * 1024 * 1024;
 
@@ -62,7 +62,7 @@ fn synth_lifecycle(c: &mut Criterion) {
     group.bench_function("rt_alloc", |b| {
         b.iter_batched_ref(
             || {
-                let mut pool = RtPool::<Box<[Align64]>>::with_capacity_bytes(POOL_BYTES);
+                let mut pool = RtPool::<HeapBlocks>::with_capacity_bytes(POOL_BYTES);
                 let mut voices: VecDeque<Vec<Region>> = VecDeque::with_capacity(LIVE + 1);
                 for i in 0..LIVE as u32 {
                     voices.push_back(
@@ -142,7 +142,7 @@ fn scratch_churn(c: &mut Criterion) {
 
     group.bench_function("rt_alloc", |b| {
         b.iter_batched_ref(
-            || RtPool::<Box<[Align64]>>::with_capacity_bytes(256 * 1024),
+            || RtPool::<HeapBlocks>::with_capacity_bytes(256 * 1024),
             |pool| {
                 let mut held = Vec::with_capacity(UNITS);
                 for _ in 0..BLOCKS {
@@ -194,7 +194,7 @@ fn fill_drain(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("rt_alloc", n), &szs, |b, szs| {
             b.iter_batched_ref(
-                || RtPool::<Box<[Align64]>>::with_capacity_bytes(POOL_BYTES),
+                || RtPool::<HeapBlocks>::with_capacity_bytes(POOL_BYTES),
                 |pool| {
                     let mut held = Vec::with_capacity(szs.len());
                     for &s in szs {
@@ -241,7 +241,7 @@ fn fragmenting(c: &mut Criterion) {
 
     group.bench_function("rt_alloc", |b| {
         b.iter_batched_ref(
-            || RtPool::<Box<[Align64]>>::with_capacity_bytes(POOL_BYTES),
+            || RtPool::<HeapBlocks>::with_capacity_bytes(POOL_BYTES),
             |pool| {
                 let mut held: Vec<Option<_>> = szs.iter().map(|&s| pool.alloc(s)).collect();
                 for slot in held.iter_mut().step_by(2) {

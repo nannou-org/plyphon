@@ -22,7 +22,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use bytemuck::{cast_slice, cast_slice_mut};
-use rt_alloc::{Align64, Region, RtPool};
+use rt_alloc::{HeapBlocks, Region, RtPool};
 
 use crate::command::Reply;
 
@@ -41,7 +41,7 @@ use plyphon_unit::unit::{
 };
 
 /// The pool type the engine uses: a heap-backed rt-pool of 64-byte-aligned blocks.
-pub(crate) type Pool = RtPool<Box<[Align64]>>;
+pub(crate) type Pool = RtPool<HeapBlocks>;
 
 /// One pool-sized unit's allocation within a synth.
 enum AuxSlot {
