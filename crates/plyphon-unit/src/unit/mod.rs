@@ -43,6 +43,8 @@ pub mod hilbert;
 pub mod info;
 pub mod input;
 pub mod io;
+#[cfg(feature = "fft")]
+pub mod key_track;
 pub mod lf;
 pub mod lf_noise;
 pub mod line;

@@ -77,6 +77,8 @@ use crate::unit::gverb::GVerbCtor;
 use crate::unit::hilbert::{FreqShiftCtor, HilbertCtor};
 use crate::unit::info::{BufInfoCtor, BufInfoKind, InfoCtor, InfoKind, SubsampleOffsetCtor};
 use crate::unit::input::{InCtor, InTrigCtor, LagInCtor};
+#[cfg(feature = "fft")]
+use crate::unit::key_track::KeyTrackCtor;
 use crate::unit::lf::{
     ImpulseCtor, LFCubCtor, LFGaussCtor, LFParCtor, LFPulseCtor, LFSawCtor, LFTriCtor, SyncSawCtor,
     VarSawCtor,
@@ -717,6 +719,8 @@ impl UnitRegistry {
             registry.register("PV_BinShift", Box::new(PvBinShiftCtor));
             registry.register("PV_MagSmear", Box::new(PvMagSmearCtor));
             registry.register("PV_RectComb", Box::new(PvRectCombCtor));
+            // Machine listening over an FFT chain.
+            registry.register("KeyTrack", Box::new(KeyTrackCtor));
             // Spectrum <-> value-list bridge: `Unpack1FFT` reads one bin per pull, `PackFFT` packs a
             // whole magnitude/phase list back into the chain buffer.
             registry.register("PackFFT", Box::new(PackFftCtor));
