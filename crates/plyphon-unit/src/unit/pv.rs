@@ -13,8 +13,8 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::unit::{self, ProcessCtx};
-use plyphon_dsp::buffer::{BufViewMut, SpectrumCoord};
+use crate::unit::{self, LocalBufs, ProcessCtx};
+use plyphon_dsp::buffer::{BufViewMut, BufferTable, SpectrumCoord};
 use plyphon_dsp::complex::ComplexTables;
 
 /// One spectral bin: a pair of floats whose meaning follows the buffer's [`SpectrumCoord`] -
@@ -145,8 +145,41 @@ impl Second<'_> {
     }
 }
 
-/// A converter for [`pv_pair`]: [`to_polar`] or [`to_complex`].
+/// A converter for [`pv_pair`]: [`to_polar`], [`to_complex`], or [`unconverted`].
 pub type Convert = for<'b, 'c> fn(&'b mut BufViewMut<'c>, &ComplexTables) -> Option<Spectrum<'b>>;
+
+/// The [`Convert`] for a two-buffer op that moves whole bins and converts neither buffer
+/// (`PV_RandWipe`): the packed view as it stands.
+pub fn unconverted<'a>(buf: &'a mut BufViewMut<'_>, _: &ComplexTables) -> Option<Spectrum<'a>> {
+    spectrum(buf)
+}
+
+/// [`pv_pair`]'s preamble on its own - scsynth's `PV_GET_BUF2`, then both buffers converted with
+/// `convert` - for a unit that must reach the rest of its context (memory, the random stream)
+/// between the preamble and its op. Returns `A`'s and `B`'s buffer numbers when the op should run,
+/// with output 0 already written, as [`pv_pair`] describes.
+pub fn pv_pair_frame(ctx: &mut ProcessCtx<'_>, convert: Convert) -> Option<(usize, usize)> {
+    let fbufnum1 = ctx.ins.control(0);
+    let fbufnum2 = ctx.ins.control(1);
+    if fbufnum1 < 0.0 || fbufnum2 < 0.0 {
+        *ctx.outs.control(0) = -1.0;
+        return None;
+    }
+    *ctx.outs.control(0) = fbufnum1;
+    let (a, b) = (fbufnum1 as usize, fbufnum2 as usize);
+    let samples = |i| unit::buffer_at(ctx.buffers, &ctx.local_bufs, i).map(|buf| buf.data().len());
+    match (samples(a), samples(b)) {
+        (Some(samples_a), Some(samples_b)) if samples_a == samples_b => {}
+        _ => return None,
+    }
+    let tables = ctx.fft.complex();
+    for i in [a, b] {
+        if let Some(mut buf) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, i) {
+            convert(&mut buf, tables);
+        }
+    }
+    Some((a, b))
+}
 
 /// The two-buffer preamble - scsynth's `PV_GET_BUF2` followed by the unit converting `buf1` then
 /// `buf2` with `convert` - then `op` on `A`'s spectrum and [`Second`] `B`, the result going into `A`.
@@ -162,33 +195,28 @@ pub fn pv_pair(
     convert: Convert,
     op: impl FnOnce(Spectrum<'_>, Second<'_>),
 ) {
-    let fbufnum1 = ctx.ins.control(0);
-    let fbufnum2 = ctx.ins.control(1);
-    if fbufnum1 < 0.0 || fbufnum2 < 0.0 {
-        *ctx.outs.control(0) = -1.0;
-        return;
+    if let Some((a, b)) = pv_pair_frame(ctx, convert) {
+        pv_pair_op(ctx.buffers, &mut ctx.local_bufs, a, b, op);
     }
-    *ctx.outs.control(0) = fbufnum1;
-    let (a, b) = (fbufnum1 as usize, fbufnum2 as usize);
-    let samples = |i| unit::buffer_at(ctx.buffers, &ctx.local_bufs, i).map(|buf| buf.data().len());
-    match (samples(a), samples(b)) {
-        (Some(samples_a), Some(samples_b)) if samples_a == samples_b => {}
-        _ => return,
-    }
-    let tables = ctx.fft.complex();
-    for i in [a, b] {
-        if let Some(mut buf) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, i) {
-            convert(&mut buf, tables);
-        }
-    }
+}
+
+/// [`pv_pair`]'s op on its own: run `op` on buffer `a`'s spectrum and [`Second`] `b`, for buffers
+/// that [`pv_pair_frame`] accepted. It takes the buffer tables rather than the whole context, so
+/// `op` may borrow the unit's memory.
+pub fn pv_pair_op(
+    buffers: &mut BufferTable,
+    local_bufs: &mut LocalBufs<'_>,
+    a: usize,
+    b: usize,
+    op: impl FnOnce(Spectrum<'_>, Second<'_>),
+) {
     if a == b {
-        if let Some(mut buf) = unit::buffer_at_mut(ctx.buffers, &mut ctx.local_bufs, a)
+        if let Some(mut buf) = unit::buffer_at_mut(buffers, local_bufs, a)
             && let Some(p) = Spectrum::new(buf.data_mut())
         {
             op(p, Second::Same);
         }
-    } else if let Some((mut buf_a, buf_b)) =
-        unit::buffer_pair_mut(ctx.buffers, &mut ctx.local_bufs, a, b)
+    } else if let Some((mut buf_a, buf_b)) = unit::buffer_pair_mut(buffers, local_bufs, a, b)
         && let Some(p) = Spectrum::new(buf_a.data_mut())
         && let [dc, nyq, bin_floats @ ..] = buf_b.data()
         && let Ok(bins) = bytemuck::try_cast_slice(bin_floats)

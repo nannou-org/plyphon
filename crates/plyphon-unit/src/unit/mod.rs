@@ -37,6 +37,8 @@ pub mod dynamics;
 pub mod env;
 pub mod eq;
 #[cfg(feature = "fft")]
+pub mod feature_detection;
+#[cfg(feature = "fft")]
 pub mod fft;
 #[cfg(feature = "fft")]
 pub mod fft_trigger;
@@ -97,12 +99,15 @@ pub mod pv_mag_mul;
 pub mod pv_mag_squared;
 #[cfg(feature = "fft")]
 pub mod pv_ops;
+#[cfg(feature = "fft")]
+pub mod pv_random;
 pub mod ramp;
 pub mod rand;
 pub mod rate_conv;
 pub mod record_buf;
 pub mod registry;
 pub mod resonant;
+pub mod running_sum;
 pub mod scope_out;
 pub mod section;
 pub mod select;

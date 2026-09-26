@@ -62,9 +62,16 @@ impl Fft {
 
 impl Unit for Fft {
     fn init(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
-        // The constructor runs no calc and writes no output. A chain reads a negative value as "no
-        // frame yet", so that is the value later constructors see.
-        *ctx.outs.control(0) = -1.0;
+        // The constructor runs no calc. Once it has sized the unit from the chain buffer it passes
+        // the buffer number through (scsynth's `FFTBase_Ctor` ends with `ZOUT0(0) = ZIN0(0)`), so a
+        // later constructor that sizes itself from the chain (`PV_JensenAndersen`) finds the
+        // buffer. A unit that could not size itself writes nothing in scsynth; plyphon writes its
+        // cleared value, `-1`, which a chain reads as "no frame".
+        *ctx.outs.control(0) = if self.fftsize != 0 {
+            ctx.ins.control(Self::BUFFER)
+        } else {
+            -1.0
+        };
         DoneAction::Nothing
     }
 
