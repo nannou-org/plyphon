@@ -47,8 +47,13 @@ fn distribution(which: i32, a: f32, f: f32) -> f32 {
         }
         // ARCSINE.
         4 => {
-            let c = math::sin(core::f32::consts::FRAC_PI_2 * a);
-            math::sin(core::f32::consts::PI * (f - 0.5) * a) / c
+            // scsynth's literal `1.5707963f`, one ulp below `FRAC_PI_2` as an `f32`.
+            #[allow(clippy::approx_constant)]
+            let c = math::sin(1.570_796_3_f32 * a);
+            // scsynth's `pi_f` is `std::acos(-1.f)`, evaluated by the platform's libm: one ulp
+            // below `PI` on macOS.
+            let pi_f = math::acos(-1.0f32);
+            math::sin(pi_f * (f - 0.5) * a) / c
         }
         // EXPON.
         5 => {
@@ -195,7 +200,8 @@ impl Unit for Gendy1 {
                 dur_mem[index] = rate;
                 speed = (minfreq + (maxfreq - minfreq) * rate) * freq_mul * num as f32;
             }
-            *slot = ((1.0 - phase) as f32 * amp) + (phase as f32 * next_amp);
+            // Interpolated in double precision, as scsynth's `double phase` promotes it.
+            *slot = ((1.0 - phase) * amp as f64 + phase * next_amp as f64) as f32;
             phase += speed as f64;
         }
 
