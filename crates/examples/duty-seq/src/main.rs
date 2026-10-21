@@ -11,14 +11,53 @@
 //! through `Dseq`, `Dseries`, and `Dwhite`. The only off-RT work is compiling the `SynthDef`; the
 //! pulling, sequencing, and randomness all happen in the audio callback.
 
-use plyphon::{
-    AddAction, InputRef, Nrt, Options, ROOT_GROUP_ID, Rate, SynthDef, UnitSpec, World, engine,
-};
+use plyphon::{AddAction, Nrt, Options, ROOT_GROUP_ID, Rate, SynthDef, World, engine};
+use plyphon_synthdef::{DSeq, Out, SinOsc, SynthDefBuilder, mce};
 
 /// Peak amplitude of the oscillator.
 const AMP: f32 = 0.2;
 /// Master gain applied in the audio callback (the voice is already scaled by `AMP`).
 const GAIN: f32 = 1.0;
+
+plyphon_synthdef::ugen!(
+    /// Demand rate arithmetic series.
+    "Dseries" => DSeries [new: Rate::Demand](
+        /// Start value (default 1).
+        length = 1,
+        /// Step value (default 1).
+        start = 1,
+        /// Number of values to create (default infinity).
+        step = f32::INFINITY,
+    ) -> 1
+);
+
+plyphon_synthdef::ugen!(
+    /// DWhite returns numbers in the continuous range between lo and hi.
+    "Dwhite" => DWhite [new: Rate::Demand](
+        /// Number of values to create (default infinity).
+        length = f32::INFINITY,
+        /// Minimum value (default 0).
+        lo = 0,
+        /// Maximum value (default 1).
+        hi = 1,
+    ) -> 1
+);
+
+plyphon_synthdef::ugen!(
+    "Duty" => Duty [ar: Rate::Audio, kr: Rate::Control](
+        /// Time values. Can be a demand UGen or any signal.
+        /// The next level is acquired after duration.
+        dur = 1.0,
+        /// Trigger or reset time values. Resets the list of UGens
+        /// and the duration UGen when triggered. The reset input
+        /// may also be a demand UGen, providing a stream of reset times.
+        reset = 0.0,
+        /// A doneAction that is evaluated when the duration stream ends.
+        done_action = 0,
+        /// Demand UGen providing the output values.
+        level = 0.0,
+    ) -> 1
+);
 
 /// The sequencer synth, built entirely from demand-rate units:
 ///
@@ -31,100 +70,32 @@ const GAIN: f32 = 1.0;
 ///   out  = SinOsc.ar(freq) * AMP
 /// ```
 fn seq_def(channels: usize) -> SynthDef {
-    // Build the multi-channel `Out` inputs: bus 0, then the (amplified) oscillator into each channel.
-    let mut out_inputs = vec![InputRef::Constant(0.0)];
-    for _ in 0..channels {
-        out_inputs.push(InputRef::Unit { unit: 6, output: 0 });
-    }
-    SynthDef {
-        name: "duty-seq".to_string(),
-        params: vec![],
-        units: vec![
-            // 0: Dseries(length: 4, start: 220, step: 55) - a four-note rising arpeggio.
-            UnitSpec::new(
-                "Dseries",
-                Rate::Demand,
-                vec![
-                    InputRef::Constant(4.0),
-                    InputRef::Constant(220.0),
-                    InputRef::Constant(55.0),
-                ],
-                1,
-            ),
-            // 1: Dwhite(length: 2, lo: 300, hi: 500) - two random notes per pass.
-            UnitSpec::new(
-                "Dwhite",
-                Rate::Demand,
-                vec![
-                    InputRef::Constant(2.0),
-                    InputRef::Constant(300.0),
-                    InputRef::Constant(500.0),
-                ],
-                1,
-            ),
-            // 2: Dseq([Dseries, Dwhite, 440, 330], inf) - the melody, nesting the two sources above.
-            UnitSpec::new(
-                "Dseq",
-                Rate::Demand,
-                vec![
-                    InputRef::Constant(f32::INFINITY),
-                    InputRef::Unit { unit: 0, output: 0 },
-                    InputRef::Unit { unit: 1, output: 0 },
-                    InputRef::Constant(440.0),
-                    InputRef::Constant(330.0),
-                ],
-                1,
-            ),
-            // 3: Dseq([0.15, 0.15, 0.3], inf) - the rhythm (beat durations in seconds).
-            UnitSpec::new(
-                "Dseq",
-                Rate::Demand,
-                vec![
-                    InputRef::Constant(f32::INFINITY),
-                    InputRef::Constant(0.15),
-                    InputRef::Constant(0.15),
-                    InputRef::Constant(0.3),
-                ],
-                1,
-            ),
-            // 4: Duty.kr(dur: rhythm, reset: 0, level: melody) - pulls the next note when each beat
-            // elapses. This is the only clock; there is no control-plane tick.
-            UnitSpec::new(
-                "Duty",
-                Rate::Control,
-                vec![
-                    InputRef::Unit { unit: 3, output: 0 },
-                    InputRef::Constant(0.0),
-                    InputRef::Constant(0.0),
-                    InputRef::Unit { unit: 2, output: 0 },
-                ],
-                1,
-            ),
-            // 5: SinOsc.ar(freq = Duty.kr output).
-            UnitSpec::new(
-                "SinOsc",
-                Rate::Audio,
-                vec![
-                    InputRef::Unit { unit: 4, output: 0 },
-                    InputRef::Constant(0.0),
-                ],
-                1,
-            ),
-            // 6: SinOsc * AMP.
-            UnitSpec {
-                name: "BinaryOpUGen".to_string(),
-                rate: Rate::Audio,
-                inputs: vec![
-                    InputRef::Unit { unit: 5, output: 0 },
-                    InputRef::Constant(AMP),
-                ],
-                num_outputs: 1,
-                special_index: 2, // multiply
-            },
-            // 7: Out.ar(0, osc) - the same voice into every channel.
-            UnitSpec::new("Out", Rate::Audio, out_inputs, 0),
-        ],
-    }
+    SynthDefBuilder::build_with("duty-seq", |g| {
+        // Pulls the next note when each beat elapses. This is the only clock;
+        // there is no control-plane tick.
+        let freq = Duty::kr(g)
+            // The rhythm (beat durations in seconds)
+            .dur(DSeq::new(g).list([0.15, 0.15, 0.3]).repeats(f32::INFINITY))
+            // The melody, nesting several sources
+            .level(
+                DSeq::new(g)
+                    .list(mce![
+                        // A four-note rising arpeggio: 220 275 330 385
+                        DSeries::new(g).length(4).start(220).step(55),
+                        // Two random notes per pass
+                        DWhite::new(g).length(2).lo(300).hi(500),
+                        440,
+                        330
+                    ])
+                    .repeats(f32::INFINITY),
+            );
+
+        let osc = SinOsc::ar(g).freq(freq) * AMP;
+
+        // Send to all output channels
+        Out::ar(g).channels(osc.repeat(channels)).emit();
+    })
+    .0
 }
 
 /// Build the engine, register the sequencer def, and start the single self-driving synth. Returns the

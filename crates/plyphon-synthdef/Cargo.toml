@@ -1,0 +1,18 @@
+[package]
+name = "plyphon-synthdef"
+version = "0.1.0"
+publish = false
+description = "Fluent SynthDef creation."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+paste = "1"
+plyphon = { workspace = true }
