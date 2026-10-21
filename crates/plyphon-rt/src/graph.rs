@@ -30,6 +30,7 @@ use plyphon_dsp::buffer::BufferTable;
 use plyphon_dsp::bus::Buses;
 use plyphon_dsp::fft::FftTables;
 use plyphon_dsp::math;
+use plyphon_dsp::ops;
 use plyphon_dsp::rate::{Rate, RateInfo};
 use plyphon_dsp::rng::Rng;
 use plyphon_dsp::wavetable::Wavetables;
@@ -360,7 +361,10 @@ impl Graph {
                 if first {
                     lag_state[li] = x;
                 }
-                let y = x + lp.b1 * (lag_state[li] - x);
+                // scsynth's `LagControl_next_k` (`IOUGens.cpp`) flushes the step with
+                // `zapgremlins`, so a lagged control settles to exactly 0 instead of resting on a
+                // denormal - a gate fed through it must reach 0 to re-arm an `EnvGen`.
+                let y = ops::zapgremlins(x + lp.b1 * (lag_state[li] - x));
                 lag_state[li] = y;
                 ctrl[lp.wire as usize] = y;
             }

@@ -146,3 +146,28 @@ fn lag_control_zero_lag_is_instant() {
         "a zero lag follows the step instantly"
     );
 }
+
+/// A lagged control stepped back to 0 settles to exactly 0. scsynth's `LagControl_next_k` and
+/// `LagControl_next_1` (`IOUGens.cpp`) store `zapgremlins` of each step, so the one-pole stops at 0
+/// once it falls under 1e-15 instead of resting on a denormal. A gate read through it must reach 0
+/// before an `EnvGen` can trigger again.
+#[test]
+fn lag_control_settles_to_exact_zero() {
+    let (mut controller, _nrt, mut world) = engine(opts());
+    controller.add_synthdef(def("lag-zero", Param::lag("f", 0.0, 1.0 / 30.0)));
+    let node = controller
+        .synth_new("lag-zero", ROOT_GROUP_ID, AddAction::Tail)
+        .unwrap();
+    controller.set_control(node, 0, 1.0).unwrap();
+    for _ in 0..100 {
+        one(&mut world);
+    }
+    controller.set_control(node, 0, 0.0).unwrap();
+    // 1e-15 is 300 dB down: five -60 dB lag times, about 125 blocks at 750 blocks/s.
+    let mut last = 1.0;
+    for _ in 0..150 {
+        last = one(&mut world);
+    }
+    assert_eq!(last, 0.0, "settles to exactly 0 soon after five lag times");
+    assert_eq!(one(&mut world), 0.0, "and stays there");
+}
