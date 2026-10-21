@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/nannou-org/plyphon/compare/plyphon-buffers-v0.1.3...plyphon-buffers-v0.1.4) - 2026-10-21
+
+### Other
+
+- updated the following local packages: plyphon
+
 ## [0.1.3](https://github.com/nannou-org/plyphon/compare/plyphon-buffers-v0.1.2...plyphon-buffers-v0.1.3) - 2026-09-26
 
 ### Other
